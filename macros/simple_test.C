@@ -1,11 +1,11 @@
 #pragma once
 
 #include <vector>
-#include "../lib_v2/alcor_spilldata.h"
-#include "../lib_v2/mapping.h"
-#include "../lib_v2/utility.h"
-#include "../lib_v2/streaming_framer.h"
-#include "../lib_v2/alcor_recodata.h"
+#include "../lib/alcor_spilldata.h"
+#include "../lib/mapping.h"
+#include "../lib/utility.h"
+#include "../lib/streaming_framer.h"
+#include "../lib/alcor_recodata.h"
 #include "lightdata_writer.C"
 #include <filesystem>
 

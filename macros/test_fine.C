@@ -1,6 +1,6 @@
 #include <TFile.h>
 #include <TH2F.h>
-#include "../lib_v2/alcor_finedata.h"
+#include "../lib/alcor_finedata.h"
 
 gSystem->Load("alcor_recodata_h.so");
 

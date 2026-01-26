@@ -1,5 +1,5 @@
-#include "../lib_v2/alcor_recodata.h"
-#include "../lib_v2/utility.h"
+#include "../lib/alcor_recodata.h"
+#include "../lib/utility.h"
 #include "recodata_writer.C"
 
 gSystem->Load("alcor_recodata_h.so");
