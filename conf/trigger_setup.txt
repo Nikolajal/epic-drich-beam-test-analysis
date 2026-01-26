@@ -1,0 +1,3 @@
+# trigger_tag index device delay
+luca_and_finger     0   196 117
+broad_scintillator  1   197 117
