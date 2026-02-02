@@ -2,6 +2,6 @@
 Data
 .DS_Store
 */.DS_Store
-*/.d
-*/.so
+*/*.d
+*/*.so
 test
