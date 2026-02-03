@@ -17,6 +17,7 @@ struct alcor_data_struct
     int rollover;
     int coarse;
     int fine;
+    uint32_t hit_mask;
 
     alcor_data_struct() = default;
 };
@@ -27,6 +28,13 @@ enum alcor_hit_struct
     trigger_tag = 9,
     start_spill = 7,
     end_spill = 15
+};
+
+enum hit_mask
+{
+    _HITMASK_ring_tag = 1,
+    _HITMASK_part_lane = 30,
+    _HITMASK_dead_lane = 31
 };
 
 class alcor_data

@@ -9,13 +9,6 @@
 #include "triggers.h"
 #include "alcor_spilldata.h"
 
-enum hit_mask
-{
-    _HITMASK_ring_tag = 1,
-    _HITMASK_part_lane = 30,
-    _HITMASK_dead_lane = 31
-};
-
 struct alcor_recodata_struct
 {
     float hit_x;
