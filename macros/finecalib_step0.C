@@ -13,7 +13,7 @@ void finecalib_step0(std::string input_filename, std::string output_filename = "
     TH2F *current_calib_histo = (TH2F *)(input_file->Get(Form("hFine_%i", current_device_index)));
     if (!current_calib_histo)
       continue;
-    cout << "[INFO] Starting device " << current_device_index << endl;
+    std::cout << "[INFO] Starting device " << current_device_index << std::endl;
     TH1F *hIIF = new TH1F(Form("hIIF_%i", current_device_index), "hIIF", 768, 0, 768);
     TH1F *hCUT = new TH1F(Form("hCUT_%i", current_device_index), "hCUT", 768, 0, 768);
     //  Take 2D TDC distribution for fit

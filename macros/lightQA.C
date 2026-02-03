@@ -70,10 +70,10 @@ void lightQA(std::string input_file = "lightdata.root", std::string output_file 
     }
   }
 
-  cout << "[INFO] Starting the light QA: reading " << input_file << endl;
+  std::cout << "[INFO] Starting the light QA: reading " << input_file << std::endl;
   sipm4eic::lightio *io = new sipm4eic::lightio();
   io->read_from_tree(input_file);
-  cout << "[INFO] Finished reading from tree in file " << input_file << endl;
+  std::cout << "[INFO] Finished reading from tree in file " << input_file << std::endl;
 
   //  Loop on spills
   auto full_frames = 0;
@@ -81,7 +81,7 @@ void lightQA(std::string input_file = "lightdata.root", std::string output_file 
   while (io->next_spill())
   {
     current_spill++;
-    cout << "[INFO] Start spill: " << current_spill << endl;
+    std::cout << "[INFO] Start spill: " << current_spill << std::endl;
 
     //  Loop on frames
     auto current_frame = 0;

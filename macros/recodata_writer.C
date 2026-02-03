@@ -107,7 +107,7 @@ void recodata_writer(std::string data_repository, std::string run_name, int max_
     spilldata->get_entry();
     auto &frames_in_spill = spilldata->get_frame_list_link();
     auto &frame_reference = spilldata->get_frame_reference_list_link();
-    cout << "[INFO] Spill " << i_spill << " with " << frames_in_spill.size() << " frames " << endl;
+    std::cout << "[INFO] Spill " << i_spill << " with " << frames_in_spill.size() << " frames " << std::endl;
 
     //  Get participating channels fill dummy event for recodata analysis
     participants_channel.clear();
@@ -142,7 +142,7 @@ void recodata_writer(std::string data_repository, std::string run_name, int max_
       alcor_lightdata current_lightdata(current_lightdata_struct);
 
       if (i_saved_frame % 1000 == 0)
-        cout << "\33[2K\r[INFO] Processing frame " << i_saved_frame << std::flush;
+        std::cout << "\33[2K\r[INFO] Processing frame " << i_saved_frame << std::flush;
 
       //  Trigger
       std::vector<trigger_struct> current_triggers;
@@ -325,8 +325,8 @@ void recodata_writer(std::string data_repository, std::string run_name, int max_
           h_hit_rate_triggered->Fill(global_index, hit_time_per_channel[global_index].size() + hits.size());
       }
     }
-    cout << std::endl;
-    cout << "[INFO] Finished processing spill " << i_spill << std::endl;
+    std::cout << std::endl;
+    std::cout << "[INFO] Finished processing spill " << i_spill << std::endl;
     all_frames += frames_in_spill.size();
   }
 
@@ -457,7 +457,7 @@ void recodata_writer(std::string data_repository, std::string run_name, int max_
     lightdata_tree->GetEntry(i_spill);
     spilldata->get_entry();
     auto frames_in_spill = spilldata->get_frame_list_link();
-    cout << "[INFO] Spill " << i_spill << " with " << frames_in_spill.size() << " frames " << endl;
+    std::cout << "[INFO] Spill " << i_spill << " with " << frames_in_spill.size() << " frames " << std::endl;
     auto &frame_reference = spilldata->get_frame_reference_list_link();
 
     //  Get participating channels

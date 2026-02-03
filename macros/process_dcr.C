@@ -77,7 +77,7 @@ void process_dcr()
   {
     iter++;
     std::string data_repository = "/Volumes/NRUBINI_DATASTASH_1/BT25/Data/";
-    cout << " ---- ---- ---- " << current_run << endl;
+    std::cout << " ---- ---- ---- " << current_run << std::endl;
     recodata_writer(data_repository, current_run, 5, true, true);
     TFile *input_file = new TFile((data_repository + "/" + current_run + "/recodata.root").c_str());
     if (!input_file || input_file->IsZombie())
@@ -161,9 +161,9 @@ void process_dcr()
         _1375_dcr_RMS += (drc_plot->GetBinContent(i_bin) - _1375_dcr_avg_val) * (drc_plot->GetBinContent(i_bin) - _1375_dcr_avg_val);
     _1375_dcr_RMS = sqrt(_1375_dcr_RMS / _1375_dcr_prt);
 
-    cout << "[DCR RESULTS] Run " << current_run << " :" << endl;
-    cout << "  - 1350 DCR: " << _1350_dcr_avg_val << " +/- " << _1350_dcr_err << " kHz" << endl;
-    cout << "  - 1375 DCR: " << _1375_dcr_avg_val << " +/- " << _1375_dcr_err << " kHz" << endl;
+    std::cout << "[DCR RESULTS] Run " << current_run << " :" << std::endl;
+    std::cout << "  - 1350 DCR: " << _1350_dcr_avg_val << " +/- " << _1350_dcr_err << " kHz" << std::endl;
+    std::cout << "  - 1375 DCR: " << _1375_dcr_avg_val << " +/- " << _1375_dcr_err << " kHz" << std::endl;
     g_dcr_vs_temp_50->SetPoint(iter, runs_T_OV_DTh_rad[current_run][0], _1350_dcr_avg_val);
     g_dcr_vs_temp_50->SetPointError(iter, 0, _1350_dcr_RMS);
     g_dcr_vs_temp_75->SetPoint(iter, runs_T_OV_DTh_rad[current_run][0], _1375_dcr_avg_val);

@@ -43,7 +43,7 @@ void check_the_tagger(std::string data_repository, std::string run_name, int max
     std::map<int, int> encoded_frames_by_trigger;
 
     if (i_frame % 1000 == 0)
-      cout << i_frame << endl;
+      std::cout << i_frame << std::endl;
 
     //  Triggers
     for (auto trigger : recodata->get_triggers())
