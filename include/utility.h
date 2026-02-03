@@ -7,6 +7,8 @@
 #include <Math/Functor.h>
 #include <Fit/Fitter.h>
 #include <TEllipse.h>
+#include <TH1.h>
+#include <TF1.h>
 #include <Math/Minimizer.h>
 #include <functional>
 #include <iostream>
@@ -14,11 +16,11 @@
 
 //  Random generator utility
 //  --- Create a random device for seeding
-std::random_device _global_rd_;
+inline std::random_device _global_rd_;
 //  --- Create a Mersenne Twister engine (fast, high quality)
-std::mt19937 _global_gen_(_global_rd_());
+inline std::mt19937 _global_gen_(_global_rd_());
 //  --- Float distribution in [0,1)
-std::uniform_real_distribution<> _rnd_(0.0, 1.0); // floats [0,1)
+inline std::uniform_real_distribution<> _rnd_(0.0, 1.0); // floats [0,1)
 
 //  Index utility
 //  TODO Should be moved to mapping.h as it heavily depends on the mapping and requested device, chip, pdu, etc
@@ -37,7 +39,7 @@ inline int get_matrix_from_global_tdc_index(int global_tdc_index) { return (glob
 // TODO clean-up
 
 //  Encoding utility
-uint32_t encode_bits(const std::vector<uint8_t> &active_bits)
+uint32_t inline encode_bits(const std::vector<uint8_t> &active_bits)
 {
   uint32_t mask = 0;
   for (uint8_t bit : active_bits)
@@ -45,8 +47,8 @@ uint32_t encode_bits(const std::vector<uint8_t> &active_bits)
       mask |= (1u << bit);
   return mask;
 }
-uint32_t encode_bit(const uint8_t &active_bit) { return encode_bits(std::vector<uint8_t>{active_bit}); }
-std::vector<uint8_t> decode_bits(uint32_t mask)
+uint32_t inline encode_bit(const uint8_t &active_bit) { return encode_bits(std::vector<uint8_t>{active_bit}); }
+std::vector<uint8_t> inline decode_bits(uint32_t mask)
 {
   std::vector<uint8_t> result;
   result.reserve(32);
@@ -60,7 +62,7 @@ std::vector<uint8_t> decode_bits(uint32_t mask)
 //  --- Fit results: X, Y, R and errors
 using circle_fit_results = std::array<std::array<float, 2>, 3>;
 //  --- Fit function
-circle_fit_results fit_circle(std::vector<std::array<float, 2>> points, std::array<float, 3> initial_values, bool fix_XY = true)
+circle_fit_results inline fit_circle(std::vector<std::array<float, 2>> points, std::array<float, 3> initial_values, bool fix_XY = true)
 {
   circle_fit_results result;
 
@@ -121,12 +123,12 @@ circle_fit_results fit_circle(std::vector<std::array<float, 2>> points, std::arr
   return result;
 }
 
-TFile *open_or_build_rootfile(const std::string &filename,
-                              std::function<void(std::string, std::string, int)> builder,
-                              const std::string &data_repository,
-                              const std::string &run_name,
-                              int max_spill,
-                              bool force_rebuild = false)
+inline TFile *open_or_build_rootfile(const std::string &filename,
+                                     std::function<void(std::string, std::string, int)> builder,
+                                     const std::string &data_repository,
+                                     const std::string &run_name,
+                                     int max_spill,
+                                     bool force_rebuild = false)
 {
   //  Try to open the file
   if (!force_rebuild)
@@ -151,7 +153,7 @@ TFile *open_or_build_rootfile(const std::string &filename,
   return input_file;
 }
 
-void draw_circle(std::array<float, 3> parameters, int line_color = kBlack, int line_style = kSolid, int line_width = 1)
+void inline draw_circle(std::array<float, 3> parameters, int line_color = kBlack, int line_style = kSolid, int line_width = 1)
 {
   auto result = new TEllipse(parameters[0], parameters[1], parameters[2]);
   result->SetFillStyle(0);
@@ -166,7 +168,7 @@ void draw_circle(std::array<float, 3> parameters, int line_color = kBlack, int l
 //  [1] / [2] -> mean (mu)
 //  x / [2] -> x
 //  Gamma( x / [2] + 1 ) = factorial (x / [2])
-TF1 *fPhotonFitFunction = new TF1("hPhotonFitFunction", "[0]*TMath::Power(([1]/[2]),(x/[2]))*(TMath::Exp(-([1]/[2])))/TMath::Gamma((x/[2])+1)", -1000, 1000);
+inline TF1 *fPhotonFitFunction = new TF1("hPhotonFitFunction", "[0]*TMath::Power(([1]/[2]),(x/[2]))*(TMath::Exp(-([1]/[2])))/TMath::Gamma((x/[2])+1)", -1000, 1000);
 
 /*
 //  Data structures

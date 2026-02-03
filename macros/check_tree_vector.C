@@ -26,7 +26,7 @@ void check_tree_vector(std::string run_name, int max_spill = 1000)
   //  Loop over spills
   for (int ispill = 0; ispill < all_spills; ++ispill)
   {
-    cout << "[INFO] Spill " << ispill << endl;
+    std::cout << "[INFO] Spill " << ispill << std::endl;
     lightdata_tree->GetEntry(ispill);
     spilldata->get_entry();
     auto frames_in_spill = spilldata->get_frame_list_link();

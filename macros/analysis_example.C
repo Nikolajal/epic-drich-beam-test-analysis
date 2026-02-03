@@ -2,7 +2,7 @@
 #include "../lib/utility.h"
 #include "recodata_writer.C"
 
-gSystem->Load("alcor_recodata_h.so");
+gSystem->Load("./alcor_recodata_h.so");
 
 bool is_phi_excluded(float phi, const std::vector<std::array<float, 2>> &phi_exclusion)
 {
@@ -243,9 +243,9 @@ void analysis_example(std::string data_repository, std::string run_name, int max
     else
       continue;
   }
-  cout << "signal: " << signal << endl;
-  cout << "background: " << background << endl;
-  cout << "signal - background: " << signal - background << endl;
+  std::cout << "signal: " << signal << std::endl;
+  std::cout << "background: " << background << std::endl;
+  std::cout << "signal - background: " << signal - background << std::endl;
 
   //  Plotting results
   new TCanvas();

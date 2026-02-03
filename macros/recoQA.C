@@ -20,8 +20,8 @@ void recoQA(std::string input_file = "recodata_2.root", std::string output_file 
   std::vector<std::array<float, 2>> list_of_available_SiPMs;
 
   //  First loop on events
-  cout << "[INFO] Start of preliminary loop for X_{0}, Y_{0} and R_{0}" << endl;
-  cout << "[INFO] Input entries: " << reco_tree->GetEntries() << endl;
+  std::cout << "[INFO] Start of preliminary loop for X_{0}, Y_{0} and R_{0}" << std::endl;
+  std::cout << "[INFO] Input entries: " << reco_tree->GetEntries() << std::endl;
   for (int iEv = 0; iEv < reco_tree->GetEntries(); iEv++)
   {
     //  Recover recodata entry form tree
@@ -29,7 +29,7 @@ void recoQA(std::string input_file = "recodata_2.root", std::string output_file 
 
     if ((iEv + 1) % 10000 == 0)
     {
-      cout << "[INFO] event: " << iEv + 1 << endl;
+      std::cout << "[INFO] event: " << iEv + 1 << std::endl;
     }
 
     //  Persistance plot
@@ -111,7 +111,7 @@ void recoQA(std::string input_file = "recodata.root", std::string output_file = 
   std::vector<std::array<float, 2>> list_of_available_SiPMs;
 
   //  First loop on events
-  cout << "[INFO] Start of preliminary loop for X_{0}, Y_{0} and R_{0}" << endl;
+  std::cout << "[INFO] Start of preliminary loop for X_{0}, Y_{0} and R_{0}" << std::endl;
   for (int iEv = 0; iEv < reco_tree->GetEntries(); iEv++)
   {
     //  Recover recodata entry form tree
@@ -119,7 +119,7 @@ void recoQA(std::string input_file = "recodata.root", std::string output_file = 
 
     if ((iEv) % 1000 == 0)
     {
-      cout << "[INFO] event: " << iEv << endl;
+      std::cout << "[INFO] event: " << iEv << std::endl;
     }
 
     //  Persistance plot
@@ -153,7 +153,7 @@ void recoQA(std::string input_file = "recodata.root", std::string output_file = 
 /-/
 
   //  Second loop on events
-  cout << "[INFO] Start of analysis loop" << endl;
+  std::cout << "[INFO] Start of analysis loop" << std::endl;
   for (int iEv = 0; iEv < reco_tree->GetEntries(); iEv++)
   {
     //  Recover recodata entry form tree
@@ -161,7 +161,7 @@ void recoQA(std::string input_file = "recodata.root", std::string output_file = 
 
     if ((iEv) % 1000 == 0)
     {
-      cout << "[INFO] event: " << iEv << endl;
+      std::cout << "[INFO] event: " << iEv << std::endl;
     }
 
     //  Loop on found loops

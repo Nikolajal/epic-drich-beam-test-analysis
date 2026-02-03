@@ -1,3 +1,5 @@
+#pragma once
+
 #include "alcor_finedata.h"
 
 // #define TESTBEAM2023
