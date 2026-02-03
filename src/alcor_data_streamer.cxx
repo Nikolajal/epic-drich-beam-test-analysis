@@ -1,5 +1,6 @@
 #include "alcor_data_streamer.h"
 
+//  Constructors
 alcor_data_streamer::alcor_data_streamer(const std::string &fname)
     : filename(fname)
 {
@@ -15,14 +16,12 @@ alcor_data_streamer::alcor_data_streamer(const std::string &fname)
   n_entries = tree->GetEntries();
   valid = true;
 }
-
 alcor_data_streamer::alcor_data_streamer(alcor_data_streamer &&other) noexcept
 {
   *this = std::move(other);
 }
-
-alcor_data_streamer &
-alcor_data_streamer::operator=(alcor_data_streamer &&other) noexcept
+//  Copy Constructor
+alcor_data_streamer &alcor_data_streamer::operator=(alcor_data_streamer &&other) noexcept
 {
   if (this != &other)
   {
@@ -40,7 +39,7 @@ alcor_data_streamer::operator=(alcor_data_streamer &&other) noexcept
   }
   return *this;
 }
-
+//  Destructor
 alcor_data_streamer::~alcor_data_streamer() noexcept
 {
   if (tree)
@@ -53,16 +52,14 @@ alcor_data_streamer::~alcor_data_streamer() noexcept
   }
 }
 
+//  General methods
 std::string alcor_data_streamer::get_filename() const noexcept { return filename; }
 bool alcor_data_streamer::is_valid() const noexcept { return valid; }
 bool alcor_data_streamer::eof() const noexcept { return cursor >= n_entries; }
-
 const alcor_data &alcor_data_streamer::current() const noexcept { return data; }
 alcor_data &alcor_data_streamer::current() noexcept { return data; }
-
 Long64_t alcor_data_streamer::entry() const noexcept { return cursor; }
 Long64_t alcor_data_streamer::entries() const noexcept { return n_entries; }
-
 bool alcor_data_streamer::read_next()
 {
   if (!valid || eof())
@@ -71,5 +68,4 @@ bool alcor_data_streamer::read_next()
   tree->GetEntry(cursor++);
   return true;
 }
-
 void alcor_data_streamer::rewind() noexcept { cursor = 0; }
