@@ -3,13 +3,14 @@
 #include <iostream>
 using namespace std;
 
-// Constructors
-streaming_framer::streaming_framer(std::vector<std::string> filenames, uint16_t frame_size)
+//  Constructors
+streaming_framer::streaming_framer(std::vector<std::string> filenames,
+                                   uint16_t frame_size)
     : streaming_framer(filenames, "", "", frame_size) {}
-
-streaming_framer::streaming_framer(std::vector<std::string> filenames, std::string trigger_config_file, uint16_t frame_size)
+streaming_framer::streaming_framer(std::vector<std::string> filenames,
+                                   std::string trigger_config_file,
+                                   uint16_t frame_size)
     : streaming_framer(filenames, trigger_config_file, "", frame_size) {}
-
 streaming_framer::streaming_framer(std::vector<std::string> filenames,
                                    std::string trigger_config_file,
                                    std::string readout_config_file,
