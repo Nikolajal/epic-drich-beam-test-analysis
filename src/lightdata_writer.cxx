@@ -1,4 +1,5 @@
 #include "streaming_framer.h"
+#include "lightdata_writer.h"
 
 std::vector<std::string> list_of_devices = {
     "rdo-192",
@@ -11,7 +12,10 @@ std::vector<std::string> list_of_devices = {
     "rdo-199",
     "kc705-200"};
 
-void lightdata_writer(std::string data_repository, std::string run_name, int max_spill = 1000)
+void lightdata_writer(
+    const std::string &data_repository,
+    const std::string &run_name,
+    int max_spill)
 {
   //  Do not make ownership of histograms to current directory
   TH1::AddDirectory(false);
@@ -139,26 +143,4 @@ void lightdata_writer(std::string data_repository, std::string run_name, int max
   for (auto [name, hist] : QA_plots_map)
     hist->Write(name.c_str());
   outfile->Close();
-}
-
-// Main function for the executable
-int main(int argc, char **argv)
-{
-  if (argc < 3)
-  {
-    std::cerr << "Usage: " << argv[0] << " <data_repository> <run_name> [max_spill]" << std::endl;
-    return 1;
-  }
-
-  std::string data_repository = argv[1];
-  std::string run_name = argv[2];
-  int max_spill = 1000; // default
-
-  if (argc >= 4)
-    max_spill = std::stoi(argv[3]);
-
-  // Call your actual function
-  lightdata_writer(data_repository, run_name, max_spill);
-
-  return 0;
 }

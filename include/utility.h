@@ -8,6 +8,8 @@
 #include <Fit/Fitter.h>
 #include <TEllipse.h>
 #include <TH1.h>
+#include <TFile.h>
+#include <TTree.h>
 #include <TF1.h>
 #include <Math/Minimizer.h>
 #include <functional>

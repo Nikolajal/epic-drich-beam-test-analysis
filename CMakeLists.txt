@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.10)
 project(beam_test_analysis LANGUAGES CXX)
 
 # ----------------------------
+# Fetch external dependencies
+# ----------------------------
+include(FetchContent)
+
+FetchContent_Declare(
+  CLI11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG v2.4.2
+)
+
+FetchContent_MakeAvailable(CLI11)
+
+# ----------------------------
 # C++ standard
 # ----------------------------
 set(CMAKE_CXX_STANDARD 17)
@@ -34,10 +47,16 @@ add_library(test_beam_analysis SHARED
     src/alcor_spilldata.cxx
     src/alcor_data_streamer.cxx
     src/streaming_framer.cxx
+    src/lightdata_writer.cxx
+    src/recodata_writer.cxx
 )
 
 # Link ROOT to the library
-target_link_libraries(test_beam_analysis PUBLIC ${ROOT_LIBRARIES})
+target_link_libraries(test_beam_analysis
+    PUBLIC ${ROOT_LIBRARIES}
+    PUBLIC CLI11::CLI11
+)
+
 
 # Set library output directory
 set_target_properties(test_beam_analysis PROPERTIES
@@ -70,10 +89,16 @@ target_link_libraries(mydict PUBLIC ${ROOT_LIBRARIES} test_beam_analysis)
 # ----------------------------
 # Add executable
 # ----------------------------
-add_executable(lightdata_writer src/lightdata_writer.cxx)
+add_executable(lightdata_writer macros/lightdata_writer.C)
+add_executable(recodata_writer macros/recodata_writer.C)
 
 # Link the shared library and dictionary to the executable
 target_link_libraries(lightdata_writer
+    PRIVATE test_beam_analysis
+    PRIVATE mydict
+    PRIVATE ${ROOT_LIBRARIES}
+)
+target_link_libraries(recodata_writer
     PRIVATE test_beam_analysis
     PRIVATE mydict
     PRIVATE ${ROOT_LIBRARIES}
@@ -83,11 +108,14 @@ target_link_libraries(lightdata_writer
 set_target_properties(lightdata_writer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+set_target_properties(recodata_writer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
 
 # ----------------------------
 # Optional: install rules
 # ----------------------------
-install(TARGETS test_beam_analysis mydict lightdata_writer
+install(TARGETS test_beam_analysis mydict lightdata_writer recodata_writer
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
