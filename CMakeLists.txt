@@ -89,8 +89,8 @@ target_link_libraries(mydict PUBLIC ${ROOT_LIBRARIES} test_beam_analysis)
 # ----------------------------
 # Add executable
 # ----------------------------
-add_executable(lightdata_writer macros/lightdata_writer.C)
-add_executable(recodata_writer macros/recodata_writer.C)
+add_executable(lightdata_writer macros/lightdata_writer.cpp)
+add_executable(recodata_writer macros/recodata_writer.cpp)
 
 # Link the shared library and dictionary to the executable
 target_link_libraries(lightdata_writer
