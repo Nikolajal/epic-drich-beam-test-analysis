@@ -2,6 +2,20 @@ cmake_minimum_required(VERSION 3.10)
 project(beam_test_analysis LANGUAGES CXX)
 
 # ----------------------------
+# C++ standard
+# ----------------------------
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ----------------------------
+# RPATH settings (macOS + ROOT)
+# ----------------------------
+set(CMAKE_MACOSX_RPATH ON)
+set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+# ----------------------------
 # Fetch external dependencies
 # ----------------------------
 include(FetchContent)
@@ -13,12 +27,6 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(CLI11)
-
-# ----------------------------
-# C++ standard
-# ----------------------------
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ----------------------------
 # Find ROOT
@@ -57,19 +65,28 @@ target_link_libraries(test_beam_analysis
     PUBLIC CLI11::CLI11
 )
 
-
 # Set library output directory
 set_target_properties(test_beam_analysis PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    BUILD_RPATH ${CMAKE_BINARY_DIR}/lib
+    INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib
 )
 
 # ----------------------------
 # Generate ROOT dictionary
 # ----------------------------
 set(DICT_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_lightdata.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_finedata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/config_reader.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/triggers.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_finedata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_lightdata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_recodata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_spilldata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data_streamer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/streaming_framer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/lightdata_writer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/recodata_writer.h
 )
 
 set(DICT_INCLUDE_DIRS
@@ -77,14 +94,20 @@ set(DICT_INCLUDE_DIRS
 )
 
 ROOT_GENERATE_DICTIONARY(
-    G__mydict
+    G__test_beam_analysis_dict
     ${DICT_HEADERS}
     LINKDEF ${CMAKE_CURRENT_SOURCE_DIR}/dict/alcor_linkdef.h
 )
 
+set_target_properties(G__test_beam_analysis_dict PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    BUILD_RPATH ${CMAKE_BINARY_DIR}/lib
+    INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib
+)
+
 # Create dictionary library
-add_library(mydict SHARED G__mydict.cxx)
-target_link_libraries(mydict PUBLIC ${ROOT_LIBRARIES} test_beam_analysis)
+add_library(test_beam_analysis_dict SHARED G__test_beam_analysis_dict.cxx)
+target_link_libraries(test_beam_analysis_dict PUBLIC ${ROOT_LIBRARIES} test_beam_analysis)
 
 # ----------------------------
 # Add executable
@@ -95,12 +118,12 @@ add_executable(recodata_writer macros/recodata_writer.cpp)
 # Link the shared library and dictionary to the executable
 target_link_libraries(lightdata_writer
     PRIVATE test_beam_analysis
-    PRIVATE mydict
+    PRIVATE test_beam_analysis_dict
     PRIVATE ${ROOT_LIBRARIES}
 )
 target_link_libraries(recodata_writer
     PRIVATE test_beam_analysis
-    PRIVATE mydict
+    PRIVATE test_beam_analysis_dict
     PRIVATE ${ROOT_LIBRARIES}
 )
 
@@ -115,10 +138,15 @@ set_target_properties(recodata_writer PROPERTIES
 # ----------------------------
 # Optional: install rules
 # ----------------------------
-install(TARGETS test_beam_analysis mydict lightdata_writer recodata_writer
+install(TARGETS test_beam_analysis test_beam_analysis_dict lightdata_writer recodata_writer
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
+)
+
+# Install the PCM explicitly
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libtest_beam_analysis_dict_rdict.pcm
+    DESTINATION lib
 )
 
 install(DIRECTORY include/ DESTINATION include)
