@@ -170,7 +170,7 @@ void inline draw_circle(std::array<float, 3> parameters, int line_color = kBlack
 //  [1] / [2] -> mean (mu)
 //  x / [2] -> x
 //  Gamma( x / [2] + 1 ) = factorial (x / [2])
-inline TF1 *fPhotonFitFunction = new TF1("hPhotonFitFunction", "[0]*TMath::Power(([1]/[2]),(x/[2]))*(TMath::Exp(-([1]/[2])))/TMath::Gamma((x/[2])+1)", -1000, 1000);
+// inline TF1 *fPhotonFitFunction = new TF1("hPhotonFitFunction", "[0]*TMath::Power(([1]/[2]),(x/[2]))*(TMath::Exp(-([1]/[2])))/TMath::Gamma((x/[2])+1)", -1000, 1000);
 
 /*
 //  Data structures

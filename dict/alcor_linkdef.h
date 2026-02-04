@@ -16,6 +16,7 @@
 
 #include "alcor_recodata.h"
 #pragma link C++ struct alcor_recodata_struct + ;
+#pragma link C++ class alcor_recodata + ;
 #pragma link C++ class std::vector<alcor_recodata_struct> + ;
 
 #include "alcor_spilldata.h"
