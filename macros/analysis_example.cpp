@@ -44,7 +44,6 @@ void analysis_example(std::string data_repository, std::string run_name, int max
       n_spils++;
     }
 
-
     //  Select Luca AND trigger (0) or timing trigger (101)
     auto current_trigger = recodata->get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
@@ -64,7 +63,7 @@ void analysis_example(std::string data_repository, std::string run_name, int max
         if (fabs(recodata->get_hit_t(current_hit) - it->fine_time) > 40)
           continue;
 
-        //  Fill a hit wirth a random phi and R within the sensors acceptance (graphical purposes)
+        //  Fill a hit with a random X and Y within the sensors acceptance (graphical purposes)
         h_xy_coverage_full->Fill(recodata->get_hit_x_rnd(current_hit), recodata->get_hit_y_rnd(current_hit));
       }
     }
