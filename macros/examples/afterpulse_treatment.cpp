@@ -1,7 +1,7 @@
 #pragma cling load("libtest_beam_analysis_dict.dylib");
 #pragma cling load("libtest_beam_analysis.dylib");
 
-void analysis_example(std::string data_repository, std::string run_name, int max_frames = 10000000)
+void afterpulse_treatment(std::string data_repository, std::string run_name, int max_frames = 10000000)
 {
   //  Input files
   std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
