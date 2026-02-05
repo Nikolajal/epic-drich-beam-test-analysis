@@ -30,8 +30,6 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
 
   //  Loop over frames
   auto i_spill = -1;
-  auto n_spils = 0;
-  auto used_frames = 0;
   for (int i_frame = 0; i_frame < all_frames; ++i_frame)
   {
     //  Load data for current frame
@@ -42,7 +40,6 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     {
       //  You can internally keep track of spills
       i_spill++;
-      n_spils++;
     }
 
     //  Select Luca AND trigger (0) or timing trigger (101)
@@ -51,9 +48,6 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
                            { return t.index == 101; });
     if (it != current_trigger.end())
     {
-      //  Keep track of the actual number of frames used in the analysis
-      used_frames++;
-
       //  Loop on hits
       for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
       {
