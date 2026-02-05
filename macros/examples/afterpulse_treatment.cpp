@@ -40,6 +40,8 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     {
       //  You can internally keep track of spills
       i_spill++;
+      //  This event is not of physical interest
+      continue;
     }
 
     //  Select Luca AND trigger (0) or timing trigger (101)
