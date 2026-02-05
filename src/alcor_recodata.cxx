@@ -89,8 +89,10 @@ void alcor_recodata::add_hit(alcor_recodata_struct hit) { recodata.push_back(hit
 std::vector<trigger_struct> alcor_recodata::get_triggers() const { return triggers; }
 alcor_recodata_struct &alcor_recodata::get_link(int i) { return recodata[i]; }
 std::vector<trigger_struct> &alcor_recodata::get_triggers_link() { return triggers; }
+
 bool alcor_recodata::check_hit_mask(int i, uint32_t v) { return (get_hit_mask(i) & v) != 0; }
 bool alcor_recodata::is_afterpulse(int i) { return check_hit_mask(i, encode_bit(_HITMASK_afterpulse)); }
+bool alcor_recodata::is_ring_tagged(int i) { return check_hit_mask(i, encode_bits({_HITMASK_ring_tag_first, _HITMASK_ring_tag_second})); }
 
 // ----------------------
 // Main logic
