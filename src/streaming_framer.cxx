@@ -74,7 +74,7 @@ bool streaming_framer::next_spill()
     {
         auto &current_lightdata = frame_list[i_frame];
         auto &current_trigger_hits = current_lightdata.trigger_hits;
-        current_trigger_hits.push_back({100, static_cast<uint16_t>(_frame_size / 2.)});
+        current_trigger_hits.push_back({100, static_cast<uint16_t>(_frame_size / 2.), static_cast<float>(_ALCOR_CC_TO_NS_ * _frame_size / 2.)});
     }
 
     // loop over input streams
@@ -137,9 +137,9 @@ bool streaming_framer::next_spill()
                 auto &current_lightdata = frame_list[frame_index];
                 auto &current_trigger_hits = current_lightdata.trigger_hits;
                 if (!triggers_map.count(current_device))
-                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(current_device)});
+                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(current_device),0.});
                 else
-                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(frame_coarse)});
+                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(frame_coarse), static_cast<float>(_ALCOR_CC_TO_NS_*frame_coarse)});
                 // QA
                 if (!QA_utility.count(Form("TH1F_delta_time_trigger_%i", current_trg_index)))
                 {

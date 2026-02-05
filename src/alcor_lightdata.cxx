@@ -31,6 +31,7 @@ void alcor_lightdata::set_cherenkov_hits_link(std::vector<alcor_finedata_struct>
 void alcor_lightdata::set_trigger_link(std::vector<trigger_struct> &v) { lightdata.trigger_hits = v; }
 
 // Utility
+// TODO: use std::optional
 uint16_t alcor_lightdata::get_trigger_time(uint8_t trigger_index)
 {
     auto it = std::find_if(lightdata.trigger_hits.begin(), lightdata.trigger_hits.end(),
@@ -38,7 +39,7 @@ uint16_t alcor_lightdata::get_trigger_time(uint8_t trigger_index)
                            { return t.index == trigger_index; });
 
     if (it != lightdata.trigger_hits.end())
-        return it->coarse;
+        return it->fine_time;
     else
-        return 65535;
+        return -1;
 }
