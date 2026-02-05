@@ -1,3 +1,5 @@
+#pragma once
+
 #ifdef __ROOTCLING__
 
 #include "alcor_data.h"
@@ -27,4 +29,13 @@
 #pragma link C++ class std::unordered_map<uint8_t, uint32_t> + ;
 #pragma link C++ class std::unordered_map<uint32_t, alcor_lightdata_struct> + ;
 
+#include "alcor_data_streamer.h"
+#include "config_reader.h"
+#include "alcor_data_streamer.h"
+#include "lightdata_writer.h"
+#include "recodata_writer.h"
+#include "mapping.h"
+#include "streaming_framer.h"
+#include "triggers.h"
+#include "utility.h"
 #endif

@@ -109,7 +109,7 @@ void lightdata_writer(
         h_timing_ref_delta->Fill(delta_timing);
 
         //  TODO: understand why thee is a difference with the lightdata result
-        spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_TIMING_), static_cast<uint16_t>(_FRAME_SIZE_ / 2), static_cast<float>(ref_timing)});
+        spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_TIMING_), static_cast<uint16_t>(_FRAME_SIZE_ / 2), static_cast<float>(ref_timing*_ALCOR_CC_TO_NS_)});
         h_timing_ref_per_frame->Fill(frame_id);
         for (auto current_trigger_hit_struct : triggers_in_frame)
         {

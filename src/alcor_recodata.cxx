@@ -86,6 +86,9 @@ float alcor_recodata::get_hit_phi(int i, std::array<float, 2> v) const { return 
 float alcor_recodata::get_hit_phi_rnd(int i, std::array<float, 2> v) const { return std::atan2(get_hit_y_rnd(i) - v[1], get_hit_x_rnd(i) - v[0]); }
 uint32_t alcor_recodata::get_hit_mask(int i) const { return recodata[i].hit_mask; }
 void alcor_recodata::add_hit(alcor_recodata_struct hit) { recodata.push_back(hit); }
+std::vector<trigger_struct> alcor_recodata::get_triggers() const { return triggers; }
+alcor_recodata_struct &alcor_recodata::get_link(int i) { return recodata[i]; }
+std::vector<trigger_struct> &alcor_recodata::get_triggers_link() { return triggers; }
 
 // ----------------------
 // Main logic
