@@ -1,7 +1,17 @@
 /*
   ---------------------------------------------------------
-  Sample exercise to...
-  To be done.
+  Sample exercise to calculate the saptial resolution of the ring.
+  A first round is done on points tagged as "ring-like" by a density scan algorithm on time coincidence and radial proximity,
+  selecting hits not labeled as APs and within a reasonable time window w.r.t. the trigger.
+  This allows us to find the center (x_0;y_0) of the ring and its radius R but fitting the ring-tagged points with a circle.
+  Fixing the center (x_0;y_0) will help the resolution calculation.
+  The resolution calculation is then done in three ways, selecting in time, within 3 \sigma of the average ring found and w/o APs:
+  --- 1) The points assigned to the ring are fitted and the resulting radius is plotted against the number of participants hits
+  --- 2) The points assigned to the ring are fitted, removing one at a time, the difference in radius between the fit result and the point is taken
+  --- 3) The difference in radius between the general first round radius result and each selected point is taken
+
+  Method 1) will give a variable resolution as a function of participants, i.e. photo-electrons (p.e.)
+  Methods 2) 3) will give the Single Photon Spatial Resolution (SPSR), i.e. the resolution in space of a single p.e.
 
   ---------------------------------------------------------
   author: Nicola Rubini <nicola.rubini@bo.infn.it>
@@ -42,10 +52,15 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
   TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
+  //  Second round selection
+  TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+  TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
+  TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
+  TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
 
   //  Saving the frame numebr you can speed up secondary loops
   std::vector<int> start_of_spill_frame_ref;
-  std::vector<int> frame_of_interest_ref;
+  std::vector<std::pair<int, float>> frame_of_interest_ref;
 
   //  Loop over frames
   for (int i_frame = 0; i_frame < all_frames; ++i_frame)
@@ -70,7 +85,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     if (it != current_trigger.end())
     {
       //  Save trigger frames for later, ref to the actual number of used frames in the analysis
-      frame_of_interest_ref.push_back(i_frame);
+      frame_of_interest_ref.push_back({i_frame, it->fine_time});
 
       //  Container for selected hits
       std::vector<std::array<float, 2>> selected_points;
@@ -79,14 +94,14 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
       //  Loop on hits
       for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
       {
-        //  Fill time distribution to check
-        auto time_delta_wrt_ref = recodata->get_hit_t(current_hit) - it->fine_time; //  ns
-        h_t_distribution->Fill(time_delta_wrt_ref);
-
         //  Remove afterpulse
         //  Ref: afterpulse_treatment.cpp
         if (recodata->is_afterpulse(current_hit))
           continue;
+
+        //  Fill time distribution to check
+        auto time_delta_wrt_ref = recodata->get_hit_t(current_hit) - it->fine_time; //  ns
+        h_t_distribution->Fill(time_delta_wrt_ref);
 
         //  Ask for time coincidence
         if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
@@ -112,7 +127,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
         //  Fitting the points
         //  fit_result = {{center_x_value,center_x_error}, {center_y_value,center_y_error}, {radius_value,radius_error}}
         //                fit_circle(points to fit,  starting values for the fit,  let X-Y free,  do not exclude any points)
-        auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false);
+        auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false, {{}});
 
         //  Save results for later QA
         h_first_round_X->Fill(fit_result[0][0]);
@@ -131,7 +146,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
   for (auto i_frame : frame_of_interest_ref)
   {
     //  Load data for current frame
-    recodata_tree->GetEntry(i_frame);
+    recodata_tree->GetEntry(i_frame.first);
 
     //  Container for selected hits
     std::vector<std::array<float, 2>> selected_points;
@@ -144,18 +159,87 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
         continue;
 
       //  Ask for time coincidence
+      auto time_delta_wrt_ref = recodata->get_hit_t(current_hit) - i_frame.second; //  ns
       if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
         continue;
 
       //  Ask the hits are within 3 \sigma of average found radius
-
+      if (std::fabs(recodata->get_hit_r(current_hit, {(float)found_ring_center_x, (float)found_ring_center_y}) - found_ring_radius) > 3 * found_ring_radius_stddev)
+        continue;
 
       //  Store selected points
-      selected_points.push_back({recodata->get_hit_x(current_hit), recodata->get_hit_y(current_hit)});
+      selected_points.push_back({(float)recodata->get_hit_x(current_hit), (float)recodata->get_hit_y(current_hit)});
+
+      //  Plot the selection for QA
+      //  *_rnd randomise the value within the sensor area, improves data visualisation
+      //  Available for x, y, r, phi getters
+      h_second_round_xy_map->Fill(recodata->get_hit_x_rnd(current_hit), recodata->get_hit_y_rnd(current_hit));
+    }
+
+    //  Work on second round of selected points
+
+    //  Fitting the points
+    auto fit_result = fit_circle(selected_points, {(float)found_ring_center_x, (float)found_ring_center_y, (float)found_ring_radius}, true, {{}});
+
+    //  R vs Ngamma for resolution estimation
+    h_second_round_R_Ngamma->Fill(fit_result[2][0], selected_points.size());
+
+    //  Fitting the points, excluding one at a time
+    for (auto i_ter = 0; i_ter < selected_points.size(); i_ter++)
+    {
+      fit_result = fit_circle(selected_points, {(float)found_ring_center_x, (float)found_ring_center_y, (float)found_ring_radius}, true, {i_ter});
+      //  Temp fix
+      auto radius = std::hypot(selected_points[i_ter][0] - found_ring_center_x, selected_points[i_ter][1] - found_ring_center_y);
+      h_second_round_R_excluded->Fill(fit_result[2][0] - radius);
+      h_second_round_R_global->Fill(found_ring_radius - radius);
     }
   }
 
-  TCanvas *c_time_delta = new TCanvas("c_time_delta", "Simple check on coincidences of timing and cherenkov sensors");
+  //  Loop on the 2D histogram to find the resolution vs p.e.
+  //  Generate a TGraph to hold each Ngamma resolution
+  TGraphErrors *g_resolution = new TGraphErrors();
+  g_resolution->SetName("g_resolution");
+  //  Loop over the y_bin, i.e. Ngamma
+  for (auto y_bin = 1; y_bin <= h_second_round_R_Ngamma->GetNbinsY(); y_bin++)
+  {
+    auto n_gamma = h_second_round_R_Ngamma->GetYaxis()->GetBinCenter(y_bin);
+
+    //  Slice to the resolution
+    auto current_r_slice = h_second_round_R_Ngamma->ProjectionX(Form("r_slice_%i", y_bin), y_bin, y_bin);
+
+    //  Select appropriate statistics
+    if (current_r_slice->GetEntries() < 100)
+      continue;
+
+    //  Fit slice with a gaus function
+    auto fit_gaus = new TF1("fit_gaus", "gaus", 0, 150);
+    current_r_slice->Fit(fit_gaus, "QNR");
+
+    //  Discard if uncertainty is too high (unreliable fit)
+    if (fit_gaus->GetParError(2) / fit_gaus->GetParameter(2) > 0.075)
+      continue;
+
+    //  Assign resolution value in the TGraph
+    auto current_point = g_resolution->GetN();
+    g_resolution->SetPoint(current_point, n_gamma, fit_gaus->GetParameter(2));
+    g_resolution->SetPointError(current_point, 0., fit_gaus->GetParError(2));
+
+    //  Memory clean-up
+    delete current_r_slice;
+    delete fit_gaus;
+  }
+
+  //  Fit w/ resolution function
+  TF1 *f_resolution = new TF1("f_resolution", "TMath::Sqrt([0] *[0] / x + [1] *[1])", 0, 100);
+  f_resolution->SetParameters(2.5, 0.5);
+  f_resolution->SetParName(0, "SPSR");
+  f_resolution->SetParName(1, "constant");
+  g_resolution->Fit(f_resolution);
+
+  //  Show fit result on Canvas
+  gStyle->SetOptFit(111111);
+
+  TCanvas *c_time_delta = new TCanvas("c_time_delta", "Simple check on coincidences of timing and cherenkov sensors", 800, 800);
   gPad->SetLogy();
   h_t_distribution->SetLineColor(kBlack);
   h_t_distribution->SetLineWidth(2);
@@ -169,4 +253,22 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
   h_first_round_Y->Draw();
   c_first_round->cd(3);
   h_first_round_R->Draw();
+
+  TCanvas *c_second_round_map = new TCanvas("c_second_round_map", "Second round QA map", 800, 800);
+  h_second_round_xy_map->Draw("COLZ");
+
+  TCanvas *c_second_round_R_Ngamma = new TCanvas("c_second_round_R_Ngamma", "First round fit on ring-like tagged points", 800, 400);
+  c_second_round_R_Ngamma->Divide(2, 1);
+  c_second_round_R_Ngamma->cd(1);
+  h_second_round_R_Ngamma->GetXaxis()->SetRangeUser(found_ring_radius - 3 * found_ring_radius_stddev, found_ring_radius + 3 * found_ring_radius_stddev);
+  h_second_round_R_Ngamma->Draw();
+  c_second_round_R_Ngamma->cd(2);
+  g_resolution->Draw("ALP");
+
+  TCanvas *c_second_round_R_exc_global = new TCanvas("c_second_round_R_exc_global", "First round fit on ring-like tagged points", 800, 400);
+  c_second_round_R_exc_global->Divide(2, 1);
+  c_second_round_R_exc_global->cd(1);
+  h_second_round_R_excluded->Draw();
+  c_second_round_R_exc_global->cd(2);
+  h_second_round_R_global->Draw();
 }
