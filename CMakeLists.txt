@@ -112,8 +112,8 @@ target_link_libraries(test_beam_analysis_dict PUBLIC ${ROOT_LIBRARIES} test_beam
 # ----------------------------
 # Add executable
 # ----------------------------
-add_executable(lightdata_writer macros/lightdata_writer.cpp)
-add_executable(recodata_writer macros/recodata_writer.cpp)
+add_executable(lightdata_writer macros/utilities/lightdata_writer.cpp)
+add_executable(recodata_writer macros/utilities/recodata_writer.cpp)
 
 # Link the shared library and dictionary to the executable
 target_link_libraries(lightdata_writer
