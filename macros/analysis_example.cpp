@@ -23,9 +23,10 @@ void analysis_example(std::string data_repository, std::string run_name, int max
   auto n_frames = recodata_tree->GetEntries();
   auto all_frames = min((int)n_frames, (int)max_frames);
 
-  //  Map of hits
-  TH2F *h_xy_coverage_full = new TH2F("h_xy_coverage_full", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
+  //  Time distribution
+  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+  TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+  TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
 
   //  Loop over frames
   auto i_spill = -1;
@@ -56,25 +57,31 @@ void analysis_example(std::string data_repository, std::string run_name, int max
       //  Loop on hits
       for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
       {
-        //  Remove afterpulse
-        if (recodata->is_afterpulse(current_hit))
-          continue;
-
         //  Fill time distribution to check
         h_t_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
 
-        //  Cut in time to select coincidences
-        if (fabs(recodata->get_hit_t(current_hit) - it->fine_time) > 40)
+        //  Remove afterpulse
+        if (recodata->is_afterpulse(current_hit))
+        {
+          h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
           continue;
-
-        //  Fill a hit with a random X and Y within the sensors acceptance (graphical purposes)
-        h_xy_coverage_full->Fill(recodata->get_hit_x_rnd(current_hit), recodata->get_hit_y_rnd(current_hit));
+        }
+        else
+        {
+          h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
+        }
       }
     }
   }
 
-  TCanvas *c1 = new TCanvas("hitmap", "", 600, 500);
-  h_xy_coverage_full->Draw("COLZ");
-  TCanvas *c2 = new TCanvas();
+  TCanvas *c_time_delta = new TCanvas();
+  gPad->SetLogy();
+  h_t_distribution->SetLineColor(kBlack);
+  h_t_distribution->SetLineWidth(2);
+  h_t_distribution->SetMinimum(1.);
   h_t_distribution->Draw();
+  h_t_AP_distribution->SetLineColor(kRed);
+  h_t_AP_distribution->Draw("SAME");
+  h_t_noAP_distribution->SetLineColor(kBlue);
+  h_t_noAP_distribution->Draw("SAME");
 }
