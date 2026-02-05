@@ -1,3 +1,14 @@
+/*
+  ---------------------------------------------------------
+  Sample exercise to...
+  To be done.
+
+  ---------------------------------------------------------
+  author: Nicola Rubini <nicola.rubini@bo.infn.it>
+  last update: 05/02/2026
+*/
+
+//  Load compiled libraries for analysis
 #pragma cling load("libtest_beam_analysis_dict.dylib");
 #pragma cling load("libtest_beam_analysis.dylib");
 
@@ -28,8 +39,8 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
   //  Time distribution
   TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
   //  First round X, Y, R
-  TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 60, -15, 15);
-  TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 60, -15, 15);
+  TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
+  TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
 
   //  Saving the frame numebr you can speed up secondary loops
@@ -74,8 +85,8 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
 
         //  Remove afterpulse
         //  Ref: afterpulse_treatment.cpp
-        // if (recodata->is_afterpulse(current_hit))
-        //  continue;
+        if (recodata->is_afterpulse(current_hit))
+          continue;
 
         //  Ask for time coincidence
         if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
@@ -85,6 +96,8 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
         //  This is done through a simple DBSCAN implementation
         //  Density-Based Spatial Clustering of Applications with Noise > https://it.wikipedia.org/wiki/DBSCAN
         //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
+        //  Clustering is done in alcor_recodata::find_rings(...)
+        //  TODO: add a flag for sensor type
         if (recodata->is_ring_tagged(current_hit))
           continue;
 
@@ -109,13 +122,46 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     }
   }
 
-  TCanvas *c_time_delta = new TCanvas();
+  auto found_ring_center_x = h_first_round_X->GetMean();
+  auto found_ring_center_y = h_first_round_Y->GetMean();
+  auto found_ring_radius = h_first_round_R->GetMean();
+  auto found_ring_radius_stddev = h_first_round_R->GetRMS();
+
+  //  Second loop on frames of interest
+  for (auto i_frame : frame_of_interest_ref)
+  {
+    //  Load data for current frame
+    recodata_tree->GetEntry(i_frame);
+
+    //  Container for selected hits
+    std::vector<std::array<float, 2>> selected_points;
+
+    //  Loop on hits
+    for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
+    {
+      //  Remove afterpulse
+      if (recodata->is_afterpulse(current_hit))
+        continue;
+
+      //  Ask for time coincidence
+      if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
+        continue;
+
+      //  Ask the hits are within 3 \sigma of average found radius
+
+
+      //  Store selected points
+      selected_points.push_back({recodata->get_hit_x(current_hit), recodata->get_hit_y(current_hit)});
+    }
+  }
+
+  TCanvas *c_time_delta = new TCanvas("c_time_delta", "Simple check on coincidences of timing and cherenkov sensors");
   gPad->SetLogy();
   h_t_distribution->SetLineColor(kBlack);
   h_t_distribution->SetLineWidth(2);
   h_t_distribution->Draw();
 
-  TCanvas *c_first_round = new TCanvas("c_first_round", "", 1200, 400);
+  TCanvas *c_first_round = new TCanvas("c_first_round", "First round fit on ring-like tagged points", 1200, 400);
   c_first_round->Divide(3, 1);
   c_first_round->cd(1);
   h_first_round_X->Draw();
