@@ -33,6 +33,7 @@ enum alcor_hit_struct
 enum hit_mask
 {
     _HITMASK_ring_tag = 1,
+    _HITMASK_afterpulse = 29,
     _HITMASK_part_lane = 30,
     _HITMASK_dead_lane = 31
 };
@@ -51,7 +52,7 @@ public:
     explicit alcor_data(const alcor_data_struct &data_struct);
     alcor_data(int device, int fifo, int type, int counter,
                int column, int pixel, int tdc, int rollover,
-               int coarse, int fine);
+               int coarse, int fine, uint32_t mask);
 
     // Getters
     alcor_data_struct get_data_struct() const;
@@ -65,6 +66,7 @@ public:
     int get_rollover() const;
     int get_coarse() const;
     int get_fine() const;
+    uint32_t get_mask() const;
 
     // Derived getters
     int get_chip() const;
@@ -74,6 +76,10 @@ public:
     int get_global_index() const;
     int get_global_tdc_index() const;
     uint64_t get_coarse_global_time() const;
+
+    //  Mask handling
+    void add_mask(uint32_t new_mask);
+    void add_mask_bit(int new_mask);
 
     // Setters
     void set_data_struct_copy(alcor_data_struct input_data);
@@ -88,6 +94,8 @@ public:
     void set_rollover(int val);
     void set_coarse(int val);
     void set_fine(int val);
+    void set_fine(uint32_t val);
+    void set_mask(uint32_t val);
 
     // Hit checks
     bool is_alcor_hit() const;

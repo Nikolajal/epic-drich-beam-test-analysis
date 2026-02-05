@@ -83,7 +83,10 @@ bool streaming_framer::next_spill()
         if (!current_stream.is_valid())
             continue;
 
-        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " processing file: " << current_stream.get_filename() << flush;
+        //  Tell where we are in the file evaluation
+        std::string path = current_stream.get_filename();
+        std::string filename = std::filesystem::path(path).filename().string();
+        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " processing file: " << filename << flush;
 
         auto trigger_counter = 0;
         while (current_stream.read_next())
@@ -122,6 +125,7 @@ bool streaming_framer::next_spill()
             // Refactoring time to relate to frame reference
             uint32_t frame_index = current_data.get_coarse_global_time() / (_frame_size * 1.);
             uint64_t frame_coarse = current_data.get_coarse_global_time() % static_cast<uint64_t>(_frame_size);
+            uint64_t frame_coarse_global = current_data.get_coarse_global_time();
 
             // Triggers
             //  --- trigger hit
@@ -137,9 +141,9 @@ bool streaming_framer::next_spill()
                 auto &current_lightdata = frame_list[frame_index];
                 auto &current_trigger_hits = current_lightdata.trigger_hits;
                 if (!triggers_map.count(current_device))
-                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(current_device),0.});
+                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(current_device), 0.});
                 else
-                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(frame_coarse), static_cast<float>(_ALCOR_CC_TO_NS_*frame_coarse)});
+                    current_trigger_hits.push_back({static_cast<uint8_t>(current_trg_index), static_cast<uint16_t>(frame_coarse), static_cast<float>(_ALCOR_CC_TO_NS_ * frame_coarse)});
                 // QA
                 if (!QA_utility.count(Form("TH1F_delta_time_trigger_%i", current_trg_index)))
                 {
@@ -157,13 +161,26 @@ bool streaming_framer::next_spill()
                     QA_utility[Form("TH1F_delta_time_trigger_%i", current_trg_index)] = current_data.get_coarse_global_time();
                 }
             }
+
             //  Assigning frame
             //  ---  related time in data
             current_data.set_rollover(0);
             current_data.set_coarse(frame_coarse);
+
             // ALCOR hit
             if (current_data.is_alcor_hit())
             {
+                //  ---
+                //  Afterpulse mask
+                //  TODO: implement a new mask to signal the hit is labeled afterpulse
+                current_data.set_mask(0);
+                auto current_channel = current_data.get_global_index();
+                if (auto search = afterpulse_map.find(current_channel); search != afterpulse_map.end())
+                    if (frame_coarse_global < afterpulse_map[current_channel])
+                        current_data.add_mask_bit(_HITMASK_afterpulse);
+                afterpulse_map[current_channel] = frame_coarse_global + _AFTERPULSE_DEADTIME_;
+                //  ---
+
                 auto &current_lightdata = frame_list[frame_index];
                 if (std::find(current_readout_tag_list.begin(), current_readout_tag_list.end(), "timing") != current_readout_tag_list.end())
                 {

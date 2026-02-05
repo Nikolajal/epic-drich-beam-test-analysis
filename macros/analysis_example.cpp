@@ -47,7 +47,7 @@ void analysis_example(std::string data_repository, std::string run_name, int max
     //  Select Luca AND trigger (0) or timing trigger (101)
     auto current_trigger = recodata->get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
-                           { return t.index == 0; });
+                           { return t.index == 101; });
     if (it != current_trigger.end())
     {
       //  Keep track of the actual number of frames used in the analysis
@@ -56,6 +56,10 @@ void analysis_example(std::string data_repository, std::string run_name, int max
       //  Loop on hits
       for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
       {
+        //  Remove afterpulse
+        if (recodata->is_afterpulse(current_hit))
+          continue;
+
         //  Fill time distribution to check
         h_t_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
 
