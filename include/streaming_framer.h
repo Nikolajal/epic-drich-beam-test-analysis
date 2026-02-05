@@ -15,7 +15,7 @@
 
 #define _FRAME_SIZE_ 1024
 #define _FIRST_FRAMES_TRIGGER_ 2500
-#define _AFTERPULSE_DEADTIME_ 64
+#define _AFTERPULSE_DEADTIME_ 64 // 200ns
 
 class streaming_framer
 {
