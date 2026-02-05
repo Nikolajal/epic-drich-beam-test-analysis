@@ -260,7 +260,7 @@ void recodata_writer(
         current_recodata_event.hit_x = hit_position[0];
         current_recodata_event.hit_y = hit_position[1];
         current_recodata_event.hit_t = (current_cherenkov_hit.get_coarse() - current_cherenkov_hit.get_phase()) * _ALCOR_CC_TO_NS_; // ns
-        current_recodata_event.hit_mask = 0.;
+        current_recodata_event.hit_mask = current_cherenkov_hit.get_mask();
 
         auto hit_x_rnd = hit_position[0] + (_rnd_(_global_gen_) * 3.0 - 1.5);
         auto hit_y_rnd = hit_position[1] + (_rnd_(_global_gen_) * 3.0 - 1.5);

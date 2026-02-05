@@ -15,6 +15,7 @@
 
 #define _FRAME_SIZE_ 1024
 #define _FIRST_FRAMES_TRIGGER_ 2500
+#define _AFTERPULSE_DEADTIME_ 64
 
 class streaming_framer
 {
@@ -57,6 +58,7 @@ private:
     uint8_t _current_spill;
     uint16_t _frame_size;
 
+    std::unordered_map<int,uint64_t> afterpulse_map;
     std::map<std::string, uint32_t> _next_spill;
     std::map<std::string, TH1 *> QA_plots;
     std::map<std::string, long double> QA_utility;

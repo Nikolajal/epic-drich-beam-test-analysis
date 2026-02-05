@@ -15,6 +15,7 @@ alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
     rollover = d.rollover;
     coarse = d.coarse;
     fine = d.fine;
+    hit_mask = d.hit_mask;
 }
 
 // --- Constructors
