@@ -1,3 +1,22 @@
+/*
+  ---------------------------------------------------------
+  Sample exercise to see the coincidence of triggers and detector-box signals.
+  Triggers 0, 1 (if and when available) are external triggers registered in an ALCOR board
+  Triggers >= 100 (if and when available) are sfotware-based triggers elaborated offline
+    --- 100:  Dummy trigger signaling the frames are taken at start of spill (first N frames, defined by _FIRST_FRAMES_TRIGGER_ in streaming_framer.h)
+              For this trigger only the coarse information is available
+    --- 101:  Timing trigger, elaborated by the coincidence of all available timing channels (a pair of scintillators coupled to two different 4x8 SiPM boards)
+              For this trigger the ref time is the average of the time registered on all channels, fine tuned (right now, no offset correction)
+
+  In the exercise you can see clearly the Afterpulse tagger in action, through alcor_recodata::is_afterpulse().
+  Afterpulse are tagged as such if they have a time difference with their previous signal (on the same channel) of _AFTERPULSE_DEADTIME_ defined in streaming_framer.h 
+
+  ---------------------------------------------------------
+  author: Nicola Rubini <nicola.rubini@bo.infn.it>
+  last update: 05/02/2026
+*/
+
+//  Load compiled libraries for analysis
 #pragma cling load("libtest_beam_analysis_dict.dylib");
 #pragma cling load("libtest_beam_analysis.dylib");
 
@@ -70,7 +89,7 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     }
   }
 
-  TCanvas *c_time_delta = new TCanvas();
+  TCanvas *c_time_delta = new TCanvas("c_time_delta", "Afterpulse check on coincidences of timing and cherenkov sensors");
   gPad->SetLogy();
   h_t_distribution->SetLineColor(kBlack);
   h_t_distribution->SetLineWidth(2);
