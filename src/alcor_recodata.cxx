@@ -125,8 +125,8 @@ void alcor_recodata::find_rings(float distance_length_cut, float distance_time_c
             selected_main_index = main_index;
             selected_size = current_index_list.size();
         }
-        add_hit_mask(selected_main_index, encode_bit(_HITMASK_ring_tag));
+        add_hit_mask(selected_main_index, encode_bit(_HITMASK_ring_tag_first));
         for (auto current_index : proximity_hit_list[current_device][selected_main_index])
-            add_hit_mask(current_index, encode_bit(_HITMASK_ring_tag));
+            add_hit_mask(current_index, encode_bit(_HITMASK_ring_tag_first));
     }
 }

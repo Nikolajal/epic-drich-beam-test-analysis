@@ -32,7 +32,8 @@ enum alcor_hit_struct
 
 enum hit_mask
 {
-    _HITMASK_ring_tag = 1,
+    _HITMASK_ring_tag_first = 1,
+    _HITMASK_ring_tag_second = 2,
     _HITMASK_afterpulse = 29,
     _HITMASK_part_lane = 30,
     _HITMASK_dead_lane = 31

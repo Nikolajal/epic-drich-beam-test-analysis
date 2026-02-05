@@ -21,7 +21,8 @@ alcor_data::alcor_data(int device, int fifo, int type, int counter,
     data.hit_mask = mask;
 }
 
-// --- Getters
+//  Getters
+//  --- Pure getters
 alcor_data_struct alcor_data::get_data_struct() const { return data; }
 int alcor_data::get_device() const { return data.device; }
 int alcor_data::get_fifo() const { return data.fifo; }
@@ -34,8 +35,7 @@ int alcor_data::get_rollover() const { return data.rollover; }
 int alcor_data::get_coarse() const { return data.coarse; }
 int alcor_data::get_fine() const { return data.fine; }
 uint32_t alcor_data::get_mask() const { return data.hit_mask; }
-
-// --- Derived getters
+//  --- Derived getters
 int alcor_data::get_chip() const { return data.fifo / 4; }
 int alcor_data::get_eo_channel() const { return data.pixel + 4 * data.column + 32 * (get_chip() % 2); }
 int alcor_data::get_calib_index() const { return data.tdc + 4 * get_eo_channel() + 128 * get_chip(); }
@@ -44,7 +44,7 @@ int alcor_data::get_global_index() const { return get_device_index() + 256 * (ge
 int alcor_data::get_global_tdc_index() const { return 4 * get_global_index() + get_tdc(); }
 uint64_t alcor_data::get_coarse_global_time() const { return get_coarse() + get_rollover() * rollover_to_clock; }
 
-// --- Setters
+//  Setters
 void alcor_data::set_data_struct_copy(alcor_data_struct input_data) { data = input_data; }
 void alcor_data::set_data_struct_linked(alcor_data_struct &input_data) { data = input_data; }
 void alcor_data::set_device(int val) { data.device = val; }
@@ -59,26 +59,23 @@ void alcor_data::set_coarse(int val) { data.coarse = val; }
 void alcor_data::set_fine(int val) { data.fine = val; }
 void alcor_data::set_mask(uint32_t val) { data.hit_mask = val; }
 
-// --- Hit checks
+//  Utilities
+// --- Bool checks
 bool alcor_data::is_alcor_hit() const { return get_type() == alcor_hit; }
 bool alcor_data::is_trigger_tag() const { return get_type() == trigger_tag; }
 bool alcor_data::is_start_spill() const { return get_type() == start_spill; }
 bool alcor_data::is_end_spill() const { return get_type() == end_spill; }
-
 // --- Time
 int alcor_data::coarse_time_clock() const { return get_coarse() + get_rollover() * rollover_to_clock; }
 double alcor_data::coarse_time_ns() const { return get_coarse() * coarse_to_ns + get_rollover() * rollover_to_ns; }
-
 // ---  Mask
 void alcor_data::add_mask(uint32_t new_mask) { data.hit_mask += new_mask; }
 void alcor_data::add_mask_bit(int new_mask) { add_mask(encode_bit(new_mask)); }
-
 // --- Comparison
 bool alcor_data::operator<(const alcor_data &c) const { return coarse_time_ns() < c.coarse_time_ns(); }
 bool alcor_data::operator<=(const alcor_data &c) const { return coarse_time_ns() <= c.coarse_time_ns(); }
 bool alcor_data::operator>(const alcor_data &c) const { return coarse_time_ns() > c.coarse_time_ns(); }
 bool alcor_data::operator>=(const alcor_data &c) const { return coarse_time_ns() >= c.coarse_time_ns(); }
-
 // --- ROOT I/O
 void alcor_data::link_to_tree(TTree *input_tree)
 {
@@ -94,9 +91,9 @@ void alcor_data::link_to_tree(TTree *input_tree)
     input_tree->SetBranchAddress("rollover", &data.rollover);
     input_tree->SetBranchAddress("coarse", &data.coarse);
     input_tree->SetBranchAddress("fine", &data.fine);
-    input_tree->SetBranchAddress("hit_mask", &data.hit_mask);
+    if (input_tree->GetBranch("hit_mask"))
+        input_tree->SetBranchAddress("hit_mask", &data.hit_mask);
 }
-
 void alcor_data::write_to_tree(TTree *output_tree)
 {
     if (!output_tree)
