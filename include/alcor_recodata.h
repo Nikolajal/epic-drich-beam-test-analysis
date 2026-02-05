@@ -84,9 +84,12 @@ public:
     void set_recodata_link(std::vector<alcor_recodata_struct> &v);
     void set_triggers_link(std::vector<trigger_struct> &v);
 
-    // I/O utilities
+    //  Bool checks
     bool check_hit_mask(int i, uint32_t v);
     bool is_afterpulse(int i);
+    bool is_ring_tagged(int i);
+
+    // I/O utilities
     void add_trigger(uint8_t index, uint16_t coarse, float fine_time = 0.);
     void add_trigger(trigger_struct hit);
     void add_hit(float hit_x, float hit_y, float hit_t, uint32_t channel, float time, uint32_t mask = 0);
