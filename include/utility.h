@@ -64,7 +64,7 @@ std::vector<uint8_t> inline decode_bits(uint32_t mask)
 //  --- Fit results: X, Y, R and errors
 using circle_fit_results = std::array<std::array<float, 2>, 3>;
 //  --- Fit function
-circle_fit_results inline fit_circle(std::vector<std::array<float, 2>> points, std::array<float, 3> initial_values, bool fix_XY = true)
+inline circle_fit_results fit_circle(std::vector<std::array<float, 2>> points, std::array<float, 3> initial_values, bool fix_XY = true, std::vector<int> exclude_points = {{}})
 {
   circle_fit_results result;
 
@@ -74,6 +74,8 @@ circle_fit_results inline fit_circle(std::vector<std::array<float, 2>> points, s
     float chi2 = 0;
     for (int iPnt = 0; iPnt < points.size(); iPnt++)
     {
+      if (std::find(exclude_points.begin(), exclude_points.end(), iPnt) != exclude_points.end())
+        continue;
       double delta_x = points[iPnt][0] - parameters[0];
       double delta_y = points[iPnt][1] - parameters[1];
       double delta_r = parameters[2] - std::sqrt(delta_x * delta_x + delta_y * delta_y);
