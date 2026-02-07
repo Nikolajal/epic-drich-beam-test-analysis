@@ -8,6 +8,7 @@
 #include <string>
 #include <algorithm>
 #include <iostream>
+#include <cstdint>
 
 // Core tags
 static const std::set<std::string> lightdata_core_tags = {
