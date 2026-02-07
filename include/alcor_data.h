@@ -51,11 +51,12 @@ public:
     // Constructors
     alcor_data() = default;
     explicit alcor_data(const alcor_data_struct &data_struct);
-    alcor_data(int device, int fifo, int type, int counter,
-               int column, int pixel, int tdc, int rollover,
-               int coarse, int fine, uint32_t mask);
+    explicit alcor_data(int device, int fifo, int type, int counter,
+                        int column, int pixel, int tdc, int rollover,
+                        int coarse, int fine, uint32_t mask);
 
     // Getters
+    //  --- Pure getters
     alcor_data_struct get_data_struct() const;
     int get_device() const;
     int get_fifo() const;
@@ -69,7 +70,7 @@ public:
     int get_fine() const;
     uint32_t get_mask() const;
 
-    // Derived getters
+    //  --- Derived getters
     int get_chip() const;
     int get_eo_channel() const;
     int get_calib_index() const;
@@ -77,10 +78,6 @@ public:
     int get_global_index() const;
     int get_global_tdc_index() const;
     uint64_t get_coarse_global_time() const;
-
-    //  Mask handling
-    void add_mask(uint32_t new_mask);
-    void add_mask_bit(int new_mask);
 
     // Setters
     void set_data_struct_copy(alcor_data_struct input_data);
@@ -98,21 +95,23 @@ public:
     void set_fine(uint32_t val);
     void set_mask(uint32_t val);
 
-    // Hit checks
-    bool is_alcor_hit() const;
-    bool is_trigger_tag() const;
-    bool is_start_spill() const;
-    bool is_end_spill() const;
-
-    // Time
-    int coarse_time_clock() const;
-    double coarse_time_ns() const;
-
     // Comparison operators
     bool operator<(const alcor_data &comparing_hit) const;
     bool operator<=(const alcor_data &comparing_hit) const;
     bool operator>(const alcor_data &comparing_hit) const;
     bool operator>=(const alcor_data &comparing_hit) const;
+    //  Utilities
+    // --- Bool checks
+    bool is_alcor_hit() const;
+    bool is_trigger_tag() const;
+    bool is_start_spill() const;
+    bool is_end_spill() const;
+    //  --- Time
+    int coarse_time_clock() const;
+    double coarse_time_ns() const;
+    //  --- Time
+    void add_mask(uint32_t new_mask);
+    void add_mask_bit(int new_mask);
 
     // ROOT tree I/O
     void link_to_tree(TTree *input_tree);

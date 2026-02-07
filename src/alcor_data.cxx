@@ -59,6 +59,12 @@ void alcor_data::set_coarse(int val) { data.coarse = val; }
 void alcor_data::set_fine(int val) { data.fine = val; }
 void alcor_data::set_mask(uint32_t val) { data.hit_mask = val; }
 
+// --- Comparison operators
+bool alcor_data::operator<(const alcor_data &c) const { return coarse_time_ns() < c.coarse_time_ns(); }
+bool alcor_data::operator<=(const alcor_data &c) const { return coarse_time_ns() <= c.coarse_time_ns(); }
+bool alcor_data::operator>(const alcor_data &c) const { return coarse_time_ns() > c.coarse_time_ns(); }
+bool alcor_data::operator>=(const alcor_data &c) const { return coarse_time_ns() >= c.coarse_time_ns(); }
+
 //  Utilities
 // --- Bool checks
 bool alcor_data::is_alcor_hit() const { return get_type() == alcor_hit; }
@@ -69,13 +75,8 @@ bool alcor_data::is_end_spill() const { return get_type() == end_spill; }
 int alcor_data::coarse_time_clock() const { return get_coarse() + get_rollover() * rollover_to_clock; }
 double alcor_data::coarse_time_ns() const { return get_coarse() * coarse_to_ns + get_rollover() * rollover_to_ns; }
 // ---  Mask
-void alcor_data::add_mask(uint32_t new_mask) { data.hit_mask += new_mask; }
+void alcor_data::add_mask(uint32_t new_mask) { data.hit_mask |= new_mask; }
 void alcor_data::add_mask_bit(int new_mask) { add_mask(encode_bit(new_mask)); }
-// --- Comparison
-bool alcor_data::operator<(const alcor_data &c) const { return coarse_time_ns() < c.coarse_time_ns(); }
-bool alcor_data::operator<=(const alcor_data &c) const { return coarse_time_ns() <= c.coarse_time_ns(); }
-bool alcor_data::operator>(const alcor_data &c) const { return coarse_time_ns() > c.coarse_time_ns(); }
-bool alcor_data::operator>=(const alcor_data &c) const { return coarse_time_ns() >= c.coarse_time_ns(); }
 // --- ROOT I/O
 void alcor_data::link_to_tree(TTree *input_tree)
 {
