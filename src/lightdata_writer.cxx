@@ -1,5 +1,8 @@
+#include "parallel_streaming_framer.h"
 #include "streaming_framer.h"
 #include "lightdata_writer.h"
+
+//  TODO: make the out file name/path custom
 
 std::vector<std::string> list_of_devices = {
     "rdo-192",
@@ -10,7 +13,8 @@ std::vector<std::string> list_of_devices = {
     "rdo-197",
     "rdo-198",
     "rdo-199",
-    "kc705-200"};
+    "kc705-200"
+};
 
 void lightdata_writer(
     const std::string &data_repository,
@@ -24,13 +28,14 @@ void lightdata_writer(
   std::vector<std::string> filenames;
   for (auto device : list_of_devices)
   {
-    for (auto i_fifo = 0; i_fifo < 32; ++i_fifo)
+    for (auto i_fifo = 0; i_fifo < (device == "kc705-200" ? 12 : 32); ++i_fifo)
       filenames.push_back(data_repository + "/" + run_name + "/" + device + "/decoded/alcdaq.fifo_" + std::to_string(i_fifo) + ".root");
     filenames.push_back(data_repository + "/" + run_name + "/" + device + "/decoded/alcdaq.fifo_99.root");
   }
 
   //  Create streaming framer
-  streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
+  parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
+  // streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
 
   //  Prepare output tree
   TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");
@@ -109,7 +114,7 @@ void lightdata_writer(
         h_timing_ref_delta->Fill(delta_timing);
 
         //  TODO: understand why thee is a difference with the lightdata result
-        spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_TIMING_), static_cast<uint16_t>(_FRAME_SIZE_ / 2), static_cast<float>(ref_timing*_ALCOR_CC_TO_NS_)});
+        spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_TIMING_), static_cast<uint16_t>(_FRAME_SIZE_ / 2), static_cast<float>(ref_timing * _ALCOR_CC_TO_NS_)});
         h_timing_ref_per_frame->Fill(frame_id);
         for (auto current_trigger_hit_struct : triggers_in_frame)
         {
@@ -139,8 +144,8 @@ void lightdata_writer(
   h_delta_time_trigger_0_timing->Write();
   h_timing_ref_delta->Write();
   h_timing_ref_delta_sel->Write();
-  auto QA_plots_map = framer.get_QA_plots();
-  for (auto [name, hist] : QA_plots_map)
-    hist->Write(name.c_str());
+  // auto QA_plots_map = framer.get_QA_plots();
+  // for (auto [name, hist] : QA_plots_map)
+  //   hist->Write(name.c_str());
   outfile->Close();
 }

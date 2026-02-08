@@ -129,7 +129,7 @@ void recodata_writer(
 
           //  Hit particiapnt mask
           alcor_recodata_struct current_recodata_event;
-          current_recodata_event.channel = global_index;
+          current_recodata_event.global_index = global_index;
           current_recodata_event.hit_x = index_to_hit_xy[global_index][0];
           current_recodata_event.hit_y = index_to_hit_xy[global_index][1];
           current_recodata_event.hit_t = 0.; // ns
@@ -256,10 +256,13 @@ void recodata_writer(
         alcor_recodata_struct current_recodata_event;
 
         //  Fill recodata
-        current_recodata_event.channel = global_index * 4 + current_cherenkov_hit.get_tdc();
+        current_recodata_event.global_index = global_index * 4 + current_cherenkov_hit.get_tdc();
         current_recodata_event.hit_x = hit_position[0];
         current_recodata_event.hit_y = hit_position[1];
         current_recodata_event.hit_t = (current_cherenkov_hit.get_coarse() - current_cherenkov_hit.get_phase()) * _ALCOR_CC_TO_NS_; // ns
+        //  *** hack, to be fixed ASAP ***
+        current_recodata_event.hit_t += current_recodata_event.global_index > 4096 ? 2.9196200 : 0.;
+        //  TODO: Fix this
         current_recodata_event.hit_mask = current_cherenkov_hit.get_mask();
 
         auto hit_x_rnd = hit_position[0] + (_rnd_(_global_gen_) * 3.0 - 1.5);
@@ -268,7 +271,7 @@ void recodata_writer(
         if (timing_available)
         {
           h_timing_cherenkov_delta_time->Fill(current_recodata_event.hit_t - ref_timing * _ALCOR_CC_TO_NS_);
-          h_timing_cherenkov_delta_time_device->Fill(current_recodata_event.channel, current_recodata_event.hit_t - ref_timing * _ALCOR_CC_TO_NS_);
+          h_timing_cherenkov_delta_time_device->Fill(current_recodata_event.global_index, current_recodata_event.hit_t - ref_timing * _ALCOR_CC_TO_NS_);
         }
 
         //  QA plots
@@ -294,7 +297,7 @@ void recodata_writer(
       //  Find ring
       recodata.find_rings(1.0, 5.0);
       auto ring_found = false;
-      for (auto current_hit = 0; current_hit < recodata.get().size(); current_hit++)
+      for (auto current_hit = 0; current_hit < recodata.get_recodata().size(); current_hit++)
       {
         auto hit_x_rnd = recodata.get_hit_x(current_hit) + (_rnd_(_global_gen_) * 3.0 - 1.5);
         auto hit_y_rnd = recodata.get_hit_y(current_hit) + (_rnd_(_global_gen_) * 3.0 - 1.5);
