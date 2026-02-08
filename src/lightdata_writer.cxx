@@ -2,20 +2,6 @@
 #include "streaming_framer.h"
 #include "lightdata_writer.h"
 
-//  TODO: make the out file name/path custom
-
-std::vector<std::string> list_of_devices = {
-    "rdo-192",
-    //"rdo-193",
-    "rdo-194",
-    "rdo-195",
-    "rdo-196",
-    "rdo-197",
-    "rdo-198",
-    "rdo-199",
-    "kc705-200"
-};
-
 void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
@@ -25,17 +11,46 @@ void lightdata_writer(
   TH1::AddDirectory(false);
 
   //  Input files
+  std::filesystem::path base_dir = data_repository + "/" + run_name;
   std::vector<std::string> filenames;
-  for (auto device : list_of_devices)
+  std::unordered_map<std::string, std::vector<std::string>> print_found_files;
+  for (const auto &device_dir : std::filesystem::directory_iterator(base_dir))
   {
-    for (auto i_fifo = 0; i_fifo < (device == "kc705-200" ? 12 : 32); ++i_fifo)
-      filenames.push_back(data_repository + "/" + run_name + "/" + device + "/decoded/alcdaq.fifo_" + std::to_string(i_fifo) + ".root");
-    filenames.push_back(data_repository + "/" + run_name + "/" + device + "/decoded/alcdaq.fifo_99.root");
+    //  Skip non directories
+    if (!std::filesystem::is_directory(device_dir))
+      continue;
+
+    //  Get current device
+    std::string device_name = device_dir.path().filename().string();
+
+    //  Check there is the decoded directory
+    std::filesystem::path decoded_dir = device_dir.path() / "decoded";
+    if (!std::filesystem::exists(decoded_dir) || !std::filesystem::is_directory(decoded_dir))
+      continue;
+
+    //  Loop on files in decoded
+    for (const auto &file : std::filesystem::directory_iterator(decoded_dir))
+    {
+      if (file.path().extension() == ".root")
+      {
+        std::string file_name = file.path().filename().string();
+        filenames.push_back(file.path());
+        print_found_files[device_name].push_back(file_name);
+      }
+    }
+  }
+
+  std::cout << "[INFO] Found devices with files: " << std::endl;
+  for (auto [current_device, current_device_file_list] : print_found_files)
+  {
+    std::cout << "[Device: " << current_device << "] Found files: ";
+    for (auto current_file : current_device_file_list)
+      std::cout << current_file << " ";
+    std::cout << std::endl;
   }
 
   //  Create streaming framer
   parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
-  // streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
 
   //  Prepare output tree
   TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");
