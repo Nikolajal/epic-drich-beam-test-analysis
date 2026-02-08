@@ -15,6 +15,9 @@ set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
+
+
 # ----------------------------
 # Fetch external dependencies
 # ----------------------------
@@ -55,6 +58,7 @@ add_library(test_beam_analysis SHARED
     src/alcor_spilldata.cxx
     src/alcor_data_streamer.cxx
     src/streaming_framer.cxx
+    src/parallel_streaming_framer.cxx
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
 )
@@ -85,6 +89,7 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_spilldata.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data_streamer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/streaming_framer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/parallel_streaming_framer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/lightdata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recodata_writer.h
 )

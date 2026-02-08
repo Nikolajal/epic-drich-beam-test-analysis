@@ -4,6 +4,8 @@
 #include <vector>  // std::vector
 #include <random>  // random_device, mt19937, uniform_real_distribution
 #include <unordered_set>
+#include <filesystem>
+
 #include <Math/Functor.h>
 #include <Fit/Fitter.h>
 #include <TEllipse.h>

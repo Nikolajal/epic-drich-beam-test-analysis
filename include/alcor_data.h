@@ -100,6 +100,7 @@ public:
     bool operator<=(const alcor_data &comparing_hit) const;
     bool operator>(const alcor_data &comparing_hit) const;
     bool operator>=(const alcor_data &comparing_hit) const;
+    
     //  Utilities
     // --- Bool checks
     bool is_alcor_hit() const;

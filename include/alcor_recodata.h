@@ -15,18 +15,13 @@ struct alcor_recodata_struct
     //  Channel w/ TDC info
     uint32_t global_index;
 
-    //  X, Y hit position
+    //  X, Y, t hit coordinates
     float hit_x;
     float hit_y;
+    float hit_t;
 
     //  Mask to characterise the hit
     uint32_t hit_mask;
-
-    //  Clearly something is wrong...
-    //  TODO: Clean-up
-    float hit_t;
-    float time;
-    float fine_tune;
 
     alcor_recodata_struct() = default;
     alcor_recodata_struct(uint32_t gi, float x, float y, uint32_t mask, float ht)
@@ -56,8 +51,8 @@ public:
     int get_global_index(int i) const;
     float get_hit_x(int i) const;
     float get_hit_y(int i) const;
-    uint32_t get_hit_mask(int i) const;
     float get_hit_t(int i) const;
+    uint32_t get_hit_mask(int i) const;
 
     //  --- Reference getters
     std::vector<alcor_recodata_struct> &get_recodata_link();
@@ -96,10 +91,10 @@ public:
     void set_global_index(int i, uint32_t v);
     void set_hit_x(int i, float v);
     void set_hit_y(int i, float v);
-    void set_hit_mask(int i, uint32_t v);
     void set_hit_t(int i, float v);
+    void set_hit_mask(int i, uint32_t v);
 
-    //  --- Reference getters
+    //  --- Reference setters
     void set_recodata_link(std::vector<alcor_recodata_struct> &v);
     void set_triggers_link(std::vector<trigger_struct> &v);
 

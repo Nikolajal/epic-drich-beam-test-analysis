@@ -19,9 +19,6 @@ class alcor_finedata : public alcor_data
 private:
     alcor_finedata_struct finedata;
     inline static std::unordered_map<int, std::array<float, 3>> calibration_parameters = {};
-
-    TF1 *fine_dist_fit_function = nullptr;
-
     void set_standard_function();
 
 public:
@@ -43,7 +40,4 @@ public:
     void generate_calibration(TH2F *calibration_histogram);
     void write_calib_to_file(const std::string &filename);
     void read_calib_from_file(const std::string &filename, bool clear_first = true, bool overwrites = true);
-
-    // Destructor
-    ~alcor_finedata();
 };
