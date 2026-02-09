@@ -1,5 +1,7 @@
 #include "lightdata_writer.h"
 #include <stdio.h>
+#include <chrono>
+#include <iostream>
 #include <CLI/CLI.hpp>
 
 int main(int argc, char **argv)
@@ -19,7 +21,12 @@ int main(int argc, char **argv)
 
   CLI11_PARSE(app, argc, argv);
 
+  auto start = std::chrono::high_resolution_clock::now();
   lightdata_writer(data_repository, run_name, max_spill); // , force_lightdata_rebuild); TODO:  Add the force rebuild
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+
+  std::cout << "Elapsed time: " << elapsed.count() << " s" << std::endl;
 
   return 0;
 }
