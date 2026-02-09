@@ -59,12 +59,16 @@ void lightdata_writer(
   spilldata.write_to_tree(lightdata_tree);
 
   //  QA Plots
+  /*
+  TODO: re-structure the QA
+    */
   TH2F *h_timing_hit_map = new TH2F("h_timing_hit_map", ";channels on chip 0; channels on chip 1", 33, 0, 33, 33, 0, 33);
   TH1F *h_timing_ref_per_frame = new TH1F("h_timing_ref_per_frame", ";frame ID;Timing trigger", 2000, 0, 2000000);
   TH1F *h_timing_ref_delta = new TH1F("h_timing_ref_delta", ";timing chip 0 - timing chip 1", 200, -10, 10);
   TH1F *h_timing_ref_delta_sel = new TH1F("h_timing_ref_delta_sel", ";timing chip 0 - timing chip 1", 200, -10, 10);
   TH1F *h_timing_res = new TH1F("h_timing_res", "", 2000, 0, 2000000);
   TH1F *h_delta_time_trigger_0_timing = new TH1F("h_delta_time_trigger_0_timing", ";#Delta t (ns)", 100, -50, 50);
+
 
   //  Loop over spills
   int n_spills = 0, n_frames = 0;
@@ -128,7 +132,7 @@ void lightdata_writer(
           h_timing_ref_delta_sel->Fill(delta_timing);
         h_timing_ref_delta->Fill(delta_timing);
 
-        //  TODO: understand why thee is a difference with the lightdata result
+        //  TODO: understand why there is a difference with the lightdata result > What does that even mean?
         spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_TIMING_), static_cast<uint16_t>(_FRAME_SIZE_ / 2), static_cast<float>(ref_timing * _ALCOR_CC_TO_NS_)});
         h_timing_ref_per_frame->Fill(frame_id);
         for (auto current_trigger_hit_struct : triggers_in_frame)
