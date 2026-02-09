@@ -69,7 +69,6 @@ void lightdata_writer(
   TH1F *h_timing_res = new TH1F("h_timing_res", "", 2000, 0, 2000000);
   TH1F *h_delta_time_trigger_0_timing = new TH1F("h_delta_time_trigger_0_timing", ";#Delta t (ns)", 100, -50, 50);
 
-
   //  Loop over spills
   int n_spills = 0, n_frames = 0;
   if (max_spill != 1000)

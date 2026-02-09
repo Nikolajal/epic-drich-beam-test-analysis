@@ -1,11 +1,10 @@
 #pragma once
 
-#include <cstdint> // uint32_t, uint8_t
-#include <vector>  // std::vector
-#include <random>  // random_device, mt19937, uniform_real_distribution
+#include <cstdint>
+#include <vector>
+#include <random>
 #include <unordered_set>
 #include <filesystem>
-
 #include <Math/Functor.h>
 #include <Fit/Fitter.h>
 #include <TEllipse.h>
@@ -18,6 +17,183 @@
 #include <iostream>
 #include <TFile.h>
 
+/**
+ * @brief Encode a single bit into a 32-bit mask.
+ * @param active_bit Index of the bit to set (0..31)
+ * @return 32-bit mask with only that bit set
+ */
+inline uint32_t encode_bit(uint8_t active_bit)
+{
+  return (active_bit < 32) ? (1u << active_bit) : 0;
+}
+
+/**
+ * @brief Encode multiple bits into a 32-bit mask.
+ * @param active_bits Vector of bit indices to set (0..31)
+ * @return 32-bit mask with all specified bits set
+ */
+inline uint32_t encode_bits(const std::vector<uint8_t> &active_bits)
+{
+  uint32_t mask = 0;
+  for (uint8_t bit : active_bits)
+    if (bit < 32)
+      mask |= (1u << bit);
+  return mask;
+}
+
+/**
+ * @brief Count trailing zeros (portable C++17)
+ * @param mask 32-bit mask
+ * @return Index of least significant set bit, 32 if mask is 0
+ */
+inline uint8_t count_trailing_zeros(uint32_t mask)
+{
+  if (mask == 0)
+    return 32;
+  uint8_t count = 0;
+  while ((mask & 1u) == 0)
+  {
+    mask >>= 1;
+    ++count;
+  }
+  return count;
+}
+
+/**
+ * @brief Decode a 32-bit mask into the indices of set bits.
+ * @param mask 32-bit mask
+ * @return Vector of indices where bits are set
+ */
+inline std::vector<uint8_t> decode_bits(uint32_t mask)
+{
+  std::vector<uint8_t> result;
+  result.resize(32, 0);
+  while (mask)
+  {
+    uint8_t bit = count_trailing_zeros(mask);
+    result.push_back(bit);
+    mask &= ~(1u << bit); // clear that bit
+  }
+
+  return result;
+}
+
+/*
+class Logger
+{
+public:
+  enum class color_tag
+{
+  BLACK,
+  RED,
+  GREEN,
+  YELLOW,
+  BLUE,
+  MAGENTA,
+  CYAN,
+  WHITE,
+  BRIGHT_BLACK,   // gray
+  BRIGHT_RED,
+  BRIGHT_GREEN,
+  BRIGHT_YELLOW,
+  BRIGHT_BLUE,
+  BRIGHT_MAGENTA,
+  BRIGHT_CYAN,
+  BRIGHT_WHITE,
+  RESET
+};
+
+
+  static constexpr const char *color(color_tag tag)
+  {
+    switch (tag)
+    {
+    case color_tag::BLACK:
+      return "\033[30m";
+    case color_tag::RED:
+      return "\033[31m";
+    case color_tag::GREEN:
+      return "\033[32m";
+    case color_tag::YELLOW:
+      return "\033[33m";
+    case color_tag::BLUE:
+      return "\033[34m";
+    case color_tag::MAGENTA:
+      return "\033[35m";
+    case color_tag::CYAN:
+      return "\033[36m";
+    case color_tag::WHITE:
+      return "\033[37m";
+    case color_tag::BRIGHT_BLACK:
+      return "\033[90m";
+    case color_tag::BRIGHT_RED:
+      return "\033[91m";
+    case color_tag::BRIGHT_GREEN:
+      return "\033[92m";
+    case color_tag::BRIGHT_YELLOW:
+      return "\033[93m";
+    case color_tag::BRIGHT_BLUE:
+      return "\033[94m";
+    case color_tag::BRIGHT_MAGENTA:
+      return "\033[95m";
+    case color_tag::BRIGHT_CYAN:
+      return "\033[96m";
+    case color_tag::BRIGHT_WHITE:
+      return "\033[97m";
+
+    case color_tag::RESET:
+      return "\033[0m";
+    }
+    return "\033[0m"; // safety
+  }
+
+  static void log(Tag tag, const std::string &msg) { std::cout << color(tag) << label(tag) << "\033[0m " << msg << "\n"; }
+
+private:
+  static const char *
+  label(Tag tag)
+  {
+    switch (tag)
+    {
+    case Tag::IO:
+      return "[IO]";
+    case Tag::DATA:
+      return "[DATA]";
+    case Tag::MERGE:
+      return "[MERGE]";
+    case Tag::RING:
+      return "[RING]";
+    case Tag::WARN:
+      return "[WARN]";
+    case Tag::ERROR:
+      return "[ERROR]";
+    }
+    return "";
+  }
+
+  static const char *color(color_tag color_tag)
+  {
+    switch (tag)
+    {
+    case Tag::CYAN:
+      return "\033[36m"; // cyan
+    case Tag::GREEN:
+      return "\033[32m"; // green
+    case Tag::MAGENTA:
+      return "\033[35m"; // magenta
+    case Tag::BLUE:
+      return "\033[34m"; // blue
+    case Tag::YELLOW:
+      return "\033[33m"; // yellow
+    case Tag::RED:
+      return "\033[31m"; // red
+    }
+    return "\033[0m";
+  }
+};
+*/
+
+// TODO clean-up & incorporate into second repository for general utilities
 //  Random generator utility
 //  --- Create a random device for seeding
 inline std::random_device _global_rd_;
@@ -40,28 +216,6 @@ inline int get_device_index_from_global_tdc_index(int global_tdc_index) { return
 inline int get_pdu_from_global_tdc_index(int global_tdc_index) { return global_tdc_index / 256 + 1; }
 inline int get_matrix_from_global_tdc_index(int global_tdc_index) { return (global_tdc_index % 256 / 4) + 1; }
 inline uint32_t get_global_index(int device, int chip, int channel, int tdc) { return (device - 192) * 32 * 8 * 4 + chip * 32 * 4 + channel * 4 + tdc; }
-
-// TODO clean-up
-
-//  Encoding utility
-uint32_t inline encode_bits(const std::vector<uint8_t> &active_bits)
-{
-  uint32_t mask = 0;
-  for (uint8_t bit : active_bits)
-    if (bit < 32) // safety
-      mask |= (1u << bit);
-  return mask;
-}
-uint32_t inline encode_bit(const uint8_t &active_bit) { return encode_bits(std::vector<uint8_t>{active_bit}); }
-std::vector<uint8_t> inline decode_bits(uint32_t mask)
-{
-  std::vector<uint8_t> result;
-  result.reserve(32);
-  for (uint8_t bit = 0; bit < 32; ++bit)
-    if (mask & (1u << bit))
-      result.push_back(bit);
-  return result;
-}
 
 //  Fit circle
 //  --- Fit results: X, Y, R and errors

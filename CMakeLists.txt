@@ -14,7 +14,7 @@ set(CMAKE_MACOSX_RPATH ON)
 set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g") // only for debug, breaks ROOT loading the libraries
 
 
 # ----------------------------
