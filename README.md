@@ -9,7 +9,7 @@ introspection and a set of example macros that can be run from a ROOT prompt.
 | Section | Description |
 |---------|-------------|
 | [Introduction](#introduction) | Introduction to the project goals and implementations |
-| [Full Documentation](#full_documentation) | Link to Doxygen full documentation |
+| [Full Documentation](#full-documentation) | Link to Doxygen full documentation |
 | [Authors](#authors) | Authors list |
 
 ---
