@@ -28,6 +28,14 @@ provides:
 
 ---
 
+## Quick Links
+
+- [Classes](annotated.html)
+- [Files](files.html)
+- [Namespaces](namespaces.html)
+
+---
+
 ## Author
 | Name | Contact |
 |---------|-------------|
