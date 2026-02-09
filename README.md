@@ -9,6 +9,7 @@ introspection and a set of example macros that can be run from a ROOT prompt.
 | Section | Description |
 |---------|-------------|
 | [Introduction](#introduction) | What the project is about |
+| [Introduction](#full Documentation) | What the project is about |
 | [Author](#author) | Author |
 
 ---
@@ -28,7 +29,7 @@ provides:
 
 ---
 
-## Quick Links
+## Full Documentation
 
 - [Classes](https://nikolajal.github.io/epic-drich-beam-test-analysis/annotated.html)
 - [Files](https://nikolajal.github.io/epic-drich-beam-test-analysis/files.html)
