@@ -33,8 +33,9 @@ void recodata_writer(
 
   //  Get calibration
   TH2F *h_calibration_data = (TH2F *)input_file->Get("TH2F_fine_calib_global_index");
-  spilldata->generate_calibration(h_calibration_data);
-  // spilldata->read_calib_from_file("alcor_fine_calibration.txt");
+  // if (!h_calibration_data)
+  //   spilldata->generate_calibration(h_calibration_data);
+  //  spilldata->read_calib_from_file("alcor_fine_calibration.txt");
 
   //  Get number of spills, limited to maximum requested spills
   auto n_spills = lightdata_tree->GetEntries();

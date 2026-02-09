@@ -3,56 +3,76 @@
 #include <cmath>
 #include <iostream>
 
-//  TODO: merge with alcor data, no sense to have this overhead
+//  TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression | merge recodata here
 //  TODO: understand what is the issue with generate calibration
 alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
 {
-    global_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column + 32 * (d.fifo / 4 % 2), d.tdc);
+    calib_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column, d.tdc);
     rollover = d.rollover;
     coarse = d.coarse;
     fine = d.fine;
     hit_mask = d.hit_mask;
 }
-
 // --- Constructors
 alcor_finedata::alcor_finedata() {}
 
 alcor_finedata::alcor_finedata(const alcor_finedata_struct &s)
-    : finedata(s) {}
+    : data(s) {}
 
 alcor_finedata::alcor_finedata(const alcor_data_struct &d)
-    : finedata(d) {}
+    : data(d) {}
 
 alcor_finedata::alcor_finedata(const alcor_finedata &o)
-    : finedata(o.get_data_struct()) {}
+    : data(o.get_data_struct()) {}
 
-// --- Member functions
-void alcor_finedata::set_standard_function()
-{
-}
-
+//  Getters
+//  --- Pure getters
+alcor_finedata_struct alcor_finedata::get_data_struct() const { return data; }
+uint32_t alcor_finedata::get_calib_index() const { return data.calib_index; }
+int alcor_finedata::get_rollover() const { return data.rollover; }
+int alcor_finedata::get_coarse() const { return data.coarse; }
+int alcor_finedata::get_fine() const { return data.fine; }
+uint32_t alcor_finedata::get_mask() const { return data.hit_mask; }
+//  --- Reconstruction info
 float alcor_finedata::get_phase() const
 {
-    auto calib_it = calibration_parameters.find(get_global_tdc_index());
+    auto calib_it = calibration_parameters.find(get_calib_index());
     if (calib_it != calibration_parameters.end())
     {
         auto calibration_parameter = calib_it->second;
         if ((calibration_parameter[1] == 0) && (calibration_parameter[0] == 0))
             return 0.;
-        auto current_fine_value = static_cast<float>(finedata.fine);
+        auto current_fine_value = static_cast<float>(get_fine());
         auto phase = -(current_fine_value - calibration_parameter[0]) / (calibration_parameter[1] - calibration_parameter[0]);
         phase -= calibration_parameter[2];
         return phase;
     }
     return 0.;
 }
+int alcor_finedata::get_tdc() const { return get_calib_index() % 4; }
+int alcor_finedata::get_device() const { return 192 + (get_global_index() / 256); }
+int alcor_finedata::get_fifo() const { return (get_global_index() % 256) / 8; }
+int alcor_finedata::get_chip() const { return (get_global_index() % 256) / 32; }
+int alcor_finedata::get_eo_channel() const { return (get_global_index() % 256) % 32 + 32 * (get_chip() % 2); }
+int alcor_finedata::get_column() const { return ((get_global_index() % 256) % 32) / 4; }
+int alcor_finedata::get_pixel() const { return ((get_global_index() % 256) % 32) % 4; }
+int alcor_finedata::get_device_index() const { return get_eo_channel() + 64 * (get_chip() / 2); }
+int alcor_finedata::get_global_index() const { return get_calib_index() / 4; }
 
-// --- Setters
+//  --- Setters
+//  --- Pure setters
+void alcor_finedata::set_data_struct(const alcor_finedata_struct &d) { data = d; }
+void alcor_finedata::set_calib_index(uint32_t calib) { data.calib_index = calib; }
+void alcor_finedata::set_rollover(int r) { data.rollover = r; }
+void alcor_finedata::set_coarse(int c) { data.coarse = c; }
+void alcor_finedata::set_fine(int f) { data.fine = f; }
+void alcor_finedata::set_mask(uint32_t mask) { data.hit_mask = mask; }
+//  --- Derived setters
 void alcor_finedata::set_param0(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][0] = value; }
 void alcor_finedata::set_param1(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][1] = value; }
 void alcor_finedata::set_param2(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][2] = value; }
 
-// --- File operations
+//  --- File operations
 void alcor_finedata::write_calib_to_file(const std::string &filename)
 {
     std::ofstream calib_file(filename);
@@ -61,7 +81,6 @@ void alcor_finedata::write_calib_to_file(const std::string &filename)
     for (auto [tdc_index, calib_params] : calibration_parameters)
         calib_file << tdc_index << " " << calib_params[0] << " " << calib_params[1] << " " << calib_params[2] << std::endl;
 }
-
 void alcor_finedata::read_calib_from_file(const std::string &filename, bool clear_first, bool overwrites)
 {
     if (clear_first)
@@ -81,7 +100,6 @@ void alcor_finedata::read_calib_from_file(const std::string &filename, bool clea
         calibration_parameters[key] = {a, b, c};
     }
 }
-
 void alcor_finedata::generate_calibration(TH2F *calibration_histogram)
 {
     calibration_parameters.clear();
