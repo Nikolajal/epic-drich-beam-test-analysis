@@ -1,4 +1,4 @@
-# ePIC dRICH beam test anlaysis framework  
+# ePIC dRICH beam test analysis framework  
 A lightweight C++ library for analysing beam‑test data in the ROOT framework.  
 The repository ships the core data structures, I/O helpers, a dictionary for ROOT
 introspection and a set of example macros that can be run from a ROOT prompt.
