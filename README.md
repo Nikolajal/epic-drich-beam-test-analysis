@@ -9,7 +9,7 @@ introspection and a set of example macros that can be run from a ROOT prompt.
 | Section | Description |
 |---------|-------------|
 | [Introduction](#introduction) | What the project is about |
-| [Introduction](#full Documentation) | What the project is about |
+| [Introduction](#full_documentation) | What the project is about |
 | [Author](#author) | Author |
 
 ---
