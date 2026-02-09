@@ -9,7 +9,7 @@
               For this trigger the ref time is the average of the time registered on all channels, fine tuned (right now, no offset correction)
 
   In the exercise you can see clearly the Afterpulse tagger in action, through alcor_recodata::is_afterpulse().
-  Afterpulse are tagged as such if they have a time difference with their previous signal (on the same channel) of _AFTERPULSE_DEADTIME_ defined in streaming_framer.h 
+  Afterpulse are tagged as such if they have a time difference with their previous signal (on the same channel) of _AFTERPULSE_DEADTIME_ defined in streaming_framer.h
 
   ---------------------------------------------------------
   author: Nicola Rubini <nicola.rubini@bo.infn.it>
@@ -43,9 +43,12 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
   auto all_frames = min((int)n_frames, (int)max_frames);
 
   //  Time distribution
-  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
+  TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
+  TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
+  //  Time distribution
+  TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
+  TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
 
   //  Loop over frames
   auto i_spill = -1;
@@ -89,6 +92,7 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     }
   }
 
+  //  Plotting the result
   TCanvas *c_time_delta = new TCanvas("c_time_delta", "Afterpulse check on coincidences of timing and cherenkov sensors");
   gPad->SetLogy();
   h_t_distribution->SetLineColor(kBlack);
@@ -99,4 +103,9 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
   h_t_AP_distribution->Draw("SAME");
   h_t_noAP_distribution->SetLineColor(kBlue);
   h_t_noAP_distribution->Draw("SAME");
+
+  //  TEST 
+  new TCanvas();
+h_t_detector_0->Draw();
+h_t_detector_1->Draw("SAME");
 }
