@@ -32,7 +32,7 @@ provides:
 
 - [Classes](annotated.html)
 - [Files](files.html)
-- [Namespaces](namespaces.html)
+- [Namespaces](docs/build/html/classes.html)
 - Check out the classes: \ref Classes
 - Browse files: \ref Files
 
