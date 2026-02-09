@@ -21,7 +21,10 @@ int main(int argc, char **argv)
 
   CLI11_PARSE(app, argc, argv);
 
+  auto start = std::chrono::high_resolution_clock::now();
   recodata_writer(data_repository, run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild);
-
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+  
   return 0;
 }
