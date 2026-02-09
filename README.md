@@ -30,11 +30,8 @@ provides:
 
 ## Quick Links
 
-- [Classes](annotated.html)
-- [Files](files.html)
-- [Namespaces](docs/build/html/classes.html)
-- Check out the classes: \ref Classes
-- Browse files: \ref Files
+- [Classes](https://nikolajal.github.io/epic-drich-beam-test-analysis/annotated.html)
+- [Files](https://nikolajal.github.io/epic-drich-beam-test-analysis/files.html)
 
 ---
 
