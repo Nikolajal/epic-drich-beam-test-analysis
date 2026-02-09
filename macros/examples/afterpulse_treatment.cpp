@@ -1,20 +1,35 @@
-/*
-  ---------------------------------------------------------
-  Sample exercise to see the coincidence of triggers and detector-box signals.
-  Triggers 0, 1 (if and when available) are external triggers registered in an ALCOR board
-  Triggers >= 100 (if and when available) are sfotware-based triggers elaborated offline
-    --- 100:  Dummy trigger signaling the frames are taken at start of spill (first N frames, defined by _FIRST_FRAMES_TRIGGER_ in streaming_framer.h)
-              For this trigger only the coarse information is available
-    --- 101:  Timing trigger, elaborated by the coincidence of all available timing channels (a pair of scintillators coupled to two different 4x8 SiPM boards)
-              For this trigger the ref time is the average of the time registered on all channels, fine tuned (right now, no offset correction)
+/**
+ * @file trigger_coincidence.cpp
+ * @brief Examine the coincidence of triggers and detector-box signals.
+ *
+ * @details
+ * This exercise investigates how external and software-based triggers 
+ * coincide with signals recorded by the detector.
+ *
+ * **Trigger types:**
+ * - **External triggers (0, 1)**  
+ *   Registered in an ALCOR board, if available.
+ *
+ * - **Software-based triggers (>= 100)**  
+ *   Elaborated offline, if available:
+ *   - **100: Dummy trigger**  
+ *     Signals that frames are taken at the start of a spill (first N frames, 
+ *     defined by `_FIRST_FRAMES_TRIGGER_` in `streaming_framer.h`).  
+ *     Only coarse timing information is available for this trigger.
+ *   - **101: Timing trigger**  
+ *     Computed from the coincidence of all available timing channels  
+ *     (a pair of scintillators coupled to two different 4x8 SiPM boards).  
+ *     The reference time is the average of times registered on all channels, 
+ *     fine-tuned (currently no offset correction applied).
+ *
+ * **Afterpulse tagging:**
+ * - Afterpulses are detected using `alcor_recodata::is_afterpulse()`.  
+ * - A signal is considered an afterpulse if the time difference with the previous 
+ *   signal on the same channel is below `_AFTERPULSE_DEADTIME_` (defined in `streaming_framer.h`).
+ *
+ * @author Nicola Rubini
+ */
 
-  In the exercise you can see clearly the Afterpulse tagger in action, through alcor_recodata::is_afterpulse().
-  Afterpulse are tagged as such if they have a time difference with their previous signal (on the same channel) of _AFTERPULSE_DEADTIME_ defined in streaming_framer.h
-
-  ---------------------------------------------------------
-  author: Nicola Rubini <nicola.rubini@bo.infn.it>
-  last update: 05/02/2026
-*/
 
 //  Load compiled libraries for analysis
 #pragma cling load("libtest_beam_analysis_dict.dylib");
@@ -43,12 +58,12 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
   auto all_frames = min((int)n_frames, (int)max_frames);
 
   //  Time distribution
-  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
-  TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
-  TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
+  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+  TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+  TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
   //  Time distribution
-  TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
-  TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{hit} - t_{timing} (ns)", 1000, -312.5, 312.5);
+  TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+  TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
 
   //  Loop over frames
   auto i_spill = -1;
@@ -69,25 +84,20 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     //  Select Luca AND trigger (0) or timing trigger (101)
     auto current_trigger = recodata->get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
-                           { return t.index == 101; });
+                           { return t.index == 0; });
     if (it != current_trigger.end())
     {
       //  Loop on hits
-      for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
+      for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
       {
         //  Fill time distribution to check
         h_t_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
 
         //  Remove afterpulse
         if (recodata->is_afterpulse(current_hit))
-        {
           h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
-          continue;
-        }
         else
-        {
           h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
-        }
       }
     }
   }
@@ -103,9 +113,4 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
   h_t_AP_distribution->Draw("SAME");
   h_t_noAP_distribution->SetLineColor(kBlue);
   h_t_noAP_distribution->Draw("SAME");
-
-  //  TEST 
-  new TCanvas();
-h_t_detector_0->Draw();
-h_t_detector_1->Draw("SAME");
 }

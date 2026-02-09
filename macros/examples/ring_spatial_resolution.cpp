@@ -1,22 +1,41 @@
-/*
-  ---------------------------------------------------------
-  Sample exercise to calculate the saptial resolution of the ring.
-  A first round is done on points tagged as "ring-like" by a density scan algorithm on time coincidence and radial proximity,
-  selecting hits not labeled as APs and within a reasonable time window w.r.t. the trigger.
-  This allows us to find the center (x_0;y_0) of the ring and its radius R but fitting the ring-tagged points with a circle.
-  Fixing the center (x_0;y_0) will help the resolution calculation.
-  The resolution calculation is then done in three ways, selecting in time, within 3 \sigma of the average ring found and w/o APs:
-  --- 1) The points assigned to the ring are fitted and the resulting radius is plotted against the number of participants hits
-  --- 2) The points assigned to the ring are fitted, removing one at a time, the difference in radius between the fit result and the point is taken
-  --- 3) The difference in radius between the general first round radius result and each selected point is taken
-
-  Method 1) will give a variable resolution as a function of participants, i.e. photo-electrons (p.e.)
-  Methods 2) 3) will give the Single Photon Spatial Resolution (SPSR), i.e. the resolution in space of a single p.e.
-
-  ---------------------------------------------------------
-  author: Nicola Rubini <nicola.rubini@bo.infn.it>
-  last update: 05/02/2026
-*/
+/**
+ * @file ring_spatial_resolution.cpp
+ * @brief Calculate the spatial resolution of the ring.
+ *
+ * This exercise estimates the center and radius of a ring of hits and then
+ * computes the spatial resolution using multiple methods.
+ *
+ * @details
+ * **Workflow:**
+ * 1. **Initial ring center and radius estimation**
+ *    - Select points tagged as "ring-like" by a density scan algorithm
+ *      (based on time coincidence and radial proximity).
+ *    - Filter hits that are **not labeled as After-Pulses (APs)** and within a
+ *      reasonable time window relative to the trigger.
+ *    - Fit the selected points with a circle to determine the center `(x_0, y_0)`
+ *      and radius `R`.
+ *    - Fixing the center will aid the subsequent resolution calculation.
+ *
+ * 2. **Spatial resolution calculation** (three methods):
+ *    - **Method 1: Variable resolution vs. participant hits**
+ *      - Fit points assigned to the ring.
+ *      - Plot resulting radius as a function of the number of participant hits (photo-electrons, p.e.).
+ *
+ *    - **Method 2: Single Photon Spatial Resolution (SPSR)**
+ *      - Fit points assigned to the ring.
+ *      - Remove one point at a time.
+ *      - Compute the difference in radius between the fit result and the removed point.
+ *
+ *    - **Method 3: SPSR alternative**
+ *      - Compute the difference in radius between the first-round radius result
+ *        and each selected point.
+ *
+ * **Notes:**
+ * - Method 1 provides variable resolution as a function of participants (p.e.).
+ * - Methods 2 and 3 provide the spatial resolution for a single photon.
+ *
+ * @author Nicola Rubini
+ */
 
 //  Load compiled libraries for analysis
 #pragma cling load("libtest_beam_analysis_dict.dylib");
@@ -81,7 +100,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     //  TODO: Make this a class method, w/ possibility to ask for multiple triggers at a time
     auto current_trigger = recodata->get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
-                           { return t.index == 101; });
+                           { return t.index == 0; });
     if (it != current_trigger.end())
     {
       //  Save trigger frames for later, ref to the actual number of used frames in the analysis
@@ -92,7 +111,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
       float avg_radius = 0.; // First estimate for radius
 
       //  Loop on hits
-      for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
+      for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
       {
         //  Remove afterpulse
         //  Ref: afterpulse_treatment.cpp
@@ -152,7 +171,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     std::vector<std::array<float, 2>> selected_points;
 
     //  Loop on hits
-    for (auto current_hit = 0; current_hit < recodata->get().size(); current_hit++)
+    for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
     {
       //  Remove afterpulse
       if (recodata->is_afterpulse(current_hit))
