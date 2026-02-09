@@ -7,13 +7,7 @@
 //  TODO: understand what is the issue with generate calibration
 alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
 {
-    device = d.device;
-    fifo = d.fifo;
-    type = d.type;
-    counter = d.counter;
-    column = d.column;
-    pixel = d.pixel;
-    tdc = d.tdc;
+    global_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column + 32 * (d.fifo / 4 % 2), d.tdc);
     rollover = d.rollover;
     coarse = d.coarse;
     fine = d.fine;
@@ -24,13 +18,13 @@ alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
 alcor_finedata::alcor_finedata() {}
 
 alcor_finedata::alcor_finedata(const alcor_finedata_struct &s)
-    : alcor_data(s), finedata(s) {}
+    : finedata(s) {}
 
 alcor_finedata::alcor_finedata(const alcor_data_struct &d)
-    : alcor_data(d), finedata(d) {}
+    : finedata(d) {}
 
 alcor_finedata::alcor_finedata(const alcor_finedata &o)
-    : alcor_data(o), finedata(o.get_data_struct()) {}
+    : finedata(o.get_data_struct()) {}
 
 // --- Member functions
 void alcor_finedata::set_standard_function()

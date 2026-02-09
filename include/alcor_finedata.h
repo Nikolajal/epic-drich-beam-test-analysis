@@ -8,8 +8,15 @@
 #include "TCanvas.h"
 #include "alcor_data.h"
 
-struct alcor_finedata_struct : public alcor_data_struct
+struct alcor_finedata_struct
 {
+
+    uint32_t global_index;
+    int rollover;
+    int coarse;
+    int fine;
+    uint32_t hit_mask;
+
     alcor_finedata_struct() = default;
     alcor_finedata_struct(const alcor_data_struct &d);
 };

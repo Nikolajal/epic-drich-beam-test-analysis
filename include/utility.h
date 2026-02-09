@@ -39,6 +39,7 @@ inline int get_calib_index_from_global_tdc_index(int global_tdc_index) { return 
 inline int get_device_index_from_global_tdc_index(int global_tdc_index) { return get_eo_channel_index_from_global_tdc_index(global_tdc_index) + 64 * (get_chip_from_global_tdc_index(global_tdc_index) / 2); }
 inline int get_pdu_from_global_tdc_index(int global_tdc_index) { return global_tdc_index / 256 + 1; }
 inline int get_matrix_from_global_tdc_index(int global_tdc_index) { return (global_tdc_index % 256 / 4) + 1; }
+inline uint32_t get_global_index(int device, int chip, int channel, int tdc) { return (device - 192) * 32 * 8 * 4 + chip * 32 * 4 + channel * 4 + tdc; }
 
 // TODO clean-up
 
