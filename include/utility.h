@@ -78,120 +78,66 @@ inline std::vector<uint8_t> decode_bits(uint32_t mask)
   return result;
 }
 
-/*
 class Logger
 {
 public:
-  enum class color_tag
-{
-  BLACK,
-  RED,
-  GREEN,
-  YELLOW,
-  BLUE,
-  MAGENTA,
-  CYAN,
-  WHITE,
-  BRIGHT_BLACK,   // gray
-  BRIGHT_RED,
-  BRIGHT_GREEN,
-  BRIGHT_YELLOW,
-  BRIGHT_BLUE,
-  BRIGHT_MAGENTA,
-  BRIGHT_CYAN,
-  BRIGHT_WHITE,
-  RESET
+  enum class colour_tag : int
+  {
+    BLACK = 30,
+    RED = 31,
+    GREEN = 32,
+    YELLOW = 33,
+    BLUE = 34,
+    MAGENTA = 35,
+    CYAN = 36,
+    WHITE = 37,
+    BRIGHT_BLACK = 90,
+    BRIGHT_RED = 91,
+    BRIGHT_GREEN = 92,
+    BRIGHT_YELLOW = 93,
+    BRIGHT_BLUE = 94,
+    BRIGHT_MAGENTA = 95,
+    BRIGHT_CYAN = 96,
+    BRIGHT_WHITE = 97,
+    RESET = 0
+  };
+  enum class style_tag : int
+  {
+    NONE = 0,
+    BOLD = 1,
+    DIM = 2,
+    ITALIC = 3,
+    UNDERLINE = 4,
+    BLINK_SLOW = 5,
+    BLINK_FAST = 6,
+    REVERSED = 7,
+    HIDDEN = 8,
+    STRIKETHROUGH = 9
+  };
+
+  enum class level_tag
+  {
+    ERROR,
+    WARNING,
+    INFO,
+    DEBUG
+  };
+
+  using style_list = std::vector<style_tag>;
+  using text_config = std::pair<colour_tag, style_list>;
+
+  static std::string ansi(colour_tag colour = colour_tag::RESET, style_list styles = {style_tag::NONE})
+  {
+    std::string code = "";
+    if (!styles.empty())
+      for (auto current_style : styles)
+        if (static_cast<int>(current_style) != 0) // skip NONE
+          code += std::to_string(static_cast<int>(current_style)) + ";";
+    code += std::to_string(static_cast<int>(colour)); // append colour
+    return "\033[" + code + "m";
+  }
+  static void log(const std::string &msg, colour_tag c = colour_tag::RESET, style_list s = {style_tag::NONE}) { std::cout << ansi(c, s) << msg << ansi() << "\n"; }
 };
-
-
-  static constexpr const char *color(color_tag tag)
-  {
-    switch (tag)
-    {
-    case color_tag::BLACK:
-      return "\033[30m";
-    case color_tag::RED:
-      return "\033[31m";
-    case color_tag::GREEN:
-      return "\033[32m";
-    case color_tag::YELLOW:
-      return "\033[33m";
-    case color_tag::BLUE:
-      return "\033[34m";
-    case color_tag::MAGENTA:
-      return "\033[35m";
-    case color_tag::CYAN:
-      return "\033[36m";
-    case color_tag::WHITE:
-      return "\033[37m";
-    case color_tag::BRIGHT_BLACK:
-      return "\033[90m";
-    case color_tag::BRIGHT_RED:
-      return "\033[91m";
-    case color_tag::BRIGHT_GREEN:
-      return "\033[92m";
-    case color_tag::BRIGHT_YELLOW:
-      return "\033[93m";
-    case color_tag::BRIGHT_BLUE:
-      return "\033[94m";
-    case color_tag::BRIGHT_MAGENTA:
-      return "\033[95m";
-    case color_tag::BRIGHT_CYAN:
-      return "\033[96m";
-    case color_tag::BRIGHT_WHITE:
-      return "\033[97m";
-
-    case color_tag::RESET:
-      return "\033[0m";
-    }
-    return "\033[0m"; // safety
-  }
-
-  static void log(Tag tag, const std::string &msg) { std::cout << color(tag) << label(tag) << "\033[0m " << msg << "\n"; }
-
-private:
-  static const char *
-  label(Tag tag)
-  {
-    switch (tag)
-    {
-    case Tag::IO:
-      return "[IO]";
-    case Tag::DATA:
-      return "[DATA]";
-    case Tag::MERGE:
-      return "[MERGE]";
-    case Tag::RING:
-      return "[RING]";
-    case Tag::WARN:
-      return "[WARN]";
-    case Tag::ERROR:
-      return "[ERROR]";
-    }
-    return "";
-  }
-
-  static const char *color(color_tag color_tag)
-  {
-    switch (tag)
-    {
-    case Tag::CYAN:
-      return "\033[36m"; // cyan
-    case Tag::GREEN:
-      return "\033[32m"; // green
-    case Tag::MAGENTA:
-      return "\033[35m"; // magenta
-    case Tag::BLUE:
-      return "\033[34m"; // blue
-    case Tag::YELLOW:
-      return "\033[33m"; // yellow
-    case Tag::RED:
-      return "\033[31m"; // red
-    }
-    return "\033[0m";
-  }
-};
-*/
 
 // TODO clean-up & incorporate into second repository for general utilities
 //  Random generator utility
@@ -314,11 +260,11 @@ inline TFile *open_or_build_rootfile(const std::string &filename,
   return input_file;
 }
 
-void inline draw_circle(std::array<float, 3> parameters, int line_color = kBlack, int line_style = kSolid, int line_width = 1)
+void inline draw_circle(std::array<float, 3> parameters, int line_colour = kBlack, int line_style = kSolid, int line_width = 1)
 {
   auto result = new TEllipse(parameters[0], parameters[1], parameters[2]);
   result->SetFillStyle(0);
-  result->SetLineColor(line_color);
+  result->SetLineColor(line_colour);
   result->SetLineStyle(line_style);
   result->SetLineWidth(line_width);
   result->DrawEllipse(parameters[0], parameters[1], parameters[2], 0, 0, 360, 0, "same");
@@ -899,20 +845,20 @@ TCanvas *get_std_canvas_2D(std::string name, std::string title, float nXpixels =
   gPad->SetBottomMargin(0.15);
   return cResult;
 }
-void plot_box(std::array<float, 4> parameters, int line_color = kBlack, int line_style = kSolid, int line_width = 1)
+void plot_box(std::array<float, 4> parameters, int line_colour = kBlack, int line_style = kSolid, int line_width = 1)
 {
   auto result = new TBox(parameters[0], parameters[1], parameters[2], parameters[3]);
   result->SetFillStyle(0);
-  result->SetLineColor(line_color);
+  result->SetLineColor(line_colour);
   result->SetLineStyle(line_style);
   result->SetLineWidth(line_width);
   result->DrawBox(parameters[0], parameters[1], parameters[2], parameters[3]);
 }
-void plot_circle(std::array<float, 3> parameters, int line_color = kBlack, int line_style = kSolid, int line_width = 1)
+void plot_circle(std::array<float, 3> parameters, int line_colour = kBlack, int line_style = kSolid, int line_width = 1)
 {
   auto result = new TEllipse(parameters[0], parameters[1], parameters[2]);
   result->SetFillStyle(0);
-  result->SetLineColor(line_color);
+  result->SetLineColor(line_colour);
   result->SetLineStyle(line_style);
   result->SetLineWidth(line_width);
   result->DrawEllipse(parameters[0], parameters[1], parameters[2], 0, 0, 360, 0, "same");
