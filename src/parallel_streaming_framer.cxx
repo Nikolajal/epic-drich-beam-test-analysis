@@ -273,6 +273,69 @@ bool parallel_streaming_framer::next_spill()
         std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " last merge round file " << i_chunk << "/" << async_processing_results.size() << flush;
     }
 
+    /*
+    //---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//
+    while (processing_results.size() > 1)
+    {
+        std::vector<alcor_spilldata> next_round;
+        size_t i = 0;
+
+        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " next merge round has " << processing_results.size() << " files"<< flush;
+        while (i + 1 < processing_results.size())
+        {
+            size_t batch_end = std::min(i + n_threads * 2, processing_results.size());
+            size_t batch_size = batch_end - i;
+
+            // For each batch, launch threads for merging pairs
+            std::vector<std::thread> threads;
+            std::vector<alcor_spilldata> temp_results(batch_size / 2);
+
+            for (size_t j = 0; j + 1 < batch_size; j += 2)
+            {
+                threads.emplace_back([&temp_results, j, &processing_results, i]()
+                                     {
+                    alcor_spilldata temp;
+                    merge(temp, std::move(processing_results[i + j]));
+                    merge(temp, std::move(processing_results[i + j + 1]));
+                    temp_results[j / 2] = std::move(temp); });
+            }
+
+            // Wait for threads to finish
+            for (auto &t : threads)
+                t.join();
+
+            // Collect results
+            for (auto &res : temp_results)
+                next_round.push_back(std::move(res));
+
+            // If odd number of chunks in batch, carry the last one
+            if (batch_size % 2 == 1)
+                next_round.push_back(std::move(processing_results[batch_end - 1]));
+
+            i = batch_end;
+        }
+
+        // If total chunks in round is odd, carry the last one
+        if (processing_results.size() % 2 == 1 && i == processing_results.size() - 1)
+            next_round.push_back(std::move(processing_results.back()));
+
+        processing_results = std::move(next_round);
+    }
+    //---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//
+
+    spilldata = std::move(processing_results[0]);
+
+    /*
+    // Collect results
+    auto i_chunk = 0;
+    for (auto &current_processing_results : processing_results)
+    {
+        i_chunk++;
+        merge(spilldata, std::move(current_processing_results));
+        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " last merge round file " << i_chunk << "/" << processing_results.size() << flush;
+    }
+    */
+
     //  Finished Merging spills
     std::cout << "\33[2K\r[INFO] Spill merging finished! Successfully merged " << data_streams.size() << " data streams results" << std::endl;
 
