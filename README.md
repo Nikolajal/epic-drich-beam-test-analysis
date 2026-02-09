@@ -8,9 +8,9 @@ introspection and a set of example macros that can be run from a ROOT prompt.
 ## Table of Contents
 | Section | Description |
 |---------|-------------|
-| [Introduction](#introduction) | What the project is about |
-| [Introduction](#full_documentation) | What the project is about |
-| [Author](#author) | Author |
+| [Introduction](#introduction) | Introduction to the project goals and implementations |
+| [Full Documentation](#full_documentation) | Link to Doxygen full documentation |
+| [Authors](#authors) | Authors list |
 
 ---
 
@@ -36,7 +36,7 @@ provides:
 
 ---
 
-## Author
+## Authors
 | Name | Contact |
 |---------|-------------|
 | Nicola Rubini | nicola.rubini@bo.infn.it
