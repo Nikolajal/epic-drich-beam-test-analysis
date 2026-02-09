@@ -38,7 +38,7 @@
 
 /**
  * @struct alcor_data_struct
- * @brief Plain data container for a single ALCOR record.
+ * @brief Plain data container for a single ALCOR hit.
  *
  * This struct is intentionally kept trivial:
  * * No logic
