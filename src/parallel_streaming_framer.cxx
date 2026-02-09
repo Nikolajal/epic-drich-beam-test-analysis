@@ -7,10 +7,10 @@
 #include <vector>
 #include <string>
 #include <thread>
-#include <execution> // for parallel policies
-#include <future>    // for std::async and std::future
-#include <chrono>    // for std::chrono::milliseconds
-#include <thread>    // for std::this_thread::get_id
+#include <execution>
+#include <future>
+#include <chrono>
+#include <thread>
 using namespace std;
 
 //  Constructors
