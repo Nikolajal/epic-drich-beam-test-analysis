@@ -1,5 +1,18 @@
 #include "alcor_lightdata.h"
 
+//  Struct clear
+void alcor_lightdata_struct::clear()
+{
+    trigger_hits.clear();
+    trigger_hits.shrink_to_fit();
+    timing_hits.clear();
+    timing_hits.shrink_to_fit();
+    tracking_hits.clear();
+    tracking_hits.shrink_to_fit();
+    cherenkov_hits.clear();
+    cherenkov_hits.shrink_to_fit();
+}
+
 // Constructors
 alcor_lightdata::alcor_lightdata(const alcor_lightdata_struct &data_struct)
     : lightdata(data_struct) {}
@@ -31,15 +44,16 @@ void alcor_lightdata::set_cherenkov_hits_link(std::vector<alcor_finedata_struct>
 void alcor_lightdata::set_trigger_link(std::vector<trigger_struct> &v) { lightdata.trigger_hits = v; }
 
 // Utility
-// TODO: use std::optional
-uint16_t alcor_lightdata::get_trigger_time(uint8_t trigger_index)
+std::optional<float> alcor_lightdata::get_trigger_time(uint8_t trigger_index)
 {
-    auto it = std::find_if(lightdata.trigger_hits.begin(), lightdata.trigger_hits.end(),
-                           [trigger_index](const trigger_struct &t)
-                           { return t.index == trigger_index; });
+    auto it = std::find_if(
+        lightdata.trigger_hits.begin(),
+        lightdata.trigger_hits.end(),
+        [trigger_index](const trigger_struct &t)
+        { return t.index == trigger_index; });
 
     if (it != lightdata.trigger_hits.end())
-        return it->fine_time;
+        return it->fine_time; // Return the found value
     else
-        return -1;
+        return std::nullopt; // Return empty optional
 }
