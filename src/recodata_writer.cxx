@@ -34,7 +34,7 @@ void recodata_writer(
 
   //  Generate mapping
   mapping current_mapping;
-  current_mapping.load_calib("./conf/mapping_conf.2024.toml");
+  current_mapping.load_calib("./conf/mapping_conf.2025.toml");
 
   //  Get calibration
   TH2F *h_calibration_data = (TH2F *)input_file->Get("TH2F_fine_calib_global_index");

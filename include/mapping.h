@@ -4,6 +4,7 @@
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
 
+//  TODO: Cache values to avoid re-computation
 class mapping
 {
 public:

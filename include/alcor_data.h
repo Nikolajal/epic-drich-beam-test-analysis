@@ -18,6 +18,8 @@
  * at the analysis level.
  */
 
+//  TODO: implement bit-wise maniopulation for global index encoding
+
 #include "TTree.h"
 #include "utility.h"
 

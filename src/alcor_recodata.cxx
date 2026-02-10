@@ -2,12 +2,21 @@
 
 //  Constructors
 //  No implementations needed
+//  TODO: recodata trigger fills every event
 
 //  Getters
 //  --- Pure getters
 std::vector<alcor_recodata_struct> alcor_recodata::get_recodata() const { return recodata; }
+std::vector<alcor_recodata_struct> *alcor_recodata::get_recodata_ptr()
+{
+    return recodata_ptr;
+}
 alcor_recodata_struct alcor_recodata::get_recodata(int i) const { return recodata[i]; }
 std::vector<trigger_struct> alcor_recodata::get_triggers() const { return triggers; }
+std::vector<trigger_struct> *alcor_recodata::get_triggers_ptr()
+{
+    return triggers_ptr;
+}
 int alcor_recodata::get_global_index(int i) const { return recodata[i].global_index; }
 float alcor_recodata::get_hit_x(int i) const { return recodata[i].hit_x; }
 float alcor_recodata::get_hit_y(int i) const { return recodata[i].hit_y; }
@@ -48,14 +57,24 @@ int alcor_recodata::get_device_index(int i) const { return get_eo_channel(i) + 6
 void alcor_recodata::set_recodata(std::vector<alcor_recodata_struct> v) { recodata = v; }
 void alcor_recodata::set_recodata(int i, alcor_recodata_struct v) { recodata[i] = v; }
 void alcor_recodata::set_triggers(const std::vector<trigger_struct> v) { triggers = v; }
+void alcor_recodata::set_recodata_ptr(std::vector<alcor_recodata_struct> *v) { recodata_ptr = v; }
+void alcor_recodata::set_triggers_ptr(std::vector<trigger_struct> *v) { triggers_ptr = v; }
 void alcor_recodata::set_global_index(int i, uint32_t v) { recodata[i].global_index = v; }
 void alcor_recodata::set_hit_x(int i, float v) { recodata[i].hit_x = v; }
 void alcor_recodata::set_hit_y(int i, float v) { recodata[i].hit_y = v; }
 void alcor_recodata::set_hit_mask(int i, uint32_t v) { recodata[i].hit_mask = v; }
 void alcor_recodata::set_hit_t(int i, float v) { recodata[i].hit_t = v; }
 //  --- Reference setters
-void alcor_recodata::set_recodata_link(std::vector<alcor_recodata_struct> &v) { recodata = v; }
-void alcor_recodata::set_triggers_link(std::vector<trigger_struct> &v) { triggers = v; }
+void alcor_recodata::set_recodata_link(std::vector<alcor_recodata_struct> &v)
+{
+    recodata = v;
+    recodata_ptr = &recodata;
+}
+void alcor_recodata::set_triggers_link(std::vector<trigger_struct> &v)
+{
+    triggers = v;
+    triggers_ptr = &triggers;
+}
 
 //  Add utilities
 void alcor_recodata::add_hit_mask(int i, uint32_t v) { recodata[i].hit_mask |= v; }

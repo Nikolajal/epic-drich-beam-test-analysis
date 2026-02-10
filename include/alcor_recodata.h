@@ -51,8 +51,10 @@ public:
     /** @name Pure Getters */
     ///@{
     std::vector<alcor_recodata_struct> get_recodata() const;
+    std::vector<alcor_recodata_struct> *get_recodata_ptr();
     alcor_recodata_struct get_recodata(int i) const;
     std::vector<trigger_struct> get_triggers() const;
+    std::vector<trigger_struct> *get_triggers_ptr();
     int get_global_index(int i) const;
     float get_hit_x(int i) const;
     float get_hit_y(int i) const;
@@ -97,6 +99,8 @@ public:
     void set_recodata(std::vector<alcor_recodata_struct> v);
     void set_recodata(int i, alcor_recodata_struct v);
     void set_triggers(const std::vector<trigger_struct> v);
+    void set_recodata_ptr(std::vector<alcor_recodata_struct> *v);
+    void set_triggers_ptr(std::vector<trigger_struct> *v);
     void set_global_index(int i, uint32_t v);
     void set_hit_x(int i, float v);
     void set_hit_y(int i, float v);
@@ -124,7 +128,7 @@ public:
     bool check_hit_mask(int i, uint32_t v);
 
     /**
-     * @brief Return if the hit is flagged as afterpulse. 
+     * @brief Return if the hit is flagged as afterpulse.
      * During reconstruction a check is performed to flag the second hit of consequent hits as afterpulse if its time is 200ns or less w.r.t. the previous hit.
      * @return Flag stating if the hit is an afterpulse or not
      */

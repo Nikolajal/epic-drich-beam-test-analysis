@@ -8,9 +8,9 @@
 #include "TCanvas.h"
 #include "alcor_data.h"
 
+//  TODO: implement bit-wise maniopulation for rollover, fine, coarse encoding
 struct alcor_finedata_struct
 {
-
     uint32_t calib_index;
     int rollover;
     int coarse;
