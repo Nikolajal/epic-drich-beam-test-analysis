@@ -78,7 +78,7 @@ inline std::vector<uint8_t> decode_bits(uint32_t mask)
   return result;
 }
 
-class Logger
+class logger
 {
 public:
   enum class colour_tag : int
@@ -131,12 +131,49 @@ public:
     std::string code = "";
     if (!styles.empty())
       for (auto current_style : styles)
-        if (static_cast<int>(current_style) != 0) // skip NONE
-          code += std::to_string(static_cast<int>(current_style)) + ";";
+        code += std::to_string(static_cast<int>(current_style)) + ";";
     code += std::to_string(static_cast<int>(colour)); // append colour
     return "\033[" + code + "m";
   }
-  static void log(const std::string &msg, colour_tag c = colour_tag::RESET, style_list s = {style_tag::NONE}) { std::cout << ansi(c, s) << msg << ansi() << "\n"; }
+  static void log(const std::string_view msg, colour_tag c = colour_tag::RESET, style_list s = {style_tag::NONE}) { std::cout << ansi(c, s) << msg << ansi() << "\n"; }
+  static void log(level_tag tag, std::string_view msg, bool flush = true)
+  {
+    std::ostream &out = std::cout; // could switch to cerr for errors if you like
+
+    // Build prefix and style
+    std::string styled_msg;
+
+    switch (tag)
+    {
+    case level_tag::ERROR:
+      styled_msg = ansi(colour_tag::RED, {style_tag::BOLD, style_tag::UNDERLINE}) + "[ERROR]" + ansi(colour_tag::RED, {style_tag::NONE}) + "    " + std::string(msg) + ansi();
+      break;
+    case level_tag::WARNING:
+      styled_msg = ansi(colour_tag::YELLOW, {style_tag::BOLD, style_tag::UNDERLINE}) + "[WARNING]" + ansi(colour_tag::YELLOW, {style_tag::NONE}) + "  " + std::string(msg) + ansi();
+      break;
+    case level_tag::DEBUG:
+      styled_msg = ansi(colour_tag::CYAN, {style_tag::BOLD, style_tag::UNDERLINE}) + "[DEBUG]" + ansi(colour_tag::CYAN, {style_tag::NONE}) + "    " + std::string(msg) + ansi();
+      break;
+    case level_tag::INFO:
+      styled_msg = ansi(colour_tag::BRIGHT_BLUE, {style_tag::BOLD, style_tag::UNDERLINE}) + "[INFO]" + ansi(colour_tag::BRIGHT_BLUE, {style_tag::NONE}) + "     " + std::string(msg) + ansi();
+      break;
+    default:
+      styled_msg = msg; // no extra styling
+      break;
+    }
+
+    // Output in one shot, newline included
+    //  TODO: sapcing
+    out << styled_msg << "\n";
+
+    // Optional flush
+    if (flush)
+      out << std::flush;
+  }
+  static void log_error(std::string_view msg, bool flush = true) { return log(level_tag::ERROR, msg, flush); }
+  static void log_warning(std::string_view msg, bool flush = true) { return log(level_tag::WARNING, msg, flush); }
+  static void log_info(std::string_view msg, bool flush = true) { return log(level_tag::INFO, msg, flush); }
+  static void log_debug(std::string_view msg, bool flush = true) { return log(level_tag::DEBUG, msg, flush); }
 };
 
 // TODO clean-up & incorporate into second repository for general utilities

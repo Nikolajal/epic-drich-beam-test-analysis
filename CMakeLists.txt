@@ -22,13 +22,21 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 # ----------------------------
 include(FetchContent)
 
+#   --- CLI
 FetchContent_Declare(
   CLI11
   GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
   GIT_TAG v2.4.2
 )
-
 FetchContent_MakeAvailable(CLI11)
+
+#   --- TOML++
+FetchContent_Declare(
+    tomlplusplus
+    GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+    GIT_TAG v3.3.0  # or latest stable
+)
+FetchContent_MakeAvailable(tomlplusplus)
 
 # ----------------------------
 # Find ROOT
@@ -41,6 +49,7 @@ include(${ROOT_USE_FILE})
 # ----------------------------
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include          # Main headers
+    ${tomlplusplus_SOURCE_DIR}/include           # toml++ headers
     # ${CMAKE_CURRENT_SOURCE_DIR}/external/utility-cpp/include  # Submodule if used
 )
 
@@ -55,6 +64,7 @@ add_library(test_beam_analysis SHARED
     src/alcor_lightdata.cxx
     src/alcor_recodata.cxx
     src/alcor_spilldata.cxx
+    src/mapping.cxx
     src/alcor_data_streamer.cxx
     src/streaming_framer.cxx
     src/parallel_streaming_framer.cxx
@@ -86,6 +96,7 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_lightdata.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_recodata.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_spilldata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/mapping.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data_streamer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/streaming_framer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/parallel_streaming_framer.h
