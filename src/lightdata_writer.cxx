@@ -2,6 +2,8 @@
 #include "streaming_framer.h"
 #include "lightdata_writer.h"
 
+//  TODO: make the CLI multithred flag
+//  TODO: cache mapping positions
 void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
@@ -51,7 +53,7 @@ void lightdata_writer(
 
   //  Create streaming framer
   //  TODO: Add FIFO to the comnfig file (2024-2023 have FIFO 24 the triggers.)
-  parallel_streaming_framer framer(filenames, "conf/trigger_setup.2024.txt", "conf/readout_config.2024.txt");
+  parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
 
   //  Prepare output tree
   TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");

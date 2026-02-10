@@ -21,6 +21,11 @@
 #pragma link C++ class alcor_recodata + ;
 #pragma link C++ class std::vector<alcor_recodata_struct> + ;
 
+#include "alcor_recotrackdata.h"
+#pragma link C++ struct alcor_recotrackdata_struct + ;
+#pragma link C++ class alcor_recotrackdata + ;
+#pragma link C++ class std::vector<alcor_recotrackdata_struct> + ;
+
 #include "alcor_spilldata.h"
 #pragma link C++ struct data_mask_struct + ;
 #pragma link C++ struct alcor_spilldata_struct + ;

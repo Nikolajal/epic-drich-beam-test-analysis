@@ -38,6 +38,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+#   --- cppinfra
+FetchContent_Declare(
+    cppinfra
+    GIT_REPOSITORY https://github.com/Nikolajal/ccpinfra.git
+    GIT_TAG main  # or latest stable
+)
+FetchContent_MakeAvailable(cppinfra)
+
 # ----------------------------
 # Find ROOT
 # ----------------------------
@@ -48,8 +56,9 @@ include(${ROOT_USE_FILE})
 # Include directories
 # ----------------------------
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include          # Main headers
-    ${tomlplusplus_SOURCE_DIR}/include           # toml++ headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/include         # Main headers
+    ${tomlplusplus_SOURCE_DIR}/include          # toml++ headers
+    ${cppinfra_SOURCE_DIR}/include              # cppinfra headers  
     # ${CMAKE_CURRENT_SOURCE_DIR}/external/utility-cpp/include  # Submodule if used
 )
 
@@ -66,17 +75,20 @@ add_library(test_beam_analysis SHARED
     src/alcor_spilldata.cxx
     src/alcor_recotrackdata.cxx
     src/mapping.cxx
+    src/tracking_altai.cxx
     src/alcor_data_streamer.cxx
     src/streaming_framer.cxx
     src/parallel_streaming_framer.cxx
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
+    src/recotrackdata_writer.cxx
 )
 
 # Link ROOT to the library
 target_link_libraries(test_beam_analysis
     PUBLIC ${ROOT_LIBRARIES}
     PUBLIC CLI11::CLI11
+    # PUBLIC cppInfra::cppInfra
 )
 
 # Set library output directory
@@ -99,11 +111,13 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_spilldata.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_recotrackdata.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/mapping.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/tracking_altai.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data_streamer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/streaming_framer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/parallel_streaming_framer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/lightdata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recodata_writer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/recotrackdata_writer.h
 )
 
 set(DICT_INCLUDE_DIRS
@@ -131,6 +145,7 @@ target_link_libraries(test_beam_analysis_dict PUBLIC ${ROOT_LIBRARIES} test_beam
 # ----------------------------
 add_executable(lightdata_writer macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer macros/utilities/recodata_writer.cpp)
+add_executable(recotrackdata_writer macros/utilities/recotrackdata_writer.cpp)
 
 # Link the shared library and dictionary to the executable
 target_link_libraries(lightdata_writer
@@ -143,6 +158,11 @@ target_link_libraries(recodata_writer
     PRIVATE test_beam_analysis_dict
     PRIVATE ${ROOT_LIBRARIES}
 )
+target_link_libraries(recotrackdata_writer
+    PRIVATE test_beam_analysis
+    PRIVATE test_beam_analysis_dict
+    PRIVATE ${ROOT_LIBRARIES}
+)
 
 # Set executable output folder
 set_target_properties(lightdata_writer PROPERTIES
@@ -151,11 +171,14 @@ set_target_properties(lightdata_writer PROPERTIES
 set_target_properties(recodata_writer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+set_target_properties(recotrackdata_writer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
 
 # ----------------------------
 # Optional: install rules
 # ----------------------------
-install(TARGETS test_beam_analysis test_beam_analysis_dict lightdata_writer recodata_writer
+install(TARGETS test_beam_analysis test_beam_analysis_dict lightdata_writer recodata_writer recotrackdata_writer
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
