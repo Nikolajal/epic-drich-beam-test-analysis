@@ -1,0 +1,13 @@
+# readout_name  device  chip
+cherenkov       192     *
+cherenkov       193     *
+cherenkov       194     *
+cherenkov       195     *
+cherenkov       196     *
+cherenkov       197     *
+cherenkov       198     *
+cherenkov       199     *
+timing          200     2
+timing          200     4
+tracking        200     3
+tracking        200     5

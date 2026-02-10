@@ -1,0 +1,2 @@
+# trigger_tag index device delay
+luca_and_finger     0   193 0
