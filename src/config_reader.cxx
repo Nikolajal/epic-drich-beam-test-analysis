@@ -1,5 +1,6 @@
 #include "config_reader.h"
 
+//  TODO: use TOML files
 // --- readout_config_struct definitions ---
 readout_config_struct::readout_config_struct(std::string _name, std::map<uint16_t, std::vector<uint16_t>> _device_chip)
     : name(_name), device_chip(_device_chip) {}

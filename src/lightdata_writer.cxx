@@ -50,7 +50,8 @@ void lightdata_writer(
   }
 
   //  Create streaming framer
-  parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
+  //  TODO: Add FIFO to the comnfig file (2024-2023 have FIFO 24 the triggers.)
+  parallel_streaming_framer framer(filenames, "conf/trigger_setup.2024.txt", "conf/readout_config.2024.txt");
 
   //  Prepare output tree
   TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");

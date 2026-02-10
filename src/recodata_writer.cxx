@@ -3,6 +3,7 @@
 #include "TH2.h"
 #include "TTree.h"
 #include "TFile.h"
+#include "mapping.h"
 #include "math.h"
 #include "TProfile.h"
 #include "streaming_framer.h"
@@ -30,6 +31,10 @@ void recodata_writer(
   TTree *lightdata_tree = (TTree *)input_file->Get("lightdata");
   alcor_spilldata *spilldata = new alcor_spilldata();
   spilldata->link_to_tree(lightdata_tree);
+
+  //  Generate mapping
+  mapping current_mapping;
+  current_mapping.load_calib("./conf/mapping_conf.2024.toml");
 
   //  Get calibration
   TH2F *h_calibration_data = (TH2F *)input_file->Get("TH2F_fine_calib_global_index");
@@ -98,11 +103,13 @@ void recodata_writer(
   std::map<std::array<float, 2>, int> hit_to_index_xy;
   for (auto i_index = 0; i_index < 2048 * 4; i_index++)
   {
-    auto position = sipm4eic::get_position(i_index);
-    if (fabs(position[0]) < 5 && fabs(position[1]) < 5)
+    auto position = current_mapping.get_position_from_global_index(i_index);
+    if (!position)
       continue;
-    index_to_hit_xy[i_index] = position;
-    hit_to_index_xy[position] = i_index;
+    if (fabs((*position)[0]) < 5 && fabs((*position)[1]) < 5)
+      continue;
+    index_to_hit_xy[i_index] = (*position);
+    hit_to_index_xy[(*position)] = i_index;
   }
 
   //  Loop over spills
@@ -253,21 +260,24 @@ void recodata_writer(
         auto current_device = current_cherenkov_hit.get_device();
         auto current_fifo = current_cherenkov_hit.get_fifo();
         auto global_index = current_cherenkov_hit.get_global_index();
-        auto hit_position = sipm4eic::get_position(sipm4eic::get_geo(current_cherenkov_hit_struct)); // TODO: use cached values
+        auto hit_position = current_mapping.get_position_from_finedata(current_cherenkov_hit);
         alcor_recodata_struct current_recodata_event;
 
         //  Fill recodata
+        //  Avoid non-recoverable position
+        if (!hit_position)
+          continue;
         current_recodata_event.global_index = global_index * 4 + current_cherenkov_hit.get_tdc();
-        current_recodata_event.hit_x = hit_position[0];
-        current_recodata_event.hit_y = hit_position[1];
+        current_recodata_event.hit_x = (*hit_position)[0];
+        current_recodata_event.hit_y = (*hit_position)[1];
         current_recodata_event.hit_t = (current_cherenkov_hit.get_coarse() - current_cherenkov_hit.get_phase()) * _ALCOR_CC_TO_NS_; // ns
         //  *** hack, to be fixed ASAP ***
         current_recodata_event.hit_t += current_recodata_event.global_index > 4096 ? 2.9196200 : 0.;
         //  TODO: Fix this
         current_recodata_event.hit_mask = current_cherenkov_hit.get_mask();
 
-        auto hit_x_rnd = hit_position[0] + (_rnd_(_global_gen_) * 3.0 - 1.5);
-        auto hit_y_rnd = hit_position[1] + (_rnd_(_global_gen_) * 3.0 - 1.5);
+        auto hit_x_rnd = (*hit_position)[0] + (_rnd_(_global_gen_) * 3.0 - 1.5);
+        auto hit_y_rnd = (*hit_position)[1] + (_rnd_(_global_gen_) * 3.0 - 1.5);
 
         if (timing_available)
         {
