@@ -84,7 +84,7 @@ public:
      *
      * @param v Incoming data
      */
-    void import_event( std::vector<tracking_altai_struct> vec);
+    void import_event(std::vector<tracking_altai_struct> vec);
     ///@}
 
 private:

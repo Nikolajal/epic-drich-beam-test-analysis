@@ -25,6 +25,7 @@ void alcor_recotrackdata::set_traj_angcoeff_y(std::size_t idx, float val) { reco
 void alcor_recotrackdata::set_chi2ndof(std::size_t idx, float val) { recotrackdata_at(idx).chi2ndof = val; }
 void alcor_recotrackdata::clear()
 {
+    alcor_recodata::clear();
     recotrackdata.clear();
     recotrackdata.shrink_to_fit();
 }
@@ -36,9 +37,9 @@ void alcor_recotrackdata::link_to_tree(TTree *input_tree)
         cerr << "[ERROR] link_to_tree: input_tree is null." << endl;
         return;
     }
+    // link base-class branches
+    alcor_recodata::link_to_tree(input_tree);
     input_tree->SetBranchAddress("recotrackdata", &recotrackdata_ptr);
-    input_tree->SetBranchAddress("recodata", get_recodata_ptr());
-    input_tree->SetBranchAddress("triggers", get_triggers_ptr());
 }
 void alcor_recotrackdata::write_to_tree(TTree *output_tree)
 {
@@ -57,11 +58,6 @@ void alcor_recotrackdata::import_event(std::vector<tracking_altai_struct> vec)
     for (auto &v : vec)
     {
         i_trk++;
-        if (i_trk > 0)
-        {
-            logger::log_debug("TRIGGERED");
-            logger::log_debug(Form("vec size: %d", vec.size()));
-        }
         set_det_plane_x(i_trk, v.zero_plane_x); // TODO: protect access
         set_det_plane_y(i_trk, v.zero_plane_y);
         set_traj_angcoeff_x(i_trk, v.angcoeff_dx);

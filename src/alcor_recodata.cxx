@@ -7,16 +7,10 @@
 //  Getters
 //  --- Pure getters
 std::vector<alcor_recodata_struct> alcor_recodata::get_recodata() const { return recodata; }
-std::vector<alcor_recodata_struct> *alcor_recodata::get_recodata_ptr()
-{
-    return recodata_ptr;
-}
+std::vector<alcor_recodata_struct> *alcor_recodata::get_recodata_ptr() { return recodata_ptr; }
 alcor_recodata_struct alcor_recodata::get_recodata(int i) const { return recodata[i]; }
 std::vector<trigger_struct> alcor_recodata::get_triggers() const { return triggers; }
-std::vector<trigger_struct> *alcor_recodata::get_triggers_ptr()
-{
-    return triggers_ptr;
-}
+std::vector<trigger_struct> *alcor_recodata::get_triggers_ptr() { return triggers_ptr; }
 int alcor_recodata::get_global_index(int i) const { return recodata[i].global_index; }
 float alcor_recodata::get_hit_x(int i) const { return recodata[i].hit_x; }
 float alcor_recodata::get_hit_y(int i) const { return recodata[i].hit_y; }

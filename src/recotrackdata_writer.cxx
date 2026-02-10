@@ -86,7 +86,7 @@ void recotrackdata_writer(
             recotrackdata->clear();
         }
     }
+    logger::log_info(Form("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter));
     recotrackdata_tree->Write();
     output_file->Close();
-    logger::log_debug(Form("Trigger 0 frames: %d", recotrack_events_counter));
 }
