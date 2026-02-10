@@ -85,5 +85,4 @@ root -l
 | Name | Contact |
 |---------|-------------|
 | Nicola Rubini | nicola.rubini@bo.infn.it
-|---------|-------------|
 | Roberto Preghenella | roberto.preghenella@bo.infn.it
