@@ -69,9 +69,9 @@ void tracking_altai::load_tracking_file(const std::string &input_file)
         data_map[event_id].emplace_back();
 
         ss >> data_map[event_id].back().zero_plane_x >> data_map[event_id].back().zero_plane_y >> data_map[event_id].back().zero_plane_z >> data_map[event_id].back().angcoeff_dx >> data_map[event_id].back().angcoeff_dy >> data_map[event_id].back().angcoeff_dz >> data_map[event_id].back().chi2 >> data_map[event_id].back().ndof >> data_map[event_id].back().chi2ndof >> data_map[event_id].back().timestamp;
-        data_map[event_id].back().event_id;
+        data_map[event_id].back().event_id = event_id;
     }
 
-    logger::log_info(Form("(tracking_altai::load_tracking_file) Done! Found %d track events", data_map.size()));
+    logger::log_info(Form("(tracking_altai::load_tracking_file) Done! Found %zu track events", data_map.size()));
     infile.close();
 }
