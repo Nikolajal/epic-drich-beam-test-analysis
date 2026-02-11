@@ -1,0 +1,46 @@
+# readout_conf.toml
+
+# Readout configuration
+
+[readouts.cherenkov]
+192 = "*"
+193 = "*"
+194 = "*"
+195 = "*"
+196 = "*"
+197 = "*"
+198 = "*"
+199 = "*"
+
+[readouts.timing]
+200 = [2, 4]
+
+[readouts.tracking]
+200 = [3, 5]
+
+# Sensor model per device
+
+[sensors]
+192 = "S13360-1350PE"
+193 = "S13360-1350PE"
+194 = "S13360-1350PE"
+195 = "S13360-1350PE"
+
+196 = "S13360-1375PE"
+197 = "S13360-1375PE"
+198 = "S13360-1375PE"
+199 = "S13360-1375PE"
+
+# Trigger configuration
+
+[[triggers]]
+tag    = "luca_and_finger"
+index  = 0
+device = 196
+delay  = 117
+
+[[triggers]]
+tag    = "broad_scintillator"
+index  = 1
+device = 197
+delay  = 117
