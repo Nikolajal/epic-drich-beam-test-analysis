@@ -25,8 +25,7 @@ int main(int argc, char **argv)
   lightdata_writer(data_repository, run_name, max_spill); // , force_lightdata_rebuild); TODO:  Add the force rebuild
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
-
-  std::cout << "Elapsed time: " << elapsed.count() << " s" << std::endl;
+  //logger::log_info(Form("Total time taken: %d seconds", elapsed.count()));
 
   return 0;
 }
