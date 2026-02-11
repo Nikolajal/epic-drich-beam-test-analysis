@@ -13,6 +13,8 @@
 #include <thread>
 using namespace std;
 
+//  TODO: this could probably be a derivate class (?)
+
 //  Constructors
 parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> filenames,
                                                      uint16_t frame_size)

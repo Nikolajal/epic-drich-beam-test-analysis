@@ -18,7 +18,8 @@ void recodata_writer(
     std::string run_name,
     int max_spill,
     bool force_recodata_rebuild,
-    bool force_lightdata_rebuild)
+    bool force_lightdata_rebuild,
+    std::string mapping_conf)
 {
   //  Input files
   //  --- Check if recodata has already been done
@@ -34,7 +35,7 @@ void recodata_writer(
 
   //  Generate mapping
   mapping current_mapping;
-  current_mapping.load_calib("./conf/mapping_conf.2025.toml");
+  current_mapping.load_calib(mapping_conf);
 
   //  Get calibration
   TH2F *h_calibration_data = (TH2F *)input_file->Get("TH2F_fine_calib_global_index");
@@ -144,6 +145,7 @@ void recodata_writer(
           current_recodata_event.hit_mask = encode_bit(_HITMASK_dead_lane);
           recodata.add_hit(current_recodata_event);
         }
+    recodata.add_trigger({200, _FRAME_SIZE_ / 2});
     recodata_tree->Fill();
     recodata.clear();
 

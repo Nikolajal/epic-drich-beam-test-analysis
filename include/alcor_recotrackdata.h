@@ -58,6 +58,8 @@ public:
      */
     alcor_recotrackdata_struct &recotrackdata_at(std::size_t idx);
 
+    double get_traj_angcoeff(std::size_t idx) const;
+
     /// Const version of recotrackdata_at
     const alcor_recotrackdata_struct &recotrackdata_at(std::size_t idx) const;
 

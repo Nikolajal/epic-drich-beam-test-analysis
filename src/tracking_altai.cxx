@@ -1,9 +1,10 @@
 #include "tracking_altai.h"
 
- tracking_altai::tracking_altai(const std::string &file_name) { load_tracking_file(file_name); }
+tracking_altai::tracking_altai(const std::string &file_name) { load_tracking_file(file_name); }
 
 //  Getters
 std::map<uint32_t, std::vector<tracking_altai_struct>> tracking_altai::get_data_map() const { return data_map; }
+uint32_t tracking_altai::get_number_of_events() const { return data_map.size(); }
 std::vector<tracking_altai_struct> tracking_altai::get_event_tracks(uint32_t event_id) const
 {
     auto it = data_map.find(event_id);
@@ -35,7 +36,7 @@ void tracking_altai::add_event_track(uint32_t event_id, const tracking_altai_str
 void tracking_altai::set_event_tracks(uint32_t event_id, const std::vector<tracking_altai_struct> &tracks) { data_map[event_id] = tracks; }
 
 //  Checks
-bool tracking_altai::event_has_one_track(uint32_t event_id)const { return get_event_tracks_size(event_id) == 1; }
+bool tracking_altai::event_has_one_track(uint32_t event_id) const { return get_event_tracks_size(event_id) == 1; }
 bool tracking_altai::event_has_at_least_one_track(uint32_t event_id) const { return get_event_tracks_size(event_id) > 0; }
 
 //  I/O
@@ -60,11 +61,17 @@ void tracking_altai::load_tracking_file(const std::string &input_file)
             firstLine = false;
             continue;
         }
-        if (line.find('*') != std::string::npos)
-            continue; // skip '*' rows
 
-        std::stringstream ss(line);
         int event_id;
+        std::stringstream ss(line);
+
+        if (line.find('*') != std::string::npos)
+        {
+            ss >> event_id;
+            data_map[event_id];
+            continue; // skip '*' rows
+        }
+
         ss >> event_id;
         data_map[event_id].emplace_back();
 

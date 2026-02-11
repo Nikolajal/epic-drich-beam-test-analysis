@@ -10,6 +10,8 @@ alcor_recotrackdata::alcor_recotrackdata(alcor_recodata &v)
     set_triggers_ptr(v.get_triggers_ptr());
 }
 
+double alcor_recotrackdata::get_traj_angcoeff(std::size_t idx) const { return std::hypot(recotrackdata_at(idx).traj_angcoeff_x, recotrackdata_at(idx).traj_angcoeff_y); }
+
 void alcor_recotrackdata::add_recotrackdata(const alcor_recotrackdata_struct &entry) { recotrackdata.push_back(entry); }
 alcor_recotrackdata_struct &alcor_recotrackdata::recotrackdata_at(std::size_t idx)
 {

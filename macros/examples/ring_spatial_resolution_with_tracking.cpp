@@ -37,6 +37,8 @@
  * @author Nicola Rubini
  */
 
+// TODO: improve the fit and stability of procedure.
+
 //  Load compiled libraries for analysis
 #pragma cling load("libtest_beam_analysis_dict.dylib");
 #pragma cling load("libtest_beam_analysis.dylib");
@@ -71,13 +73,14 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
+  TH1F *h_tracking_chi2 = new TH1F("h_tracking_chi2", ";tracking chi2", 1000, 0, 1);
   //  Second round selection
   TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
   TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
   TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
   TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
 
-  //  Saving the frame numebr you can speed up secondary loops
+  //  Saving the frame number you can speed up secondary loops
   std::vector<int> start_of_spill_frame_ref;
   std::vector<std::pair<int, float>> frame_of_interest_ref;
 
@@ -103,6 +106,13 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
                            { return t.index == 0; });
     if (it != current_trigger.end())
     {
+      //  Checking
+      h_tracking_chi2->Fill(recotrackdata->get_traj_angcoeff(0));
+      
+      //  Check the tracking of the event is within a certain range
+      if (recotrackdata->get_traj_angcoeff(0) > 0.001)
+        continue;
+
       //  Save trigger frames for later, ref to the actual number of used frames in the analysis
       frame_of_interest_ref.push_back({i_frame, it->fine_time});
 
@@ -290,4 +300,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   h_second_round_R_excluded->Draw();
   c_second_round_R_exc_global->cd(2);
   h_second_round_R_global->Draw();
+
+  TCanvas *c_tracking_chi2 = new TCanvas("c_tracking_chi2", "Tracking chi2 distribution", 800, 800);
+  h_tracking_chi2->Draw();
 }
