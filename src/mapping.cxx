@@ -49,16 +49,16 @@ std::optional<std::array<float, 2>> mapping::get_position_from_pdu_matrix_eoch(i
     auto row = (*do_channel) % 8 + (matrix % 2 == 0 ? 8 : 0);
 
     //  Rotate the PDU if requested
-    if (pdu_rotation[pdu - 1])
+    if (pdu_rotation[pdu])
         return get_position_from_pdu_column_row(pdu, 15 - column, 15 - row);
     return get_position_from_pdu_column_row(pdu, column, row);
 }
 std::optional<std::array<float, 2>> mapping::get_position_from_device_chip_eoch(int device, int chip, int eo_channel) const
 {
-    if (!pdu_matrix_map.count({device, chip}))
+    if (!device_chip_to_pdu_matrix.count({device, chip}))
         return std::nullopt;
-    auto pdu = pdu_matrix_map[{device, chip}][0];
-    auto matrix = pdu_matrix_map[{device, chip}][1];
+    auto pdu = device_chip_to_pdu_matrix[{device, chip}][0];
+    auto matrix = device_chip_to_pdu_matrix[{device, chip}][1];
     return get_position_from_pdu_matrix_eoch(pdu, matrix, eo_channel);
 }
 std::optional<std::array<float, 2>> mapping::get_position_from_finedata(alcor_finedata entry) const { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
@@ -95,7 +95,7 @@ void mapping::load_calib(std::string filename, bool verbose)
             int idx = std::stoi(std::string(key));
             bool flag = val.value<bool>().value_or(true);
             if (idx >= 1 && idx <= 8)
-                pdu_rotation[idx - 1] = flag;
+                pdu_rotation[idx] = flag;
         }
         logger::log_info(Form("pdu_rotation size: %zu", pdu_rotation.size()));
     }

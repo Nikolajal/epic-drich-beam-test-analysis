@@ -43,6 +43,7 @@ public:
      * @return Map of event_id to vector of tracks
      */
     std::map<uint32_t, std::vector<tracking_altai_struct>> get_data_map() const;
+    uint32_t get_number_of_events() const;
 
     /**
      * @brief Get tracks for a specific event
