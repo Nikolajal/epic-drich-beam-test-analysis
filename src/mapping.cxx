@@ -31,11 +31,10 @@ std::optional<std::array<float, 2>> mapping::get_position_from_pdu_column_row(in
     float y = 0.05 + 0.1 + 0.2 + 1.5 + 3.2 * row + (row > 7 ? 0.3f : 0.f);
 
     //  Add the full PDU center placement
-    auto it = pdu_xy_position.find(pdu);
-    if (it != pdu_xy_position.end())
+    if (pdu < pdu_xy_position.size())
     {
-        x += it->second[0];
-        y += it->second[1];
+        x += pdu_xy_position[pdu][0];
+        y += pdu_xy_position[pdu][1];
     }
 
     return std::array<float, 2>{x, y};
@@ -55,10 +54,12 @@ std::optional<std::array<float, 2>> mapping::get_position_from_pdu_matrix_eoch(i
 }
 std::optional<std::array<float, 2>> mapping::get_position_from_device_chip_eoch(int device, int chip, int eo_channel) const
 {
-    if (!device_chip_to_pdu_matrix.count({device, chip}))
+    auto it = device_chip_to_pdu_matrix.find({device, chip});
+    if (it == device_chip_to_pdu_matrix.end())
         return std::nullopt;
-    auto pdu = device_chip_to_pdu_matrix[{device, chip}][0];
-    auto matrix = device_chip_to_pdu_matrix[{device, chip}][1];
+
+    auto pdu = it->second[0];
+    auto matrix = it->second[1];
     return get_position_from_pdu_matrix_eoch(pdu, matrix, eo_channel);
 }
 std::optional<std::array<float, 2>> mapping::get_position_from_finedata(alcor_finedata entry) const { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
