@@ -92,6 +92,8 @@ public:
     int get_pixel(int i) const;
     int get_calib_index(int i) const;
     int get_device_index(int i) const;
+
+    std::optional<trigger_struct> get_trigger_by_index(uint8_t index) const;
     ///@}
 
     /** @name Pure Setters */
@@ -125,14 +127,30 @@ public:
 
     /** @name Boolean Checks */
     ///@{
+    bool check_trigger(uint8_t v);
+    /**
+     * @brief Return if the event is flagged as start of spill.
+     * Start of spill events list all available channels, so they can be used to keep track of spills and channel availability.
+     * @return Flag stating if the event is start of spill
+     */
+    bool is_start_of_spill();
+    bool is_first_frames();
+    bool is_timing_available();
+    bool is_embedded_tracking_available();
+    bool is_ring_found();
     bool check_hit_mask(int i, uint32_t v);
-
     /**
      * @brief Return if the hit is flagged as afterpulse.
      * During reconstruction a check is performed to flag the second hit of consequent hits as afterpulse if its time is 200ns or less w.r.t. the previous hit.
      * @return Flag stating if the hit is an afterpulse or not
      */
     bool is_afterpulse(int i);
+
+    /**
+     * @brief Return if the hit is flagged as afterpulse.
+     * During reconstruction a check is performed to flag the second hit of consequent hits as afterpulse if its time is 200ns or less w.r.t. the previous hit.
+     * @return Flag stating if the hit is an afterpulse or not
+     */
     bool is_ring_tagged(int i);
     ///@}
 
