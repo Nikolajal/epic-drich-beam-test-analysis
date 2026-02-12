@@ -45,6 +45,17 @@ int alcor_recodata::get_column(int i) const { return ((recodata[i].global_index 
 int alcor_recodata::get_pixel(int i) const { return ((recodata[i].global_index % 1024) % 32) % 4; }
 int alcor_recodata::get_calib_index(int i) const { return get_hit_tdc(i) + 4 * get_eo_channel(i) + 128 * get_chip(i); }
 int alcor_recodata::get_device_index(int i) const { return get_eo_channel(i) + 64 * (get_chip(i) / 2); }
+//  --- --- Trigger info
+std::optional<trigger_struct> alcor_recodata::get_trigger_by_index(uint8_t index) const
+{
+    auto current_trigger = get_triggers();
+    auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [index](const trigger_struct &t)
+                           { return t.index == index; });
+    if (it != current_trigger.end())
+        return *it;
+    else
+        return std::nullopt;
+}
 
 //  Setters
 //  --- Pure setters
@@ -78,6 +89,12 @@ void alcor_recodata::add_hit(uint32_t gi, float x, float y, uint32_t mask, float
 void alcor_recodata::add_hit(alcor_recodata_struct hit) { recodata.push_back(hit); }
 
 //  Bool checks
+bool alcor_recodata::check_trigger(uint8_t v) { return get_trigger_by_index(v).has_value(); }
+bool alcor_recodata::is_start_of_spill() { return check_trigger(_TRIGGER_START_OF_SPILL_); }
+bool alcor_recodata::is_first_frames() { return check_trigger(_TRIGGER_FIRST_FRAMES_); }
+bool alcor_recodata::is_timing_available() { return check_trigger(_TRIGGER_TIMING_); }
+bool alcor_recodata::is_embedded_tracking_available() { return check_trigger(_TRIGGER_TRACKING_); }
+bool alcor_recodata::is_ring_found() { return check_trigger(_TRIGGER_RING_FOUND_); }
 bool alcor_recodata::check_hit_mask(int i, uint32_t v) { return (get_hit_mask(i) & v) != 0; }
 bool alcor_recodata::is_afterpulse(int i) { return check_hit_mask(i, encode_bit(_HITMASK_afterpulse)); }
 bool alcor_recodata::is_ring_tagged(int i) { return check_hit_mask(i, encode_bits({_HITMASK_ring_tag_first, _HITMASK_ring_tag_second})); }
