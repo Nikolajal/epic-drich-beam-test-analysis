@@ -145,7 +145,7 @@ void recodata_writer(
           current_recodata_event.hit_mask = encode_bit(_HITMASK_dead_lane);
           recodata.add_hit(current_recodata_event);
         }
-    recodata.add_trigger({200, _FRAME_SIZE_ / 2});
+    recodata.add_trigger({_TRIGGER_START_OF_SPILL_, _FRAME_SIZE_ / 2});
     recodata_tree->Fill();
     recodata.clear();
 
@@ -332,7 +332,7 @@ void recodata_writer(
       }
 
       if (ring_found)
-        recodata.add_trigger({102, _FRAME_SIZE_ / 2});
+        recodata.add_trigger({_TRIGGER_RING_FOUND_, _FRAME_SIZE_ / 2});
 
       //  Fill recodata tree
       recodata_tree->Fill();

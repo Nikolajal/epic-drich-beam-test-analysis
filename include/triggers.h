@@ -8,6 +8,8 @@ enum trigger_number
 {
     _TRIGGER_FIRST_FRAMES_ = 100,
     _TRIGGER_TIMING_ = 101,
+    _TRIGGER_TRACKING_ = 102,
+    _TRIGGER_RING_FOUND_ = 103,
     _TRIGGER_START_OF_SPILL_ = 200
 };
 
