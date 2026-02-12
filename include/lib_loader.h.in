@@ -1,0 +1,4 @@
+#pragma once
+
+// Load dynamic libraries (CMake will replace placeholders)
+#pragma cling load("@BEAM_MAIN_LIB@")
