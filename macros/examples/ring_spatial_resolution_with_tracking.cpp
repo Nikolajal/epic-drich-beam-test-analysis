@@ -1,3 +1,5 @@
+#include "../lib_loader.h"
+
 /**
  * @file ring_spatial_resolution.cpp
  * @brief Calculate the spatial resolution of the ring.
@@ -38,10 +40,6 @@
  */
 
 // TODO: improve the fit and stability of procedure.
-
-//  Load compiled libraries for analysis
-#pragma cling load("libtest_beam_analysis_dict.dylib");
-#pragma cling load("libtest_beam_analysis.dylib");
 
 std::array<float, 2> time_cut_boundaries = {-45., 20.};
 

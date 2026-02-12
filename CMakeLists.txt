@@ -1,40 +1,49 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(beam_test_analysis LANGUAGES CXX)
 
 # ----------------------------
-# C++ standard
+# Set default install prefix (user-local) if not specified
 # ----------------------------
+if(NOT CMAKE_INSTALL_PREFIX)
+    if(WIN32)
+        set(CMAKE_INSTALL_PREFIX "$ENV{USERPROFILE}/.local" CACHE PATH "Default install prefix" FORCE)
+    else()
+        set(CMAKE_INSTALL_PREFIX "$ENV{HOME}/.local" CACHE PATH "Default install prefix" FORCE)
+    endif()
+endif()
+
+# Place executables in build/bin during build
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# --------------------------------------------------
+# C++ Standard
+# --------------------------------------------------
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ----------------------------
-# RPATH settings (macOS + ROOT)
-# ----------------------------
-set(CMAKE_MACOSX_RPATH ON)
-set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/lib")
-set(CMAKE_INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib")
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g") # only for debug, breaks ROOT loading the libraries
+# Windows: auto-export symbols for shared library
+if(WIN32)
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
 
-
-# ----------------------------
-# Fetch external dependencies
-# ----------------------------
+# --------------------------------------------------
+# Dependencies (FetchContent)
+# --------------------------------------------------
 include(FetchContent)
 
-#   --- CLI
+# CLI11
 FetchContent_Declare(
-  CLI11
-  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-  GIT_TAG v2.4.2
+    CLI11
+    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+    GIT_TAG v2.4.2
 )
 FetchContent_MakeAvailable(CLI11)
 
-#   --- TOML++
+# toml++
 FetchContent_Declare(
     tomlplusplus
     GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-    GIT_TAG v3.3.0  # or latest stable
+    GIT_TAG v3.3.0
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
@@ -42,65 +51,18 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     cppinfra
     GIT_REPOSITORY https://github.com/Nikolajal/ccpinfra.git
-    GIT_TAG main  # or latest stable
+    GIT_TAG main
 )
 FetchContent_MakeAvailable(cppinfra)
 
-# ----------------------------
-# Find ROOT
-# ----------------------------
-find_package(ROOT REQUIRED COMPONENTS RIO Tree Hist)
-include(${ROOT_USE_FILE})
+# --------------------------------------------------
+# ROOT
+# --------------------------------------------------
+find_package(ROOT REQUIRED COMPONENTS RIO Tree Hist Graf Gui)
 
-# ----------------------------
-# Include directories
-# ----------------------------
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include         # Main headers
-    ${tomlplusplus_SOURCE_DIR}/include          # toml++ headers
-    ${cppinfra_SOURCE_DIR}/include              # cppinfra headers  
-    # ${CMAKE_CURRENT_SOURCE_DIR}/external/utility-cpp/include  # Submodule if used
-)
-
-# ----------------------------
-# Add shared library
-# ----------------------------
-add_library(test_beam_analysis SHARED
-    src/config_reader.cxx
-    src/triggers.cxx
-    src/alcor_data.cxx
-    src/alcor_finedata.cxx
-    src/alcor_lightdata.cxx
-    src/alcor_recodata.cxx
-    src/alcor_spilldata.cxx
-    src/alcor_recotrackdata.cxx
-    src/mapping.cxx
-    src/tracking_altai.cxx
-    src/alcor_data_streamer.cxx
-    src/streaming_framer.cxx
-    src/parallel_streaming_framer.cxx
-    src/lightdata_writer.cxx
-    src/recodata_writer.cxx
-    src/recotrackdata_writer.cxx
-)
-
-# Link ROOT to the library
-target_link_libraries(test_beam_analysis
-    PUBLIC ${ROOT_LIBRARIES}
-    PUBLIC CLI11::CLI11
-    # PUBLIC cppInfra::cppInfra
-)
-
-# Set library output directory
-set_target_properties(test_beam_analysis PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-    BUILD_RPATH ${CMAKE_BINARY_DIR}/lib
-    INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib
-)
-
-# ----------------------------
-# Generate ROOT dictionary
-# ----------------------------
+# --------------------------------------------------
+# Dictionary Headers
+# --------------------------------------------------
 set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/config_reader.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/triggers.h
@@ -120,73 +82,135 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recotrackdata_writer.h
 )
 
-set(DICT_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
+# --------------------------------------------------
+# ROOT Dictionary
+# --------------------------------------------------
 ROOT_GENERATE_DICTIONARY(
-    G__test_beam_analysis_dict
+    G__beam_test_analysis_dict
     ${DICT_HEADERS}
     LINKDEF ${CMAKE_CURRENT_SOURCE_DIR}/dict/alcor_linkdef.h
+    OPTIONS -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        OPTIONS
+        -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        -I${cppinfra_SOURCE_DIR}/include
+        -I${tomlplusplus_SOURCE_DIR}/include
 )
 
-set_target_properties(G__test_beam_analysis_dict PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-    BUILD_RPATH ${CMAKE_BINARY_DIR}/lib
-    INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib
+# --------------------------------------------------
+# Library Sources
+# --------------------------------------------------
+set(SRC_FILES
+    src/config_reader.cxx
+    src/triggers.cxx
+    src/alcor_data.cxx
+    src/alcor_finedata.cxx
+    src/alcor_lightdata.cxx
+    src/alcor_recodata.cxx
+    src/alcor_spilldata.cxx
+    src/alcor_recotrackdata.cxx
+    src/mapping.cxx
+    src/tracking_altai.cxx
+    src/alcor_data_streamer.cxx
+    src/streaming_framer.cxx
+    src/parallel_streaming_framer.cxx
+    src/lightdata_writer.cxx
+    src/recodata_writer.cxx
+    src/recotrackdata_writer.cxx
 )
 
-# Create dictionary library
-add_library(test_beam_analysis_dict SHARED G__test_beam_analysis_dict.cxx)
-target_link_libraries(test_beam_analysis_dict PUBLIC ${ROOT_LIBRARIES} test_beam_analysis)
+# --------------------------------------------------
+# Shared Library
+# --------------------------------------------------
+add_library(beam_test_analysis SHARED
+    ${SRC_FILES}
+    G__beam_test_analysis_dict.cxx
+)
 
-# ----------------------------
-# Add executable
-# ----------------------------
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/lib_loader.h"
+    @ONLY
+)
+
+target_include_directories(beam_test_analysis
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+        ${cppinfra_SOURCE_DIR}/include
+        ${tomlplusplus_SOURCE_DIR}/include
+)
+
+target_link_libraries(beam_test_analysis
+    PUBLIC
+        ROOT::RIO
+        ROOT::Tree
+        ROOT::Hist
+        ROOT::Graf
+        ROOT::Gui
+        CLI11::CLI11
+        tomlplusplus::tomlplusplus
+)
+
+if(APPLE)
+    set_target_properties(beam_test_analysis PROPERTIES
+        INSTALL_RPATH "@loader_path"
+    )
+endif()
+
+# --------------------------------------------------
+# Executables
+# --------------------------------------------------
 add_executable(lightdata_writer macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer macros/utilities/recotrackdata_writer.cpp)
 
-# Link the shared library and dictionary to the executable
-target_link_libraries(lightdata_writer
-    PRIVATE test_beam_analysis
-    PRIVATE test_beam_analysis_dict
-    PRIVATE ${ROOT_LIBRARIES}
-)
-target_link_libraries(recodata_writer
-    PRIVATE test_beam_analysis
-    PRIVATE test_beam_analysis_dict
-    PRIVATE ${ROOT_LIBRARIES}
-)
-target_link_libraries(recotrackdata_writer
-    PRIVATE test_beam_analysis
-    PRIVATE test_beam_analysis_dict
-    PRIVATE ${ROOT_LIBRARIES}
-)
+target_link_libraries(lightdata_writer PRIVATE beam_test_analysis)
+target_link_libraries(recodata_writer PRIVATE beam_test_analysis)
+target_link_libraries(recotrackdata_writer PRIVATE beam_test_analysis)
 
-# Set executable output folder
-set_target_properties(lightdata_writer PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-)
-set_target_properties(recodata_writer PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-)
-set_target_properties(recotrackdata_writer PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-)
-
-# ----------------------------
-# Optional: install rules
-# ----------------------------
-install(TARGETS test_beam_analysis test_beam_analysis_dict lightdata_writer recodata_writer recotrackdata_writer
+# --------------------------------------------------
+# Install Rules
+# --------------------------------------------------
+install(TARGETS
+    beam_test_analysis
+    lightdata_writer
+    recodata_writer
+    recotrackdata_writer
+    EXPORT beam_test_analysisTargets
     LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
-)
-
-# Install the PCM explicitly
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libtest_beam_analysis_dict_rdict.pcm
-    DESTINATION lib
+    RUNTIME DESTINATION bin
 )
 
 install(DIRECTORY include/ DESTINATION include)
+
+# Install ROOT dictionary artifacts
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/libbeam_test_analysis_dict_rdict.pcm
+    DESTINATION lib
+    OPTIONAL
+)
+
+# Determine dynamic library extension
+if(APPLE)
+    set(DYNLIB_EXT ".dylib")
+elseif(WIN32)
+    set(DYNLIB_EXT ".dll")
+else()
+    set(DYNLIB_EXT ".so")
+endif()
+
+# Paths
+set(BEAM_DICT_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis_dict${DYNLIB_EXT}")
+set(BEAM_MAIN_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
+
+# Configure the header
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
+    @ONLY
+)
+
+# Install so macros can include it
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
+        DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/macros/")
