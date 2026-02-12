@@ -126,6 +126,12 @@ add_library(beam_test_analysis SHARED
     G__beam_test_analysis_dict.cxx
 )
 
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/lib_loader.h"
+    @ONLY
+)
+
 target_include_directories(beam_test_analysis
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -144,6 +150,12 @@ target_link_libraries(beam_test_analysis
         CLI11::CLI11
         tomlplusplus::tomlplusplus
 )
+
+if(APPLE)
+    set_target_properties(beam_test_analysis PROPERTIES
+        INSTALL_RPATH "@loader_path"
+    )
+endif()
 
 # --------------------------------------------------
 # Executables
@@ -178,3 +190,27 @@ install(FILES
     DESTINATION lib
     OPTIONAL
 )
+
+# Determine dynamic library extension
+if(APPLE)
+    set(DYNLIB_EXT ".dylib")
+elseif(WIN32)
+    set(DYNLIB_EXT ".dll")
+else()
+    set(DYNLIB_EXT ".so")
+endif()
+
+# Paths
+set(BEAM_DICT_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis_dict${DYNLIB_EXT}")
+set(BEAM_MAIN_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
+
+# Configure the header
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
+    @ONLY
+)
+
+# Install so macros can include it
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
+        DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/macros/")
