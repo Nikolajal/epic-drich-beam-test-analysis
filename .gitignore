@@ -6,3 +6,4 @@ Data
 */*.so
 *alcor_fine_calibration.txt
 build/
+macros/*.h
