@@ -21,11 +21,10 @@ public:
   void load_calib(std::string filename, bool verbose = false);
 
 private:
+  //  Static definition of matrix channels
   static std::map<int, std::vector<int>> matrix_to_do_channel;
   //  Loaded from calib file
   static std::map<int, bool> pdu_rotation;
   static std::map<int, std::array<float, 2>> pdu_xy_position;
   static std::map<std::array<int, 2>, std::array<int, 2>> device_chip_to_pdu_matrix;
-  // constexpr static std::array<float, 2> position_offset = {1.7, 1.7}; // the centre of the SiPM in the bottom-left corner (A1)
-  // constexpr static std::array<float, 2> position_pitch = {3.2, 3.2};  // the distance between the SiPM cetres
 };
