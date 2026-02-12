@@ -1,3 +1,5 @@
+#include "../lib_loader.h"
+
 /**
  * @file trigger_coincidence.cpp
  * @brief Examine the coincidence of triggers and detector-box signals.
@@ -29,11 +31,6 @@
  *
  * @author Nicola Rubini
  */
-
-
-//  Load compiled libraries for analysis
-#pragma cling load("libtest_beam_analysis_dict.dylib");
-#pragma cling load("libtest_beam_analysis.dylib");
 
 void afterpulse_treatment(std::string data_repository, std::string run_name, int max_frames = 10000000)
 {
