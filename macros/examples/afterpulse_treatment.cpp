@@ -69,32 +69,31 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     //  Load data for current frame
     recodata_tree->GetEntry(i_frame);
 
-    //  _HITMASK_dead_lane signals the event is start of spill, tells which channels are available
-    if (decode_bits(recodata->get_hit_mask(0))[0] == _HITMASK_dead_lane)
+    //  Takes note of spill evolution
+    if (recodata->is_start_of_spill())
     {
       //  You can internally keep track of spills
       i_spill++;
-      //  This event is not of physical interest
+
+      //  This event is not of physical interest, skip it
       continue;
     }
 
     //  Select Luca AND trigger (0) or timing trigger (101)
-    auto current_trigger = recodata->get_triggers();
-    auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
-                           { return t.index == 0; });
-    if (it != current_trigger.end())
+    auto default_hardware_trigger = recodata->get_trigger_by_index(0);
+    if (default_hardware_trigger)
     {
       //  Loop on hits
       for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
       {
         //  Fill time distribution to check
-        h_t_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
+        h_t_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
 
         //  Remove afterpulse
         if (recodata->is_afterpulse(current_hit))
-          h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
+          h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
         else
-          h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - it->fine_time);
+          h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
       }
     }
   }

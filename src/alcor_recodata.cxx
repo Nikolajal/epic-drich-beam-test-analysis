@@ -56,6 +56,7 @@ std::optional<trigger_struct> alcor_recodata::get_trigger_by_index(uint8_t index
     else
         return std::nullopt;
 }
+std::optional<trigger_struct> alcor_recodata::get_timing_trigger()const { return get_trigger_by_index(_TRIGGER_TIMING_); }
 
 //  Setters
 //  --- Pure setters

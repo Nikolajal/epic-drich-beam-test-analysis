@@ -94,6 +94,8 @@ public:
     int get_device_index(int i) const;
 
     std::optional<trigger_struct> get_trigger_by_index(uint8_t index) const;
+    std::optional<trigger_struct> get_timing_trigger() const;
+
     ///@}
 
     /** @name Pure Setters */
