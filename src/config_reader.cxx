@@ -183,3 +183,5 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
     infile.close();
     return readout_config;
 }
+
+std::unordered_map<std::string, run_info_struct> run_info::run_info_database = {};
