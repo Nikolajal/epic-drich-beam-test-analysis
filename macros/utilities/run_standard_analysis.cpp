@@ -6,7 +6,7 @@
 
 int main(int argc, char **argv)
 {
-  CLI::App app{"Recodata writer"};
+  CLI::App app{"Standard analysis launcher"};
 
   std::string data_repository;
   std::string run_name;

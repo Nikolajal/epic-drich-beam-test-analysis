@@ -185,3 +185,4 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
 }
 
 std::unordered_map<std::string, run_info_struct> run_info::run_info_database = {};
+std::unordered_map<std::string, std::vector<std::string>> run_info::run_list_database= {};

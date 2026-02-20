@@ -1,0 +1,89 @@
+# 2025 full database of runs info
+# The first run defines the standard configuration, 
+# all subsequents runs only specify the filed that changed
+#  w.r.t the previous run
+#
+
+[runs."20251111-164951"]
+aerogel_mirror = 20
+beam_polarity = "positive"
+beam_energy = 180
+rdo_firmware = "rdo-v1.3.0"
+timing_firmware = "single-ext-std-tb2024-base.02"
+temperature = -28	
+v_bias = 52.0
+n_spills = 50
+timing_on_axis = true
+op_mode = 1
+delta_thr = 5
+radiators = [
+  { name = "Aerogel", refindex = 1.021, tag = "AG22-J001", depth = 2 }, # depth = cm
+  { name = "Aerogel", refindex = 1.0207, tag = "AG22-J003", depth = 2, side = "B" } # depth = cm
+]
+
+[runs."20251111-172946"]
+timing_on_axis = false
+
+[runs."20251111-181940"]
+v_bias = 50.50
+n_spills = 10
+
+[runs."20251111-182949"]
+v_bias = 50.75
+
+[runs."20251111-184527"]
+v_bias = 51.00
+
+[runs."20251111-190706"]
+v_bias = 51.25
+
+[runs."20251111-191852"]
+v_bias = 51.50
+
+[runs."20251111-193024"]
+v_bias = 51.75
+
+[runs."20251111-193942"]
+v_bias = 52.00
+
+[runs."20251111-204935"]
+v_bias = 52.25
+
+[runs."20251111-205721"]
+v_bias = 52.50
+
+[runs."20251111-210353"]
+v_bias = 52.75
+
+[runs."20251111-210949"]
+v_bias = 53.00
+
+[runs."20251111-212219"]
+v_bias = 53.25
+
+[runs."20251111-212942"]
+v_bias = 53.50
+
+[runs."20251111-214103"]
+v_bias = 53.75
+
+[runs."20251111-215015"]
+v_bias = 54.00
+
+[runs."20251111-220133"]
+v_bias = 54.25
+
+[runs."20251111-221010"]
+v_bias = 54.50
+
+[runs."20251111-222010"]
+v_bias = 54.75
+
+[runs."20251111-224109"]
+v_bias = 55.00
+
+[runs."20251111-225920"]
+v_bias = 55.25
+
+[runs."20251111-232638"]
+v_bias = 55.50

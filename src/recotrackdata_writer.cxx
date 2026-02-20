@@ -91,6 +91,22 @@ void recotrackdata_writer(
         {
             //  Trigger found, trigger 0 is the sync trigger for tracking
             per_spill_events_counter_recodata[i_spill]++;
+
+            //  Keep track of the actual number of frames used in the analysis
+            altai_events_counter++;
+
+            //  Exclude events with 0 or multiple tracks
+            if (!current_tracking.event_has_one_track(altai_events_counter))
+                continue;
+
+            test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
+
+            //  Recotrack events counter
+            recotrack_events_counter++;
+            recotrackdata->import_event(current_tracking.get_event_tracks(altai_events_counter));
+
+            recotrackdata_tree->Fill();
+            recotrackdata->clear();
         }
     }
 
@@ -133,22 +149,3 @@ void recotrackdata_writer(
     test2->Write();
     output_file->Close();
 }
-
-/*
-
-            //  Keep track of the actual number of frames used in the analysis
-            altai_events_counter++;
-
-            //  Exclude events with 0 or multiple tracks
-            if (!current_tracking.event_has_one_track(altai_events_counter))
-                continue;
-
-            test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
-
-            //  Recotrack events counter
-            recotrack_events_counter++;
-            recotrackdata->import_event(current_tracking.get_event_tracks(altai_events_counter));
-
-            recotrackdata_tree->Fill();
-            recotrackdata->clear();
-*/
