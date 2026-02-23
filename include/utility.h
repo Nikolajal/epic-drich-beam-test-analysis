@@ -74,10 +74,9 @@ inline std::vector<uint8_t> decode_bits(uint32_t mask)
   while (mask)
   {
     uint8_t bit = count_trailing_zeros(mask);
-    result.push_back(bit);
+    result[bit] = bit;
     mask &= ~(1u << bit); // clear that bit
   }
-
   return result;
 }
 
