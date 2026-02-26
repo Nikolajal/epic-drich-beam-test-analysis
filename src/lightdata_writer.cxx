@@ -16,6 +16,31 @@ void lightdata_writer(
   std::filesystem::path base_dir = data_repository + "/" + run_name;
   std::vector<std::string> filenames;
   std::unordered_map<std::string, std::vector<std::string>> print_found_files;
+
+  // 1️⃣ Check existence
+  if (!std::filesystem::exists(base_dir))
+  {
+    std::cerr << "Error: Directory does not exist: "
+              << base_dir << std::endl;
+    return;
+  }
+
+  // 2️⃣ Check it's actually a directory
+  if (!std::filesystem::is_directory(base_dir))
+  {
+    std::cerr << "Error: Not a directory: "
+              << base_dir << std::endl;
+    return;
+  }
+
+  // 3️⃣ Check if empty
+  if (std::filesystem::is_empty(base_dir))
+  {
+    std::cout << "Warning: Directory is empty: "
+              << base_dir << std::endl;
+    return;
+  }
+
   for (const auto &device_dir : std::filesystem::directory_iterator(base_dir))
   {
     //  Skip non directories

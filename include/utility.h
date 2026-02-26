@@ -190,6 +190,7 @@ inline double clip_phi(double phi, double low_bound, double high_bound)
   {
     /* code */
   }
+  return -1.;
 }
 
 inline double ring_fit_function_sigma_function(double phi, double baseline_sigma, std::vector<std::array<double, 4>> input_values = {})

@@ -72,7 +72,7 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
       for (const auto &global_index : active_sensors)
         active_sensors_count[global_index] = 0;
       for (const auto &hit : recodata->get_recodata())
-        active_sensors_count[hit.global_index / 4]++;
+        active_sensors_count[hit.global_index/4]++;
 
       //  Fill the DCR histogram
       for (auto &[global_index, count] : active_sensors_count)
@@ -101,6 +101,6 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
   TCanvas *c_test2 = new TCanvas("c_test2", "Test Histogram", 800, 600);
   h_dcr_per_channel->Draw();
   TCanvas *c_test3 = new TCanvas("c_test3", "Average DCR Histogram", 800, 600);
-  h_average_dcr->Draw();
+  //h_average_dcr->Draw();
   h_average_dcr_2->Draw("SAME");
 }
