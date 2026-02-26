@@ -17,7 +17,7 @@
 //  Add to a config file, devise a pass-down mechanism to propagate the info to recodata
 #define _FRAME_SIZE_ 1024
 #define _FRAME_LENGTH_NS_ (_FRAME_SIZE_ * 3.125) //   3.125ns per clock cycle at 320MHz
-#define _FIRST_FRAMES_TRIGGER_ 2500 
+#define _FIRST_FRAMES_TRIGGER_ 2500
 #define _AFTERPULSE_DEADTIME_ 64 // 200ns
 
 class parallel_streaming_framer
@@ -37,6 +37,7 @@ public:
     // Setters
     void set_spilldata(alcor_spilldata v);
     void set_spilldata_link(alcor_spilldata &v);
+    void set_parallel_cores(uint16_t v);
 
     // I/O operations
     bool next_spill();
@@ -47,6 +48,7 @@ public:
 
 private:
     // Data
+    uint16_t n_threads_requested;
     std::vector<alcor_data_streamer> data_streams;
     alcor_spilldata spilldata;
     std::vector<trigger_config_struct> triggers;

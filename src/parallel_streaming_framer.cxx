@@ -27,7 +27,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
                                                      std::string trigger_config_file,
                                                      std::string readout_config_file,
                                                      uint16_t frame_size)
-    : _frame_size(frame_size)
+    : _frame_size(frame_size), n_threads_requested(0)
 {
     // Create streams
     data_streams.reserve(filenames.size());
@@ -35,7 +35,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
     {
         data_streams.emplace_back(current_filename);
         if (!data_streams.back().is_valid())
-            cerr << "[WARNING] Failed to open streamer: " << current_filename << std::endl;
+            logger::log_warning("[WARNING] Failed to open streamer: " + current_filename);
     }
 
     // QA plots
@@ -61,6 +61,7 @@ std::map<std::string, TH1 *> parallel_streaming_framer::get_QA_plots() { return 
 // Setters
 void parallel_streaming_framer::set_spilldata(alcor_spilldata v) { spilldata = v; }
 void parallel_streaming_framer::set_spilldata_link(alcor_spilldata &v) { spilldata = v; }
+void parallel_streaming_framer::set_parallel_cores(uint16_t v) { n_threads_requested = v; }
 
 // Initialize QA plots
 void parallel_streaming_framer::init_QA_plots() {}
@@ -201,7 +202,7 @@ bool parallel_streaming_framer::next_spill()
 
     //  Check machine cores for safe threading
     unsigned int n_threads = std::thread::hardware_concurrency();
-    n_threads = 8 * std::min<size_t>(n_threads - 2, 2); //  Leave 2 cores free for general machine work, 2 streams per core are manageable
+    n_threads = std::min<uint16_t>(n_threads_requested, 8 * std::min<size_t>(n_threads - 2, 2)); //  Leave 2 cores free for general machine work, 8 streams per core are manageable
 
     //  Generate result vector
     std::vector<std::future<alcor_spilldata>> async_processing_results;
