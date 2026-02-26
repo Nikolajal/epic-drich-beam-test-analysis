@@ -16,7 +16,7 @@
 
 //  Add to a config file, devise a pass-down mechanism to propagate the info to recodata
 #define _FRAME_SIZE_ 1024
-#define _FRAME_LENGTH_NS_ _FRAME_SIZE_ * 3.125 //   3.125ns per clock cycle at 320MHz
+#define _FRAME_LENGTH_NS_ (_FRAME_SIZE_ * 3.125) //   3.125ns per clock cycle at 320MHz
 #define _FIRST_FRAMES_TRIGGER_ 2500 
 #define _AFTERPULSE_DEADTIME_ 64 // 200ns
 

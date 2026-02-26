@@ -52,7 +52,7 @@ void lightdata_writer(
   }
 
   //  Create streaming framer
-  //  TODO: Add FIFO to the comnfig file (2024-2023 have FIFO 24 the triggers.)
+  //  TODO: Add FIFO to the config file (2024-2023 have FIFO 24 the triggers.)
   parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
 
   //  Prepare output tree

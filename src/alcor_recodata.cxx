@@ -31,7 +31,7 @@ float alcor_recodata::get_hit_phi(int i, std::array<float, 2> v) const { return 
 //  --- --- Randomised coordinates
 float alcor_recodata::get_hit_x_rnd(int i) const { return recodata[i].hit_x + (_rnd_(_global_gen_) * 3.0 - 1.5); }
 float alcor_recodata::get_hit_y_rnd(int i) const { return recodata[i].hit_y + (_rnd_(_global_gen_) * 3.0 - 1.5); }
-float alcor_recodata::get_hit_r_rnd(int i) const { return get_hit_r(i, {0.f, 0.f}); }
+float alcor_recodata::get_hit_r_rnd(int i) const { return get_hit_r_rnd(i, {0.f, 0.f}); }
 float alcor_recodata::get_hit_r_rnd(int i, std::array<float, 2> v) const { return std::hypot(get_hit_x_rnd(i) - v[0], get_hit_y_rnd(i) - v[1]); }
 float alcor_recodata::get_hit_phi_rnd(int i) const { return get_hit_phi_rnd(i, {0.f, 0.f}); }
 float alcor_recodata::get_hit_phi_rnd(int i, std::array<float, 2> v) const { return std::atan2(get_hit_y_rnd(i) - v[1], get_hit_x_rnd(i) - v[0]); }

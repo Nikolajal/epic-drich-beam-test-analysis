@@ -129,22 +129,24 @@ void recodata_writer(
     trigger_edge_rejection.clear();
     auto lanes_participating = spilldata->get_not_dead_participants();
     for (auto [device, lanes] : lanes_participating)
-      for (auto current_lane : lanes)
-        for (auto i_channel = 0; i_channel < 8; ++i_channel)
-        {
-          auto global_index = 256 * (device - 192) + 8 * (int)current_lane + i_channel;
-          participants_channel[global_index] = {};
-          h_active_participants_per_channel->Fill(global_index, 1. / all_spills);
+      if (device < 200) // TODO: Skip timin, to be done properly
+        for (auto current_lane : lanes)
+          if (current_lane)
+            for (auto i_channel = 0; i_channel < 8; ++i_channel)
+            {
+              auto global_index = get_global_index(device, current_lane / 4, 8 * (current_lane % 4) + i_channel, 0); // (int device, int chip, int channel, int tdc) //4*(256 * (device - 192) + 8 * (int)current_lane + i_channel);
+              participants_channel[global_index] = {};
+              h_active_participants_per_channel->Fill(global_index, 1. / all_spills);
 
-          //  Hit particiapnt mask
-          alcor_recodata_struct current_recodata_event;
-          current_recodata_event.global_index = global_index;
-          current_recodata_event.hit_x = index_to_hit_xy[global_index][0];
-          current_recodata_event.hit_y = index_to_hit_xy[global_index][1];
-          current_recodata_event.hit_t = 0.; // ns
-          current_recodata_event.hit_mask = encode_bit(_HITMASK_dead_lane);
-          recodata.add_hit(current_recodata_event);
-        }
+              //  Hit particiapnt mask
+              alcor_recodata_struct current_recodata_event;
+              current_recodata_event.global_index = global_index;
+              current_recodata_event.hit_x = index_to_hit_xy[global_index][0];
+              current_recodata_event.hit_y = index_to_hit_xy[global_index][1];
+              current_recodata_event.hit_t = 0.; // ns
+              current_recodata_event.hit_mask = encode_bit(_HITMASK_dead_lane);
+              recodata.add_hit(current_recodata_event);
+            }
     recodata.add_trigger({_TRIGGER_START_OF_SPILL_, _FRAME_SIZE_ / 2});
     recodata_tree->Fill();
     recodata.clear();

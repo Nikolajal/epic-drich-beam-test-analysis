@@ -66,9 +66,9 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
 
 struct radiator_info_struct
 {
-    std::string name;
-    double refindex;
+    std::string type;
     std::string tag;
+    double refindex;
     double depth;
     std::string side;
 };
@@ -233,8 +233,8 @@ public:
                                 if (auto r_tbl = r.as_table())
                                 {
                                     auto &rad = current_run_info.radiators.emplace_back();
-                                    if (auto *n = r_tbl->get("name"))
-                                        rad.name = n->value_or("");
+                                    if (auto *n = r_tbl->get("type"))
+                                        rad.type = n->value_or("");
                                     if (auto *n = r_tbl->get("refindex"))
                                         rad.refindex = n->value_or(0.0);
                                     if (auto *n = r_tbl->get("tag"))

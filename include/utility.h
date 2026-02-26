@@ -11,6 +11,9 @@
 #include <Fit/Fitter.h>
 #include <TEllipse.h>
 #include <TH1.h>
+#include <TH2.h>
+#include <TGraph.h>
+#include <TGraph2D.h>
 #include <TFile.h>
 #include <TTree.h>
 #include <TF1.h>
@@ -170,6 +173,196 @@ inline circle_fit_results fit_circle(std::vector<std::array<float, 2>> points, s
   test[2] = result[2][0];
   auto myChi2 = chi2_function(test);
 
+  return result;
+}
+
+inline double logistic(double variable, double amplitude, double center_1, double sigma_1, double center_2, double sigma_2)
+{
+  return amplitude *                                                                                              // Amplitude
+                                                                                                                  // (1. / (1. + exp(-(center_2 - center_1) / sigma_1)) - 1. / (1. + exp(-(center_2 - center_1) / sigma_2))) * // Normalisation
+         (1. / (1. + exp(-(variable - center_1) / sigma_1)) - 1. / (1. + exp(-(variable - center_2) / sigma_2))); // Difference of logistics
+}
+
+inline double clip_phi(double phi, double low_bound, double high_bound)
+{
+  double result = phi;
+  while (phi < low_bound || phi >= high_bound)
+  {
+    /* code */
+  }
+}
+
+inline double ring_fit_function_sigma_function(double phi, double baseline_sigma, std::vector<std::array<double, 4>> input_values = {})
+{
+  double result = baseline_sigma;
+  for (auto current_logistic : input_values)
+  {
+    result += logistic(phi, current_logistic[0], current_logistic[1] - 0.5 * current_logistic[2], current_logistic[3], current_logistic[1] + 0.5 * current_logistic[2], current_logistic[3]);
+  }
+  return result;
+}
+
+inline double ring_fit_function(std::array<double, 2> input_values, std::array<double, 6> parameters, std::vector<std::array<double, 4>> logistic_input_values = {})
+{
+  //  Get input values
+  auto current_radius = input_values[0];
+  auto current_phi = input_values[1];
+
+  //  Parameters
+  auto ring_x_center = parameters[0];
+  auto ring_y_center = parameters[1];
+  auto ring_radius = parameters[2];
+  auto ring_sigma = parameters[3];
+  auto ring_photons = parameters[4];
+  auto bkg_level = parameters[5];
+
+  //  Signal
+  auto signal = ring_photons * (1. / (2 * TMath::Pi() * ring_radius)) * TMath::Gaus(current_radius, ring_radius, ring_fit_function_sigma_function(current_phi, ring_sigma, logistic_input_values), true);
+  //  Background
+  auto background = bkg_level;
+
+  //  Return
+  return signal + background;
+}
+
+inline double ring_fit_function_xy(std::array<double, 2> input_values, std::array<double, 6> parameters, std::vector<std::array<double, 4>> logistic_input_values = {})
+{
+  //  Get input values
+  auto x_center = input_values[0];
+  auto y_center = input_values[1];
+
+  //  Parameters
+  auto ring_x_center = parameters[0];
+  auto ring_y_center = parameters[1];
+
+  //  Get radial coordinates
+  auto current_radius = hypot(x_center - ring_x_center, y_center - ring_y_center);
+  auto current_phi = atan2(y_center - ring_y_center, x_center - ring_x_center);
+
+  //  Return
+  return ring_fit_function({current_radius, current_phi}, parameters);
+}
+
+inline double ring_fit_function_xy(std::array<double, 2> input_values, const double *parameters, int how_many_logistics = 0)
+{
+  //  Convert to internal format
+  std::array<double, 6> array_parameters = {
+      static_cast<double>(parameters[0]),
+      static_cast<double>(parameters[1]),
+      static_cast<double>(parameters[2]),
+      static_cast<double>(parameters[3]),
+      static_cast<double>(parameters[4]),
+      static_cast<double>(parameters[5])};
+
+  std::vector<std::array<double, 4>> logistic_input_values;
+  for (auto i_logistic = 0; i_logistic < how_many_logistics; i_logistic++)
+    logistic_input_values.emplace_back(
+        std::array<double, 4>{parameters[5 + i_logistic * 4 + 0],
+                              parameters[5 + i_logistic * 4 + 1],
+                              parameters[5 + i_logistic * 4 + 2],
+                              parameters[5 + i_logistic * 4 + 3]});
+
+  //  Return
+  return ring_fit_function_xy(input_values, array_parameters);
+}
+
+//  X0, Y0, R, sigma, Integral
+using ring_fit_results = std::array<std::array<double, 2>, 6>;
+inline ring_fit_results fit_ring_integral(TH2 *target_histogram, std::array<double, 6> initial_values, bool fix_XY = true)
+{
+  ring_fit_results result;
+
+  //  Chi2 minimisation for points in a circle
+  auto chi2_function = [&](const double *parameters)
+  {
+    double chi2 = 0;
+    for (auto x_bin = 1; x_bin <= target_histogram->GetNbinsX(); x_bin++)
+      for (auto y_bin = 1; y_bin <= target_histogram->GetNbinsY(); y_bin++)
+      {
+        //  Get bin values
+        double x_center = target_histogram->GetXaxis()->GetBinCenter(x_bin);
+        double y_center = target_histogram->GetYaxis()->GetBinCenter(y_bin);
+        double x_width = target_histogram->GetXaxis()->GetBinWidth(x_bin);
+        double y_width = target_histogram->GetYaxis()->GetBinWidth(y_bin);
+        double z_value = target_histogram->GetBinContent(x_bin, y_bin);
+        double z_error = target_histogram->GetBinError(x_bin, y_bin);
+        // z_error = std::max(z_error, 1.0);
+
+        if (z_value <= 0)
+          continue;
+
+        //  Calculate the fit function here
+        double current_function_value = x_width * y_width * ring_fit_function_xy({x_center, y_center}, parameters);
+        chi2 += (z_value - current_function_value) * (z_value - current_function_value) / (z_error * z_error);
+      }
+    return chi2;
+  };
+
+  // wrap chi2 function in a function object for the fit
+  ROOT::Math::Functor fit_function(chi2_function, 6);
+  ROOT::Fit::Fitter fitter;
+
+  //  Set initial values and variables names
+  double internal_initial_values[6] = {initial_values[0], initial_values[1], initial_values[2], initial_values[3], initial_values[4], initial_values[5]};
+  fitter.SetFCN(fit_function, internal_initial_values);
+  fitter.Config().ParSettings(0).SetName("centerX");
+  fitter.Config().ParSettings(0).SetLimits(-5.0, 5.0);
+  fitter.Config().ParSettings(1).SetName("centerY");
+  fitter.Config().ParSettings(1).SetLimits(-5.0, 5.0);
+  fitter.Config().ParSettings(2).SetName("ring__R");
+  fitter.Config().ParSettings(2).SetLowerLimit(0);
+  fitter.Config().ParSettings(3).SetName("sigma_R");
+  fitter.Config().ParSettings(3).SetLimits(0., 7.5);
+  fitter.Config().ParSettings(4).SetName("N_gamma");
+  fitter.Config().ParSettings(4).SetLimits(0., 50.);
+  fitter.Config().ParSettings(5).SetName("bkg");
+  fitter.Config().ParSettings(5).SetLowerLimit(0.);
+  if (fix_XY)
+  {
+    fitter.Config().ParSettings(0).Fix();
+    fitter.Config().ParSettings(1).Fix();
+  }
+
+  //  Fitting
+  if (!fitter.FitFCN())
+  {
+    const ROOT::Fit::FitResult &fit_result = fitter.Result();
+    Error("fit_circle", "Fit failed");
+    fit_result.Print(std::cout);
+    return {{{-2., 0.}, {-2., 0.}, {-2., 0.}, {0., 0.}, {0., 0.}, {0., 0.}}};
+  }
+  const ROOT::Fit::FitResult &fit_result = fitter.Result();
+  fit_result.Print(std::cout);
+
+  auto iTer = -1;
+  for (auto current_parameter : fit_result.Parameters())
+  {
+    iTer++;
+    logger::log_debug("par " + fit_result.GetParameterName(iTer) + " : " + std::to_string(current_parameter) + " +- " + std::to_string(fit_result.Errors()[iTer]));
+    if (iTer > 6)
+      continue;
+    result[iTer][0] = current_parameter;
+    result[iTer][1] = fit_result.Errors()[iTer];
+  }
+
+  return result;
+}
+
+inline std::vector<TGraph *> plot_ring_integral(ring_fit_results fit_results, std::vector<float> sigma_values, std::vector<std::array<double, 4>> logistic_input_values = {}, int n_points = 500)
+{
+  std::vector<TGraph *> result;
+  for (auto current_sigma_value : sigma_values)
+  {
+    result.push_back(new TGraph());
+    auto &current_graph = result.back();
+    for (auto i_point = 0; i_point <= n_points; i_point++)
+    {
+      auto current_phi = -TMath::Pi() + 2 * TMath::Pi() * (1. * i_point) / n_points;
+      auto current_x = fit_results[0][0] + (fit_results[2][0] + current_sigma_value * ring_fit_function_sigma_function(current_phi, fit_results[3][0], logistic_input_values)) * cos(current_phi);
+      auto current_y = fit_results[1][0] + (fit_results[2][0] + current_sigma_value * ring_fit_function_sigma_function(current_phi, fit_results[3][0], logistic_input_values)) * sin(current_phi);
+      current_graph->SetPoint(i_point, current_x, current_y);
+    }
+  }
   return result;
 }
 

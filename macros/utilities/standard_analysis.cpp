@@ -1,4 +1,4 @@
-#include "recodata_writer.h"
+#include "standard_analysis.h"
 #include "config_reader.h"
 #include "utility.h"
 #include <stdio.h>
@@ -10,20 +10,14 @@ int main(int argc, char **argv)
 
   std::string data_repository;
   std::string run_name;
-  std::string mapping_conf = "conf/mapping_conf.2025.toml";
   std::string run_list;
 
-  int max_spill = 1000;
-  bool force_recodata_rebuild = false;
-  bool force_lightdata_rebuild = false;
+  int max_spill = 10000000;
 
   app.add_option("data_repository", data_repository)->required();
   app.add_option("run_name", run_name)->required();
   app.add_option("--run-list", run_list, "Name of run list (required if run_name is a .toml runlist)");
   app.add_option("--max-spill", max_spill);
-  app.add_option("--mapping-conf", mapping_conf);
-  app.add_flag("--force-recodata", force_recodata_rebuild);
-  app.add_flag("--force-lightdata", force_lightdata_rebuild);
 
   try
   {
@@ -54,23 +48,23 @@ int main(int argc, char **argv)
       for (const auto &current_run_name : *recovered_run_list)
       {
         auto start = std::chrono::high_resolution_clock::now();
-        logger::log_info(Form("(recodata_writer) Starting writing recodata for run '%s'", current_run_name.c_str()));
-        recodata_writer(data_repository, current_run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf);
+        logger::log_info(Form("(standard_analysis) Starting standard analysis for run '%s'", current_run_name.c_str()));
+        standard_analysis(data_repository, current_run_name, max_spill);
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed = end - start;
-        logger::log_info(Form("(recodata_writer) Total time taken: %f seconds", elapsed.count()));
+        logger::log_info(Form("(standard_analysis) Total time taken: %f seconds", elapsed.count()));
       }
       auto list_end = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> list_elapsed = list_end - list_start;
-      logger::log_info(Form("(recodata_writer) Total time taken: %f seconds", list_elapsed.count()));
+      logger::log_info(Form("(standard_analysis) Total time taken: %f seconds", list_elapsed.count()));
     }
     else
     {
       auto start = std::chrono::high_resolution_clock::now();
-      recodata_writer(data_repository, run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf);
+      standard_analysis(data_repository, run_name, max_spill);
       auto end = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> elapsed = end - start;
-      logger::log_info(Form("(recodata_writer) Total time taken: %f seconds", elapsed.count()));
+      logger::log_info(Form("(standard_analysis) Total time taken: %f seconds", elapsed.count()));
     }
   }
   catch (const CLI::ParseError &e)

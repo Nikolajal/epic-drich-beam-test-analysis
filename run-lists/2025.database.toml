@@ -1,7 +1,7 @@
 # 2025 full database of runs info
 # The first run defines the standard configuration, 
 # all subsequents runs only specify the filed that changed
-#  w.r.t the previous run
+# w.r.t the previous run
 #
 
 [runs."20251111-164951"]
@@ -17,8 +17,8 @@ timing_on_axis = true
 op_mode = 1
 delta_thr = 5
 radiators = [
-  { name = "Aerogel", refindex = 1.021, tag = "AG22-J001", depth = 2 }, # depth = cm
-  { name = "Aerogel", refindex = 1.0207, tag = "AG22-J003", depth = 2, side = "B" } # depth = cm
+  { type = "Aerogel", refindex = 1.021, tag = "AG22-J001", depth = 2 }, # depth = cm
+  { type = "Aerogel", refindex = 1.0207, tag = "AG22-J003", depth = 2, side = "B" } # depth = cm
 ]
 
 [runs."20251111-172946"]
