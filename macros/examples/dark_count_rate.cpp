@@ -72,21 +72,22 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
       for (const auto &global_index : active_sensors)
         active_sensors_count[global_index] = 0;
       for (const auto &hit : recodata->get_recodata())
-        active_sensors_count[hit.global_index/4]++;
+        active_sensors_count[4 * (hit.global_index / 4)]++;
 
       //  Fill the DCR histogram
       for (auto &[global_index, count] : active_sensors_count)
-        h_dcr_per_channel->Fill(global_index, count * 1. / (_FRAME_LENGTH_NS_ * 1e-6));
+        h_dcr_per_channel->Fill(global_index / 4, count);
 
-      h_dcr->Fill(recodata->get_recodata().size() * 1. / (_FRAME_LENGTH_NS_ * 1e-6 * active_sensors.size()));
+      h_dcr->Fill(recodata->get_recodata().size() * 1. / (_FRAME_LENGTH_NS_ * 1.e-6 * active_sensors.size()));
     }
   }
 
   //  Normalise DCR to the number of used frames
+  h_dcr_per_channel->Scale(1. / (_FRAME_LENGTH_NS_ * 1.e-6));
   h_dcr->Scale(1. / used_frames);
 
   for (auto x_bin = 1; x_bin <= h_dcr_per_channel->GetNbinsX(); ++x_bin)
-    if (h_dcr_per_channel->GetBinContent(x_bin) > 0)
+    if (h_dcr_per_channel->GetBinContent(x_bin) > 0.1)
       if (x_bin < 1025)
       {
         h_average_dcr->Fill(h_dcr_per_channel->GetBinContent(x_bin));
@@ -101,6 +102,6 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
   TCanvas *c_test2 = new TCanvas("c_test2", "Test Histogram", 800, 600);
   h_dcr_per_channel->Draw();
   TCanvas *c_test3 = new TCanvas("c_test3", "Average DCR Histogram", 800, 600);
-  //h_average_dcr->Draw();
+  h_average_dcr->Draw();
   h_average_dcr_2->Draw("SAME");
 }
