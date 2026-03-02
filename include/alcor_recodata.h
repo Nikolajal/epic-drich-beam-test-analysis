@@ -121,6 +121,7 @@ public:
     /** @name Hit Utilities */
     ///@{
     void add_hit_mask(int i, uint32_t v);
+    void add_hit_mask_bit(int i, uint32_t v);
     void add_trigger(uint8_t index, uint16_t coarse, float fine_time = 0.);
     void add_trigger(trigger_struct hit);
     void add_hit(uint32_t gi, float x, float y, uint32_t mask, float ht);
@@ -147,6 +148,7 @@ public:
      * @return Flag stating if the hit is an afterpulse or not
      */
     bool is_afterpulse(int i);
+    bool is_cross_talk(int i);
 
     /**
      * @brief Return if the hit is flagged as afterpulse.

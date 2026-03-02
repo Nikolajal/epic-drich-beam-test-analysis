@@ -33,9 +33,9 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
 
   //  Result histograms
   TH1F *h_dcr = new TH1F("h_dcr", "Dark Count Rate;DCR [kHz];Entries", 40, 0, 20);
-  TProfile *h_dcr_per_channel = new TProfile("h_dcr_per_channel", "Dark Count Rate per Channel;DCR [kHz];Entries", 2048, 0, 2048);
-  TH1F *h_average_dcr = new TH1F("h_average_dcr", "Dark Count Rate;DCR [kHz];Entries", 125, 0, 50);
-  TH1F *h_average_dcr_2 = new TH1F("h_average_dcr_2", "Dark Count Rate;DCR [kHz];Entries", 125, 0, 50);
+  TProfile *h_dcr_per_channel = new TProfile("h_dcr_per_channel", ";channel;DCR [kHz];", 2048, 0, 2048);
+  TH1F *h_average_dcr = new TH1F("h_average_dcr", "1350;DCR [kHz];Entries", 50, 0, 10);
+  TH1F *h_average_dcr_2 = new TH1F("h_average_dcr_2", "1375;DCR [kHz];Entries", 50, 0, 10);
 
   //  Keep track of active sensors
   std::set<uint32_t> active_sensors;
@@ -88,6 +88,7 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
 
   for (auto x_bin = 1; x_bin <= h_dcr_per_channel->GetNbinsX(); ++x_bin)
     if (h_dcr_per_channel->GetBinContent(x_bin) > 0.1)
+    {
       if (x_bin < 1025)
       {
         h_average_dcr->Fill(h_dcr_per_channel->GetBinContent(x_bin));
@@ -96,12 +97,19 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
       {
         h_average_dcr_2->Fill(h_dcr_per_channel->GetBinContent(x_bin));
       }
+    }
 
+  gStyle->SetOptStat(0);
   TCanvas *c_dcr = new TCanvas("c_dcr", "Dark Count Rate", 800, 600);
   h_dcr->Draw();
   TCanvas *c_test2 = new TCanvas("c_test2", "Test Histogram", 800, 600);
   h_dcr_per_channel->Draw();
   TCanvas *c_test3 = new TCanvas("c_test3", "Average DCR Histogram", 800, 600);
+  h_average_dcr->SetLineWidth(2);
+  h_average_dcr->SetLineColor(kRed);
   h_average_dcr->Draw();
+  h_average_dcr_2->SetLineWidth(2);
+  h_average_dcr_2->SetLineColor(kBlue);
   h_average_dcr_2->Draw("SAME");
+  gPad->BuildLegend();
 }
