@@ -439,7 +439,7 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
                                         25.0,
                                         0.0003},
                                        true);
-  auto sigma_plots = plot_ring_integral(fit_results, {0, -3, 3}, {{2, 2, 0.5, 0.01}});
+  auto sigma_plots = plot_ring_integral(fit_results, {0, -3, 3}, {{2, -2.27, 0.65, 0.04}});
   std::vector<std::array<int, 3>> plot_nice = {{kBlack, 2, kSolid},
                                                {kRed, 2, kDashed},
                                                {kRed, 2, kDashed}};
@@ -483,10 +483,16 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
   //  Test Sigma
   new TCanvas();
   TGraph *test = new TGraph();
+  TH1F *frame = new TH1F("", "", 1000, -TMath::Pi(), TMath::Pi());
+  frame->SetMinimum(2.0);
+  frame->SetMaximum(3.5);
+  frame->GetXaxis()->SetTitle("#phi (rad)");
+  frame->GetYaxis()->SetTitle("Sigma (mm)");
   for (auto i = 0; i < 1000; i++)
   {
-    auto current_phi = 2 * TMath::Pi() * (i / 1000.);
-    test->SetPoint(i, current_phi, ring_fit_function_sigma_function(current_phi, 2.15, {{0.5, 2, 0.5, 0.01}}));
+    auto current_phi = -TMath::Pi() + 2 * TMath::Pi() * (i / 1000.);
+    test->SetPoint(i, current_phi, ring_fit_function_sigma_function(current_phi, 2.15, {{1.0, 2, 0.5, 0.01}, {0.5, -1, 0.25, 0.025}}));
   }
-  test->Draw("ALP");
+  frame->Draw();
+  test->Draw("SAME LP");
 }

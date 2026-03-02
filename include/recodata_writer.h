@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 
+#define _CROSS_TALK_DEADTIME_ 124 // 200ns
+
 void recodata_writer(
     std::string data_repository,
     std::string run_name,

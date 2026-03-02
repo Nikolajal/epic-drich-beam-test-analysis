@@ -79,6 +79,11 @@ void lightdata_writer(
   //  Create streaming framer
   //  TODO: Add FIFO to the config file (2024-2023 have FIFO 24 the triggers.)
   parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
+  
+  //  TODO: Set this from outside
+  //  TODO: Check if one core has a good behaviour, especially in merging: possibility to lock writing in the same place to avoid merging
+  //  TODO: Add a plot to evaluate how many consecutive hits are flagged as afterpulse
+  //  framer.set_parallel_cores(1);
 
   //  Prepare output tree
   TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");

@@ -56,7 +56,7 @@ std::optional<trigger_struct> alcor_recodata::get_trigger_by_index(uint8_t index
     else
         return std::nullopt;
 }
-std::optional<trigger_struct> alcor_recodata::get_timing_trigger()const { return get_trigger_by_index(_TRIGGER_TIMING_); }
+std::optional<trigger_struct> alcor_recodata::get_timing_trigger() const { return get_trigger_by_index(_TRIGGER_TIMING_); }
 
 //  Setters
 //  --- Pure setters
@@ -84,6 +84,7 @@ void alcor_recodata::set_triggers_link(std::vector<trigger_struct> &v)
 
 //  Add utilities
 void alcor_recodata::add_hit_mask(int i, uint32_t v) { recodata[i].hit_mask |= v; }
+void alcor_recodata::add_hit_mask_bit(int i, uint32_t v) { recodata[i].hit_mask |= encode_bit(v); }
 void alcor_recodata::add_trigger(uint8_t index, uint16_t coarse, float fine_time) { triggers.emplace_back(index, coarse, fine_time); }
 void alcor_recodata::add_trigger(trigger_struct hit) { triggers.push_back(hit); }
 void alcor_recodata::add_hit(uint32_t gi, float x, float y, uint32_t mask, float ht) { recodata.emplace_back(gi, x, y, mask, ht); }
@@ -98,6 +99,7 @@ bool alcor_recodata::is_embedded_tracking_available() { return check_trigger(_TR
 bool alcor_recodata::is_ring_found() { return check_trigger(_TRIGGER_RING_FOUND_); }
 bool alcor_recodata::check_hit_mask(int i, uint32_t v) { return (get_hit_mask(i) & v) != 0; }
 bool alcor_recodata::is_afterpulse(int i) { return check_hit_mask(i, encode_bit(_HITMASK_afterpulse)); }
+bool alcor_recodata::is_cross_talk(int i) { return check_hit_mask(i, encode_bit(_HITMASK_cross_talk)); }
 bool alcor_recodata::is_ring_tagged(int i) { return check_hit_mask(i, encode_bits({_HITMASK_ring_tag_first, _HITMASK_ring_tag_second})); }
 
 //  I/O utilities
