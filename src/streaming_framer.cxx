@@ -172,7 +172,6 @@ bool streaming_framer::next_spill()
             {
                 //  ---
                 //  Afterpulse mask
-                //  TODO: implement a new mask to signal the hit is labeled afterpulse
                 current_data.set_mask(0);
                 auto current_channel = current_data.get_global_index();
                 if (auto search = afterpulse_map.find(current_channel); search != afterpulse_map.end())
