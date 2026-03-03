@@ -201,8 +201,11 @@ void lightdata_writer(
       //  TODO: make it an external repo with template structure
 
       //  Utility structures
-      std::vector<std::pair<int, float>> streaming_trigger;
+      std::vector<std::pair<int, float>> current_hit_fifo;
+      std::vector<std::pair<int, float>> previous_hit_fifo;
       float clock_cycles = 10.f;
+      //  TODO: make the threshold dependent on participants channels (?)
+      int hit_threshold = 7;
 
       //  Build an alcor_finedata vector and sort the hits
       std::vector<alcor_finedata> cherenkov_finedata_hits;
@@ -211,11 +214,37 @@ void lightdata_writer(
       std::sort(cherenkov_finedata_hits.begin(), cherenkov_finedata_hits.end());
 
       //  Loop over cherenkov hits
+      int current_hit = -1;
+      int current_hit_count = 0;
+      int previous_hit_count = 0;
       for (auto current_cherenkov_hit : cherenkov_finedata_hits)
       {
-        streaming_trigger.push_back();
-        //  Check if we found a time cluster
-        if (true)
+        //  Next hit, get reference hit time and add to the streaming_trigger
+        current_hit++;
+        float current_hit_time = current_cherenkov_hit.get_time();
+        current_hit_fifo.push_back({current_hit, current_hit_time});
+
+        //  Remove hits than clock_cycles in the search array
+        current_hit_fifo.erase(
+            std::remove_if(current_hit_fifo.begin(),
+                           current_hit_fifo.end(),
+                           [&](const std::pair<int, float> &elem)
+                           {
+                             return (current_hit_time - elem.second) > clock_cycles;
+                           }),
+            current_hit_fifo.end());
+
+        //  Check the nuber of hits to trigger
+        current_hit_count = current_hit_fifo.size();
+        if ((previous_hit_count >= hit_threshold) && (current_hit_count < previous_hit_count))
+        {
+          float trigger_time = 0.;
+          for (auto i_ter : previous_hit_fifo)
+            trigger_time += i_ter.second / previous_hit_count;
+          spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_), static_cast<uint16_t>(previous_hit_count), static_cast<float>(trigger_time * _ALCOR_CC_TO_NS_)});
+        }
+        previous_hit_fifo = current_hit_fifo;
+        previous_hit_count = current_hit_count;
       }
 
       if (!spilldata.has_trigger(frame_id))
