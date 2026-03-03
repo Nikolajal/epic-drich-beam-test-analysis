@@ -13,7 +13,9 @@
 #include <utility.h>
 #include <toml++/toml.h>
 
-//  TODO: re-write for TOML configuration files
+/**
+ * @todo re-write for TOML configuration files
+ */
 
 // Core tags
 static const std::set<std::string> lightdata_core_tags = {

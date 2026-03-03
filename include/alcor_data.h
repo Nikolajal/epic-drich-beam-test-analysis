@@ -16,9 +16,15 @@
  * The design intentionally separates *storage* (struct) from *logic*
  * (class) to keep ROOT I/O simple while allowing richer semantics
  * at the analysis level.
+ * 
+ * @todo Implement bit-wise manipulation for global index encoding.
+ * global index is a 32-bit integer, which count be used to contain:
+ * device   (10-bit) [0-1023]
+ * fifo     (7-bit) [0-127]
+ * channel  (6-bit) [0-63]
+ * tdc      (2-bit) [0-3]
+ * unused   (7-bit)
  */
-
-//  TODO: implement bit-wise maniopulation for global index encoding
 
 #include "TTree.h"
 #include "utility.h"

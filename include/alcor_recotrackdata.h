@@ -27,8 +27,6 @@ struct alcor_recotrackdata_struct
     alcor_recotrackdata_struct(alcor_recodata &v);
 };
 
-
-
 /**
  * @brief Container class for reconstructed track data.
  *
@@ -38,11 +36,13 @@ struct alcor_recotrackdata_struct
 class alcor_recotrackdata : public alcor_recodata
 {
 public:
+    /**
+     * @todo Constructor linking to previous recodata object
+     */
+
     /// Default constructor
     alcor_recotrackdata() = default;
     alcor_recotrackdata(alcor_recodata &v);
-
-    /// TODO: Constructor linking to previous recodata object
 
     /**
      * @brief Add a new track entry.

@@ -4,8 +4,11 @@
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
 
-//  TODO: make a full coverage map
-//  TODO: Cache values to avoid re-computation > Check benefits
+/**
+ * @todo Make a function to generate a full covergae map, maybe add a R-phi option
+ * @todo Cache values to avoid re-computation > Check benefits
+ */
+
 class mapping
 {
 public:
