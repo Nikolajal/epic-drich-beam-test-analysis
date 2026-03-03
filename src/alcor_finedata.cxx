@@ -49,6 +49,7 @@ float alcor_finedata::get_phase() const
     }
     return 0.;
 }
+float alcor_finedata::get_time() const { return _ALCOR_ROLLOVER_TO_CC_ * get_rollover() + get_coarse() - get_phase(); }
 int alcor_finedata::get_tdc() const { return get_calib_index() % 4; }
 int alcor_finedata::get_device() const { return 192 + (get_global_index() / 256); }
 int alcor_finedata::get_fifo() const { return (get_global_index() % 256) / 8; }
@@ -71,6 +72,12 @@ void alcor_finedata::set_mask(uint32_t mask) { data.hit_mask = mask; }
 void alcor_finedata::set_param0(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][0] = value; }
 void alcor_finedata::set_param1(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][1] = value; }
 void alcor_finedata::set_param2(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][2] = value; }
+
+//  Comparison operators
+bool alcor_finedata::operator<(const alcor_finedata &v) const { return get_time() < v.get_time(); }
+bool alcor_finedata::operator<=(const alcor_finedata &v) const { return get_time() < v.get_time(); }
+bool alcor_finedata::operator>(const alcor_finedata &v) const { return get_time() < v.get_time(); }
+bool alcor_finedata::operator>=(const alcor_finedata &v) const { return get_time() < v.get_time(); }
 
 //  --- File operations
 void alcor_finedata::write_calib_to_file(const std::string &filename)

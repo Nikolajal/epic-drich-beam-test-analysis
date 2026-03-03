@@ -1,3 +1,5 @@
+#include "../lib_loader.h"
+
 /**
  * @file ring_spatial_resolution.cpp
  * @brief Calculate the spatial resolution of the ring.
@@ -36,10 +38,6 @@
  *
  * @author Nicola Rubini
  */
-
-//  Load compiled libraries for analysis
-#pragma cling load("libtest_beam_analysis_dict.dylib");
-#pragma cling load("libtest_beam_analysis.dylib");
 
 std::array<float, 2> time_cut_boundaries = {-45., 20.};
 
@@ -87,24 +85,21 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     //  Load data for current frame
     recodata_tree->GetEntry(i_frame);
 
-    //  _HITMASK_dead_lane signals the event is start of spill, tells which channels are available
-    if (decode_bits(recodata->get_hit_mask(0))[0] == _HITMASK_dead_lane)
+    //  Takes note of spill evolution
+    if (recodata->is_start_of_spill())
     {
-      //  You can save the frame number of spill start if you want
-      start_of_spill_frame_ref.push_back(i_frame);
-      //  This event is not of physical interest
+      //  You can internally keep track of spills
+      
+      //  This event is not of physical interest, skip it
       continue;
     }
 
     //  Select Luca AND trigger (0) or timing trigger (101)
-    //  TODO: Make this a class method, w/ possibility to ask for multiple triggers at a time
-    auto current_trigger = recodata->get_triggers();
-    auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
-                           { return t.index == 0; });
-    if (it != current_trigger.end())
+    auto default_hardware_trigger = recodata->get_trigger_by_index(0);
+    if (default_hardware_trigger)
     {
       //  Save trigger frames for later, ref to the actual number of used frames in the analysis
-      frame_of_interest_ref.push_back({i_frame, it->fine_time});
+      frame_of_interest_ref.push_back({i_frame, default_hardware_trigger->fine_time});
 
       //  Container for selected hits
       std::vector<std::array<float, 2>> selected_points;
@@ -119,7 +114,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
           continue;
 
         //  Fill time distribution to check
-        auto time_delta_wrt_ref = recodata->get_hit_t(current_hit) - it->fine_time; //  ns
+        auto time_delta_wrt_ref = recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time; //  ns
         h_t_distribution->Fill(time_delta_wrt_ref);
 
         //  Ask for time coincidence
