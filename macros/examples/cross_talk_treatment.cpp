@@ -5,34 +5,34 @@
  * @brief Examine the coincidence of triggers and detector-box signals.
  *
  * @details
- * This exercise investigates how external and software-based triggers 
+ * This exercise investigates how external and software-based triggers
  * coincide with signals recorded by the detector.
  *
  * **Trigger types:**
- * - **External triggers (0, 1)**  
+ * - **External triggers (0, 1)**
  *   Registered in an ALCOR board, if available.
  *
- * - **Software-based triggers (>= 100)**  
+ * - **Software-based triggers (>= 100)**
  *   Elaborated offline, if available:
- *   - **100: Dummy trigger**  
- *     Signals that frames are taken at the start of a spill (first N frames, 
- *     defined by `_FIRST_FRAMES_TRIGGER_` in `streaming_framer.h`).  
+ *   - **100: Dummy trigger**
+ *     Signals that frames are taken at the start of a spill (first N frames,
+ *     defined by `_FIRST_FRAMES_TRIGGER_` in `streaming_framer.h`).
  *     Only coarse timing information is available for this trigger.
- *   - **101: Timing trigger**  
- *     Computed from the coincidence of all available timing channels  
- *     (a pair of scintillators coupled to two different 4x8 SiPM boards).  
- *     The reference time is the average of times registered on all channels, 
+ *   - **101: Timing trigger**
+ *     Computed from the coincidence of all available timing channels
+ *     (a pair of scintillators coupled to two different 4x8 SiPM boards).
+ *     The reference time is the average of times registered on all channels,
  *     fine-tuned (currently no offset correction applied).
  *
  * **Afterpulse tagging:**
- * - Afterpulses are detected using `alcor_recodata::is_afterpulse()`.  
- * - A signal is considered an afterpulse if the time difference with the previous 
+ * - Afterpulses are detected using `alcor_recodata::is_afterpulse()`.
+ * - A signal is considered an afterpulse if the time difference with the previous
  *   signal on the same channel is below `_AFTERPULSE_DEADTIME_` (defined in `streaming_framer.h`).
  *
  * @author Nicola Rubini
  */
 
-void afterpulse_treatment(std::string data_repository, std::string run_name, int max_frames = 10000000)
+void cross_talk_treatment(std::string data_repository, std::string run_name, int max_frames = 10000000)
 {
   //  Input files
   std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
@@ -69,6 +69,11 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     //  Load data for current frame
     recodata_tree->GetEntry(i_frame);
 
+    for (auto i = 0; i < recodata->get_recodata().size(); i++)
+      for (auto trg : decode_bits(recodata->get_hit_mask(i)))
+        if (trg == 28)
+          logger::log_debug(Form("pre-Fill cross-talk hit at index %i, mask %i", i, trg));
+
     //  Takes note of spill evolution
     if (recodata->is_start_of_spill())
     {
@@ -90,7 +95,7 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
         h_t_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
 
         //  Remove afterpulse
-        if (recodata->is_afterpulse(current_hit))
+        if (recodata->is_cross_talk(current_hit))
           h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
         else
           h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);

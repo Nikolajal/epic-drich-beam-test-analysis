@@ -27,7 +27,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
                                                      std::string trigger_config_file,
                                                      std::string readout_config_file,
                                                      uint16_t frame_size)
-    : _frame_size(frame_size)
+    : _frame_size(frame_size), n_threads_requested(0)
 {
     // Create streams
     data_streams.reserve(filenames.size());
@@ -35,7 +35,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
     {
         data_streams.emplace_back(current_filename);
         if (!data_streams.back().is_valid())
-            cerr << "[WARNING] Failed to open streamer: " << current_filename << std::endl;
+            logger::log_warning("[WARNING] Failed to open streamer: " + current_filename);
     }
 
     // QA plots
@@ -61,6 +61,7 @@ std::map<std::string, TH1 *> parallel_streaming_framer::get_QA_plots() { return 
 // Setters
 void parallel_streaming_framer::set_spilldata(alcor_spilldata v) { spilldata = v; }
 void parallel_streaming_framer::set_spilldata_link(alcor_spilldata &v) { spilldata = v; }
+void parallel_streaming_framer::set_parallel_cores(uint16_t v) { n_threads_requested = v; }
 
 // Initialize QA plots
 void parallel_streaming_framer::init_QA_plots() {}
@@ -83,10 +84,11 @@ alcor_spilldata parallel_streaming_framer::process(alcor_data_streamer &current_
         auto current_chip = current_data.get_chip();
         auto current_readout_tag_list = readout_config.find_by_device_and_chip(current_device, current_chip);
 
-        // Stop streamer reading if not tagged for readout
+        //  Stop streamer reading if not tagged for readout
         //  TODO: understand the issue to make it work again, if borken at all
-        // if (current_readout_tag_list.size() == 0 && (current_chip != (99 / 4)))
-        //    break;
+        //  TODO: For thread balancing this should probably be done outside this function, before workload division
+        //  if (current_readout_tag_list.size() == 0 && (current_chip != (99 / 4)))
+        //      break;
 
         // Refactoring time to relate to frame reference
         uint32_t hit_frame_index = current_data.get_coarse_global_time() / (_frame_size * 1.);
@@ -201,7 +203,7 @@ bool parallel_streaming_framer::next_spill()
 
     //  Check machine cores for safe threading
     unsigned int n_threads = std::thread::hardware_concurrency();
-    n_threads = 8 * std::min<size_t>(n_threads - 2, 2); //  Leave 2 cores free for general machine work, 2 streams per core are manageable
+    n_threads = n_threads_requested > 0 ? std::min<uint16_t>(n_threads_requested, 8 * std::min<size_t>(n_threads - 2, 2)) : 8 * std::min<size_t>(n_threads - 2, 2); //  Leave 2 cores free for general machine work, 8 streams per core are manageable
 
     //  Generate result vector
     std::vector<std::future<alcor_spilldata>> async_processing_results;
@@ -274,69 +276,6 @@ bool parallel_streaming_framer::next_spill()
         merge(spilldata, current_async_processing_results.get());
         std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " last merge round file " << i_chunk << "/" << async_processing_results.size() << flush;
     }
-
-    /*
-    //---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//
-    while (processing_results.size() > 1)
-    {
-        std::vector<alcor_spilldata> next_round;
-        size_t i = 0;
-
-        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " next merge round has " << processing_results.size() << " files"<< flush;
-        while (i + 1 < processing_results.size())
-        {
-            size_t batch_end = std::min(i + n_threads * 2, processing_results.size());
-            size_t batch_size = batch_end - i;
-
-            // For each batch, launch threads for merging pairs
-            std::vector<std::thread> threads;
-            std::vector<alcor_spilldata> temp_results(batch_size / 2);
-
-            for (size_t j = 0; j + 1 < batch_size; j += 2)
-            {
-                threads.emplace_back([&temp_results, j, &processing_results, i]()
-                                     {
-                    alcor_spilldata temp;
-                    merge(temp, std::move(processing_results[i + j]));
-                    merge(temp, std::move(processing_results[i + j + 1]));
-                    temp_results[j / 2] = std::move(temp); });
-            }
-
-            // Wait for threads to finish
-            for (auto &t : threads)
-                t.join();
-
-            // Collect results
-            for (auto &res : temp_results)
-                next_round.push_back(std::move(res));
-
-            // If odd number of chunks in batch, carry the last one
-            if (batch_size % 2 == 1)
-                next_round.push_back(std::move(processing_results[batch_end - 1]));
-
-            i = batch_end;
-        }
-
-        // If total chunks in round is odd, carry the last one
-        if (processing_results.size() % 2 == 1 && i == processing_results.size() - 1)
-            next_round.push_back(std::move(processing_results.back()));
-
-        processing_results = std::move(next_round);
-    }
-    //---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//---//
-
-    spilldata = std::move(processing_results[0]);
-
-    /*
-    // Collect results
-    auto i_chunk = 0;
-    for (auto &current_processing_results : processing_results)
-    {
-        i_chunk++;
-        merge(spilldata, std::move(current_processing_results));
-        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " last merge round file " << i_chunk << "/" << processing_results.size() << flush;
-    }
-    */
 
     //  Finished Merging spills
     std::cout << "\33[2K\r[INFO] Spill merging finished! Successfully merged " << data_streams.size() << " data streams results" << std::endl;

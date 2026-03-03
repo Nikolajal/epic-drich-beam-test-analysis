@@ -16,6 +16,28 @@ void lightdata_writer(
   std::filesystem::path base_dir = data_repository + "/" + run_name;
   std::vector<std::string> filenames;
   std::unordered_map<std::string, std::vector<std::string>> print_found_files;
+
+  //  Check the given folder existence
+  if (!std::filesystem::exists(base_dir))
+  {
+    logger::log_error("(lightdata_writer) Data folder does not exist, abort");
+    return;
+  }
+
+  //  Check the given folder is actually a directory
+  if (!std::filesystem::is_directory(base_dir))
+  {
+    logger::log_error("(lightdata_writer) Data folder is not a folder, abort");
+    return;
+  }
+
+  //  Check the given folder is not empty
+  if (std::filesystem::is_empty(base_dir))
+  {
+    logger::log_error("(lightdata_writer) Data folder is empty, abort");
+    return;
+  }
+
   for (const auto &device_dir : std::filesystem::directory_iterator(base_dir))
   {
     //  Skip non directories
@@ -28,7 +50,10 @@ void lightdata_writer(
     //  Check there is the decoded directory
     std::filesystem::path decoded_dir = device_dir.path() / "decoded";
     if (!std::filesystem::exists(decoded_dir) || !std::filesystem::is_directory(decoded_dir))
+    {
+      logger::log_warning(Form("(lightdata_writer) Data folder for device %s do not have decoded data, skipping", device_name.c_str()));
       continue;
+    }
 
     //  Loop on files in decoded
     for (const auto &file : std::filesystem::directory_iterator(decoded_dir))
@@ -42,18 +67,41 @@ void lightdata_writer(
     }
   }
 
-  std::cout << "[INFO] Found devices with files: " << std::endl;
-  for (auto [current_device, current_device_file_list] : print_found_files)
+  // Collect and sort devices numerically by their trailing number
+  std::vector<std::pair<int, std::string>> sorted_devices;
+  for (auto [current_device, _] : print_found_files)
   {
-    std::cout << "[Device: " << current_device << "] Found files: ";
-    for (auto current_file : current_device_file_list)
-      std::cout << current_file << " ";
+    auto dash = current_device.rfind('-');
+    int dev_num = (dash != std::string::npos) ? std::stoi(current_device.substr(dash + 1)) : 0;
+    sorted_devices.push_back({dev_num, current_device});
+  }
+  std::sort(sorted_devices.begin(), sorted_devices.end());
+  logger::log_info("[INFO] Found devices with files: ");
+  for (auto [dev_num, current_device] : sorted_devices)
+  {
+    std::vector<int> fifo_numbers;
+    for (auto current_file : print_found_files[current_device])
+    {
+      auto start = current_file.find("fifo_");
+      auto end = current_file.find(".root");
+      if (start != std::string::npos && end != std::string::npos)
+        fifo_numbers.push_back(std::stoi(current_file.substr(start + 5, end - (start + 5))));
+    }
+    std::sort(fifo_numbers.begin(), fifo_numbers.end());
+    std::cout << "[Device: " << current_device << "] Found fifos: ";
+    for (auto n : fifo_numbers)
+      std::cout << n << " ";
     std::cout << std::endl;
   }
 
   //  Create streaming framer
-  //  TODO: Add FIFO to the comnfig file (2024-2023 have FIFO 24 the triggers.)
+  //  TODO: Add FIFO to the config file (2024-2023 have FIFO 24 the triggers.)
   parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
+
+  //  TODO: Set this from outside
+  //  TODO: Check if one core has a good behaviour, especially in merging: possibility to lock writing in the same place to avoid merging
+  //  TODO: Add a plot to evaluate how many consecutive hits are flagged as afterpulse
+  //  framer.set_parallel_cores(1);
 
   //  Prepare output tree
   TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");
@@ -84,11 +132,12 @@ void lightdata_writer(
       //  Build current event lightdata
       alcor_lightdata current_lightdata(current_lightdata_struct);
 
-      //  Trigger hits
+      //  Link locally hits structure
       auto &triggers_in_frame = current_lightdata.get_triggers_link();
+      auto &timing_hits = current_lightdata.get_timing_hits_link();
+      auto &cherenkov_hits = current_lightdata.get_cherenkov_hits_link();
 
       //  Fill timing trigger information
-      auto &timing_hits = current_lightdata.get_timing_hits_link();
       int timing_hit_chip_0 = 0;
       int timing_hit_chip_1 = 0;
       int all_timing_hit_chip_0 = 0;
@@ -144,6 +193,29 @@ void lightdata_writer(
             continue;
           h_delta_time_trigger_0_timing->Fill((ref_timing - current_trigger_hit_struct.coarse) * _ALCOR_CC_TO_NS_);
         }
+      }
+
+      // -------------------------------------------------------------------------
+      // Cherenkov sliding window trigger
+      // -------------------------------------------------------------------------
+      //  TODO: make it an external repo with template structure
+
+      //  Utility structures
+      std::vector<std::pair<int, float>> streaming_trigger;
+      float clock_cycles = 10.f;
+
+      //  Build an alcor_finedata vector and sort the hits
+      std::vector<alcor_finedata> cherenkov_finedata_hits;
+      for (auto current_cherenkov_hit_struct : cherenkov_hits)
+        cherenkov_finedata_hits.emplace_back(current_cherenkov_hit_struct);
+      std::sort(cherenkov_finedata_hits.begin(), cherenkov_finedata_hits.end());
+
+      //  Loop over cherenkov hits
+      for (auto current_cherenkov_hit : cherenkov_finedata_hits)
+      {
+        streaming_trigger.push_back();
+        //  Check if we found a time cluster
+        if (true)
       }
 
       if (!spilldata.has_trigger(frame_id))

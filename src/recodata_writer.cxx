@@ -99,10 +99,10 @@ void recodata_writer(
   TH1F *h_timing_trigger_0_delta_time = new TH1F("h_timing_trigger_0_delta_time", "", 1000, -200, 200);
   TH2F *h_timing_cherenkov_delta_time_device = new TH2F("h_timing_cherenkov_delta_time_device", ";device ID;#Delta t (ns)", 10000, 0, 10000, 1000, -200, 200);
 
-  //  TODO: use cached position
+  //  TODO: use cached position, maybe not.. to understand what's fastest
   std::map<int, std::array<float, 2>> index_to_hit_xy;
   std::map<std::array<float, 2>, int> hit_to_index_xy;
-  for (auto i_index = 0; i_index < 2048 * 4; i_index++)
+  for (auto i_index = 0; i_index < 2048 * 4; i_index += 4)
   {
     auto position = current_mapping.get_position_from_global_index(i_index);
     if (!position)
@@ -112,6 +112,43 @@ void recodata_writer(
     index_to_hit_xy[i_index] = (*position);
     hit_to_index_xy[(*position)] = i_index;
   }
+
+  //  Precache hits based on spatial vicinity
+  const float pitch = 4.0f;    // rounded from 3mm*sqrt(2) diagonal distance for sensors
+  const float tolerance = 1.f; // rounded from 3mm*sqrt(2) diagonal distance for sensors
+  std::map<int, std::vector<int>> index_to_proximity_index;
+  float average_hits = 0.f;
+  for (auto &[current_index, current_position] : index_to_hit_xy)
+  {
+    auto &current_neighbors_list = index_to_proximity_index[current_index]; // creates empty vector
+
+    //  Loop over close sensors
+    for (int x_neighbor : {-1, 0, 1})
+      for (int y_neighbor : {-1, 0, 1})
+      {
+        if (x_neighbor == 0 && y_neighbor == 0)
+          continue;
+
+        std::array<float, 2> candidate = {
+            current_position[0] + x_neighbor * pitch,
+            current_position[1] + y_neighbor * pitch};
+
+        // Scan hit_to_index_xy for a match, tolerance is included in pitch
+        for (auto &[position, global_index] : hit_to_index_xy)
+        {
+          float distance = std::hypot(position[0] - candidate[0],
+                                      position[1] - candidate[1]);
+          if (distance < tolerance)
+          {
+            current_neighbors_list.push_back(global_index);
+            break;
+          }
+        }
+      }
+    average_hits += current_neighbors_list.size();
+  }
+  logger::log_debug(Form("index_to_proximity_index size: %i", index_to_proximity_index.size()));
+  logger::log_debug(Form("index_to_proximity_index avg vector length: %f", average_hits * 1. / index_to_proximity_index.size()));
 
   //  Loop over spills
   auto all_frames = 0;
@@ -129,28 +166,34 @@ void recodata_writer(
     trigger_edge_rejection.clear();
     auto lanes_participating = spilldata->get_not_dead_participants();
     for (auto [device, lanes] : lanes_participating)
-      for (auto current_lane : lanes)
-        for (auto i_channel = 0; i_channel < 8; ++i_channel)
-        {
-          auto global_index = 256 * (device - 192) + 8 * (int)current_lane + i_channel;
-          participants_channel[global_index] = {};
-          h_active_participants_per_channel->Fill(global_index, 1. / all_spills);
+      if (device < 200) // TODO: Skip timin, to be done properly
+        for (auto current_lane : lanes)
+          if (current_lane)
+            for (auto i_channel = 0; i_channel < 8; ++i_channel)
+            {
+              auto global_index = get_global_index(device, current_lane / 4, 8 * (current_lane % 4) + i_channel, 0); // (int device, int chip, int channel, int tdc) //4*(256 * (device - 192) + 8 * (int)current_lane + i_channel);
+              participants_channel[global_index] = {};
+              h_active_participants_per_channel->Fill(global_index, 1. / all_spills);
 
-          //  Hit particiapnt mask
-          alcor_recodata_struct current_recodata_event;
-          current_recodata_event.global_index = global_index;
-          current_recodata_event.hit_x = index_to_hit_xy[global_index][0];
-          current_recodata_event.hit_y = index_to_hit_xy[global_index][1];
-          current_recodata_event.hit_t = 0.; // ns
-          current_recodata_event.hit_mask = encode_bit(_HITMASK_dead_lane);
-          recodata.add_hit(current_recodata_event);
-        }
-    recodata.add_trigger({200, _FRAME_SIZE_ / 2});
+              //  Hit participant mask
+              alcor_recodata_struct current_recodata_event;
+              current_recodata_event.global_index = global_index;
+              current_recodata_event.hit_x = index_to_hit_xy[global_index][0];
+              current_recodata_event.hit_y = index_to_hit_xy[global_index][1];
+              current_recodata_event.hit_t = 0.; // ns
+              current_recodata_event.hit_mask = encode_bit(_HITMASK_dead_lane);
+              recodata.add_hit(current_recodata_event);
+            }
+    recodata.add_trigger({_TRIGGER_START_OF_SPILL_, _FRAME_SIZE_ / 2});
     recodata_tree->Fill();
     recodata.clear();
 
     //  Loop over frames
     auto i_saved_frame = -1;
+    //  Utility for cross-talk
+    std::map<int, std::vector<float>> prev_hit_time_per_channel;
+    int prev_frame_reference = -1;
+    std::map<std::pair<int, float>, int> channel_time_to_recodata_index;
     for (auto &current_lightdata_struct : frames_in_spill)
     {
       i_saved_frame++;
@@ -192,7 +235,9 @@ void recodata_writer(
         h_triggers_per_spill[current_trigger.index]->Fill(i_spill);
       }
 
+      //  Clear utility counters
       hit_time_per_channel.clear();
+      channel_time_to_recodata_index.clear();
 
       //  Loop over timing hits
       auto timing_hits = current_lightdata.get_timing_hits_link();
@@ -274,6 +319,7 @@ void recodata_writer(
         current_recodata_event.hit_y = (*hit_position)[1];
         current_recodata_event.hit_t = (current_cherenkov_hit.get_coarse() - current_cherenkov_hit.get_phase()) * _ALCOR_CC_TO_NS_; // ns
         //  *** hack, to be fixed ASAP ***
+        //  TODO: implement external conf file to compensate jitter of different sensors
         current_recodata_event.hit_t += current_recodata_event.global_index > 4096 ? 2.9196200 : 0.;
         //  TODO: Fix this
         current_recodata_event.hit_mask = current_cherenkov_hit.get_mask();
@@ -288,7 +334,7 @@ void recodata_writer(
         }
 
         //  QA plots
-        hit_time_per_channel[global_index].push_back(current_cherenkov_hit.get_coarse());
+        hit_time_per_channel[4 * global_index].push_back(current_cherenkov_hit.get_coarse());
         for (auto [trigger_index, hit_time] : trigger_in_frame)
           if (!trigger_edge_rejection[trigger_index])
           {
@@ -305,7 +351,57 @@ void recodata_writer(
           }
         h_full_hitmap->Fill(hit_x_rnd, hit_y_rnd);
         recodata.add_hit(current_recodata_event);
+
+        //  Cross-talk reference
+        int recodata_idx = recodata.get_recodata().size() - 1;
+        channel_time_to_recodata_index[{4 * global_index, current_cherenkov_hit.get_coarse()}] = recodata_idx;
       }
+
+      //  Flag hits as possible cross-talk
+      //  --- Check previous frame vicinity
+      bool frames_are_adjacent = (current_frame == prev_frame_reference + 1);
+      //  Loop over all channels that did fire
+      for (auto &[global_index, times] : hit_time_per_channel)
+      {
+        //  Skip if channel never fired
+        if (times.empty())
+          continue;
+
+        //  Skip if channel do not have neighbors
+        if (!index_to_proximity_index.count(global_index))
+          continue;
+
+        //  loop on all neighboring sensors
+        for (auto neighbor_index : index_to_proximity_index[global_index])
+        {
+          // Looping on all hits for this channel
+          for (auto t_self : times)
+            //  Loop on the times related to neighbors
+            for (auto t_neighbor : hit_time_per_channel[neighbor_index])
+              if ((t_neighbor - t_self) < _CROSS_TALK_DEADTIME_ && (t_neighbor - t_self) > 0)
+              {
+                auto key_self = std::make_pair(global_index, t_self);
+                auto key_neighbor = std::make_pair(neighbor_index, t_neighbor);
+                if (channel_time_to_recodata_index.count(key_neighbor))
+                  recodata.add_hit_mask_bit(channel_time_to_recodata_index[key_neighbor], _HITMASK_cross_talk);
+              }
+          // Only check boundary if frames are truly consecutive
+          if (frames_are_adjacent)
+            // Looping on all hits for this channel
+            for (auto t_self : times)
+              //  Loop on the times related to neighbors
+              for (auto t_neighbor : prev_hit_time_per_channel[neighbor_index])
+                if ((t_neighbor - t_self) < _CROSS_TALK_DEADTIME_ && (t_neighbor - t_self) > 0)
+                {
+                  auto key_self = std::make_pair(global_index, t_self);
+                  auto key_neighbor = std::make_pair(neighbor_index, t_neighbor);
+                  if (channel_time_to_recodata_index.count(key_neighbor))
+                    recodata.add_hit_mask_bit(channel_time_to_recodata_index[key_neighbor], _HITMASK_cross_talk);
+                }
+        }
+      }
+      prev_hit_time_per_channel = hit_time_per_channel;
+      prev_frame_reference = current_frame;
 
       //  Find ring
       recodata.find_rings(1.0, 5.0);
@@ -332,7 +428,7 @@ void recodata_writer(
       }
 
       if (ring_found)
-        recodata.add_trigger({102, _FRAME_SIZE_ / 2});
+        recodata.add_trigger({_TRIGGER_RING_FOUND_, _FRAME_SIZE_ / 2});
 
       //  Fill recodata tree
       recodata_tree->Fill();
@@ -460,82 +556,3 @@ void recodata_writer(
   input_file->Close();
   output_file->Close();
 }
-
-/*
-  //TH2F *h_afterpulse = new TH2F("h_afterpulse", "", 10000, 0, 10000, _FRAME_SIZE_, 0, _FRAME_SIZE_);
-
-  //  --- Afterpulse
-  TH2F *h_afterpulse = new TH2F("h_afterpulse", "", 10000, 0, 10000, _FRAME_SIZE_, 0, _FRAME_SIZE_);
-  std::map<int, std::vector<float>> participants_channel;
-  std::map<int, std::vector<float>> hit_time_per_channel;
-  //  --- Avg hits
-  TProfile *h_dcr_rate_start_of_spill = new TProfile("h_dcr_rate_start_of_spill", ";global channel;DCR (kHz)", 2600, 0, 2600);
-  TProfile *h_dcr_rate_start_of_spill_spill = new TProfile("h_dcr_rate_start_of_spill_spill", "", all_spills, 0, all_spills);
-
-  //  Loop over spills
-  for (int i_spill = 0; i_spill < all_spills; ++i_spill)
-  {
-
-    lightdata_tree->GetEntry(i_spill);
-    spilldata->get_entry();
-    auto frames_in_spill = spilldata->get_frame_list_link();
-    std::cout << "[INFO] Spill " << i_spill << " with " << frames_in_spill.size() << " frames " << std::endl;
-    auto &frame_reference = spilldata->get_frame_reference_list_link();
-
-    //  Get participating channels
-    participants_channel.clear();
-    auto lanes_participating = spilldata->get_not_dead_participants();
-    for (auto [device, lanes] : lanes_participating)
-      for (auto current_lane : lanes)
-        for (auto i_channel = 0; i_channel < 8; ++i_channel)
-          participants_channel[256 * (device - 192) + 8 * (int)current_lane + i_channel] = {};
-
-    //  Loop over frames
-    auto i_saved_frame = -1;
-    for (auto &current_lightdata_struct : frames_in_spill)
-    {
-      i_saved_frame++;
-      auto current_frame = frame_reference[i_saved_frame];
-
-      alcor_lightdata current_lightdata(current_lightdata_struct);
-
-      hit_time_per_channel = participants_channel;
-      auto cherenkov_hits = current_lightdata.get_cherenkov_hits_link();
-      //  Loop over hits
-      for (auto current_cherenkov_hit_struct : cherenkov_hits)
-      {
-        alcor_finedata current_cherenkov_hit(current_cherenkov_hit_struct);
-        auto current_device = current_cherenkov_hit.get_device();
-        auto global_index = current_cherenkov_hit.get_global_index();
-        hit_time_per_channel[global_index].push_back(current_cherenkov_hit.get_coarse());
-      }
-
-      //  Fill plots per channel
-      for (auto [global_index, hits] : hit_time_per_channel)
-      {
-        if (true)
-        {
-          h_dcr_rate_start_of_spill->Fill(global_index, hits.size());
-          h_dcr_rate_start_of_spill_spill->Fill(i_spill, hits.size());
-        }
-        for (auto i_hit = 0; i_hit < hits.size(); i_hit++)
-          for (auto j_hit = i_hit + 1; j_hit < hits.size(); j_hit++)
-          {
-            h_afterpulse->Fill(global_index, j_hit - i_hit);
-          }
-      }
-    }
-  }
-
-  new TCanvas();
-  h_afterpulse->Draw("COLZ");
-  new TCanvas();
-  h_dcr_rate_start_of_spill->Draw("COLZ");
-  new TCanvas();
-  h_dcr_rate_start_of_spill_spill->Draw("COLZ");
-
-  h_dcr_rate_start_of_spill->Scale((1. / 1000.) * (1. / (1024 * 3.125 * 1e-9)));
-
-  // input_file->Close();
-  //  output_file->Close();
-  */

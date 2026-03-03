@@ -31,10 +31,11 @@ std::optional<std::array<float, 2>> mapping::get_position_from_pdu_column_row(in
     float y = 0.05 + 0.1 + 0.2 + 1.5 + 3.2 * row + (row > 7 ? 0.3f : 0.f);
 
     //  Add the full PDU center placement
-    if (pdu < pdu_xy_position.size())
+    auto it = pdu_xy_position.find(pdu);
+    if (it != pdu_xy_position.end())
     {
-        x += pdu_xy_position[pdu][0];
-        y += pdu_xy_position[pdu][1];
+        x += it->second[0];
+        y += it->second[1];
     }
 
     return std::array<float, 2>{x, y};

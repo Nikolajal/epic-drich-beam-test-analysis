@@ -4,7 +4,8 @@
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
 
-//  TODO: Cache values to avoid re-computation
+//  TODO: make a full coverage map
+//  TODO: Cache values to avoid re-computation > Check benefits
 class mapping
 {
 public:
