@@ -288,45 +288,5 @@ bool parallel_streaming_framer::next_spill()
     //  Finished Processing spills
     std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " processing finished! Successfully processed " << data_streams.size() << " data streams" << std::endl;
 
-    /*
-        // Divide processing_results into roughly equal chunks
-        size_t base_size = processing_results.size() / n_threads; //    minimum number of chunks per thread
-        size_t remainder = processing_results.size() % n_threads; //    number of threads that get 1 extra chunk
-        size_t start = 0;                                         //    starting chunk
-        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " merging jobs in " << remainder << " batches of " << base_size << " data streams and " << n_threads - remainder << " batches of " << base_size + 1 << " data streams" << flush;
-        for (size_t current_thread = 0; current_thread < n_threads; ++current_thread)
-        {
-            size_t chunk_size = base_size + (current_thread < remainder ? 1 : 0);
-            size_t end = start + chunk_size;
-
-            //  Process merging
-            async_processing_results.push_back(
-                std::async(
-                    std::launch::async,
-                    [start, end, &processing_results]() -> alcor_spilldata
-                    {
-                        alcor_spilldata local_acc;
-                        for (size_t i = start; i < end; ++i)
-                        {
-                            merge(local_acc, std::move(processing_results[i]));
-                        }
-                        return local_acc;
-                    }));
-            start = end;
-        }
-
-        // Collect results
-        auto i_chunk = 0;
-        for (auto &current_async_processing_results : async_processing_results)
-        {
-            i_chunk++;
-            merge(spilldata, current_async_processing_results.get());
-            std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " last merge round file " << i_chunk << "/" << async_processing_results.size() << flush;
-        }
-
-        //  Finished Merging spills
-        std::cout << "\33[2K\r[INFO] Spill merging finished! Successfully merged " << data_streams.size() << " data streams results" << std::endl;
-    */
-
     return spilldata.has_data();
 }
