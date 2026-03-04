@@ -136,7 +136,7 @@ public:
      * @param _frame_size    Number of clock cycles per frame.
      * @return The framed @ref alcor_spilldata produced from the stream.
      */
-    alcor_spilldata process(alcor_data_streamer &current_stream, int _frame_size);
+    void process(alcor_data_streamer &current_stream, int _frame_size);
 
     // -------------------------------------------------------------------------
     // Internal Helpers
@@ -151,6 +151,18 @@ private:
 
     /** @brief Number of parallel threads requested by the user. */
     uint16_t n_threads_requested;
+
+    /** @brief Frame-grained mutex to protect from data races. */
+    std::unordered_map<int, std::mutex> frame_mutexes;
+
+    /** @brief Protects creation of new mutex entries. */
+    std::mutex frame_mutexes_access;
+
+    /** @brief Protects creation of new entries for unknown triggers. */
+    std::mutex triggers_map_mutex;
+
+    /** @brief Protects creation of new participants and dead masks. */
+    std::mutex spilldata_masks_mutex;
 
     /// @}
 
