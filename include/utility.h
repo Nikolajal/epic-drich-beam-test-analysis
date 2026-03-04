@@ -368,7 +368,7 @@ inline std::vector<TGraph *> plot_ring_integral(ring_fit_results fit_results, st
 }
 
 inline TFile *open_or_build_rootfile(const std::string &filename,
-                                     std::function<void(std::string, std::string, int)> builder,
+                                     std::function<void(std::string, std::string, int, bool, int)> builder,
                                      const std::string &data_repository,
                                      const std::string &run_name,
                                      int max_spill,
@@ -385,7 +385,7 @@ inline TFile *open_or_build_rootfile(const std::string &filename,
   std::cout << "[WARNING] File '" << filename << "' missing, corrupted or rebuild forced, creating it\n";
 
   //  Re-build file
-  builder(data_repository, run_name, max_spill);
+  builder(data_repository, run_name, max_spill, force_rebuild, -1);
 
   TFile *input_file = TFile::Open(filename.c_str(), "READ");
   if (!input_file || input_file->IsZombie())

@@ -22,7 +22,7 @@ void recodata_writer(
     std::string mapping_conf)
 {
   //  Input files
-  //  --- Check if recodata has already been done
+  //  --- Check if lightdata has already been done
   std::string input_filename = data_repository + "/" + run_name + "/lightdata.root";
   TFile *input_file = open_or_build_rootfile(input_filename, lightdata_writer, data_repository, run_name, max_spill, force_lightdata_rebuild);
   if (!input_file)
