@@ -7,37 +7,38 @@
 void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
-    int max_spill)
+    int max_spill,
+    bool force_lightdata_rebuild,
+    int requested_n_threads)
 {
   //  Do not make ownership of histograms to current directory
   TH1::AddDirectory(false);
 
+  //  --- --- --- --- --- ---
   //  Input files
+  //  ---
   std::filesystem::path base_dir = data_repository + "/" + run_name;
   std::vector<std::string> filenames;
   std::unordered_map<std::string, std::vector<std::string>> print_found_files;
-
   //  Check the given folder existence
   if (!std::filesystem::exists(base_dir))
   {
     logger::log_error("(lightdata_writer) Data folder does not exist, abort");
     return;
   }
-
   //  Check the given folder is actually a directory
   if (!std::filesystem::is_directory(base_dir))
   {
     logger::log_error("(lightdata_writer) Data folder is not a folder, abort");
     return;
   }
-
   //  Check the given folder is not empty
   if (std::filesystem::is_empty(base_dir))
   {
     logger::log_error("(lightdata_writer) Data folder is empty, abort");
     return;
   }
-
+  //  Iterate in the directory
   for (const auto &device_dir : std::filesystem::directory_iterator(base_dir))
   {
     //  Skip non directories
@@ -54,7 +55,6 @@ void lightdata_writer(
       logger::log_warning(Form("(lightdata_writer) Data folder for device %s do not have decoded data, skipping", device_name.c_str()));
       continue;
     }
-
     //  Loop on files in decoded
     for (const auto &file : std::filesystem::directory_iterator(decoded_dir))
     {
@@ -66,7 +66,6 @@ void lightdata_writer(
       }
     }
   }
-
   // Collect and sort devices numerically by their trailing number
   std::vector<std::pair<int, std::string>> sorted_devices;
   for (auto [current_device, _] : print_found_files)
@@ -93,33 +92,48 @@ void lightdata_writer(
       std::cout << n << " ";
     std::cout << std::endl;
   }
+  //  ---
+  //  End: Input files
+  //  --- --- --- --- --- ---
 
-  //  Create streaming framer
+  //  --- --- --- --- --- ---
+  //  Framing data & output definition
+  //  ---
   //  TODO: Add FIFO to the config file (2024-2023 have FIFO 24 the triggers.)
-  parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
-
-  //  TODO: Set this from outside
-  //  TODO: Check if one core has a good behaviour, especially in merging: possibility to lock writing in the same place to avoid merging
+  //  TODO: Test single/multiple core behaviour is consistent
   //  TODO: Add a plot to evaluate how many consecutive hits are flagged as afterpulse
-  //  framer.set_parallel_cores(1);
-
-  //  Prepare output tree
-  TFile *outfile = TFile::Open((data_repository + "/" + run_name + "/lightdata.root").c_str(), "RECREATE");
+  //  TODO: re-structureand re-evaluate needs for the QA
+  //  ---
+  //  Create streaming framer
+  parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
+  framer.set_parallel_cores(requested_n_threads);
+  //  Prepare output file & tree
+  std::string outfile_name = data_repository + "/" + run_name + "/lightdata.root";
+  if (std::filesystem::exists(outfile_name) && !force_lightdata_rebuild)
+  {
+    logger::log_info("[INFO] Output file already exists, skipping: " + outfile_name);
+    return;
+  }
+  TFile *outfile = TFile::Open(outfile_name.c_str(), "RECREATE");
   auto &spilldata = framer.get_spilldata_link();
   TTree *lightdata_tree = new TTree("lightdata", "Lightdata tree");
   spilldata.write_to_tree(lightdata_tree);
-
   //  QA Plots
-  /*
-  TODO: re-structure the QA
-  */
+  std::unorderd_map<int, TH1F *> h_trigger_frame_population;
+  //  --- --- --- V Revise V
   TH2F *h_timing_hit_map = new TH2F("h_timing_hit_map", ";channels on chip 0; channels on chip 1", 33, 0, 33, 33, 0, 33);
   TH1F *h_timing_ref_per_frame = new TH1F("h_timing_ref_per_frame", ";frame ID;Timing trigger", 2000, 0, 2000000);
   TH1F *h_timing_ref_delta = new TH1F("h_timing_ref_delta", ";timing chip 0 - timing chip 1", 200, -10, 10);
   TH1F *h_timing_ref_delta_sel = new TH1F("h_timing_ref_delta_sel", ";timing chip 0 - timing chip 1", 200, -10, 10);
   TH1F *h_timing_res = new TH1F("h_timing_res", "", 2000, 0, 2000000);
   TH1F *h_delta_time_trigger_0_timing = new TH1F("h_delta_time_trigger_0_timing", ";#Delta t (ns)", 100, -50, 50);
+  //  ---
+  //  End: Framing data & output definition
+  //  --- --- --- --- --- ---
 
+  //  --- --- --- --- --- ---
+  //  Loop on data streamers
+  //  ---
   //  Loop over spills
   int n_spills = 0, n_frames = 0;
   if (max_spill != 1000)
@@ -248,7 +262,14 @@ void lightdata_writer(
       }
 
       if (!spilldata.has_trigger(frame_id))
+      {
         spilldata.do_not_write_frame(frame_id);
+      }
+      else
+      {
+        if (!h_trigger_frame_population.count(current_trigger_index))
+          h_trigger_frame_population[current_trigger_index] = new TH1F(Form("h_trigger_frame_population_%i", current_trigger_index), ";frame number; trigger;", 5e3, 0, 5e6);
+      }
     }
 
     outfile->cd();
@@ -257,6 +278,9 @@ void lightdata_writer(
     outfile->Flush();
   }
   std::cout << "\r[INFO] Finished spills loop, writing to file" << std::endl;
+  //  ---
+  //  End: Loop on data streamers
+  //  --- --- --- --- --- ---
 
   //  QA plots
   outfile->cd();
