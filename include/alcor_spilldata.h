@@ -31,9 +31,9 @@ struct alcor_spilldata_struct
     alcor_spilldata_struct(const alcor_spilldata_struct &) = default;
     alcor_spilldata_struct &operator=(const alcor_spilldata_struct &) = default;
 
-    std::unordered_map<uint8_t, uint32_t> dead_mask;
-    std::unordered_map<uint8_t, uint32_t> participants_mask;
-    std::unordered_map<uint32_t, alcor_lightdata_struct> frame_and_lightdata;
+    std::map<uint8_t, uint32_t> dead_mask;
+    std::map<uint8_t, uint32_t> participants_mask;
+    std::map<uint32_t, alcor_lightdata_struct> frame_and_lightdata;
 
     std::vector<data_mask_struct> dead_mask_list;
     std::vector<data_mask_struct> participants_mask_list;
@@ -60,17 +60,17 @@ public:
 
     // Getters (copied value)
     alcor_spilldata_struct get_spilldata() const;
-    std::unordered_map<uint32_t, alcor_lightdata_struct> get_frame() const;
-    std::unordered_map<uint8_t, uint32_t> get_participants_mask() const;
-    std::unordered_map<uint8_t, uint32_t> get_dead_mask() const;
+    std::map<uint32_t, alcor_lightdata_struct> get_frame() const;
+    std::map<uint8_t, uint32_t> get_participants_mask() const;
+    std::map<uint8_t, uint32_t> get_dead_mask() const;
     std::vector<alcor_lightdata_struct> get_frame_list() const;
     std::vector<uint32_t> get_frame_reference_list() const;
 
     // Getters (linked reference)
     alcor_spilldata_struct &get_spilldata_link();
-    std::unordered_map<uint32_t, alcor_lightdata_struct> &get_frame_link();
-    std::unordered_map<uint8_t, uint32_t> &get_participants_mask_link();
-    std::unordered_map<uint8_t, uint32_t> &get_dead_mask_link();
+    std::map<uint32_t, alcor_lightdata_struct> &get_frame_link();
+    std::map<uint8_t, uint32_t> &get_participants_mask_link();
+    std::map<uint8_t, uint32_t> &get_dead_mask_link();
     std::vector<alcor_lightdata_struct> &get_frame_list_link();
     std::vector<uint32_t> &get_frame_reference_list_link();
 
@@ -82,15 +82,15 @@ public:
 
     // Setters (copied value)
     void set_spilldata(alcor_spilldata_struct v);
-    void set_frame(std::unordered_map<uint32_t, alcor_lightdata_struct> v);
-    void set_participants_mask(std::unordered_map<uint8_t, uint32_t> v);
-    void set_dead_mask(std::unordered_map<uint8_t, uint32_t> v);
+    void set_frame(std::map<uint32_t, alcor_lightdata_struct> v);
+    void set_participants_mask(std::map<uint8_t, uint32_t> v);
+    void set_dead_mask(std::map<uint8_t, uint32_t> v);
 
     // Setters (linked reference)
     void set_spilldata_link(alcor_spilldata_struct &v);
-    void set_frame_link(std::unordered_map<uint32_t, alcor_lightdata_struct> &v);
-    void set_participants_mask_link(std::unordered_map<uint8_t, uint32_t> &v);
-    void set_dead_mask_link(std::unordered_map<uint8_t, uint32_t> &v);
+    void set_frame_link(std::map<uint32_t, alcor_lightdata_struct> &v);
+    void set_participants_mask_link(std::map<uint8_t, uint32_t> &v);
+    void set_dead_mask_link(std::map<uint8_t, uint32_t> &v);
 
     // Utilities
     void clear();

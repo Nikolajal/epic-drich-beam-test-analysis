@@ -33,17 +33,17 @@ alcor_spilldata::alcor_spilldata(const alcor_spilldata_struct &v) : spilldata(v)
 
 // Getters (copied value)
 alcor_spilldata_struct alcor_spilldata::get_spilldata() const { return spilldata; }
-std::unordered_map<uint32_t, alcor_lightdata_struct> alcor_spilldata::get_frame() const { return spilldata.frame_and_lightdata; }
-std::unordered_map<uint8_t, uint32_t> alcor_spilldata::get_participants_mask() const { return spilldata.participants_mask; }
-std::unordered_map<uint8_t, uint32_t> alcor_spilldata::get_dead_mask() const { return spilldata.dead_mask; }
+std::map<uint32_t, alcor_lightdata_struct> alcor_spilldata::get_frame() const { return spilldata.frame_and_lightdata; }
+std::map<uint8_t, uint32_t> alcor_spilldata::get_participants_mask() const { return spilldata.participants_mask; }
+std::map<uint8_t, uint32_t> alcor_spilldata::get_dead_mask() const { return spilldata.dead_mask; }
 std::vector<alcor_lightdata_struct> alcor_spilldata::get_frame_list() const { return spilldata.lightdata_list_in_frame; }
 std::vector<uint32_t> alcor_spilldata::get_frame_reference_list() const { return spilldata.frame_reference; }
 
 // Getters (linked reference)
 alcor_spilldata_struct &alcor_spilldata::get_spilldata_link() { return spilldata; }
-std::unordered_map<uint32_t, alcor_lightdata_struct> &alcor_spilldata::get_frame_link() { return spilldata.frame_and_lightdata; }
-std::unordered_map<uint8_t, uint32_t> &alcor_spilldata::get_participants_mask_link() { return spilldata.participants_mask; }
-std::unordered_map<uint8_t, uint32_t> &alcor_spilldata::get_dead_mask_link() { return spilldata.dead_mask; }
+std::map<uint32_t, alcor_lightdata_struct> &alcor_spilldata::get_frame_link() { return spilldata.frame_and_lightdata; }
+std::map<uint8_t, uint32_t> &alcor_spilldata::get_participants_mask_link() { return spilldata.participants_mask; }
+std::map<uint8_t, uint32_t> &alcor_spilldata::get_dead_mask_link() { return spilldata.dead_mask; }
 std::vector<alcor_lightdata_struct> &alcor_spilldata::get_frame_list_link() { return spilldata.lightdata_list_in_frame; }
 std::vector<uint32_t> &alcor_spilldata::get_frame_reference_list_link() { return spilldata.frame_reference; }
 
@@ -55,15 +55,15 @@ std::vector<alcor_finedata_struct> &alcor_spilldata::get_frame_cherenkov_hits(ui
 
 // Setters (copied value)
 void alcor_spilldata::set_spilldata(alcor_spilldata_struct v) { spilldata = v; }
-void alcor_spilldata::set_frame(std::unordered_map<uint32_t, alcor_lightdata_struct> v) { spilldata.frame_and_lightdata = v; }
-void alcor_spilldata::set_participants_mask(std::unordered_map<uint8_t, uint32_t> v) { spilldata.participants_mask = v; }
-void alcor_spilldata::set_dead_mask(std::unordered_map<uint8_t, uint32_t> v) { spilldata.dead_mask = v; }
+void alcor_spilldata::set_frame(std::map<uint32_t, alcor_lightdata_struct> v) { spilldata.frame_and_lightdata = v; }
+void alcor_spilldata::set_participants_mask(std::map<uint8_t, uint32_t> v) { spilldata.participants_mask = v; }
+void alcor_spilldata::set_dead_mask(std::map<uint8_t, uint32_t> v) { spilldata.dead_mask = v; }
 
 // Setters (linked reference)
 void alcor_spilldata::set_spilldata_link(alcor_spilldata_struct &v) { spilldata = v; }
-void alcor_spilldata::set_frame_link(std::unordered_map<uint32_t, alcor_lightdata_struct> &v) { spilldata.frame_and_lightdata = v; }
-void alcor_spilldata::set_participants_mask_link(std::unordered_map<uint8_t, uint32_t> &v) { spilldata.participants_mask = v; }
-void alcor_spilldata::set_dead_mask_link(std::unordered_map<uint8_t, uint32_t> &v) { spilldata.dead_mask = v; }
+void alcor_spilldata::set_frame_link(std::map<uint32_t, alcor_lightdata_struct> &v) { spilldata.frame_and_lightdata = v; }
+void alcor_spilldata::set_participants_mask_link(std::map<uint8_t, uint32_t> &v) { spilldata.participants_mask = v; }
+void alcor_spilldata::set_dead_mask_link(std::map<uint8_t, uint32_t> &v) { spilldata.dead_mask = v; }
 
 // Utilities
 void alcor_spilldata::clear()
@@ -77,19 +77,31 @@ void alcor_spilldata::do_not_write_frame(uint32_t index_of_frame) { frame_refere
 std::map<uint32_t, std::vector<uint8_t>> alcor_spilldata::get_not_dead_participants()
 {
     std::map<uint32_t, std::vector<uint8_t>> result;
-    for (const auto &pm : spilldata.participants_mask_list)
+    if (spilldata.participants_mask_list.size())
     {
-        uint8_t device = pm.device;
-        uint32_t participants_mask = pm.mask;
-        uint32_t dead_mask = 0;
-        for (const auto &dm : spilldata.dead_mask_list)
-            if (dm.device == device)
-            {
-                dead_mask = dm.mask;
-                break;
-            }
-        uint32_t not_dead_participants_mask = (participants_mask & (~dead_mask));
-        result[device] = decode_bits(not_dead_participants_mask);
+        for (const auto &pm : spilldata.participants_mask_list)
+        {
+            uint8_t device = pm.device;
+            uint32_t participants_mask = pm.mask;
+            uint32_t dead_mask = 0;
+            for (const auto &dm : spilldata.dead_mask_list)
+                if (dm.device == device)
+                {
+                    dead_mask = dm.mask;
+                    break;
+                }
+            uint32_t not_dead_participants_mask = (participants_mask & (~dead_mask));
+            result[device] = decode_bits(not_dead_participants_mask);
+        }
+    }
+    else
+    {
+        for (const auto &[device, part_mask] : spilldata.participants_mask)
+        {
+            uint32_t dead_mask = spilldata.dead_mask[device];
+            uint32_t not_dead_participants_mask = (part_mask & (~dead_mask));
+            result[device] = decode_bits(not_dead_participants_mask);
+        }
     }
     return result;
 }
