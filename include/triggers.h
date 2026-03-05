@@ -12,6 +12,7 @@ enum trigger_number
     _TRIGGER_TRACKING_ = 102,
     _TRIGGER_RING_FOUND_ = 103,
     _TRIGGER_STREAMING_RING_FOUND_ = 104,
+    _TRIGGER_HOUGH_RING_FOUND_ = 105,
     _TRIGGER_START_OF_SPILL_ = 200,
     _TRIGGER_UNKNOWN_ = 255
 };
@@ -21,8 +22,14 @@ constexpr trigger_number all_default_triggers[] = {
     _TRIGGER_TRACKING_,
     _TRIGGER_RING_FOUND_,
     _TRIGGER_STREAMING_RING_FOUND_,
+    _TRIGGER_HOUGH_RING_FOUND_,
     _TRIGGER_START_OF_SPILL_,
     _TRIGGER_UNKNOWN_};
+constexpr const char *default_names[] = {
+    "FIRST_FRAMES", "TIMING", "TRACKING",
+    "RING_FOUND", "STREAMING_RING_FOUND",
+    "HOUGH_RING_FOUND",
+    "START_OF_SPILL", "UNKNOWN"};
 constexpr int n_default_triggers = std::size(all_default_triggers);
 constexpr int default_trigger_index(trigger_number t)
 {
@@ -67,11 +74,6 @@ struct trigger_registry
         // Config triggers first (indices 0,1,2,...)
         for (auto &t : config_triggers)
             triggers.push_back({t.index, t.name});
-        // Default triggers after
-        constexpr const char *default_names[] = {
-            "FIRST_FRAMES", "TIMING", "TRACKING",
-            "RING_FOUND", "STREAMING_RING_FOUND",
-            "START_OF_SPILL", "UNKNOWN"};
         for (int i = 0; i < n_default_triggers; ++i)
             triggers.push_back({all_default_triggers[i], default_names[i]});
     }
