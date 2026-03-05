@@ -47,6 +47,12 @@ std::unordered_map<uint8_t, uint32_t> &alcor_spilldata::get_dead_mask_link() { r
 std::vector<alcor_lightdata_struct> &alcor_spilldata::get_frame_list_link() { return spilldata.lightdata_list_in_frame; }
 std::vector<uint32_t> &alcor_spilldata::get_frame_reference_list_link() { return spilldata.frame_reference; }
 
+//  Getters for a frame lightdata
+std::vector<trigger_struct> &alcor_spilldata::get_frame_trigger_hits(uint32_t index_of_frame) { return ((get_frame_link())[index_of_frame]).trigger_hits; }
+std::vector<alcor_finedata_struct> &alcor_spilldata::get_frame_timing_hits(uint32_t index_of_frame) { return ((get_frame_link())[index_of_frame]).timing_hits; }
+std::vector<alcor_finedata_struct> &alcor_spilldata::get_frame_tracking_hits(uint32_t index_of_frame) { return ((get_frame_link())[index_of_frame]).tracking_hits; }
+std::vector<alcor_finedata_struct> &alcor_spilldata::get_frame_cherenkov_hits(uint32_t index_of_frame) { return ((get_frame_link())[index_of_frame]).cherenkov_hits; }
+
 // Setters (copied value)
 void alcor_spilldata::set_spilldata(alcor_spilldata_struct v) { spilldata = v; }
 void alcor_spilldata::set_frame(std::unordered_map<uint32_t, alcor_lightdata_struct> v) { spilldata.frame_and_lightdata = v; }
