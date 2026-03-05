@@ -43,7 +43,7 @@
 #include "lightdata_writer.h"
 #include "recodata_writer.h"
 #include "mapping.h"
-#include "streaming_framer.h"
+#include "parallel_streaming_framer.h"
 #include "triggers.h"
 #include "utility.h"
 #endif

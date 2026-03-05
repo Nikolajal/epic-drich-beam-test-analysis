@@ -93,6 +93,10 @@ public:
     int get_calib_index(int i) const;
     int get_device_index(int i) const;
 
+    /**
+     * @todo Make return a vector with all available trigger w/ matching index
+     * @todo Make a function with (anti-)coincidence
+     */
     std::optional<trigger_struct> get_trigger_by_index(uint8_t index) const;
     std::optional<trigger_struct> get_timing_trigger() const;
 

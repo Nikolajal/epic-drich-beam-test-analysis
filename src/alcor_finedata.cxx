@@ -50,6 +50,7 @@ float alcor_finedata::get_phase() const
     return 0.;
 }
 float alcor_finedata::get_time() const { return _ALCOR_ROLLOVER_TO_CC_ * get_rollover() + get_coarse() - get_phase(); }
+float alcor_finedata::get_time_ns() const { return _ALCOR_CC_TO_NS_ * get_time(); }
 int alcor_finedata::get_tdc() const { return get_calib_index() % 4; }
 int alcor_finedata::get_device() const { return 192 + (get_global_index() / 256); }
 int alcor_finedata::get_fifo() const { return (get_global_index() % 256) / 8; }
