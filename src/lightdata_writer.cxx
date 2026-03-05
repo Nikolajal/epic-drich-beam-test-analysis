@@ -1,5 +1,4 @@
 #include "parallel_streaming_framer.h"
-#include "streaming_framer.h"
 #include "lightdata_writer.h"
 
 //  TODO: make the CLI multithred flag
@@ -98,15 +97,18 @@ void lightdata_writer(
 
   //  --- --- --- --- --- ---
   //  Framing data & output definition
-  //  ---
-  //  TODO: Add FIFO to the config file (2024-2023 have FIFO 24 the triggers.)
-  //  TODO: Test single/multiple core behaviour is consistent
-  //  TODO: Add a plot to evaluate how many consecutive hits are flagged as afterpulse
-  //  TODO: re-structureand re-evaluate needs for the QA
-  //  ---
+  /***
+   * @todo Add FIFO to the config file (2024-2023 have FIFO 24 the triggers.)
+   * @todo Test single/multiple core behaviour is consistent
+   * @todo Add a plot to evaluate how many consecutive hits are flagged as afterpulse
+   * @todo Re-structureand re-evaluate needs for the QA
+   * @todo Config files from outside
+   */
   //  Create streaming framer
   parallel_streaming_framer framer(filenames, "conf/trigger_setup.txt", "conf/readout_config.txt");
   framer.set_parallel_cores(requested_n_threads);
+  auto config_triggers = trigger_conf_reader("conf/trigger_setup.txt");
+  trigger_registry registry(config_triggers);
   //  Prepare output file & tree
   std::string outfile_name = data_repository + "/" + run_name + "/lightdata.root";
   if (std::filesystem::exists(outfile_name) && !force_lightdata_rebuild)
@@ -118,8 +120,21 @@ void lightdata_writer(
   auto &spilldata = framer.get_spilldata_link();
   TTree *lightdata_tree = new TTree("lightdata", "Lightdata tree");
   spilldata.write_to_tree(lightdata_tree);
+  //  ---
   //  QA Plots
-  std::unorderd_map<int, TH1F *> h_trigger_frame_population;
+  //  ---
+  //  --- Triggers
+  std::unordered_map<int, TH1F *> h_trigger_frame_population;
+  std::unordered_map<int, TH1F *> h_trigger_time_diff_w_cherenkov;
+  TH2F *h2_trigger_matrix = new TH2F(
+      "h2_trigger_matrix", "Trigger coincidence matrix;;",
+      registry.size(), -0.5, registry.size() - 0.5,
+      registry.size(), -0.5, registry.size() - 0.5);
+  registry.label_axes(h2_trigger_matrix);
+  //  ---
+  //  --- Hit Number
+  TH1F *h_hits_per_frame_sig = new TH1F("h_hits_per_frame_sig", ";;", 500, 0, 500);
+  TH1F *h_hits_per_frame_bkg = new TH1F("h_hits_per_frame_bkg", ";;", 500, 0, 500);
   //  --- --- --- V Revise V
   TH2F *h_timing_hit_map = new TH2F("h_timing_hit_map", ";channels on chip 0; channels on chip 1", 33, 0, 33, 33, 0, 33);
   TH1F *h_timing_ref_per_frame = new TH1F("h_timing_ref_per_frame", ";frame ID;Timing trigger", 2000, 0, 2000000);
@@ -143,13 +158,10 @@ void lightdata_writer(
     std::cout << "\33[2K\r[INFO] Spill " << ispill << std::flush;
     for (auto &[frame_id, current_lightdata_struct] : spilldata.get_frame_link())
     {
-      //  Build current event lightdata
-      alcor_lightdata current_lightdata(current_lightdata_struct);
-
       //  Link locally hits structure
-      auto &triggers_in_frame = current_lightdata.get_triggers_link();
-      auto &timing_hits = current_lightdata.get_timing_hits_link();
-      auto &cherenkov_hits = current_lightdata.get_cherenkov_hits_link();
+      auto &triggers_in_frame = spilldata.get_frame_trigger_hits(frame_id);
+      auto &timing_hits = spilldata.get_frame_timing_hits(frame_id);
+      auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
 
       //  Fill timing trigger information
       int timing_hit_chip_0 = 0;
@@ -217,7 +229,7 @@ void lightdata_writer(
       //  Utility structures
       std::vector<std::pair<int, float>> current_hit_fifo;
       std::vector<std::pair<int, float>> previous_hit_fifo;
-      float clock_cycles = 10.f;
+      float clock_cycles = 40.f;
       //  TODO: make the threshold dependent on participants channels (?)
       int hit_threshold = 7;
 
@@ -265,13 +277,47 @@ void lightdata_writer(
       {
         spilldata.do_not_write_frame(frame_id);
       }
+      //  This frame will be saved, we perform saved frames QA
       else
       {
-        if (!h_trigger_frame_population.count(current_trigger_index))
-          h_trigger_frame_population[current_trigger_index] = new TH1F(Form("h_trigger_frame_population_%i", current_trigger_index), ";frame number; trigger;", 5e3, 0, 5e6);
+        for (auto current_trigger : triggers_in_frame)
+        {
+          if (!h_trigger_frame_population.count(current_trigger.index))
+          {
+            h_trigger_frame_population[current_trigger.index] = new TH1F(Form("h_trigger_frame_population_%s", registry.name_of(current_trigger.index).c_str()), ";frame number; trigger;", 5e3, 0, 5e6);
+            h_trigger_time_diff_w_cherenkov[current_trigger.index] = new TH1F(Form("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()), ";;", 5e3, -500, 500);
+          }
+          //  Frame distribution of the trigger
+          h_trigger_frame_population[current_trigger.index]->Fill(frame_id);
+          //  Time difference of trigger with cherenkov hits
+          auto trigger_104_hits_signal = 0;
+          auto trigger_104_hits_background = 0;
+          for (auto current_cherenkov_hit_struct : cherenkov_hits)
+          {
+            alcor_finedata current_hit(current_cherenkov_hit_struct);
+            if (!current_hit.is_afterpulse())
+            {
+              h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(current_hit.get_time_ns() - current_trigger.fine_time);
+              if (fabs(current_hit.get_time_ns() - current_trigger.fine_time) < 20 && current_trigger.index == 104)
+                trigger_104_hits_signal++;
+              if (fabs(current_hit.get_time_ns() - current_trigger.fine_time - 60) < 20 && current_trigger.index == 104)
+                trigger_104_hits_background++;
+            }
+          }
+          h_hits_per_frame_sig->Fill(trigger_104_hits_signal);
+          h_hits_per_frame_bkg->Fill(trigger_104_hits_background);
+        }
+        // Collect unique trigger types in this frame
+        std::set<int> fired_trigger_types;
+        for (auto &t : triggers_in_frame)
+          fired_trigger_types.insert(
+              registry.index_of(static_cast<trigger_number>(t.index)));
+        // Fill matrix — each pair filled exactly once
+        for (auto i : fired_trigger_types)
+          for (auto j : fired_trigger_types)
+            h2_trigger_matrix->Fill(i, j);
       }
     }
-
     outfile->cd();
     spilldata.prepare_tree_fill();
     lightdata_tree->Fill();
@@ -282,16 +328,31 @@ void lightdata_writer(
   //  End: Loop on data streamers
   //  --- --- --- --- --- ---
 
+  //  --- --- --- --- --- ---
   //  QA plots
+  //  ---
   outfile->cd();
   lightdata_tree->Write();
-  h_timing_hit_map->Write();
-  h_timing_ref_per_frame->Write();
-  h_delta_time_trigger_0_timing->Write();
-  h_timing_ref_delta->Write();
-  h_timing_ref_delta_sel->Write();
-  // auto QA_plots_map = framer.get_QA_plots();
-  // for (auto [name, hist] : QA_plots_map)
-  //   hist->Write(name.c_str());
+  h_hits_per_frame_sig->Write();
+  h_hits_per_frame_bkg->Write();
+  //  ---
+  //  --- Trigger QA
+  TDirectory *trigger_dir = outfile->mkdir("Triggers");
+  trigger_dir->cd();
+  h2_trigger_matrix->Write();
+  for (auto [key, val] : h_trigger_frame_population)
+    val->Write();
+  for (auto [key, val] : h_trigger_time_diff_w_cherenkov)
+  {
+    val->Scale(1. / h2_trigger_matrix->GetBinContent(registry.index_of(key) + 1, registry.index_of(key) + 1));
+    val->Write();
+  }
+  //  ---
+  //  --- Other QA
+  //  ---
+  //  --- Close file
   outfile->Close();
+  //  ---
+  //  End: QA plots
+  //  --- --- --- --- --- ---
 }
