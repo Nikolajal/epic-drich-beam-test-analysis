@@ -150,7 +150,7 @@ void alcor_recodata::find_rings(float distance_length_cut, float distance_time_c
         int selected_size = -1;
         for (auto [main_index, current_index_list] : proximity_hit_list_device)
         {
-            if (current_index_list.size() > selected_size)
+            if (current_index_list.size() < selected_size)
                 continue;
             selected_main_index = main_index;
             selected_size = current_index_list.size();
