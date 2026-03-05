@@ -55,6 +55,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
 alcor_spilldata parallel_streaming_framer::get_spilldata() const { return spilldata; }
 alcor_spilldata &parallel_streaming_framer::get_spilldata_link() { return spilldata; }
 std::map<std::string, TH1 *> parallel_streaming_framer::get_QA_plots() { return {}; }
+int parallel_streaming_framer::get_registered_triggers() { return triggers_map.size(); }
 
 // Setters
 void parallel_streaming_framer::set_spilldata(alcor_spilldata v) { spilldata = v; }
@@ -95,29 +96,21 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
         //  ----    ----    ----    ALCOR hit  ----    ----    ----
         if (current_data.is_alcor_hit())
         {
-            // Get or create the mutex for this frame
-            std::mutex *frame_mutex;
-            {
-                std::lock_guard<std::mutex> map_lock(frame_mutexes_access);
-                frame_mutex = &frame_mutexes[hit_frame_index]; // creates if not exists
-            }
-
             //  Make afterpulse check
             current_data.set_mask(0);
             auto current_channel = current_data.get_global_index();
             if (auto search = afterpulse_map.find(current_channel); search != afterpulse_map.end())
-                if (hit_frame_coarse_global < afterpulse_map[current_channel])
+                if (hit_frame_coarse_global < search->second)
                     current_data.add_mask_bit(_HITMASK_afterpulse);
             afterpulse_map[current_channel] = hit_frame_coarse_global + _AFTERPULSE_DEADTIME_;
 
             //  Assigning frame-time values
             current_data.set_rollover(0);
             current_data.set_coarse(hit_frame_coarse);
-            current_data.set_mask(0);
 
             // Lock only this frame's mutex
             {
-                std::lock_guard<std::mutex> frame_lock(*frame_mutex);
+                std::lock_guard<std::mutex> map_lock(frame_mutexes_access);
                 auto &current_lightdata = frame_map[hit_frame_index];
                 //  Assign to correct lightdata hit label
                 for (auto &tag : current_readout_tag_list)
@@ -146,22 +139,17 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
             {
                 std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
                 if (!triggers_map.count(current_device))
-                    triggers_map[current_device] = {"UNDF", 255, 0, static_cast<uint16_t>(current_device)};
+                    triggers_map[current_device] = {"UNDF", _TRIGGER_UNKNOWN_, 0, static_cast<uint16_t>(current_device)};
                 current_setting = triggers_map[current_device];
-                trigger_known = (current_setting.index != 255);
+                trigger_known = (current_setting.index != _TRIGGER_UNKNOWN_);
             }
 
             if (!trigger_known)
             {
                 // Unknown trigger — write to original frame
-                std::mutex *frame_mutex;
-                {
-                    std::lock_guard<std::mutex> map_lock(frame_mutexes_access);
-                    frame_mutex = &frame_mutexes[hit_frame_index];
-                }
-                std::lock_guard<std::mutex> frame_lock(*frame_mutex);
+                std::lock_guard<std::mutex> map_lock(frame_mutexes_access);
                 frame_map[hit_frame_index].trigger_hits.emplace_back(
-                    static_cast<uint8_t>(255),
+                    static_cast<uint8_t>(_TRIGGER_UNKNOWN_),
                     static_cast<uint16_t>(current_device),
                     static_cast<float>(hit_frame_coarse * _ALCOR_CC_TO_NS_));
                 continue;
@@ -170,14 +158,8 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
             // Known trigger — recalculate frame and write there
             uint32_t new_frame_index = (hit_frame_coarse_global - current_setting.delay) / (_frame_size * 1.);
             uint64_t new_frame_coarse = (hit_frame_coarse_global - current_setting.delay) % static_cast<uint64_t>(_frame_size);
-
-            std::mutex *frame_mutex;
             {
                 std::lock_guard<std::mutex> map_lock(frame_mutexes_access);
-                frame_mutex = &frame_mutexes[new_frame_index];
-            }
-            {
-                std::lock_guard<std::mutex> frame_lock(*frame_mutex);
                 frame_map[new_frame_index].trigger_hits.emplace_back(
                     static_cast<uint8_t>(current_setting.index),
                     static_cast<uint16_t>(new_frame_coarse),
@@ -189,21 +171,21 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
         //  ----    ----    ----    Start of spill  ----    ----    ----
         if (current_data.is_start_spill())
         {
+            //  Lock the spilldata info
+            std::lock_guard<std::mutex> lock(spilldata_masks_mutex);
+
+            //  Gather infos on the fifo
+            auto current_fifo = current_data.get_fifo();
+
+            //  Encode participation of lane
+            auto &current_participants_mask = spilldata.get_participants_mask_link();
+            current_participants_mask[static_cast<uint8_t>(current_device)] += encode_bits({(uint8_t)current_fifo});
+
+            //  Encode dead lane
+            if (current_data.coarse_time_clock() != 0)
             {
-                std::lock_guard<std::mutex> lock(spilldata_masks_mutex);
-                //  Gather infos on the fifo
-                auto current_fifo = current_data.get_fifo();
-
-                //  Encode participation of lane
-                auto &current_participants_mask = spilldata.get_participants_mask_link();
-                current_participants_mask[static_cast<uint8_t>(current_device)] += encode_bits({(uint8_t)current_fifo});
-
-                //  Encode dead lane
-                if (current_data.coarse_time_clock() != 0)
-                {
-                    auto &current_dead_mask = spilldata.get_dead_mask_link();
-                    current_dead_mask[static_cast<uint8_t>(current_device)] += encode_bits({(uint8_t)current_fifo});
-                }
+                auto &current_dead_mask = spilldata.get_dead_mask_link();
+                current_dead_mask[static_cast<uint8_t>(current_device)] += encode_bits({(uint8_t)current_fifo});
             }
             continue;
         }
@@ -219,18 +201,6 @@ bool parallel_streaming_framer::next_spill()
     spilldata.clear();
     _current_spill++;
     auto &frame_list = spilldata.get_frame_link();
-
-    //  Pre-populate maps to avoid re-hashing
-    {
-        uint32_t max_frame = 5.e6;
-        frame_list.reserve(max_frame);
-        frame_mutexes.reserve(max_frame);
-        for (uint32_t i = 0; i < max_frame; ++i)
-        {
-            frame_list[i];
-            frame_mutexes[i];
-        }
-    }
 
     // --- First frames trigger
     for (auto i_frame = 0; i_frame < _FIRST_FRAMES_TRIGGER_; ++i_frame)
@@ -254,36 +224,31 @@ bool parallel_streaming_framer::next_spill()
     n_threads = n_threads_requested > 0 ? std::min<uint16_t>(n_threads_requested, 8 * std::min<size_t>(n_threads - 2, 2)) : 8 * std::min<size_t>(n_threads - 2, 2); //  Leave 2 cores free for general machine work, 8 streams per core are manageable
 
     //  Generate result vector
-    std::vector<std::future<void>> async_processing_results;
-    async_processing_results.reserve(n_threads);
+    std::atomic<size_t> next_streamer_atomic(0);
+    std::vector<std::future<void>> thread_pool;
+    thread_pool.reserve(n_threads);
 
-    //  Loop over data streams
-    //  --- Start with streamer 0
-    size_t next_streamer = 0;
-    while (next_streamer < data_streams.size())
+    // Launch exactly n_threads workers, each grabbing the next available stream
+    for (size_t i = 0; i < n_threads; ++i)
     {
-        //  Update on processing
-        std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " processed files " << next_streamer << "/" << data_streams.size() << " -- parallel threads: " << n_threads << flush;
-
-        //  Set next batch size
-        size_t batch_size = std::min<size_t>(n_threads, data_streams.size() - next_streamer);
-
-        //  Launch a batch of async tasks processing the next spill of data to generate frames
-        for (size_t i = 0; i < batch_size; ++i)
+        thread_pool.push_back(std::async(std::launch::async, [this, &next_streamer_atomic]()
+                                         {
+        while (true)
         {
-            auto &current_stream = data_streams[next_streamer + i];
-            async_processing_results.push_back(std::async(std::launch::async, [this, &current_stream]()
-                                                          { return process(current_stream, this->_frame_size); }));
-        }
+            // Atomically grab the next stream index
+            size_t my_stream = next_streamer_atomic.fetch_add(1);
+            if (my_stream >= data_streams.size())
+                return; // no more work
 
-        //  Collect results for this batch
-        for (auto &current_async_thread_result : async_processing_results)
-            current_async_thread_result.get(); //    Get forces the current thread to end working before next batch
+            std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill
+                      << " thread processing stream " << my_stream
+                      << "/" << data_streams.size() << std::flush;
 
-        async_processing_results.clear(); //    Ready for next batch
-        next_streamer += batch_size;      //    Start over with next batch
+            process(data_streams[my_stream], this->_frame_size);
+        } }));
     }
-    async_processing_results.clear();
+    for (auto &f : thread_pool)
+        f.get();
 
     //  Finished Processing spills
     std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " processing finished! Successfully processed " << data_streams.size() << " data streams" << std::endl;
