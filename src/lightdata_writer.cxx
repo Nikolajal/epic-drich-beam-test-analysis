@@ -132,10 +132,10 @@ void lightdata_writer(
       registry.size(), -0.5, registry.size() - 0.5);
   registry.label_axes(h2_trigger_matrix);
   //  ---
+  //  --- --- --- V Revise V
   //  --- Hit Number
   TH1F *h_hits_per_frame_sig = new TH1F("h_hits_per_frame_sig", ";;", 500, 0, 500);
   TH1F *h_hits_per_frame_bkg = new TH1F("h_hits_per_frame_bkg", ";;", 500, 0, 500);
-  //  --- --- --- V Revise V
   TH2F *h_timing_hit_map = new TH2F("h_timing_hit_map", ";channels on chip 0; channels on chip 1", 33, 0, 33, 33, 0, 33);
   TH1F *h_timing_ref_per_frame = new TH1F("h_timing_ref_per_frame", ";frame ID;Timing trigger", 2000, 0, 2000000);
   TH1F *h_timing_ref_delta = new TH1F("h_timing_ref_delta", ";timing chip 0 - timing chip 1", 200, -10, 10);
@@ -155,7 +155,24 @@ void lightdata_writer(
     std::cout << "[INFO] Requested to stop at spill : " << max_spill << std::endl;
   for (int ispill = 0; ispill < max_spill && framer.next_spill(); ++ispill)
   {
-    std::cout << "\33[2K\r[INFO] Spill " << ispill << std::flush;
+    //  Calculate participants channel
+    auto lanes_participating = spilldata.get_not_dead_participants();
+    int n_active_cherenkov_channels = 0;
+    for (auto [device, lanes] : lanes_participating)
+      if (device < 200)
+        for (auto current_lane : lanes)
+          if (current_lane)
+            n_active_cherenkov_channels += 8;
+
+    //  Streaming trigger utilities
+    const float cherenkov_fraction = 0.005f; // tune this
+    const float time_window_ns = 40.f;
+    const int threshold = std::max(1, static_cast<int>(std::ceil(cherenkov_fraction * n_active_cherenkov_channels)));
+    std::vector<float> carry_over_hits;
+
+    //  Info
+    std::cout << "\33[2K\r[INFO] Spill " << ispill << " has " << n_active_cherenkov_channels << " active channels" << std::flush;
+
     for (auto &[frame_id, current_lightdata_struct] : spilldata.get_frame_link())
     {
       //  Link locally hits structure
@@ -221,17 +238,17 @@ void lightdata_writer(
         }
       }
 
-      // -------------------------------------------------------------------------
-      // Cherenkov sliding window trigger
-      // -------------------------------------------------------------------------
-      //  TODO: make it an external repo with template structure
+      //  --- Cherenkov sliding window trigger
 
       //  Utility structures
-      std::vector<std::pair<int, float>> current_hit_fifo;
-      std::vector<std::pair<int, float>> previous_hit_fifo;
-      float clock_cycles = 40.f;
-      //  TODO: make the threshold dependent on participants channels (?)
-      int hit_threshold = 7;
+      std::vector<float> hit_times;
+      hit_times.reserve(cherenkov_hits.size());
+      std::vector<float> window;
+      window.reserve(32);
+      window = carry_over_hits;
+      bool in_cluster = false;
+      int peak_count = 0;
+      float peak_time_sum = 0.f;
 
       //  Build an alcor_finedata vector and sort the hits
       std::vector<alcor_finedata> cherenkov_finedata_hits;
@@ -240,38 +257,57 @@ void lightdata_writer(
       std::sort(cherenkov_finedata_hits.begin(), cherenkov_finedata_hits.end());
 
       //  Loop over cherenkov hits
-      int current_hit = -1;
-      int current_hit_count = 0;
-      int previous_hit_count = 0;
-      for (auto current_cherenkov_hit : cherenkov_finedata_hits)
+      for (auto &current_cherenkov_hit : cherenkov_finedata_hits)
       {
-        //  Next hit, get reference hit time and add to the streaming_trigger
-        current_hit++;
-        float current_hit_time = current_cherenkov_hit.get_time();
-        current_hit_fifo.push_back({current_hit, current_hit_time});
+        float current_time = current_cherenkov_hit.get_time_ns();
 
-        //  Remove hits than clock_cycles in the search array
-        current_hit_fifo.erase(
-            std::remove_if(current_hit_fifo.begin(),
-                           current_hit_fifo.end(),
-                           [&](const std::pair<int, float> &elem)
-                           {
-                             return (current_hit_time - elem.second) > clock_cycles;
-                           }),
-            current_hit_fifo.end());
+        // Evict hits outside the window
+        window.erase(
+            std::remove_if(window.begin(), window.end(),
+                           [&](float t_old)
+                           { return (current_time - t_old) > time_window_ns; }),
+            window.end());
+        window.push_back(current_time);
 
-        //  Check the nuber of hits to trigger
-        current_hit_count = current_hit_fifo.size();
-        if ((previous_hit_count >= hit_threshold) && (current_hit_count < previous_hit_count))
+        //  Get window occupancy
+        int count = static_cast<int>(window.size());
+
+        //  Check triggering conditions
+        if (count >= threshold)
         {
-          float trigger_time = 0.;
-          for (auto i_ter : previous_hit_fifo)
-            trigger_time += i_ter.second / previous_hit_count;
-          spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_), static_cast<uint16_t>(previous_hit_count), static_cast<float>(trigger_time * _ALCOR_CC_TO_NS_)});
+          in_cluster = true;
+          if (count > peak_count)
+          {
+            peak_count = count;
+            peak_time_sum = 0.f;
+            for (float tw : window)
+              peak_time_sum += tw;
+          }
         }
-        previous_hit_fifo = current_hit_fifo;
-        previous_hit_count = current_hit_count;
+        else if (in_cluster)
+        {
+          // Cluster just ended — fire once
+          float trigger_time = (peak_time_sum / peak_count);
+          spilldata.add_trigger_to_frame(frame_id,
+                                         {static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_),
+                                          static_cast<uint16_t>(peak_count),
+                                          static_cast<float>(trigger_time)});
+
+          // Reset
+          in_cluster = false;
+          peak_count = 0;
+          peak_time_sum = 0.f;
+        }
       }
+      //  Store carry over window for cross-frames triggers
+      // TODO: add_trigger_to_frame(peak_frame_id, ...) is called retroactively during
+      // frame N+1 processing, after frame N has already passed the has_trigger /
+      // do_not_write_frame gate. Need to defer the write gate to after the full frame
+      // loop, or do a second pass.
+      carry_over_window.clear();
+      for (float t : window)
+        carry_over_window.push_back(t - _FRAME_LENGTH_NS_);
+      //  ---
 
       if (!spilldata.has_trigger(frame_id))
       {
@@ -280,16 +316,33 @@ void lightdata_writer(
       //  This frame will be saved, we perform saved frames QA
       else
       {
+        int has_104 = -1;
+        int n_trigger = -1;
         for (auto current_trigger : triggers_in_frame)
         {
+          n_trigger++;
           if (!h_trigger_frame_population.count(current_trigger.index))
           {
             h_trigger_frame_population[current_trigger.index] = new TH1F(Form("h_trigger_frame_population_%s", registry.name_of(current_trigger.index).c_str()), ";frame number; trigger;", 5e3, 0, 5e6);
             h_trigger_time_diff_w_cherenkov[current_trigger.index] = new TH1F(Form("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()), ";;", 5e3, -500, 500);
           }
+
+          if (current_trigger.index == 104)
+            has_104 = n_trigger;
+
           //  Frame distribution of the trigger
           h_trigger_frame_population[current_trigger.index]->Fill(frame_id);
           //  Time difference of trigger with cherenkov hits
+          for (auto current_cherenkov_hit_struct : cherenkov_hits)
+          {
+            alcor_finedata current_hit(current_cherenkov_hit_struct);
+            if (!current_hit.is_afterpulse())
+              h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(current_hit.get_time_ns() - current_trigger.fine_time);
+          }
+        }
+        if (has_104 != -1)
+        {
+          auto current_trigger = triggers_in_frame[has_104];
           auto trigger_104_hits_signal = 0;
           auto trigger_104_hits_background = 0;
           for (auto current_cherenkov_hit_struct : cherenkov_hits)
@@ -297,10 +350,9 @@ void lightdata_writer(
             alcor_finedata current_hit(current_cherenkov_hit_struct);
             if (!current_hit.is_afterpulse())
             {
-              h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(current_hit.get_time_ns() - current_trigger.fine_time);
-              if (fabs(current_hit.get_time_ns() - current_trigger.fine_time) < 20 && current_trigger.index == 104)
+              if ((fabs(current_hit.get_time_ns() - current_trigger.fine_time) < time_window_ns / 2.))
                 trigger_104_hits_signal++;
-              if (fabs(current_hit.get_time_ns() - current_trigger.fine_time - 60) < 20 && current_trigger.index == 104)
+              if ((fabs(current_hit.get_time_ns() - current_trigger.fine_time - time_window_ns) < time_window_ns / 2.))
                 trigger_104_hits_background++;
             }
           }
@@ -322,6 +374,7 @@ void lightdata_writer(
     spilldata.prepare_tree_fill();
     lightdata_tree->Fill();
     outfile->Flush();
+    std::cout << std::endl;
   }
   std::cout << "\r[INFO] Finished spills loop, writing to file" << std::endl;
   //  ---
