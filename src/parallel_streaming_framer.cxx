@@ -36,9 +36,6 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
             logger::log_warning("[WARNING] Failed to open streamer: " + current_filename);
     }
 
-    // QA plots
-    init_QA_plots();
-
     // Trigger map initialization
     triggers = trigger_conf_reader(trigger_config_file);
     for (auto current_trigger : triggers)
@@ -54,16 +51,12 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
 // Getters
 alcor_spilldata parallel_streaming_framer::get_spilldata() const { return spilldata; }
 alcor_spilldata &parallel_streaming_framer::get_spilldata_link() { return spilldata; }
-std::map<std::string, TH1 *> parallel_streaming_framer::get_QA_plots() { return {}; }
 int parallel_streaming_framer::get_registered_triggers() { return triggers_map.size(); }
 
 // Setters
 void parallel_streaming_framer::set_spilldata(alcor_spilldata v) { spilldata = v; }
 void parallel_streaming_framer::set_spilldata_link(alcor_spilldata &v) { spilldata = v; }
 void parallel_streaming_framer::set_parallel_cores(uint16_t v) { n_threads_requested = v; }
-
-// Initialize QA plots
-void parallel_streaming_framer::init_QA_plots() {}
 
 // I/O operations
 void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int _frame_size)
@@ -123,10 +116,6 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
                         current_lightdata.cherenkov_hits.emplace_back(current_data.get_data_struct());
                 }
             }
-
-            //  TODO: re-build QA plots infrastructure
-            //  QA_plots["TH2F_fine_calib_global_index"]->Fill(current_data.get_global_tdc_index(), current_data.get_fine());
-            //  TODO: if something else is defined, add. make all "classes" variable. Might make some issues in the reading... Maybe you can ask root to dynamically generate something to read?
             continue;
         }
 

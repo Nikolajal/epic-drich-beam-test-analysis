@@ -37,7 +37,7 @@
  *
  * This class manages multiple @ref alcor_data_streamer instances, one per input file,
  * and processes them concurrently to produce framed spill data. It supports optional
- * trigger and readout configuration, afterpulse suppression, and QA histogram generation.
+ * trigger and readout configuration and afterpulse suppression.
  *
  * @note Frame size and timing constants are defined via macros and should eventually
  *       be moved to a config file with a proper pass-down mechanism to @ref alcor_spilldata.
@@ -93,12 +93,6 @@ public:
     alcor_spilldata &get_spilldata_link();
 
     /**
-     * @brief Returns the QA histogram map.
-     * @return Map of histogram name to ROOT TH1 pointer.
-     */
-    std::map<std::string, TH1 *> get_QA_plots();
-
-    /**
      * @brief Returns the number of triggers registered from the configuration file.
      * @return Number of triggers registered from the configuration file.
      * @todo Trigger number should be assigned by program, and checked to avoid using reserved numbers > should be [0-100[
@@ -144,13 +138,6 @@ public:
      * @return The framed @ref alcor_spilldata produced from the stream.
      */
     void process(alcor_data_streamer &current_stream, int _frame_size);
-
-    // -------------------------------------------------------------------------
-    // Internal Helpers
-    // -------------------------------------------------------------------------
-
-    /** @brief Initialises the QA histograms. Must be called before @ref get_QA_plots(). */
-    void init_QA_plots();
 
 private:
     /// @name Threading
