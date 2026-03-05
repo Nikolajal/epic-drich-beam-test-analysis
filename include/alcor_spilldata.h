@@ -74,6 +74,12 @@ public:
     std::vector<alcor_lightdata_struct> &get_frame_list_link();
     std::vector<uint32_t> &get_frame_reference_list_link();
 
+    //  Getters for a frame lightdata
+    std::vector<trigger_struct> &get_frame_trigger_hits(uint32_t index_of_frame);
+    std::vector<alcor_finedata_struct> &get_frame_timing_hits(uint32_t index_of_frame);
+    std::vector<alcor_finedata_struct> &get_frame_tracking_hits(uint32_t index_of_frame);
+    std::vector<alcor_finedata_struct> &get_frame_cherenkov_hits(uint32_t index_of_frame);
+
     // Setters (copied value)
     void set_spilldata(alcor_spilldata_struct v);
     void set_frame(std::unordered_map<uint32_t, alcor_lightdata_struct> v);
