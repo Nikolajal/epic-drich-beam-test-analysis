@@ -98,6 +98,13 @@ public:
      */
     std::map<std::string, TH1 *> get_QA_plots();
 
+    /**
+     * @brief Returns the number of triggers registered from the configuration file.
+     * @return Number of triggers registered from the configuration file.
+     * @todo Trigger number should be assigned by program, and checked to avoid using reserved numbers > should be [0-100[
+     */
+    int get_registered_triggers();
+
     // -------------------------------------------------------------------------
     // Setters
     // -------------------------------------------------------------------------
@@ -152,9 +159,6 @@ private:
     /** @brief Number of parallel threads requested by the user. */
     uint16_t n_threads_requested;
 
-    /** @brief Frame-grained mutex to protect from data races. */
-    std::unordered_map<int, std::mutex> frame_mutexes;
-
     /** @brief Protects creation of new mutex entries. */
     std::mutex frame_mutexes_access;
 
@@ -200,17 +204,6 @@ private:
 
     /** @brief Frame size in clock cycles used during processing. */
     uint16_t _frame_size;
-
-    /// @}
-
-    /// @name Hit selection
-    /// @{
-
-    /**
-     * @brief Maps channel/pixel ID to the last hit timestamp (clock cycles).
-     * Hits within @ref _AFTERPULSE_DEADTIME_ cycles of a previous hit are suppressed.
-     */
-    std::unordered_map<int, uint64_t> afterpulse_map;
 
     /// @}
 };
