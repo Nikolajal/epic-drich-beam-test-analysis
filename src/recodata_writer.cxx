@@ -6,7 +6,7 @@
 #include "mapping.h"
 #include "math.h"
 #include "TProfile.h"
-#include "streaming_framer.h"
+#include "parallel_streaming_framer.h"
 #include "mapping.h"
 #include "alcor_recodata.h"
 #include "alcor_spilldata.h"
@@ -209,7 +209,7 @@ void recodata_writer(
       for (auto current_trigger : frame_triggers)
       {
         //  Skip the unknown trigger tag
-        if (current_trigger.index == 255)
+        if (current_trigger.index == _TRIGGER_UNKNOWN_)
         {
           h_unknown_trigger_devices->Fill(i_spill, current_trigger.coarse);
           continue;
