@@ -304,9 +304,9 @@ void lightdata_writer(
       // frame N+1 processing, after frame N has already passed the has_trigger /
       // do_not_write_frame gate. Need to defer the write gate to after the full frame
       // loop, or do a second pass.
-      carry_over_window.clear();
+      carry_over_hits.clear();
       for (float t : window)
-        carry_over_window.push_back(t - _FRAME_LENGTH_NS_);
+        carry_over_hits.push_back(t - _FRAME_LENGTH_NS_);
       //  ---
 
       if (!spilldata.has_trigger(frame_id))
