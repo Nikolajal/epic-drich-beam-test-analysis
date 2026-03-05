@@ -123,16 +123,22 @@ public:
     uint32_t get_mask() const;
 
     /**
-     * @brief Returns the calibrated fine-time phase in nanoseconds.
+     * @brief Returns the calibrated fine-time phase in clock cycles.
      * Computed from the 3-parameter calibration stored in @c calibration_parameters.
      */
     float get_phase() const;
 
     /**
-     * @brief Returns the calibrated fine-time in nanoseconds.
+     * @brief Returns the calibrated fine-time in clock cycles.
      * Computed from the phase, using the 3-parameter calibration stored in @c calibration_parameters.
      */
     float get_time() const;
+
+    /**
+     * @brief Returns the calibrated fine-time in nanoseconds.
+     * Computed from the phase, using the 3-parameter calibration stored in @c calibration_parameters.
+     */
+    float get_time_ns() const;
 
     /// @}
 
@@ -169,6 +175,64 @@ public:
 
     /** @brief Returns the global TDC index across all devices and FIFOs. */
     int get_global_index() const;
+
+    /// @}
+
+    // -------------------------------------------------------------------------
+    // Getters — Hit masks
+    // -------------------------------------------------------------------------
+
+    /// @name Hit Mask Flags
+    /// @{
+
+    /**
+     * @brief Sets a single bit in the hit mask.
+     * @param bit Bit position to set (from @ref hit_mask enum).
+     */
+    void add_mask_bit(hit_mask bit) { data.hit_mask |= (1u << bit); }
+
+    /**
+     * @brief Clears a single bit in the hit mask.
+     * @param bit Bit position to clear (from @ref hit_mask enum).
+     */
+    void clear_mask_bit(hit_mask bit) { data.hit_mask &= ~(1u << bit); }
+
+    /**
+     * @brief Checks whether a single bit is set in the hit mask.
+     * @param bit Bit position to check (from @ref hit_mask enum).
+     * @return true if the bit is set.
+     */
+    bool has_mask_bit(hit_mask bit) const { return (data.hit_mask >> bit) & 1u; }
+
+    /**
+     * @brief Checks whether the hit is tagged as part of a ring (first pass).
+     */
+    bool is_ring_tag_first() const { return has_mask_bit(_HITMASK_ring_tag_first); }
+
+    /**
+     * @brief Checks whether the hit is tagged as part of a ring (second pass).
+     */
+    bool is_ring_tag_second() const { return has_mask_bit(_HITMASK_ring_tag_second); }
+
+    /**
+     * @brief Checks whether the hit is flagged as cross-talk.
+     */
+    bool is_cross_talk() const { return has_mask_bit(_HITMASK_cross_talk); }
+
+    /**
+     * @brief Checks whether the hit is flagged as an afterpulse.
+     */
+    bool is_afterpulse() const { return has_mask_bit(_HITMASK_afterpulse); }
+
+    /**
+     * @brief Checks whether the hit originates from a partially active lane.
+     */
+    bool is_part_lane() const { return has_mask_bit(_HITMASK_part_lane); }
+
+    /**
+     * @brief Checks whether the hit originates from a dead lane.
+     */
+    bool is_dead_lane() const { return has_mask_bit(_HITMASK_dead_lane); }
 
     /// @}
 

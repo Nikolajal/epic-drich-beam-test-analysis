@@ -37,7 +37,7 @@
  *
  * This class manages multiple @ref alcor_data_streamer instances, one per input file,
  * and processes them concurrently to produce framed spill data. It supports optional
- * trigger and readout configuration, afterpulse suppression, and QA histogram generation.
+ * trigger and readout configuration and afterpulse suppression.
  *
  * @note Frame size and timing constants are defined via macros and should eventually
  *       be moved to a config file with a proper pass-down mechanism to @ref alcor_spilldata.
@@ -93,10 +93,11 @@ public:
     alcor_spilldata &get_spilldata_link();
 
     /**
-     * @brief Returns the QA histogram map.
-     * @return Map of histogram name to ROOT TH1 pointer.
+     * @brief Returns the number of triggers registered from the configuration file.
+     * @return Number of triggers registered from the configuration file.
+     * @todo Trigger number should be assigned by program, and checked to avoid using reserved numbers > should be [0-100[
      */
-    std::map<std::string, TH1 *> get_QA_plots();
+    int get_registered_triggers();
 
     // -------------------------------------------------------------------------
     // Setters
@@ -138,22 +139,12 @@ public:
      */
     void process(alcor_data_streamer &current_stream, int _frame_size);
 
-    // -------------------------------------------------------------------------
-    // Internal Helpers
-    // -------------------------------------------------------------------------
-
-    /** @brief Initialises the QA histograms. Must be called before @ref get_QA_plots(). */
-    void init_QA_plots();
-
 private:
     /// @name Threading
     /// @{
 
     /** @brief Number of parallel threads requested by the user. */
     uint16_t n_threads_requested;
-
-    /** @brief Frame-grained mutex to protect from data races. */
-    std::unordered_map<int, std::mutex> frame_mutexes;
 
     /** @brief Protects creation of new mutex entries. */
     std::mutex frame_mutexes_access;
@@ -200,17 +191,6 @@ private:
 
     /** @brief Frame size in clock cycles used during processing. */
     uint16_t _frame_size;
-
-    /// @}
-
-    /// @name Hit selection
-    /// @{
-
-    /**
-     * @brief Maps channel/pixel ID to the last hit timestamp (clock cycles).
-     * Hits within @ref _AFTERPULSE_DEADTIME_ cycles of a previous hit are suppressed.
-     */
-    std::unordered_map<int, uint64_t> afterpulse_map;
 
     /// @}
 };
