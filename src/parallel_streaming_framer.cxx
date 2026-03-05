@@ -126,7 +126,11 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
             {
                 std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
                 if (!triggers_map.count(current_device))
-                    triggers_map[current_device] = {"UNDF", _TRIGGER_UNKNOWN_, 0, static_cast<uint16_t>(current_device)};
+                    triggers_map[current_device] = {
+                        "UNDF",
+                        static_cast<uint8_t>(_TRIGGER_UNKNOWN_),
+                        static_cast<uint16_t>(0),
+                        static_cast<uint16_t>(current_device)};
                 current_setting = triggers_map[current_device];
                 trigger_known = (current_setting.index != _TRIGGER_UNKNOWN_);
             }
