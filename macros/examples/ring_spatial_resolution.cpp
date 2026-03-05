@@ -127,7 +127,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
         //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
         //  Clustering is done in alcor_recodata::find_rings(...)
         //  TODO: add a flag for sensor type
-        if (recodata->is_ring_tagged(current_hit))
+        if (!recodata->is_ring_tagged(current_hit))
           continue;
 
         //  Store selected points
