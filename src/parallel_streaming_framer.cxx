@@ -76,10 +76,8 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
         auto current_readout_tag_list = readout_config.find_by_device_and_chip(current_device, current_chip);
 
         //  Stop streamer reading if not tagged for readout
-        //  TODO: understand the issue to make it work again, if borken at all
-        //  TODO: For thread balancing this should probably be done outside this function, before workload division
-        //  if (current_readout_tag_list.size() == 0 && (current_chip != (99 / 4)))
-        //      break;
+        if (current_readout_tag_list.size() == 0 && (current_chip != (99 / 4)))
+            break;
 
         // Refactoring time to relate to frame reference
         uint32_t hit_frame_index = current_data.get_coarse_global_time() / (_frame_size * 1.);
