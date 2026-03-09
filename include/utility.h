@@ -1,5 +1,21 @@
 #pragma once
 
+/**
+ * @file utility.h
+ * @brief General-purpose utilities, fitting functions, and ALCOR address decoders.
+ *
+ * Provides:
+ * - **Bit manipulation** — @ref encode_bit, @ref encode_bits, @ref decode_bits.
+ * - **Global RNG** — a shared Mersenne-Twister generator and uniform float distribution.
+ * - **ALCOR address decoders** — inline functions to extract device, chip, FIFO,
+ *   column, pixel, and PDU from a packed global TDC index.
+ * - **Circle and ring fitting** — @ref fit_circle, @ref fit_ring_integral and helpers.
+ * - **ROOT graphical helpers** — @ref draw_circle, @ref open_or_build_rootfile.
+ *
+ * @note The address decoder functions and the global RNG are candidates for
+ *       migration to @c mapping.h and a dedicated RNG header respectively.
+ */
+
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -83,34 +99,92 @@ inline std::vector<uint8_t> decode_bits(uint32_t mask)
   return result;
 }
 
-//  TODO clean-up & incorporate into second repository for general utilities
-//  Random generator utility
-//  --- Create a random device for seeding
-inline std::random_device _global_rd_;
-//  --- Create a Mersenne Twister engine (fast, high quality)
-inline std::mt19937 _global_gen_(_global_rd_());
-//  --- Float distribution in [0,1)
-inline std::uniform_real_distribution<> _rnd_(0.0, 1.0); // floats [0,1)
+/// @name Global random-number generator
+/// A single shared Mersenne-Twister engine used for pixel-position smearing.
+/// @todo Move to a dedicated header or a utility singleton.
+/// @{
 
-//  Index utility
-//  TODO Should be moved to mapping.h as it heavily depends on the mapping and requested device, chip, pdu, etc
+/// @brief Seeding device for @ref _global_gen_.
+inline std::random_device _global_rd_;
+
+/// @brief Mersenne-Twister 19937 engine seeded from @ref _global_rd_.
+inline std::mt19937 _global_gen_(_global_rd_());
+
+/// @brief Uniform float distribution in [0, 1).
+inline std::uniform_real_distribution<> _rnd_(0.0, 1.0);
+
+/// @}
+
+/// @name ALCOR global-index address decoders
+/// Extract sub-fields from a packed global TDC index.
+/// The global index is defined as:
+///   @code (device-192)*1024 + chip*32 + eo_channel/4*4 + tdc @endcode
+/// @todo Move to mapping.h once the device-numbering convention is stabilised.
+/// @{
+
+/** @brief Extract the TDC sub-index (0–3) from a global TDC index. */
 inline int get_hit_tdc_from_global_tdc_index(int global_tdc_index) { return global_tdc_index % 4; }
+
+/** @brief Decode the readout device ID (192+) from a global TDC index. */
 inline int get_device_from_global_tdc_index(int global_tdc_index) { return 192 + (global_tdc_index / 1024); }
+
+/** @brief Decode the FIFO number from a global TDC index. */
 inline int get_fifo_from_global_tdc_index(int global_tdc_index) { return (global_tdc_index % 1024) / 32; }
+
+/** @brief Decode the chip number from a global TDC index. */
 inline int get_chip_from_global_tdc_index(int global_tdc_index) { return get_fifo_from_global_tdc_index(global_tdc_index) / 4; }
+
+/** @brief Decode the even/odd channel index from a global TDC index. */
 inline int get_eo_channel_index_from_global_tdc_index(int global_tdc_index) { return ((global_tdc_index % 1024) % (32 * 4)) / 4 + 32 * (get_chip_from_global_tdc_index(global_tdc_index) % 2); }
+
+/** @brief Decode the column address from a global TDC index. */
 inline int get_column_from_global_tdc_index(int global_tdc_index) { return ((global_tdc_index % 1024) % 32) / 4; }
+
+/** @brief Decode the pixel address from a global TDC index. */
 inline int get_pixel_from_global_tdc_index(int global_tdc_index) { return ((global_tdc_index % 1024) % 32) % 4; }
+
+/** @brief Compute the calibration look-up index from a global TDC index. */
 inline int get_calib_index_from_global_tdc_index(int global_tdc_index) { return get_hit_tdc_from_global_tdc_index(global_tdc_index) + 4 * get_eo_channel_index_from_global_tdc_index(global_tdc_index) + 128 * get_chip_from_global_tdc_index(global_tdc_index); }
+
+/** @brief Compute the per-device flat index from a global TDC index. */
 inline int get_device_index_from_global_tdc_index(int global_tdc_index) { return get_eo_channel_index_from_global_tdc_index(global_tdc_index) + 64 * (get_chip_from_global_tdc_index(global_tdc_index) / 2); }
+
+/** @brief Decode the PDU number (1-based) from a global TDC index. */
 inline int get_pdu_from_global_tdc_index(int global_tdc_index) { return global_tdc_index / 256 + 1; }
+
+/** @brief Decode the matrix number (1-based) from a global TDC index. */
 inline int get_matrix_from_global_tdc_index(int global_tdc_index) { return (global_tdc_index % 256 / 4) + 1; }
+
+/**
+ * @brief Pack device, chip, channel, and TDC sub-index into a global TDC index.
+ * @param device   Readout device ID (≥ 192).
+ * @param chip     Chip number on the device.
+ * @param channel  Even/odd channel index.
+ * @param tdc      TDC sub-index (0–3).
+ * @return         Packed global TDC index.
+ */
 inline uint32_t get_global_index(int device, int chip, int channel, int tdc) { return (device - 192) * 32 * 8 * 4 + chip * 32 * 4 + channel * 4 + tdc; }
 
-//  Fit circle
-//  --- Fit results: X, Y, R and errors
+/// @}
+
+/// @name Circle fitting
+/// Least-squares circle fit minimising radial residuals.
+/// @{
+
+/// Result type: { {x0,σx0}, {y0,σy0}, {R,σR} }.
 using circle_fit_results = std::array<std::array<float, 2>, 3>;
-//  --- Fit function
+
+/**
+ * @brief Fit a circle to a set of 2-D points.
+ *
+ * Minimises the sum of squared radial residuals using ROOT's @c Fitter.
+ *
+ * @param points           Input points {x, y} [mm].
+ * @param initial_values   Initial guess {x0, y0, R}.
+ * @param fix_XY           If @c true, fix the centre and fit only R (default: true).
+ * @param exclude_points   Indices of points to exclude from the fit (default: empty).
+ * @return                 Fit result with central values and uncertainties.
+ */
 inline circle_fit_results fit_circle(std::vector<std::array<float, 2>> points, std::array<float, 3> initial_values, bool fix_XY = true, std::vector<int> exclude_points = {{}})
 {
   circle_fit_results result;
@@ -174,6 +248,22 @@ inline circle_fit_results fit_circle(std::vector<std::array<float, 2>> points, s
   return result;
 }
 
+/// @}
+
+/// @name Ring model and fit utilities
+/// Analytical ring signal model and histogram-based ring fitter.
+/// @{
+
+/**
+ * @brief Difference-of-logistic function used to model azimuthal acceptance gaps.
+ * @param variable   Independent variable (e.g. azimuthal angle φ [rad]).
+ * @param amplitude  Peak amplitude.
+ * @param center_1   Centre of the rising logistic.
+ * @param sigma_1    Width of the rising logistic.
+ * @param center_2   Centre of the falling logistic.
+ * @param sigma_2    Width of the falling logistic.
+ * @return           Function value at @p variable.
+ */
 inline double logistic(double variable, double amplitude, double center_1, double sigma_1, double center_2, double sigma_2)
 {
   return amplitude *                                                                                              // Amplitude
@@ -181,6 +271,14 @@ inline double logistic(double variable, double amplitude, double center_1, doubl
          (1. / (1. + exp(-(variable - center_1) / sigma_1)) - 1. / (1. + exp(-(variable - center_2) / sigma_2))); // Difference of logistics
 }
 
+/**
+ * @brief Clip an angle to a given range (placeholder — currently returns -1).
+ * @param phi        Input angle [rad].
+ * @param low_bound  Lower bound.
+ * @param high_bound Upper bound.
+ * @return           Clipped angle (implementation incomplete).
+ * @todo Complete implementation.
+ */
 inline double clip_phi(double phi, double low_bound, double high_bound)
 {
   double result = phi;
@@ -191,6 +289,18 @@ inline double clip_phi(double phi, double low_bound, double high_bound)
   return -1.;
 }
 
+/**
+ * @brief Azimuthally-varying ring-width model.
+ *
+ * Returns a baseline sigma plus contributions from one or more logistic features
+ * at configurable azimuthal positions.  Used to model PDU boundaries.
+ *
+ * @param phi             Azimuthal angle [rad].
+ * @param baseline_sigma  Constant ring-width baseline.
+ * @param input_values    Logistic feature descriptors: each element is
+ *                        {amplitude, centre, width, logistic-sigma}.
+ * @return                Effective ring-width sigma at @p phi.
+ */
 inline double ring_fit_function_sigma_function(double phi, double baseline_sigma, std::vector<std::array<double, 4>> input_values = {})
 {
   double result = baseline_sigma;
@@ -201,6 +311,15 @@ inline double ring_fit_function_sigma_function(double phi, double baseline_sigma
   return result;
 }
 
+/**
+ * @brief Evaluate the ring signal + flat background model in (R, φ) coordinates.
+ *
+ * @param input_values  {R [mm], φ [rad]} of the point to evaluate.
+ * @param parameters    {x0, y0, R0, sigma_R, N_gamma, bkg_level}.
+ * @param logistic_input_values  Optional azimuthal-gap descriptors (see
+ *                               @ref ring_fit_function_sigma_function).
+ * @return              Expected density at the given (R, φ).
+ */
 inline double ring_fit_function(std::array<double, 2> input_values, std::array<double, 6> parameters, std::vector<std::array<double, 4>> logistic_input_values = {})
 {
   //  Get input values
@@ -224,6 +343,13 @@ inline double ring_fit_function(std::array<double, 2> input_values, std::array<d
   return signal + background;
 }
 
+/**
+ * @brief Evaluate the ring model in Cartesian (x, y) coordinates.
+ * @param input_values  {x [mm], y [mm]} of the point to evaluate.
+ * @param parameters    {x0, y0, R0, sigma_R, N_gamma, bkg_level}.
+ * @param logistic_input_values  Optional azimuthal-gap descriptors.
+ * @return              Expected density at (x, y).
+ */
 inline double ring_fit_function_xy(std::array<double, 2> input_values, std::array<double, 6> parameters, std::vector<std::array<double, 4>> logistic_input_values = {})
 {
   //  Get input values
@@ -242,6 +368,14 @@ inline double ring_fit_function_xy(std::array<double, 2> input_values, std::arra
   return ring_fit_function({current_radius, current_phi}, parameters);
 }
 
+/**
+ * @brief Overload accepting a raw C-style parameter array (ROOT fitter compatible).
+ * @param input_values     {x [mm], y [mm]}.
+ * @param parameters       Parameter array: [0–5] = {x0,y0,R,sigma,N,bkg},
+ *                         followed by 4 values per logistic feature.
+ * @param how_many_logistics Number of logistic features appended after element 5.
+ * @return                 Expected density at (x, y).
+ */
 inline double ring_fit_function_xy(std::array<double, 2> input_values, const double *parameters, int how_many_logistics = 0)
 {
   //  Convert to internal format
@@ -265,8 +399,21 @@ inline double ring_fit_function_xy(std::array<double, 2> input_values, const dou
   return ring_fit_function_xy(input_values, array_parameters);
 }
 
-//  X0, Y0, R, sigma, Integral
+/// Result type for ring fits: { {x0,σ}, {y0,σ}, {R,σ}, {sigma_R,σ}, {N,σ}, {bkg,σ} }.
 using ring_fit_results = std::array<std::array<double, 2>, 6>;
+
+/**
+ * @brief Fit a 2-D ring model to a histogram using chi-squared minimisation.
+ *
+ * Integrates @ref ring_fit_function_xy over each bin and minimises the sum of
+ * squared normalised residuals.
+ *
+ * @param target_histogram  Input TH2 (any bin size; bins with zero content are skipped).
+ * @param initial_values    Initial guess {x0, y0, R, sigma_R, N_gamma, bkg}.
+ * @param fix_XY            If @c true, fix (x0, y0) and fit only R and normalisation
+ *                          (default: true).
+ * @return                  Fit result with central values and uncertainties.
+ */
 inline ring_fit_results fit_ring_integral(TH2 *target_histogram, std::array<double, 6> initial_values, bool fix_XY = true)
 {
   ring_fit_results result;
@@ -347,6 +494,14 @@ inline ring_fit_results fit_ring_integral(TH2 *target_histogram, std::array<doub
   return result;
 }
 
+/**
+ * @brief Generate ring-contour TGraphs at specified sigma levels from a fit result.
+ * @param fit_results           Result of @ref fit_ring_integral.
+ * @param sigma_values          List of sigma multipliers (e.g. {0, 1, -1} for centre ± 1σ).
+ * @param logistic_input_values Optional azimuthal-gap descriptors for the sigma model.
+ * @param n_points              Number of points per contour (default: 500).
+ * @return                      One TGraph per sigma value, caller takes ownership.
+ */
 inline std::vector<TGraph *> plot_ring_integral(ring_fit_results fit_results, std::vector<float> sigma_values, std::vector<std::array<double, 4>> logistic_input_values = {}, int n_points = 500)
 {
   std::vector<TGraph *> result;
@@ -365,6 +520,26 @@ inline std::vector<TGraph *> plot_ring_integral(ring_fit_results fit_results, st
   return result;
 }
 
+/// @}
+
+/// @name ROOT file helpers
+/// @{
+
+/**
+ * @brief Open a ROOT file for reading, rebuilding it if missing or corrupted.
+ *
+ * Tries to open @p filename.  If the file is absent, a zombie, or
+ * @p force_rebuild is @c true, calls @p builder with the supplied arguments to
+ * regenerate it, then re-opens it.
+ *
+ * @param filename          Path to the ROOT file to open.
+ * @param builder           Callable that creates the file from raw data.
+ * @param data_repository   Passed verbatim as the first argument to @p builder.
+ * @param run_name          Passed verbatim as the second argument.
+ * @param max_spill         Passed verbatim as the third argument.
+ * @param force_rebuild     If @c true, always rebuild (default: false).
+ * @return                  Open @c TFile* in READ mode, or @c nullptr on failure.
+ */
 inline TFile *open_or_build_rootfile(const std::string &filename,
                                      std::function<void(std::string, std::string, int, bool, int, std::string, std::string, std::string)> builder,
                                      const std::string &data_repository,
@@ -395,6 +570,18 @@ inline TFile *open_or_build_rootfile(const std::string &filename,
   return input_file;
 }
 
+/// @}
+
+/// @name ROOT graphical helpers
+/// @{
+
+/**
+ * @brief Draw a circle on the current ROOT canvas pad.
+ * @param parameters    {x0, y0, R} [mm].
+ * @param line_colour   ROOT line colour (default: @c kBlack).
+ * @param line_style    ROOT line style (default: @c kSolid).
+ * @param line_width    ROOT line width in pixels (default: 1).
+ */
 void inline draw_circle(std::array<float, 3> parameters, int line_colour = kBlack, int line_style = kSolid, int line_width = 1)
 {
   auto result = new TEllipse(parameters[0], parameters[1], parameters[2]);

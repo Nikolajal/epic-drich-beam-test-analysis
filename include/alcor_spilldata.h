@@ -65,10 +65,14 @@ struct alcor_spilldata_struct
     std::vector<alcor_lightdata_struct> lightdata_list_in_frame;  ///< Light-data entries parallel to @c frame_reference.
 
     // --- Branch-address pointers (ROOT internal use) --------------------
-    std::vector<data_mask_struct>      *dead_mask_list_ptr         = &dead_mask_list;         ///< Stable pointer for ROOT branch address.
-    std::vector<data_mask_struct>      *participants_mask_list_ptr = &participants_mask_list;  ///< Stable pointer for ROOT branch address.
-    std::vector<uint32_t>              *frame_reference_ptr        = &frame_reference;         ///< Stable pointer for ROOT branch address.
-    std::vector<alcor_lightdata_struct> *lightdata_list_in_frame_ptr = &lightdata_list_in_frame; ///< Stable pointer for ROOT branch address.
+    //  @warning These are intentionally NOT initialised here. Taking the address
+    //           of a sibling member in a default member initialiser is UB, and
+    //           after any copy/move the pointers would dangle into the source
+    //           object. They are set correctly by clear() and prepare_tree_fill().
+    std::vector<data_mask_struct>       *dead_mask_list_ptr;          ///< Stable pointer for ROOT branch address.
+    std::vector<data_mask_struct>       *participants_mask_list_ptr;  ///< Stable pointer for ROOT branch address.
+    std::vector<uint32_t>               *frame_reference_ptr;         ///< Stable pointer for ROOT branch address.
+    std::vector<alcor_lightdata_struct> *lightdata_list_in_frame_ptr; ///< Stable pointer for ROOT branch address.
 
     /**
      * @brief Resets all members to an empty state and re-synchronises the
