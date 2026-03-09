@@ -94,13 +94,6 @@ public:
     /// @brief Number of track entries in the current event.
     std::size_t n_recotrackdata() const { return recotrackdata.size(); }
 
-    /**
-     * @brief Combined angular-coefficient magnitude: @c hypot(angcoeff_x, angcoeff_y).
-     * @param idx Track index.
-     * @return @c sqrt(angcoeff_x² + angcoeff_y²) for track @p idx.
-     */
-    double get_traj_angcoeff(std::size_t idx) const;
-
     /// @brief Extrapolated X coordinate at the detector plane [mm].
     float get_det_plane_x(std::size_t idx) const { return recotrackdata.at(idx).det_plane_x; }
     /// @brief Extrapolated Y coordinate at the detector plane [mm].
@@ -155,7 +148,7 @@ public:
      * @param idx Track index.
      * @return @c hypot(angcoeff_x, angcoeff_y).
      */
-    double get_traj_angcoeff_r(std::size_t idx) const
+    double get_traj_angcoeff_theta(std::size_t idx) const
     {
         return std::hypot(recotrackdata.at(idx).traj_angcoeff_x,
                           recotrackdata.at(idx).traj_angcoeff_y);
