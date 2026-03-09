@@ -91,12 +91,90 @@ public:
     /// @brief Append a new track entry to the internal vector.
     void add_recotrackdata(const alcor_recotrackdata_struct &entry) { recotrackdata.push_back(entry); }
 
+    /// @brief Number of track entries in the current event.
+    std::size_t n_recotrackdata() const { return recotrackdata.size(); }
+
     /**
      * @brief Combined angular-coefficient magnitude: @c hypot(angcoeff_x, angcoeff_y).
      * @param idx Track index.
      * @return @c sqrt(angcoeff_x² + angcoeff_y²) for track @p idx.
      */
     double get_traj_angcoeff(std::size_t idx) const;
+
+    /// @brief Extrapolated X coordinate at the detector plane [mm].
+    float get_det_plane_x(std::size_t idx) const { return recotrackdata.at(idx).det_plane_x; }
+    /// @brief Extrapolated Y coordinate at the detector plane [mm].
+    float get_det_plane_y(std::size_t idx) const { return recotrackdata.at(idx).det_plane_y; }
+    /// @brief Track angular coefficient along X (dx/dz).
+    float get_traj_angcoeff_x(std::size_t idx) const { return recotrackdata.at(idx).traj_angcoeff_x; }
+    /// @brief Track angular coefficient along Y (dy/dz).
+    float get_traj_angcoeff_y(std::size_t idx) const { return recotrackdata.at(idx).traj_angcoeff_y; }
+    /// @brief Fit quality χ²/NDF.
+    float get_chi2ndof(std::size_t idx) const { return recotrackdata.at(idx).chi2ndof; }
+
+    /// @}
+
+    // -------------------------------------------------------------------------
+    /** @name Polar coordinates */
+    /// @{
+
+    /**
+     * @brief Radial distance of the extrapolated impact point from the beam axis.
+     *
+     * Computed as @c hypot(det_plane_x, det_plane_y).
+     *
+     * @param idx Track index.
+     * @return @c r [mm].
+     */
+    double get_det_plane_r(std::size_t idx) const
+    {
+        return std::hypot(recotrackdata.at(idx).det_plane_x,
+                          recotrackdata.at(idx).det_plane_y);
+    }
+
+    /**
+     * @brief Azimuthal angle of the extrapolated impact point.
+     *
+     * Computed as @c atan2(det_plane_y, det_plane_x).
+     *
+     * @param idx Track index.
+     * @return @c φ [rad], in (−π, π].
+     */
+    double get_det_plane_phi(std::size_t idx) const
+    {
+        return std::atan2(recotrackdata.at(idx).det_plane_y,
+                          recotrackdata.at(idx).det_plane_x);
+    }
+
+    /**
+     * @brief Magnitude of the transverse angular coefficient vector.
+     *
+     * Equivalent to @ref get_traj_angcoeff; provided here for naming symmetry
+     * with get_traj_angcoeff_phi().
+     *
+     * @param idx Track index.
+     * @return @c hypot(angcoeff_x, angcoeff_y).
+     */
+    double get_traj_angcoeff_r(std::size_t idx) const
+    {
+        return std::hypot(recotrackdata.at(idx).traj_angcoeff_x,
+                          recotrackdata.at(idx).traj_angcoeff_y);
+    }
+
+    /**
+     * @brief Azimuthal angle of the track slope vector in the transverse plane.
+     *
+     * Computed as @c atan2(angcoeff_y, angcoeff_x); describes the direction
+     * in which the track is deflected transversely with respect to the beam axis.
+     *
+     * @param idx Track index.
+     * @return @c φ [rad], in (−π, π].
+     */
+    double get_traj_angcoeff_phi(std::size_t idx) const
+    {
+        return std::atan2(recotrackdata.at(idx).traj_angcoeff_y,
+                          recotrackdata.at(idx).traj_angcoeff_x);
+    }
 
     /// @}
 
