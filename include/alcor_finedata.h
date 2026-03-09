@@ -1,5 +1,9 @@
 #pragma once
 
+#include <mist/ring_finding/hough_transform.h>
+#include <sstream>
+#include <cmath>
+#include <iostream>
 #include <fstream>
 #include <unordered_map>
 #include <array>
@@ -30,13 +34,19 @@ struct alcor_finedata_struct
     /** @brief Fine timestamp (TDC interpolation bin within a clock cycle). */
     int fine;
 
+    /** @brief X-axis position from mapping. */
+    float hit_x;
+
+    /** @brief Y-axis position from mapping. */
+    float hit_y;
+
     /// @}
 
     /// @name Indexing & Masking
     /// @{
 
     /** @brief Global calibration index identifying the TDC channel. */
-    uint32_t calib_index;
+    uint32_t global_index;
 
     /** @brief Bitmask encoding hit channel/pixel information. */
     uint32_t hit_mask;
@@ -105,22 +115,37 @@ public:
     /// @{
 
     /** @brief Returns a copy of the underlying @ref alcor_finedata_struct. */
-    alcor_finedata_struct get_data_struct() const;
+    alcor_finedata_struct get_data_struct() const { return internal_data; }
 
     /** @brief Returns the calibration index identifying the TDC channel. */
-    uint32_t get_calib_index() const;
+    uint32_t get_global_index() const { return internal_data.global_index; }
 
     /** @brief Returns the rollover counter. */
-    int get_rollover() const;
+    int get_rollover() const { return internal_data.rollover; }
 
     /** @brief Returns the coarse timestamp (clock-cycle count). */
-    int get_coarse() const;
+    int get_coarse() const { return internal_data.coarse; }
 
     /** @brief Returns the fine timestamp (TDC bin within a clock cycle). */
-    int get_fine() const;
+    int get_fine() const { return internal_data.fine; }
+
+    /** @brief Returns the x-axis position from mapping. */
+    float get_hit_x() const { return internal_data.hit_x; }
+
+    /** @brief Returns the y-axis position from mapping. */
+    float get_hit_y() const { return internal_data.hit_y; }
 
     /** @brief Returns the hit bitmask. */
-    uint32_t get_mask() const;
+    uint32_t get_mask() const { return internal_data.hit_mask; }
+
+    /// @}
+
+    // -------------------------------------------------------------------------
+    // Getters — Derived timing
+    // -------------------------------------------------------------------------
+
+    /// @name Derived Timing Getters
+    /// @{
 
     /**
      * @brief Returns the calibrated fine-time phase in clock cycles.
@@ -129,16 +154,15 @@ public:
     float get_phase() const;
 
     /**
-     * @brief Returns the calibrated fine-time in clock cycles.
-     * Computed from the phase, using the 3-parameter calibration stored in @c calibration_parameters.
+     * @brief Returns the calibrated hit time in clock cycles.
+     * Combines rollover, coarse, and the fine-time phase correction.
      */
-    float get_time() const;
+    float get_time() const { return _ALCOR_ROLLOVER_TO_CC_ * get_rollover() + get_coarse() - get_phase(); }
 
     /**
-     * @brief Returns the calibrated fine-time in nanoseconds.
-     * Computed from the phase, using the 3-parameter calibration stored in @c calibration_parameters.
+     * @brief Returns the calibrated hit time in nanoseconds.
      */
-    float get_time_ns() const;
+    float get_time_ns() const { return _ALCOR_CC_TO_NS_ * get_time(); }
 
     /// @}
 
@@ -150,31 +174,64 @@ public:
     /// @{
 
     /** @brief Returns the TDC index decoded from the calibration index. */
-    int get_tdc() const;
+    int get_tdc() const { return get_global_index() % 4; }
 
     /** @brief Returns the readout device ID decoded from the calibration index. */
-    int get_device() const;
+    int get_device() const { return 192 + (get_global_channel_index() / 256); }
 
     /** @brief Returns the FIFO number decoded from the calibration index. */
-    int get_fifo() const;
+    int get_fifo() const { return (get_global_channel_index() % 256) / 8; }
 
     /** @brief Returns the chip ID decoded from the calibration index. */
-    int get_chip() const;
+    int get_chip() const { return (get_global_channel_index() % 256) / 32; }
 
-    /** @brief Returns the even/odd channel flag decoded from the calibration index. */
-    int get_eo_channel() const;
+    /** @brief Returns the even/odd channel index decoded from the calibration index. */
+    int get_eo_channel() const { return (get_global_channel_index() % 256) % 32 + 32 * (get_chip() % 2); }
 
     /** @brief Returns the column address decoded from the calibration index. */
-    int get_column() const;
+    int get_column() const { return ((get_global_channel_index() % 256) % 32) / 4; }
 
     /** @brief Returns the pixel address decoded from the calibration index. */
-    int get_pixel() const;
+    int get_pixel() const { return ((get_global_channel_index() % 256) % 32) % 4; }
 
     /** @brief Returns the per-device TDC index. */
-    int get_device_index() const;
+    int get_device_index() const { return get_eo_channel() + 64 * (get_chip() / 2); }
 
-    /** @brief Returns the global TDC index across all devices and FIFOs. */
-    int get_global_index() const;
+    /** @brief Returns the global channel index stripped of TDC info. */
+    int get_global_channel_index() const { return get_global_index() / 4; }
+
+    /// @}
+
+    // -------------------------------------------------------------------------
+    // Getters — Spatial (randomised)
+    // -------------------------------------------------------------------------
+
+    /// @name Spatial Getters
+    /// @{
+
+    /** @brief Returns the pixel-randomised x-coordinate, uniform within ±1.5 mm of the hit position. */
+    float get_hit_x_rnd() const { return internal_data.hit_x + (_rnd_(_global_gen_) * 3.0f - 1.5f); }
+
+    /** @brief Returns the pixel-randomised y-coordinate, uniform within ±1.5 mm of the hit position. */
+    float get_hit_y_rnd() const { return internal_data.hit_y + (_rnd_(_global_gen_) * 3.0f - 1.5f); }
+
+    /** @brief Returns the radial distance from the origin using a freshly randomised position. */
+    float get_hit_r_rnd() const { return get_hit_r_rnd({0.f, 0.f}); }
+
+    /** @brief Returns the azimuthal angle from the origin using a freshly randomised position [rad]. */
+    float get_hit_phi_rnd() const { return get_hit_phi_rnd({0.f, 0.f}); }
+
+    /**
+     * @brief Returns the radial distance from a custom centre using a freshly randomised position.
+     * @param v Centre coordinates {x, y}.
+     */
+    float get_hit_r_rnd(std::array<float, 2> v) const;
+
+    /**
+     * @brief Returns the azimuthal angle from a custom centre using a freshly randomised position [rad].
+     * @param v Centre coordinates {x, y}.
+     */
+    float get_hit_phi_rnd(std::array<float, 2> v) const;
 
     /// @}
 
@@ -189,55 +246,43 @@ public:
      * @brief Sets a single bit in the hit mask.
      * @param bit Bit position to set (from @ref hit_mask enum).
      */
-    void add_mask_bit(hit_mask bit) { data.hit_mask |= (1u << bit); }
+    void add_mask_bit(hit_mask bit) { internal_data.hit_mask |= (1u << bit); }
 
     /**
      * @brief Clears a single bit in the hit mask.
      * @param bit Bit position to clear (from @ref hit_mask enum).
      */
-    void clear_mask_bit(hit_mask bit) { data.hit_mask &= ~(1u << bit); }
+    void clear_mask_bit(hit_mask bit) { internal_data.hit_mask &= ~(1u << bit); }
 
     /**
      * @brief Checks whether a single bit is set in the hit mask.
      * @param bit Bit position to check (from @ref hit_mask enum).
      * @return true if the bit is set.
      */
-    bool has_mask_bit(hit_mask bit) const { return (data.hit_mask >> bit) & 1u; }
+    bool has_mask_bit(hit_mask bit) const { return (internal_data.hit_mask >> bit) & 1u; }
 
-    /**
-     * @brief Checks whether the hit is tagged as part of a ring (first pass).
-     */
+    /** @brief Checks whether the hit is tagged as part of a ring (first pass). */
     bool is_ring_tag_first() const { return has_mask_bit(_HITMASK_ring_tag_first); }
 
-    /**
-     * @brief Checks whether the hit is tagged as part of a ring (second pass).
-     */
+    /** @brief Checks whether the hit is tagged as part of a ring (second pass). */
     bool is_ring_tag_second() const { return has_mask_bit(_HITMASK_ring_tag_second); }
 
-    /**
-     * @brief Checks whether the hit is flagged as cross-talk.
-     */
+    /** @brief Checks whether the hit is flagged as cross-talk. */
     bool is_cross_talk() const { return has_mask_bit(_HITMASK_cross_talk); }
 
-    /**
-     * @brief Checks whether the hit is flagged as an afterpulse.
-     */
+    /** @brief Checks whether the hit is flagged as an afterpulse. */
     bool is_afterpulse() const { return has_mask_bit(_HITMASK_afterpulse); }
 
-    /**
-     * @brief Checks whether the hit originates from a partially active lane.
-     */
+    /** @brief Checks whether the hit originates from a partially active lane. */
     bool is_part_lane() const { return has_mask_bit(_HITMASK_part_lane); }
 
-    /**
-     * @brief Checks whether the hit originates from a dead lane.
-     */
+    /** @brief Checks whether the hit originates from a dead lane. */
     bool is_dead_lane() const { return has_mask_bit(_HITMASK_dead_lane); }
 
     /// @}
 
     // -------------------------------------------------------------------------
-    // Setters — Pure
+    // Setters — Raw fields
     // -------------------------------------------------------------------------
 
     /// @name Raw Field Setters
@@ -247,37 +292,40 @@ public:
      * @brief Replaces the underlying data struct.
      * @param d New @ref alcor_finedata_struct to assign.
      */
-    void set_data_struct(const alcor_finedata_struct &d);
+    void set_data_struct(const alcor_finedata_struct &d) { internal_data = d; }
 
     /**
      * @brief Sets the calibration index.
      * @param calib New calibration index value.
      */
-    void set_calib_index(uint32_t calib);
+    void set_global_index(uint32_t calib) { internal_data.global_index = calib; }
 
     /**
      * @brief Sets the rollover counter.
      * @param r New rollover value.
      */
-    void set_rollover(int r);
+    void set_rollover(int r) { internal_data.rollover = r; }
 
     /**
      * @brief Sets the coarse timestamp.
      * @param c New coarse value.
      */
-    void set_coarse(int c);
+    void set_coarse(int c) { internal_data.coarse = c; }
 
     /**
      * @brief Sets the fine timestamp.
      * @param f New fine value.
      */
-    void set_fine(int f);
+    void set_fine(int f) { internal_data.fine = f; }
 
     /**
      * @brief Sets the hit bitmask.
      * @param mask New mask value.
      */
-    void set_mask(uint32_t mask);
+    void set_mask(uint32_t mask) { internal_data.hit_mask = mask; }
+
+    /** @brief Flags the hit as a streaming ring trigger participant. */
+    void set_streaming_ring_trigger_mask() { add_mask_bit(_HITMASK_streaming_ring_trigger_); }
 
     /// @}
 
@@ -293,21 +341,21 @@ public:
      * @param global_tdc_index Global TDC index to update.
      * @param value            New value for parameter 0.
      */
-    void set_param0(int global_tdc_index, float value);
+    static void set_param0(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][0] = value; }
 
     /**
      * @brief Sets calibration parameter 1 for a given TDC channel.
      * @param global_tdc_index Global TDC index to update.
      * @param value            New value for parameter 1.
      */
-    void set_param1(int global_tdc_index, float value);
+    static void set_param1(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][1] = value; }
 
     /**
      * @brief Sets calibration parameter 2 for a given TDC channel.
      * @param global_tdc_index Global TDC index to update.
      * @param value            New value for parameter 2.
      */
-    void set_param2(int global_tdc_index, float value);
+    static void set_param2(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][2] = value; }
 
     /// @}
 
@@ -316,20 +364,20 @@ public:
     // -------------------------------------------------------------------------
 
     /// @name Comparison Operators
-    /// @brief Compare hits by their absolute timestamp (rollover + coarse).
+    /// @brief Compare hits by their calibrated timestamp.
     /// @{
 
     /** @brief Less-than comparison against an @ref alcor_finedata hit. */
-    bool operator<(const alcor_finedata &comparing_hit) const;
+    bool operator<(const alcor_finedata &v) const { return get_time() < v.get_time(); }
 
     /** @brief Less-than-or-equal comparison against an @ref alcor_finedata hit. */
-    bool operator<=(const alcor_finedata &comparing_hit) const;
+    bool operator<=(const alcor_finedata &v) const { return get_time() <= v.get_time(); }
 
     /** @brief Greater-than comparison against an @ref alcor_finedata hit. */
-    bool operator>(const alcor_finedata &comparing_hit) const;
+    bool operator>(const alcor_finedata &v) const { return get_time() > v.get_time(); }
 
     /** @brief Greater-than-or-equal comparison against an @ref alcor_finedata hit. */
-    bool operator>=(const alcor_finedata &comparing_hit) const;
+    bool operator>=(const alcor_finedata &v) const { return get_time() >= v.get_time(); }
 
     /// @}
 
@@ -349,8 +397,16 @@ public:
      * @param calibration_histogram 2D histogram with TDC index on X and fine
      *                              counts on Y, typically accumulated during a
      *                              dedicated calibration run.
+     * @param overwrite_calibration If @c true, existing entries are replaced.
      */
-    void generate_calibration(TH2F *calibration_histogram);
+    void generate_calibration(TH2F *calibration_histogram, bool overwrite_calibration);
+
+    /**
+     * @brief Updates calibration without overwriting existing entries.
+     * Alias for @ref generate_calibration with @c overwrite_calibration = @c false.
+     * @param h 2D fine-time histogram (same format as @ref generate_calibration).
+     */
+    void update_calibration(TH2F *h) { generate_calibration(h, false); }
 
     /**
      * @brief Writes the current calibration parameters to a plain-text file.
@@ -368,12 +424,56 @@ public:
 
     /// @}
 
-private:
-    /// @name Private Data
+    // -------------------------------------------------------------------------
+    // Finding rings algorithms
+    // -------------------------------------------------------------------------
+
+    /// @name Ring-finding algorithms
     /// @{
 
+    /**
+     * @brief Convert a vector of @ref alcor_finedata hits into @ref hough_hit,
+     *        run the Hough-transform ring finder, write mask bits back onto the
+     *        original hits, and return the ring results.
+     *
+     * All ALCOR-specific knowledge is concentrated here:
+     *  - Afterpulse filtering (`is_afterpulse()`).
+     *  - Device-index guard (device ≥ 200 excluded).
+     *  - LUT key derivation (`get_global_index() / 4`).
+     *  - Mask-bit assignment (`_HITMASK_hough_ring_tag_first/second`).
+     *
+     * @param ht                  Pre-built @ref hough_transform instance.
+     *                            @ref hough_transform::build_lut must have been
+     *                            called with geometry consistent with @p alcor_hits.
+     * @param alcor_hits          Calibrated ALCOR hits for the current event.
+     *                            Mask bits are written back in-place for tagged hits.
+     * @param threshold_fraction  Minimum fraction of active hits required in the
+     *                            peak accumulator cell (range 0–1).
+     * @param min_hits            Minimum absolute vote count for a ring to be accepted.
+     * @param max_rings           Maximum number of rings to extract (default 2).
+     * @param collection_radius   Distance from the ring arc within which a hit is
+     *                            assigned to the ring [mm] (default 6).
+     * @return                    Vector of @ref hough_ring_result (indices refer to
+     *                            the @p alcor_hits vector), in descending peak-vote order.
+     */
+    static std::vector<mist::ring_finding::ring_result> alcor_find_rings_hough(
+        mist::ring_finding::hough_transform &ht,
+        std::vector<alcor_finedata> &alcor_hits,
+        float threshold_fraction,
+        int min_hits,
+        int min_active,
+        int max_rings = 2,
+        float collection_radius = 6.f);
+
+    /// @}
+
+private:
+    // -------------------------------------------------------------------------
+    // Private data
+    // -------------------------------------------------------------------------
+
     /** @brief Decoded timing and mask data for this hit. */
-    alcor_finedata_struct data;
+    alcor_finedata_struct internal_data;
 
     /**
      * @brief Shared calibration table mapping global TDC index to 3 fit parameters.
@@ -382,8 +482,6 @@ private:
      * @ref alcor_finedata instances without requiring a separate definition.
      */
     inline static std::unordered_map<int, std::array<float, 3>> calibration_parameters = {};
-
-    /// @}
 
     // -------------------------------------------------------------------------
     // Private helpers

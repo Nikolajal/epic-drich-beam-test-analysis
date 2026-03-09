@@ -16,7 +16,7 @@
  * The design intentionally separates *storage* (struct) from *logic*
  * (class) to keep ROOT I/O simple while allowing richer semantics
  * at the analysis level.
- * 
+ *
  * @todo Implement bit-wise manipulation for global index encoding.
  * global index is a 32-bit integer, which count be used to contain:
  * device   (10-bit) [0-1023]
@@ -95,8 +95,11 @@ enum alcor_hit_struct
  */
 enum hit_mask
 {
-    _HITMASK_ring_tag_first = 1,
-    _HITMASK_ring_tag_second = 2,
+    _HITMASK_streaming_ring_trigger_ = 1,
+    _HITMASK_ring_tag_first = 2,
+    _HITMASK_ring_tag_second = 3,
+    _HITMASK_hough_ring_tag_first = 11,
+    _HITMASK_hough_ring_tag_second = 12,
     _HITMASK_cross_talk = 28,
     _HITMASK_afterpulse = 29,
     _HITMASK_part_lane = 30,

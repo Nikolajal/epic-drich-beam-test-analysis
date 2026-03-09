@@ -26,7 +26,7 @@ void standard_analysis(
   TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
   if (!input_file_recodata || input_file_recodata->IsZombie())
   {
-    logger::log_error("Could not find " + input_filename_recodata + ", exiting");
+    mist::logger::error("Could not find " + input_filename_recodata + ", exiting");
     return;
   }
 

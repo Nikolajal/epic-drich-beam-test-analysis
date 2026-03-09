@@ -34,8 +34,7 @@ void recodata_writer(
   spilldata->link_to_tree(lightdata_tree);
 
   //  Generate mapping
-  mapping current_mapping;
-  current_mapping.load_calib(mapping_conf);
+  mapping current_mapping(mapping_conf);
 
   //  Get calibration
   TH2F *h_calibration_data = (TH2F *)input_file->Get("TH2F_fine_calib_global_index");
@@ -112,6 +111,7 @@ void recodata_writer(
     index_to_hit_xy[i_index] = (*position);
     hit_to_index_xy[(*position)] = i_index;
   }
+  recodata.build_hough_lut(index_to_hit_xy, 20, 120, 0.5, 1.5);
 
   //  Precache hits based on spatial vicinity
   const float pitch = 4.0f;    // rounded from 3mm*sqrt(2) diagonal distance for sensors
@@ -147,8 +147,8 @@ void recodata_writer(
       }
     average_hits += current_neighbors_list.size();
   }
-  logger::log_debug(Form("index_to_proximity_index size: %i", index_to_proximity_index.size()));
-  logger::log_debug(Form("index_to_proximity_index avg vector length: %f", average_hits * 1. / index_to_proximity_index.size()));
+  mist::logger::debug(Form("index_to_proximity_index size: %i", index_to_proximity_index.size()));
+  mist::logger::debug(Form("index_to_proximity_index avg vector length: %f", average_hits * 1. / index_to_proximity_index.size()));
 
   //  Loop over spills
   auto all_frames = 0;
@@ -204,7 +204,7 @@ void recodata_writer(
         std::cout << "\33[2K\r[INFO] Processing frame " << i_saved_frame << std::flush;
 
       //  Trigger
-      std::vector<trigger_struct> current_triggers;
+      std::vector<trigger_event> current_triggers;
       auto frame_triggers = current_lightdata.get_triggers();
       for (auto current_trigger : frame_triggers)
       {
@@ -252,20 +252,20 @@ void recodata_writer(
         alcor_finedata current_timing_hit(current_timing_hit_struct);
         if (current_timing_hit.get_chip() == 0)
         {
-          if (!map_timing_hit_chip_0[current_timing_hit.get_global_index()])
+          if (!map_timing_hit_chip_0[current_timing_hit.get_global_index() / 4])
           {
             timing_hit_chip_0++;
             timing_ref_chip_0 += (current_timing_hit.get_coarse() - current_timing_hit.get_phase());
-            map_timing_hit_chip_0[current_timing_hit.get_global_index()] = true;
+            map_timing_hit_chip_0[current_timing_hit.get_global_index() / 4] = true;
           }
         }
         if (current_timing_hit.get_chip() == 2)
         {
-          if (!map_timing_hit_chip_1[current_timing_hit.get_global_index()])
+          if (!map_timing_hit_chip_1[current_timing_hit.get_global_index() / 4])
           {
             timing_hit_chip_1++;
             timing_ref_chip_1 += (current_timing_hit.get_coarse() - current_timing_hit.get_phase());
-            map_timing_hit_chip_1[current_timing_hit.get_global_index()] = true;
+            map_timing_hit_chip_1[current_timing_hit.get_global_index() / 4] = true;
           }
         }
       }
@@ -404,31 +404,8 @@ void recodata_writer(
       prev_frame_reference = current_frame;
 
       //  Find ring
-      recodata.find_rings(1.0, 5.0);
-      auto ring_found = false;
-      for (auto current_hit = 0; current_hit < recodata.get_recodata().size(); current_hit++)
-      {
-        auto hit_x_rnd = recodata.get_hit_x(current_hit) + (_rnd_(_global_gen_) * 3.0 - 1.5);
-        auto hit_y_rnd = recodata.get_hit_y(current_hit) + (_rnd_(_global_gen_) * 3.0 - 1.5);
-        auto hit_t = recodata.get_hit_t(current_hit);
-        if (decode_bits(recodata.get_hit_mask(current_hit))[0] == 1)
-        {
-          ring_found = true;
-          h_delta_time_selected->Fill(hit_t - trigger_in_frame[0] * _ALCOR_CC_TO_NS_);
-
-          auto delta_x = (recodata.get_hit_x(current_hit) - 1.75) * (recodata.get_hit_x(current_hit) - 1.75);
-          auto delta_y = (recodata.get_hit_y(current_hit) - 0.75) * (recodata.get_hit_y(current_hit) - 0.75);
-          auto current_radius = sqrt(delta_x + delta_y);
-          h_selected_radius_dist->Fill(current_radius);
-          if (fabs(hit_t - trigger_in_frame[0] * _ALCOR_CC_TO_NS_) > 50)
-            h_full_hitmap_selected->Fill(hit_x_rnd, hit_y_rnd);
-          else
-            h_full_hitmap_selected_2->Fill(hit_x_rnd, hit_y_rnd);
-        }
-      }
-
-      if (ring_found)
-        recodata.add_trigger({_TRIGGER_RING_FOUND_, _FRAME_SIZE_ / 2});
+      //  This should be from a config file
+      recodata.find_rings_hough(0.4, 4);
 
       //  Fill recodata tree
       recodata_tree->Fill();
@@ -448,6 +425,11 @@ void recodata_writer(
     all_frames += frames_in_spill.size();
   }
 
+  input_file->Close();
+  output_file->Close();
+};
+
+/*
   //  Loop to determine offset
   TF1 *f_utility_gaussian = new TF1("f_utility_gaussian", "[2]*TMath::Gaus(x,[0],[1],true)", -100., 100.);
   h_timing_cherenkov_delta_time_device->GetYaxis()->SetRangeUser(-25., 25.);
@@ -556,3 +538,4 @@ void recodata_writer(
   input_file->Close();
   output_file->Close();
 }
+  */
