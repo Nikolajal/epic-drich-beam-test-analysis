@@ -96,10 +96,8 @@ void recotrackdata_writer(
             altai_events_counter++;
 
             //  Exclude events with 0 or multiple tracks
-            if (!current_tracking.event_has_one_track(altai_events_counter))
-                continue;
-
-            test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
+            if (current_tracking.event_has_one_track(altai_events_counter))
+                test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
 
             //  Recotrack events counter
             recotrack_events_counter++;
