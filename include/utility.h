@@ -1,6 +1,11 @@
 #pragma once
 
 /**
+ * @todo: in multiple spills parallelise I/O and frames processing
+ * @todo: git workflow formatting
+ */
+
+/**
  * @file utility.h
  * @brief General-purpose utilities, fitting functions, and ALCOR address decoders.
  *
