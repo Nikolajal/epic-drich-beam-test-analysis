@@ -14,10 +14,8 @@ devices = [
 
 [readout.timing]
 devices = [
-    { id = 200, chips = [2, 4] },
+    { id = 200, chips = [0, 2] },
 ]
 
 [readout.tracking]
-devices = [
-    { id = 200, chips = [3, 5] },
-]
+devices = []

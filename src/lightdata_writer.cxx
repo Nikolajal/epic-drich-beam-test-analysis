@@ -306,7 +306,7 @@ void lightdata_writer(
     {
       //  Info
       if (frame_id % 100000 == 0)
-        bar.update(frame_id, (int)(spilldata.get_frame_link().size()));
+        bar.update((int)frame_id, (int)(spilldata.get_frame_link().size()));
 
       //  Link locally hits structure
       auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
@@ -605,13 +605,13 @@ void lightdata_writer(
         }
       }
     }
+    bar.update(spilldata.get_frame_link().size(), spilldata.get_frame_link().size());
     bar.finish();
 
     outfile->cd();
     spilldata.prepare_tree_fill();
     lightdata_tree->Fill();
     outfile->Flush();
-    std::cout << std::endl;
   }
   mist::logger::info("(lightdata_writer) Finished spills loop, writing to file");
   //  ---

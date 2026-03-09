@@ -15,6 +15,7 @@ The framework provides core data structures, I/O utilities, ROOT dictionary supp
 - [Prerequisites](#prerequisites)
 - [Build & Install](#build--install)
 - [Usage](#usage)
+- [Data Pipeline](#data-pipeline)
 - [Data Formats](#data-formats)
 - [Configuration](#configuration)
 - [Documentation](#documentation)
@@ -38,13 +39,11 @@ This repository aims to:
 
 ```
 .
-├── include/                    # Header files for core data structures
-│   └── ring-finding-algorithms/    # Ring-finding algorithm headers (e.g. Hough transform)
+├── include/                    # Public header files for all classes and utilities
 ├── src/                        # Implementation files (.cxx)
-│   └── ring-finding-algorithms/    # Ring-finding algorithm implementations
 ├── macros/                     # ROOT macros for analysis
-│   ├── examples/                   # Ready-to-run example macros
-│   └── utilities/                  # Shared macro utilities
+│   ├── examples/               # Ready-to-run example macros
+│   └── utilities/              # Pipeline entry-point macros (lightdata, recodata, …)
 ├── scripts/                    # Build and install scripts
 ├── conf/                       # Readout, mapping, and trigger configuration files
 ├── run-lists/                  # Run database and run list definitions (.toml)
@@ -116,36 +115,69 @@ Available examples:
 
 ---
 
-## Data Formats
+## Data Pipeline
 
-The framework defines three levels of data abstraction, each represented by a dedicated C++ class and a corresponding ROOT tree structure.
+Raw ALCOR data is processed through three sequential steps, each producing a ROOT file:
+
+```
+ALCOR raw (.root, one file per FIFO)
+        │
+        ▼  lightdata_writer
+lightdata.root       ← framed (1024 cc / frame), trigger-selected,
+                       hit-categorised (Cherenkov / timing / tracking / trigger),
+                       afterpulse-suppressed, position-assigned
+        │
+        ▼  recodata_writer
+recodata.root        ← cross-talk cleaned, ring-found (DBSCAN or Hough),
+                       analysis-ready hit + trigger collections
+        │
+        ▼  recotrackdata_writer  (optional — requires ALTAI tracking file)
+recotrackdata.root   ← track-matched recodata with ALTAI telescope information
+```
+
+Each step is invoked via the corresponding macro in `macros/utilities/` or the matching free function declared in `include/`.
+
+### In development
+
+The `lightdata_writer` step implements a streaming Hough-transform ring finder
+(`mist::ring_finding::hough_transform`) operating directly on Cherenkov hit clusters
+within each 3.2 µs frame. Active areas of development include:
+
+- **Neural-network ring recognition** — a NN-based alternative to the Hough transform
+  for improved efficiency at low photon multiplicity.
+- **Time-cluster self-triggering** — a time-cluster finding algorithm to enable
+  trigger-less operation by identifying Cherenkov bursts without an external hardware trigger.
+
+---
+
+## Data Formats
 
 ### ALCOR Raw Data (`alcor_data`, `alcor_finedata`)
 
-Low-level TDC hits decoded from the ALCOR ASIC front-end. These represent the raw time-stamped signals before any frame or event building.
+Low-level TDC hits decoded from the ALCOR ASIC front-end. `alcor_finedata` adds a per-channel calibration table (3 parameters per TDC) that converts raw fine-time bins into calibrated timestamps in nanoseconds. The detector consists of 8 PDUs of 16×16 SiPM pixels in a square layout (centre PDU absent).
 
-### Lightdata (`alcor_lightdata`)
+### Lightdata (`alcor_lightdata`, `alcor_spilldata`)
 
-Frame-based, filtered view of ALCOR data. Hits are grouped into readout frames, with coarse noise rejection applied. This is the typical starting point for Cherenkov photon counting analyses.
+Frame-based, filtered view of ALCOR data. Hits are grouped into readout frames and assigned to one of four categories — **Cherenkov**, **timing**, **tracking**, or **trigger** — based on the readout configuration file. Dead-channel and active-participant bitmasks are tracked per device and per spill.
 
 ### Recodata (`alcor_recodata`, `alcor_recotrackdata`)
 
-Event-level, analysis-ready data structures. Photon rings are reconstructed and optionally associated with particle tracks from the ALTAI tracking telescope. This is the format used for physics-level studies such as ring spatial resolution or Cherenkov angle reconstruction.
+Event-level, analysis-ready data structures. Photon rings are reconstructed using DBSCAN or the Hough transform and optionally associated with particle tracks from the ALTAI tracking telescope. This is the format used for physics studies such as ring spatial resolution and Cherenkov angle reconstruction.
 
 ---
 
 ## Configuration
 
-Runtime configuration is handled through plain-text files in `conf/`. Versioned copies are kept for each data-taking period and symlinked to the active version:
+Runtime configuration is handled through plain-text and TOML files in `conf/`:
 
-| File                  | Description                                            |
-| --------------------- | ------------------------------------------------------ |
-| `readout_config.toml` | ALCOR readout channel mapping                          |
-| `mapping_conf.toml`   | Pixel-to-SiPM spatial mapping (symlink → current year) |
-| `trigger_conf.toml`   | Trigger logic configuration (symlink → current year)   |
-| `sensors_config.txt`  | SiPM sensor parameters                                 |
+| File                       | Description                                              |
+| -------------------------- | -------------------------------------------------------- |
+| `readout_config.txt`       | Maps (device, chip) pairs to hit categories              |
+| `mapping_conf.<year>.toml` | Pixel-to-physical-position mapping for the SiPM plane    |
+| `trigger_conf.<year>.toml` | Trigger logic and channel assignment                     |
+| `sensors_config.txt`       | SiPM sensor parameters (gain, breakdown voltage, …)      |
 
-Run lists and a run database for 2025 are available in `run-lists/`.
+Run lists and a run metadata database for 2025 are available in `run-lists/` in TOML format, loadable via `run_info::read_database()` and `run_info::read_runslists()`.
 
 ---
 
@@ -219,6 +251,9 @@ Other style expectations:
 
 - New data structures should provide a corresponding ROOT dictionary entry in `dict/alcor_linkdef.h`.
 - New example macros go in `macros/examples/`; shared helpers go in `macros/utilities/`.
+- All public headers must carry Doxygen `@file`, `@brief`, and `@param` / `///` comments on every class, struct, field, and non-trivial method. Use `@name` / `///@{` groups to organise getters, setters, and I/O utilities within a class.
+- Inline constants that are part of the public API (e.g. detector geometry, conversion factors) must be documented with `///` trailing comments.
+- Use `@warning` to flag methods with known caveats or non-obvious ownership semantics.
 
 ---
 

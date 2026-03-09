@@ -104,7 +104,7 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
 {
     std::vector<readout_config_struct> readout_config;
     std::map<std::string, readout_config_struct> readout_config_utility;
-
+    
     try
     {
         auto tbl = toml::parse_file(config_file);
