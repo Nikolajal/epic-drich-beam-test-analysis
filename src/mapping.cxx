@@ -2,6 +2,9 @@
 
 #include "mapping.h"
 
+//  Constructors
+mapping::mapping(std::string conf_file_name) { load_calib(conf_file_name); }
+
 //  Getters
 std::optional<int> mapping::get_do_channel(int matrix, int eo_channel) const
 {
@@ -65,6 +68,17 @@ std::optional<std::array<float, 2>> mapping::get_position_from_device_chip_eoch(
 }
 std::optional<std::array<float, 2>> mapping::get_position_from_finedata(alcor_finedata entry) const { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
 std::optional<std::array<float, 2>> mapping::get_position_from_global_index(int global_index) const { return get_position_from_device_chip_eoch(get_device_from_global_tdc_index(global_index), get_chip_from_global_tdc_index(global_index), get_eo_channel_index_from_global_tdc_index(global_index)); }
+void mapping::assign_position(alcor_finedata_struct &entry)
+{
+    auto current_position = get_position_from_global_index(entry.global_index);
+    if (!current_position)
+    {
+        entry.hit_x = -99.f;
+        entry.hit_y = -99.f;
+    }
+    entry.hit_x = (*current_position)[0];
+    entry.hit_y = (*current_position)[1];
+}
 
 //  I/O
 void mapping::load_calib(std::string filename, bool verbose)
@@ -75,7 +89,7 @@ void mapping::load_calib(std::string filename, bool verbose)
     // Load pdu_xy_position
     if (auto placement_table = loaded_tables["pdu_xy_position"].as_table())
     {
-        logger::log_info("Found pdu_xy_position table, loading contents");
+        mist::logger::info("(mapping::load_calib) Found pdu_xy_position table, loading contents");
         pdu_xy_position.clear();
         for (auto &[key, val] : *placement_table)
         {
@@ -84,13 +98,13 @@ void mapping::load_calib(std::string filename, bool verbose)
                     static_cast<float>((*arr)[0].value_or(0.0)),
                     static_cast<float>((*arr)[1].value_or(0.0))};
         }
-        logger::log_info(Form("pdu_xy_position size: %zu", pdu_xy_position.size()));
+        mist::logger::info(Form("(mapping::load_calib) pdu_xy_position size: %zu", pdu_xy_position.size()));
     }
 
     // Load pdu_rotation
     if (auto rotation_table = loaded_tables["pdu_rotation"].as_table())
     {
-        logger::log_info("Found pdu_rotation table, loading contents");
+        mist::logger::info("(mapping::load_calib) Found pdu_rotation table, loading contents");
         pdu_rotation.clear();
         for (auto &[key, val] : *rotation_table)
         {
@@ -99,13 +113,13 @@ void mapping::load_calib(std::string filename, bool verbose)
             if (idx >= 1 && idx <= 8)
                 pdu_rotation[idx] = flag;
         }
-        logger::log_info(Form("pdu_rotation size: %zu", pdu_rotation.size()));
+        mist::logger::info(Form("(mapping::load_calib) pdu_rotation size: %zu", pdu_rotation.size()));
     }
 
     //  Load device_chip_to_pdu_matrix
     if (auto device_chip_to_pdu_matrix_table = loaded_tables["device_chip_to_pdu_matrix"].as_table())
     {
-        logger::log_info("Found device_chip_to_pdu_matrix table, loading contents");
+        mist::logger::info("(mapping::load_calib) Found device_chip_to_pdu_matrix table, loading contents");
         device_chip_to_pdu_matrix.clear();
         for (auto &[key, val] : *device_chip_to_pdu_matrix_table)
         {
@@ -114,7 +128,7 @@ void mapping::load_calib(std::string filename, bool verbose)
             auto pos = k.find('_');
             if (pos == std::string::npos)
             {
-                logger::log_info(Form("Skipping invalid key: %s", k.c_str()));
+                mist::logger::info(Form("(mapping::load_calib) Skipping invalid key: %s", k.c_str()));
                 continue;
             }
 
@@ -128,7 +142,7 @@ void mapping::load_calib(std::string filename, bool verbose)
                 device_chip_to_pdu_matrix[{device, chip}] = {pdu, matrix};
             }
         }
-        logger::log_info(Form("device_chip_to_pdu_matrix size: %zu", device_chip_to_pdu_matrix.size()));
+        mist::logger::info(Form("(mapping::load_calib) device_chip_to_pdu_matrix size: %zu", device_chip_to_pdu_matrix.size()));
     }
 }
 

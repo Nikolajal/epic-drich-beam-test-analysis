@@ -108,7 +108,7 @@ public:
     //  Pure run info
     static void read_database(std::string filename)
     {
-        logger::log_info(Form("(run_info::read_database) Reading run database: %s", filename.c_str()));
+        mist::logger::info(Form("(run_info::read_database) Reading run database: %s", filename.c_str()));
 
         //  Parse data base
         auto loaded_tables = toml::parse_file(filename);
@@ -120,9 +120,9 @@ public:
 
             auto runs_table = tbl["runs"].as_table();
             if (!runs_table)
-                logger::log_warning("(run_info::read_database) No [runs] table found in TOML file. Skipping run info loading.");
+                mist::logger::warning("(run_info::read_database) No [runs] table found in TOML file. Skipping run info loading.");
             else
-                logger::log_info("(run_info::read_database) Found runs table, loading contents");
+                mist::logger::info("(run_info::read_database) Found runs table, loading contents");
 
             // Iterate over each run
             std::string previous_run_id = "";
@@ -255,13 +255,13 @@ public:
                             current_run_info.radiators = run_info_database[previous_run_id].radiators;
                     }
 
-                    logger::log_debug("test: current_run_info.temperature = " + std::to_string(current_run_info.temperature));
+                    mist::logger::debug("test: current_run_info.temperature = " + std::to_string(current_run_info.temperature));
                 }
             }
         }
         catch (const toml::parse_error &err)
         {
-            logger::log_warning(Form("(run_info::read_database) File for run info \"%s\" does not contain the TOML tables expected, skipping info loading.", filename.c_str()));
+            mist::logger::warning(Form("(run_info::read_database) File for run info \"%s\" does not contain the TOML tables expected, skipping info loading.", filename.c_str()));
         }
     }
     static void clear_database()
@@ -280,7 +280,7 @@ public:
     //  Utility to read runlists
     static inline void read_runslists(std::string runlist_file)
     {
-        logger::log_info(Form("(run_info::read_runslists) Reading run list: %s", runlist_file.c_str()));
+        mist::logger::info(Form("(run_info::read_runslists) Reading run list: %s", runlist_file.c_str()));
 
         try
         {
@@ -289,9 +289,9 @@ public:
 
             auto runs_table = tbl["runlists"].as_table();
             if (!runs_table)
-                logger::log_warning("(run_info::read_runslists) No [runlists] table found in TOML file. Skipping run list loading.");
+                mist::logger::warning("(run_info::read_runslists) No [runlists] table found in TOML file. Skipping run list loading.");
             else
-                logger::log_info("(run_info::read_runslists) Found runlists table, loading contents");
+                mist::logger::info("(run_info::read_runslists) Found runlists table, loading contents");
 
             // Access the "runlists" table
             if (auto runlists_table = tbl["runlists"].as_table())
@@ -318,7 +318,7 @@ public:
         }
         catch (const toml::parse_error &err)
         {
-            logger::log_warning(Form("(run_info::read_runslists) File for run list \"%s\" does not contain the TOML tables expected, skipping info loading.", runlist_file.c_str()));
+            mist::logger::warning(Form("(run_info::read_runslists) File for run list \"%s\" does not contain the TOML tables expected, skipping info loading.", runlist_file.c_str()));
         }
     }
     static const std::optional<std::vector<std::string>> get_run_list(const std::string &runlist_name)

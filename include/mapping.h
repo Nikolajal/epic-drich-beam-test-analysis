@@ -12,6 +12,8 @@
 class mapping
 {
 public:
+  mapping(std::string conf_file_name);
+
   //  Getters
   std::optional<int> get_do_channel(int matrix, int eo_channel) const;
   std::optional<std::array<int, 2>> get_pdu_matrix(int device, int chip) const;
@@ -20,6 +22,7 @@ public:
   std::optional<std::array<float, 2>> get_position_from_device_chip_eoch(int device, int chip, int eo_channel) const;
   std::optional<std::array<float, 2>> get_position_from_finedata(alcor_finedata entry) const;
   std::optional<std::array<float, 2>> get_position_from_global_index(int entry) const;
+  void assign_position(alcor_finedata_struct &entry);
 
   //  I/O
   void load_calib(std::string filename, bool verbose = false);

@@ -1,0 +1,11 @@
+[[trigger]]
+name   = "luca_and_finger"
+index  = 0
+device = 196
+delay  = 117
+
+[[trigger]]
+name   = "broad_scintillator"
+index  = 1
+device = 197
+delay  = 117

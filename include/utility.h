@@ -17,11 +17,11 @@
 #include <TFile.h>
 #include <TTree.h>
 #include <TF1.h>
+#include <TProfile.h>
 #include <Math/Minimizer.h>
 #include <functional>
 #include <iostream>
-#include <TFile.h>
-#include <cppinfra/logger.h>
+#include <mist/mist.h>
 
 /**
  * @brief Encode a single bit into a 32-bit mask.
@@ -82,8 +82,6 @@ inline std::vector<uint8_t> decode_bits(uint32_t mask)
   }
   return result;
 }
-
-using logger = cppinfra::logger;
 
 //  TODO clean-up & incorporate into second repository for general utilities
 //  Random generator utility
@@ -339,7 +337,7 @@ inline ring_fit_results fit_ring_integral(TH2 *target_histogram, std::array<doub
   for (auto current_parameter : fit_result.Parameters())
   {
     iTer++;
-    logger::log_debug("par " + fit_result.GetParameterName(iTer) + " : " + std::to_string(current_parameter) + " +- " + std::to_string(fit_result.Errors()[iTer]));
+    mist::logger::debug("par " + fit_result.GetParameterName(iTer) + " : " + std::to_string(current_parameter) + " +- " + std::to_string(fit_result.Errors()[iTer]));
     if (iTer > 6)
       continue;
     result[iTer][0] = current_parameter;
@@ -368,7 +366,7 @@ inline std::vector<TGraph *> plot_ring_integral(ring_fit_results fit_results, st
 }
 
 inline TFile *open_or_build_rootfile(const std::string &filename,
-                                     std::function<void(std::string, std::string, int, bool, int)> builder,
+                                     std::function<void(std::string, std::string, int, bool, int, std::string, std::string, std::string)> builder,
                                      const std::string &data_repository,
                                      const std::string &run_name,
                                      int max_spill,
@@ -385,7 +383,7 @@ inline TFile *open_or_build_rootfile(const std::string &filename,
   std::cout << "[WARNING] File '" << filename << "' missing, corrupted or rebuild forced, creating it\n";
 
   //  Re-build file
-  builder(data_repository, run_name, max_spill, force_rebuild, -1);
+  builder(data_repository, run_name, max_spill, force_rebuild, -1, "", "", "");
 
   TFile *input_file = TFile::Open(filename.c_str(), "READ");
   if (!input_file || input_file->IsZombie())
