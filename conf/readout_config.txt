@@ -1,11 +1,21 @@
-# readout_name  device  chip
-cherenkov       192     *
-cherenkov       193     *
-cherenkov       194     *
-cherenkov       195     *
-cherenkov       196     *
-cherenkov       197     *
-cherenkov       198     *
-cherenkov       199     *
-timing          200     0
-timing          200     2
+[readout]
+
+[readout.cherenkov]
+devices = [
+    { id = 192, chips = "*" },
+    { id = 193, chips = "*" },
+    { id = 194, chips = "*" },
+    { id = 195, chips = "*" },
+    { id = 196, chips = "*" },
+    { id = 197, chips = "*" },
+    { id = 198, chips = "*" },
+    { id = 199, chips = "*" },
+]
+
+[readout.timing]
+devices = [
+    { id = 200, chips = [0, 2] },
+]
+
+[readout.tracking]
+devices = []

@@ -1,7 +1,11 @@
 #pragma once
 #include <string>
 
-//  TODO:   Make a single file with (class?) writers/readers
+/**
+ * @todo: Make a single file with (class?) writers/readers
+ * @tood: Generate a class for the standard analysis to have method to recover standard flow results: n photons, sigma, etc
+ */
+
 void standard_analysis(
     std::string data_repository,
     std::string run_name,

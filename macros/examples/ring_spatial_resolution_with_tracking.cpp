@@ -6,7 +6,7 @@
  *
  * This exercise estimates the center and radius of a ring of hits and then
  * computes the spatial resolution using multiple methods.
- * 
+ *
  * Additonally, this version of the macro exploits the tracking capabilities of the recotrackdata, to check the correlation between tracking angle and ring reconstruction quality.
  *
  * @details
@@ -47,7 +47,7 @@
 
 std::array<float, 2> time_cut_boundaries = {-45., 20.};
 
-void ring_spatial_resolution_with_tracking(std::string data_repository, std::string run_name, int max_frames = 10000000)
+void ring_spatial_resolution_with_tracking(std::string data_repository, std::string run_name, int max_frames = 100000)
 {
   //  Input files
   std::string input_filename_recotrackdata = data_repository + "/" + run_name + "/recotrackdata.root";
@@ -75,7 +75,8 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
   TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
-  TH1F *h_tracking_chi2 = new TH1F("h_tracking_chi2", ";tracking chi2", 1000, 0, 1);
+  TH1F *h_tracking_theta = new TH1F("h_tracking_theta", ";tracking #theta", 1000, 0, 0.1);
+  TH1F *h_tracking_phi = new TH1F("h_tracking_phi", ";tracking #phi", 1000, -3.1415, +3.1415);
   //  Second round selection
   TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
   TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
@@ -93,23 +94,29 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     recotrackdata_tree->GetEntry(i_frame);
 
     //  Takes note of spill evolution
-    if (recodata->is_start_of_spill())
+    if (recotrackdata->is_start_of_spill())
     {
       //  You can internally keep track of spills
-      
+
       //  This event is not of physical interest, skip it
       continue;
     }
 
     //  Select Luca AND trigger (0) or timing trigger (101)
-    auto default_hardware_trigger = recodata->get_trigger_by_index(0);
+    auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
     if (default_hardware_trigger)
     {
+
+      if (1 != recotrackdata->n_recotrackdata())
+        continue;
+
       //  Checking
-      h_tracking_chi2->Fill(recotrackdata->get_traj_angcoeff(0));
-      
+      h_tracking_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0));
+      h_tracking_phi->Fill(recotrackdata->get_traj_angcoeff_phi(0));
+
       //  Check the tracking of the event is within a certain range
-      if (recotrackdata->get_traj_angcoeff(0) > 0.001)
+      // if (recotrackdata->get_traj_angcoeff_theta(0) > 0.001)
+      if (fabs(recotrackdata->get_traj_angcoeff_phi(0)) > 1)
         continue;
 
       //  Save trigger frames for later, ref to the actual number of used frames in the analysis
@@ -300,6 +307,9 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   c_second_round_R_exc_global->cd(2);
   h_second_round_R_global->Draw();
 
-  TCanvas *c_tracking_chi2 = new TCanvas("c_tracking_chi2", "Tracking chi2 distribution", 800, 800);
-  h_tracking_chi2->Draw();
+  new TCanvas();
+  h_tracking_phi->Draw();
+
+  new TCanvas();
+  h_tracking_theta->Draw();
 }
