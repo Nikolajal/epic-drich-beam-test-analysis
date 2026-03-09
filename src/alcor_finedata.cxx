@@ -1,42 +1,43 @@
 #include "alcor_finedata.h"
-#include <sstream>
-#include <cmath>
-#include <iostream>
 
-//  TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression | merge recodata here
+//  TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression | merge data here
 //  TODO: understand what is the issue with generate calibration
+
+// =============================================================================
+// alcor_finedata_struct
+// =============================================================================
+
 alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
 {
-    calib_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column, d.tdc);
-    rollover = d.rollover;
-    coarse = d.coarse;
-    fine = d.fine;
+    global_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column, d.tdc);
+    rollover = static_cast<uint32_t>(d.rollover);
+    coarse   = static_cast<uint16_t>(d.coarse);
+    fine     = static_cast<uint8_t>(d.fine);
     hit_mask = d.hit_mask;
 }
-// --- Constructors
+
+// =============================================================================
+// alcor_finedata — Constructors
+// =============================================================================
+
 alcor_finedata::alcor_finedata() {}
 
-alcor_finedata::alcor_finedata(const alcor_finedata_struct &s)
-    : data(s) {}
+alcor_finedata::alcor_finedata(const alcor_data_struct &s)
+    : internal_data(s) {}
 
-alcor_finedata::alcor_finedata(const alcor_data_struct &d)
-    : data(d) {}
+alcor_finedata::alcor_finedata(const alcor_finedata_struct &d)
+    : internal_data(d) {}
 
 alcor_finedata::alcor_finedata(const alcor_finedata &o)
-    : data(o.get_data_struct()) {}
+    : internal_data(o.get_data_struct()) {}
 
-//  Getters
-//  --- Pure getters
-alcor_finedata_struct alcor_finedata::get_data_struct() const { return data; }
-uint32_t alcor_finedata::get_calib_index() const { return data.calib_index; }
-int alcor_finedata::get_rollover() const { return data.rollover; }
-int alcor_finedata::get_coarse() const { return data.coarse; }
-int alcor_finedata::get_fine() const { return data.fine; }
-uint32_t alcor_finedata::get_mask() const { return data.hit_mask; }
-//  --- Reconstruction info
+// =============================================================================
+// alcor_finedata — Derived timing getters
+// =============================================================================
+
 float alcor_finedata::get_phase() const
 {
-    auto calib_it = calibration_parameters.find(get_calib_index());
+    auto calib_it = calibration_parameters.find(get_global_index());
     if (calib_it != calibration_parameters.end())
     {
         auto calibration_parameter = calib_it->second;
@@ -49,38 +50,29 @@ float alcor_finedata::get_phase() const
     }
     return 0.;
 }
-float alcor_finedata::get_time() const { return _ALCOR_ROLLOVER_TO_CC_ * get_rollover() + get_coarse() - get_phase(); }
-float alcor_finedata::get_time_ns() const { return _ALCOR_CC_TO_NS_ * get_time(); }
-int alcor_finedata::get_tdc() const { return get_calib_index() % 4; }
-int alcor_finedata::get_device() const { return 192 + (get_global_index() / 256); }
-int alcor_finedata::get_fifo() const { return (get_global_index() % 256) / 8; }
-int alcor_finedata::get_chip() const { return (get_global_index() % 256) / 32; }
-int alcor_finedata::get_eo_channel() const { return (get_global_index() % 256) % 32 + 32 * (get_chip() % 2); }
-int alcor_finedata::get_column() const { return ((get_global_index() % 256) % 32) / 4; }
-int alcor_finedata::get_pixel() const { return ((get_global_index() % 256) % 32) % 4; }
-int alcor_finedata::get_device_index() const { return get_eo_channel() + 64 * (get_chip() / 2); }
-int alcor_finedata::get_global_index() const { return get_calib_index() / 4; }
 
-//  --- Setters
-//  --- Pure setters
-void alcor_finedata::set_data_struct(const alcor_finedata_struct &d) { data = d; }
-void alcor_finedata::set_calib_index(uint32_t calib) { data.calib_index = calib; }
-void alcor_finedata::set_rollover(int r) { data.rollover = r; }
-void alcor_finedata::set_coarse(int c) { data.coarse = c; }
-void alcor_finedata::set_fine(int f) { data.fine = f; }
-void alcor_finedata::set_mask(uint32_t mask) { data.hit_mask = mask; }
-//  --- Derived setters
-void alcor_finedata::set_param0(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][0] = value; }
-void alcor_finedata::set_param1(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][1] = value; }
-void alcor_finedata::set_param2(int global_tdc_index, float value) { calibration_parameters[global_tdc_index][2] = value; }
+// =============================================================================
+// alcor_finedata — Spatial getters (randomised)
+// =============================================================================
 
-//  Comparison operators
-bool alcor_finedata::operator<(const alcor_finedata &v) const { return get_time() < v.get_time(); }
-bool alcor_finedata::operator<=(const alcor_finedata &v) const { return get_time() < v.get_time(); }
-bool alcor_finedata::operator>(const alcor_finedata &v) const { return get_time() < v.get_time(); }
-bool alcor_finedata::operator>=(const alcor_finedata &v) const { return get_time() < v.get_time(); }
+float alcor_finedata::get_hit_r_rnd(std::array<float, 2> v) const
+{
+    const float x = get_hit_x_rnd();
+    const float y = get_hit_y_rnd();
+    return std::hypot(x - v[0], y - v[1]);
+}
 
-//  --- File operations
+float alcor_finedata::get_hit_phi_rnd(std::array<float, 2> v) const
+{
+    const float x = get_hit_x_rnd();
+    const float y = get_hit_y_rnd();
+    return std::atan2(y - v[1], x - v[0]);
+}
+
+// =============================================================================
+// alcor_finedata — Calibration I/O
+// =============================================================================
+
 void alcor_finedata::write_calib_to_file(const std::string &filename)
 {
     std::ofstream calib_file(filename);
@@ -89,6 +81,7 @@ void alcor_finedata::write_calib_to_file(const std::string &filename)
     for (auto [tdc_index, calib_params] : calibration_parameters)
         calib_file << tdc_index << " " << calib_params[0] << " " << calib_params[1] << " " << calib_params[2] << std::endl;
 }
+
 void alcor_finedata::read_calib_from_file(const std::string &filename, bool clear_first, bool overwrites)
 {
     if (clear_first)
@@ -108,7 +101,8 @@ void alcor_finedata::read_calib_from_file(const std::string &filename, bool clea
         calibration_parameters[key] = {a, b, c};
     }
 }
-void alcor_finedata::generate_calibration(TH2F *calibration_histogram)
+
+void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool overwrite_calibration)
 {
     calibration_parameters.clear();
 
@@ -122,11 +116,12 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram)
     TH1F *h_par2 = new TH1F("h_par2", "h_par2", 40, 80, 120);
     TH2F *h_par_corr = new TH2F("h_par_corr", "", 120, 0, 120, 120, 0, 120);
 
-    //  Loop over the calibration histogram
     auto channels = 0;
     new TCanvas();
     for (auto xbin = 1; xbin <= calibration_histogram->GetNbinsX(); xbin++)
     {
+        if (!overwrite_calibration && calibration_parameters.count(xbin - 1))
+            continue;
         auto current_tdc_fine_calib = calibration_histogram->ProjectionY(Form("tmp_%i", xbin), xbin, xbin);
         if (current_tdc_fine_calib->GetEntries() < 250)
             continue;
@@ -151,7 +146,6 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram)
         fine_dist_fit_function->SetParLimits(3, found_maximum - 3, found_maximum + 3);
         current_tdc_fine_calib->Fit(fine_dist_fit_function, "Q");
 
-        //  Check the result is consistent
         auto first_parameter = static_cast<float>(fine_dist_fit_function->GetParameter(2));
         auto second_parameter = static_cast<float>(fine_dist_fit_function->GetParameter(3));
         for (auto i_ter = 0; i_ter < 5; i_ter++)
@@ -163,16 +157,13 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram)
             second_parameter = static_cast<float>(fine_dist_fit_function->GetParameter(3));
         }
         if (fabs(second_parameter - first_parameter - 62.5) > 10)
-        {
             continue;
-        }
-        //  Store the calibration
+
         calibration_parameters[xbin - 1] = {first_parameter, second_parameter, 0.};
         h_par1->Fill(first_parameter);
         h_par2->Fill(second_parameter);
         h_par_corr->Fill(first_parameter, second_parameter);
     }
-    std::cout << channels << std::endl;
 
     //  --- TFIX
     new TCanvas();
@@ -181,4 +172,65 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram)
     h_par2->Draw();
     new TCanvas();
     h_par_corr->Draw("COLZ");
+}
+
+// =============================================================================
+// alcor_finedata — Finding rings algorithms
+// =============================================================================
+
+std::vector<mist::ring_finding::ring_result> alcor_finedata::alcor_find_rings_hough(
+    mist::ring_finding::hough_transform &ht,
+    std::vector<alcor_finedata> &alcor_hits,
+    float threshold_fraction,
+    int min_hits,
+    int min_active,
+    int max_rings,
+    float collection_radius)
+{
+    // --- Build generic hit vector, keeping a parallel index map -------------
+    // generic_to_alcor[i] gives the index into alcor_hits that corresponds to
+    // generic_hits[i].  This lets us write mask bits back after ring finding.
+    std::vector<mist::ring_finding::hit> generic_hits;
+    std::vector<int> generic_to_alcor;
+    generic_hits.reserve(alcor_hits.size());
+    generic_to_alcor.reserve(alcor_hits.size());
+
+    for (int i = 0; i < static_cast<int>(alcor_hits.size()); ++i)
+    {
+        const auto &h = alcor_hits[i];
+
+        // ALCOR-specific filters — do not belong in hough_transform
+        if (h.is_afterpulse())
+            continue;
+        if (h.get_device() >= 200)
+            continue;
+
+        generic_hits.push_back({h.get_hit_x(),
+                                h.get_hit_y(),
+                                h.get_time_ns(),
+                                static_cast<int>(4 * h.get_global_channel_index())});
+        generic_to_alcor.push_back(i);
+    }
+
+    // --- Run the generic ring finder ----------------------------------------
+    std::vector<mist::ring_finding::ring_result> rings =
+        ht.find_rings(generic_hits, threshold_fraction, min_hits,
+                      max_rings, collection_radius);
+
+    // --- Write mask bits back onto the original alcor_finedata hits ---------
+    // Ring mask bits in declaration order; extend the array for more rings.
+    const std::array<hit_mask, 2> ring_masks = {
+        _HITMASK_hough_ring_tag_first,
+        _HITMASK_hough_ring_tag_second};
+
+    for (int ring_idx = 0; ring_idx < static_cast<int>(rings.size()); ++ring_idx)
+    {
+        if (ring_idx >= static_cast<int>(ring_masks.size()))
+            break; // no mask bit defined for this ring index
+
+        for (int generic_idx : rings[ring_idx].hit_indices)
+            alcor_hits[generic_to_alcor[generic_idx]].add_mask_bit(ring_masks[ring_idx]);
+    }
+
+    return rings;
 }

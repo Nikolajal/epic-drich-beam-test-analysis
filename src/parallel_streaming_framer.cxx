@@ -33,7 +33,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
     {
         data_streams.emplace_back(current_filename);
         if (!data_streams.back().is_valid())
-            logger::log_warning("[WARNING] Failed to open streamer: " + current_filename);
+            mist::logger::warning("Failed to open streamer: " + current_filename);
     }
 
     // Trigger map initialization
@@ -46,12 +46,16 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
 
     // Initialize spill counter
     _current_spill = -1;
+
+    //  Initialise the fine tune container
+    h2_fine_tune_distribution = new TH2F("h2_fine_tune_distribution", ";global tdc index;fine parameter", 1e4, 0, 1e4, 256, 0, 256);
 }
 
 // Getters
 alcor_spilldata parallel_streaming_framer::get_spilldata() const { return spilldata; }
 alcor_spilldata &parallel_streaming_framer::get_spilldata_link() { return spilldata; }
 int parallel_streaming_framer::get_registered_triggers() { return triggers_map.size(); }
+TH2F *parallel_streaming_framer::get_fine_tune_distribution() { return h2_fine_tune_distribution; }
 
 // Setters
 void parallel_streaming_framer::set_spilldata(alcor_spilldata v) { spilldata = v; }
@@ -113,6 +117,7 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
                     else if (tag == "cherenkov")
                         current_lightdata.cherenkov_hits.emplace_back(current_data.get_data_struct());
                 }
+                h2_fine_tune_distribution->Fill(current_data.get_global_tdc_index() + 1, current_data.get_fine());
             }
             continue;
         }
@@ -121,7 +126,7 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
         if (current_data.is_trigger_tag())
         {
             // Read trigger settings safely
-            trigger_config_struct current_setting;
+            trigger_config current_setting;
             bool trigger_known = false;
             {
                 std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
@@ -186,7 +191,6 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
             break;
     }
 }
-
 bool parallel_streaming_framer::next_spill()
 {
     spilldata.clear();
@@ -214,35 +218,52 @@ bool parallel_streaming_framer::next_spill()
     unsigned int n_threads = std::thread::hardware_concurrency();
     n_threads = n_threads_requested > 0 ? std::min<uint16_t>(n_threads_requested, 8 * std::min<size_t>(n_threads - 2, 2)) : 8 * std::min<size_t>(n_threads - 2, 2); //  Leave 2 cores free for general machine work, 8 streams per core are manageable
 
-    //  Generate result vector
     std::atomic<size_t> next_streamer_atomic(0);
+    std::atomic<size_t> completed(0); // tracks finished streams
+    std::mutex bar_mutex;             // serialises bar.update() calls
+    const size_t total = data_streams.size();
+
+    mist::logger::progress_bar bar(mist::logger::bar_style::BLOCK);
+    mist::logger::info("(parallel_streaming_framer::next_spill) Starting reading data streams");
+
     std::vector<std::future<void>> thread_pool;
     thread_pool.reserve(n_threads);
 
-    // Launch exactly n_threads workers, each grabbing the next available stream
     for (size_t i = 0; i < n_threads; ++i)
     {
-        thread_pool.push_back(std::async(std::launch::async, [this, &next_streamer_atomic]()
+        thread_pool.push_back(std::async(std::launch::async,
+                                         [this, &next_streamer_atomic, &completed, &bar_mutex, &bar, total]()
                                          {
-        while (true)
-        {
-            // Atomically grab the next stream index
-            size_t my_stream = next_streamer_atomic.fetch_add(1);
-            if (my_stream >= data_streams.size())
-                return; // no more work
+                                             while (true)
+                                             {
+                                                 size_t my_stream = next_streamer_atomic.fetch_add(1);
+                                                 if (my_stream >= total)
+                                                     return;
 
-            std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill
-                      << " thread processing stream " << my_stream
-                      << "/" << data_streams.size() << std::flush;
+                                                 process(data_streams[my_stream], this->_frame_size);
 
-            process(data_streams[my_stream], this->_frame_size);
-        } }));
+                                                 // Increment *after* work is done so progress reflects
+                                                 // completed streams, not just claimed ones.
+                                                 size_t done = ++completed;
+                                                 {
+                                                     std::lock_guard<std::mutex> lock(bar_mutex);
+                                                     bar.update(done, total);
+                                                 }
+                                             }
+                                         }));
     }
+
     for (auto &f : thread_pool)
         f.get();
 
+    bar.finish();
+
     //  Finished Processing spills
-    std::cout << "\33[2K\r[INFO] Spill " << (int)_current_spill << " processing finished! Successfully processed " << data_streams.size() << " data streams" << std::endl;
+    mist::logger::info("(parallel_streaming_framer::next_spill) Spill " +
+                       std::to_string(_current_spill) +
+                       " processing finished! Successfully processed " +
+                       std::to_string(data_streams.size()) +
+                       " data streams");
 
     return spilldata.has_data();
 }

@@ -72,7 +72,7 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
     for (auto i = 0; i < recodata->get_recodata().size(); i++)
       for (auto trg : decode_bits(recodata->get_hit_mask(i)))
         if (trg == 28)
-          logger::log_debug(Form("pre-Fill cross-talk hit at index %i, mask %i", i, trg));
+          mist::logger::debug(Form("pre-Fill cross-talk hit at index %i, mask %i", i, trg));
 
     //  Takes note of spill evolution
     if (recodata->is_start_of_spill())

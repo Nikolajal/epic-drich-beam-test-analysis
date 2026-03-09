@@ -40,7 +40,7 @@ int main(int argc, char **argv)
       auto recovered_run_list = run_info::get_run_list(run_list);
       if (!recovered_run_list)
       {
-        logger::log_error(Form("Run list '%s' not found in database", run_list.c_str()));
+        mist::logger::error(Form("Run list '%s' not found in database", run_list.c_str()));
         throw CLI::ValidationError("--run-list", Form("Run list '%s' not found in database", run_list.c_str()));
       }
 
@@ -48,15 +48,15 @@ int main(int argc, char **argv)
       for (const auto &current_run_name : *recovered_run_list)
       {
         auto start = std::chrono::high_resolution_clock::now();
-        logger::log_info(Form("(standard_analysis) Starting standard analysis for run '%s'", current_run_name.c_str()));
+        mist::logger::info(Form("(standard_analysis) Starting standard analysis for run '%s'", current_run_name.c_str()));
         standard_analysis(data_repository, current_run_name, max_spill);
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed = end - start;
-        logger::log_info(Form("(standard_analysis) Total time taken: %f seconds", elapsed.count()));
+        mist::logger::info(Form("(standard_analysis) Total time taken: %f seconds", elapsed.count()));
       }
       auto list_end = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> list_elapsed = list_end - list_start;
-      logger::log_info(Form("(standard_analysis) Total time taken: %f seconds", list_elapsed.count()));
+      mist::logger::info(Form("(standard_analysis) Total time taken: %f seconds", list_elapsed.count()));
     }
     else
     {
@@ -64,7 +64,7 @@ int main(int argc, char **argv)
       standard_analysis(data_repository, run_name, max_spill);
       auto end = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> elapsed = end - start;
-      logger::log_info(Form("(standard_analysis) Total time taken: %f seconds", elapsed.count()));
+      mist::logger::info(Form("(standard_analysis) Total time taken: %f seconds", elapsed.count()));
     }
   }
   catch (const CLI::ParseError &e)
