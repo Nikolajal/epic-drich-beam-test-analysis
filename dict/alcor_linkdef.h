@@ -11,13 +11,12 @@
 #pragma link C++ class std::vector<alcor_finedata_struct> + ;
 
 #include "alcor_lightdata.h"
-#pragma link C++ struct trigger_struct + ;
+#pragma link C++ struct trigger_event + ;
 #pragma link C++ struct alcor_lightdata_struct + ;
-#pragma link C++ class std::vector<trigger_struct> + ;
+#pragma link C++ class std::vector<trigger_event> + ;
 #pragma link C++ class std::vector<alcor_lightdata_struct> + ;
 
 #include "alcor_recodata.h"
-#pragma link C++ struct alcor_recodata_struct + ;
 #pragma link C++ class alcor_recodata + ;
 #pragma link C++ class std::vector<alcor_recodata_struct> + ;
 
@@ -46,4 +45,5 @@
 #include "parallel_streaming_framer.h"
 #include "triggers.h"
 #include "utility.h"
+
 #endif

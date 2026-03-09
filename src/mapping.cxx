@@ -1,6 +1,7 @@
-
-
 #include "mapping.h"
+
+//  Constructors
+mapping::mapping(std::string conf_file_name) { load_calib(conf_file_name); }
 
 //  Getters
 std::optional<int> mapping::get_do_channel(int matrix, int eo_channel) const
@@ -8,7 +9,7 @@ std::optional<int> mapping::get_do_channel(int matrix, int eo_channel) const
     auto it = matrix_to_do_channel.find(matrix);
     if (it == matrix_to_do_channel.end())
         return std::nullopt;
-    if (eo_channel < 0 || eo_channel >= it->second.size())
+    if (eo_channel < 0 || eo_channel >= (int)it->second.size())
         return std::nullopt;
     return it->second[eo_channel];
 }
@@ -65,17 +66,34 @@ std::optional<std::array<float, 2>> mapping::get_position_from_device_chip_eoch(
 }
 std::optional<std::array<float, 2>> mapping::get_position_from_finedata(alcor_finedata entry) const { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
 std::optional<std::array<float, 2>> mapping::get_position_from_global_index(int global_index) const { return get_position_from_device_chip_eoch(get_device_from_global_tdc_index(global_index), get_chip_from_global_tdc_index(global_index), get_eo_channel_index_from_global_tdc_index(global_index)); }
+void mapping::assign_position(alcor_finedata_struct &entry)
+{
+    auto current_position = get_position_from_global_index(entry.global_index);
+    if (!current_position)
+    {
+        entry.hit_x = -99.f;
+        entry.hit_y = -99.f;
+    }
+    entry.hit_x = (*current_position)[0];
+    entry.hit_y = (*current_position)[1];
+}
 
 //  I/O
 void mapping::load_calib(std::string filename, bool verbose)
 {
+    //  Invalidate caches whenever calibration is reloaded
+    index_to_hit_xy.clear();
+    hit_xy_to_index.clear();
+    cache_index_to_xy_built = false;
+    cache_xy_to_index_built = false;
+
     //  Parsing file
     auto loaded_tables = toml::parse_file(filename);
 
     // Load pdu_xy_position
     if (auto placement_table = loaded_tables["pdu_xy_position"].as_table())
     {
-        logger::log_info("Found pdu_xy_position table, loading contents");
+        mist::logger::info("(mapping::load_calib) Found pdu_xy_position table, loading contents");
         pdu_xy_position.clear();
         for (auto &[key, val] : *placement_table)
         {
@@ -84,13 +102,13 @@ void mapping::load_calib(std::string filename, bool verbose)
                     static_cast<float>((*arr)[0].value_or(0.0)),
                     static_cast<float>((*arr)[1].value_or(0.0))};
         }
-        logger::log_info(Form("pdu_xy_position size: %zu", pdu_xy_position.size()));
+        mist::logger::info(Form("(mapping::load_calib) pdu_xy_position size: %zu", pdu_xy_position.size()));
     }
 
     // Load pdu_rotation
     if (auto rotation_table = loaded_tables["pdu_rotation"].as_table())
     {
-        logger::log_info("Found pdu_rotation table, loading contents");
+        mist::logger::info("(mapping::load_calib) Found pdu_rotation table, loading contents");
         pdu_rotation.clear();
         for (auto &[key, val] : *rotation_table)
         {
@@ -99,13 +117,13 @@ void mapping::load_calib(std::string filename, bool verbose)
             if (idx >= 1 && idx <= 8)
                 pdu_rotation[idx] = flag;
         }
-        logger::log_info(Form("pdu_rotation size: %zu", pdu_rotation.size()));
+        mist::logger::info(Form("(mapping::load_calib) pdu_rotation size: %zu", pdu_rotation.size()));
     }
 
     //  Load device_chip_to_pdu_matrix
     if (auto device_chip_to_pdu_matrix_table = loaded_tables["device_chip_to_pdu_matrix"].as_table())
     {
-        logger::log_info("Found device_chip_to_pdu_matrix table, loading contents");
+        mist::logger::info("(mapping::load_calib) Found device_chip_to_pdu_matrix table, loading contents");
         device_chip_to_pdu_matrix.clear();
         for (auto &[key, val] : *device_chip_to_pdu_matrix_table)
         {
@@ -114,7 +132,7 @@ void mapping::load_calib(std::string filename, bool verbose)
             auto pos = k.find('_');
             if (pos == std::string::npos)
             {
-                logger::log_info(Form("Skipping invalid key: %s", k.c_str()));
+                mist::logger::info(Form("(mapping::load_calib) Skipping invalid key: %s", k.c_str()));
                 continue;
             }
 
@@ -128,11 +146,117 @@ void mapping::load_calib(std::string filename, bool verbose)
                 device_chip_to_pdu_matrix[{device, chip}] = {pdu, matrix};
             }
         }
-        logger::log_info(Form("device_chip_to_pdu_matrix size: %zu", device_chip_to_pdu_matrix.size()));
+        mist::logger::info(Form("(mapping::load_calib) device_chip_to_pdu_matrix size: %zu", device_chip_to_pdu_matrix.size()));
     }
 }
 
-//  Private attributes
+//  Cache construction
+void mapping::build_index_to_position_cache(float origin_cut)
+{
+    index_to_hit_xy.clear();
+    cache_index_to_xy_built = false;
+    cache_xy_to_index_built = false;   // invalidate reverse cache too
+
+    // Global TDC indices are packed as index = 4 * (chip_offset + eo_group),
+    // so we step by 4 over the full range [0, 2048*4).
+    constexpr int kMaxIndex = 2048 * 4;
+    int n_mapped = 0;
+
+    for (int i_index = 0; i_index < kMaxIndex; i_index += 4)
+    {
+        auto position = get_position_from_global_index(i_index);
+        if (!position)
+            continue;
+
+        // Skip hits whose position is suspiciously close to the origin —
+        // these typically correspond to unmapped or dead channels that
+        // the position formula returns as (0+offsets, 0+offsets) ≈ (0,0).
+        if (std::fabs((*position)[0]) < origin_cut &&
+            std::fabs((*position)[1]) < origin_cut)
+            continue;
+
+        index_to_hit_xy[i_index] = (*position);
+        ++n_mapped;
+    }
+
+    cache_index_to_xy_built = true;
+    mist::logger::info(Form("(mapping::build_index_to_position_cache) "
+                            "Built cache with %d entries (origin_cut=%.1f mm).",
+                            n_mapped, origin_cut));
+}
+
+void mapping::build_position_to_index_cache(std::string collision_policy)
+{
+    // Ensure the forward cache exists first.
+    if (!cache_index_to_xy_built)
+    {
+        mist::logger::info("(mapping::build_position_to_index_cache) "
+                           "Forward cache not built yet — building with default parameters.");
+        build_index_to_position_cache();
+    }
+
+    hit_xy_to_index.clear();
+    cache_xy_to_index_built = false;
+    int n_collisions = 0;
+
+    for (auto const &[idx, pos] : index_to_hit_xy)
+    {
+        auto [it, inserted] = hit_xy_to_index.emplace(pos, idx);
+
+        if (!inserted)   // position key already present → collision
+        {
+            ++n_collisions;
+            if (collision_policy == "last")
+            {
+                it->second = idx;
+            }
+            else if (collision_policy == "warn")
+            {
+                mist::logger::info(Form("(mapping::build_position_to_index_cache) "
+                                        "Collision at (%.3f, %.3f): keeping index %d, "
+                                        "ignoring index %d.",
+                                        pos[0], pos[1], it->second, idx));
+            }
+            // "first" (default): do nothing — keep the already-stored entry.
+        }
+    }
+
+    cache_xy_to_index_built = true;
+    mist::logger::info(Form("(mapping::build_position_to_index_cache) "
+                            "Built reverse cache with %zu entries "
+                            "(%d collision(s), policy='%s').",
+                            hit_xy_to_index.size(),
+                            n_collisions,
+                            collision_policy.c_str()));
+}
+
+std::optional<std::array<float, 2>> mapping::get_cached_position(int global_index) const
+{
+    auto it = index_to_hit_xy.find(global_index);
+    if (it == index_to_hit_xy.end())
+        return std::nullopt;
+    return it->second;
+}
+
+std::optional<int> mapping::get_cached_index(float x, float y) const
+{
+    auto it = hit_xy_to_index.find({x, y});
+    if (it == hit_xy_to_index.end())
+        return std::nullopt;
+    return it->second;
+}
+
+const std::map<int, std::array<float, 2>> &mapping::get_index_to_position_map() const
+{
+    return index_to_hit_xy;
+}
+
+const std::map<std::array<float, 2>, int> &mapping::get_position_to_index_map() const
+{
+    return hit_xy_to_index;
+}
+
+//  Private static attributes
 std::map<int, std::vector<int>> mapping::matrix_to_do_channel = {
     {1, {3, 2, 1, 0, 8, 9, 10, 11, 17, 16, 12, 4, 18, 19, 5, 13, 25, 24, 21, 20, 26, 27, 28, 29, 30, 22, 14, 6, 7, 15, 23, 31, 35, 34, 33, 32, 36, 37, 38, 39, 43, 42, 41, 40, 44, 45, 46, 47, 51, 50, 49, 48, 52, 53, 54, 55, 59, 58, 57, 56, 60, 61, 62, 63}},
     {2, {59, 58, 57, 56, 60, 61, 62, 63, 51, 50, 49, 48, 52, 53, 54, 55, 43, 42, 41, 40, 44, 45, 46, 47, 35, 34, 33, 32, 36, 37, 38, 39, 0, 8, 16, 24, 25, 17, 26, 27, 29, 28, 1, 9, 30, 31, 18, 19, 21, 20, 2, 10, 22, 23, 11, 12, 3, 15, 14, 13, 4, 5, 6, 7}},

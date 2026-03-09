@@ -99,6 +99,12 @@ public:
      */
     int get_registered_triggers();
 
+    /**
+     * @brief Returns the fine tune distribution per tdc index.
+     * @return fine tune distribution per tdc index.
+     */
+    TH2F *get_fine_tune_distribution();
+
     // -------------------------------------------------------------------------
     // Setters
     // -------------------------------------------------------------------------
@@ -181,16 +187,24 @@ private:
     /// @{
 
     /** @brief Ordered list of trigger configurations loaded from file. */
-    std::vector<trigger_config_struct> triggers;
+    std::vector<trigger_config> triggers;
 
     /** @brief Fast lookup map from channel ID to trigger configuration. */
-    std::unordered_map<uint8_t, trigger_config_struct> triggers_map;
+    std::unordered_map<uint8_t, trigger_config> triggers_map;
 
     /** @brief Readout configuration (channel masking, thresholds, etc.). */
     readout_config_list readout_config;
 
     /** @brief Frame size in clock cycles used during processing. */
     uint16_t _frame_size;
+
+    /// @}
+
+    /// @name Configuration
+    /// @{
+
+    /** @brief Frame size in clock cycles used during processing. */
+    TH2F *h2_fine_tune_distribution;
 
     /// @}
 };
