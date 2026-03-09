@@ -77,77 +77,77 @@
 void analysis_example(std::string data_repository, std::string run_name, int max_frames = 10000000)
 {
 
-  //  Input files
-  std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
+    //  Input files
+    std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
-  //  Load recodata, return if not available
-  TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
-  if (!input_file_recodata || input_file_recodata->IsZombie())
-  {
-    std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
-    return;
-  }
-
-  //  Link recodata tree locally
-  TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
-  alcor_recodata *recodata = new alcor_recodata();
-  recodata->link_to_tree(recodata_tree);
-
-  //  Get number of frames, limited to maximum requested frames
-  auto n_frames = recodata_tree->GetEntries();
-  auto all_frames = min((int)n_frames, (int)max_frames);
-
-  //  Map of hits
-  TH2F *h_xy_hitmap = new TH2F("h_xy_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-  TH1F *h_t_hit_htrg_distribution = new TH1F("h_t_hit_htrg_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
-  TH1F *h_t_hit_ttrg_distribution = new TH1F("h_t_hit_ttrg_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
-  TH1F *h_t_htrg_ttrg_distribution = new TH1F("h_t_htrg_ttrg_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
-
-  //  Loop over frames
-  auto i_spill = -1;
-  for (int i_frame = 0; i_frame < all_frames; ++i_frame)
-  {
-    //  Load data for current frame
-    recodata_tree->GetEntry(i_frame);
-
-    //  Takes note of spill evolution
-    if (recodata->is_start_of_spill())
+    //  Load recodata, return if not available
+    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    if (!input_file_recodata || input_file_recodata->IsZombie())
     {
-      //  You can internally keep track of spills
-      i_spill++;
-
-      //  This event is not of physical interest, skip it
-      continue;
+        std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
+        return;
     }
 
-    auto default_hardware_trigger = recodata->get_trigger_by_index(0);
-    auto timing_trigger = recodata->get_timing_trigger();
-    if (default_hardware_trigger && timing_trigger)
+    //  Link recodata tree locally
+    TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
+    alcor_recodata *recodata = new alcor_recodata();
+    recodata->link_to_tree(recodata_tree);
+
+    //  Get number of frames, limited to maximum requested frames
+    auto n_frames = recodata_tree->GetEntries();
+    auto all_frames = min((int)n_frames, (int)max_frames);
+
+    //  Map of hits
+    TH2F *h_xy_hitmap = new TH2F("h_xy_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH1F *h_t_hit_htrg_distribution = new TH1F("h_t_hit_htrg_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
+    TH1F *h_t_hit_ttrg_distribution = new TH1F("h_t_hit_ttrg_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
+    TH1F *h_t_htrg_ttrg_distribution = new TH1F("h_t_htrg_ttrg_distribution", ";t_{hit} - t_{timing} (ns)", 600, -300, 300);
+
+    //  Loop over frames
+    auto i_spill = -1;
+    for (int i_frame = 0; i_frame < all_frames; ++i_frame)
     {
-      //  Loop on hits
-      for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
-      {
-        //  Fill time distribution to check
-        h_t_hit_htrg_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
-        h_t_hit_ttrg_distribution->Fill(recodata->get_hit_t(current_hit) - timing_trigger->fine_time);
-        h_t_htrg_ttrg_distribution->Fill(default_hardware_trigger->fine_time - timing_trigger->fine_time);
+        //  Load data for current frame
+        recodata_tree->GetEntry(i_frame);
 
-        //  Cut in time to select coincidences
-        if (fabs(recodata->get_hit_t(current_hit) - timing_trigger->fine_time) > 40)
-          continue;
+        //  Takes note of spill evolution
+        if (recodata->is_start_of_spill())
+        {
+            //  You can internally keep track of spills
+            i_spill++;
 
-        //  Fill a hit wirth a random X and Y within the sensors acceptance (graphical purposes)
-        h_xy_hitmap->Fill(recodata->get_hit_x_rnd(current_hit), recodata->get_hit_y_rnd(current_hit));
-      }
+            //  This event is not of physical interest, skip it
+            continue;
+        }
+
+        auto default_hardware_trigger = recodata->get_trigger_by_index(0);
+        auto timing_trigger = recodata->get_timing_trigger();
+        if (default_hardware_trigger && timing_trigger)
+        {
+            //  Loop on hits
+            for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
+            {
+                //  Fill time distribution to check
+                h_t_hit_htrg_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
+                h_t_hit_ttrg_distribution->Fill(recodata->get_hit_t(current_hit) - timing_trigger->fine_time);
+                h_t_htrg_ttrg_distribution->Fill(default_hardware_trigger->fine_time - timing_trigger->fine_time);
+
+                //  Cut in time to select coincidences
+                if (fabs(recodata->get_hit_t(current_hit) - timing_trigger->fine_time) > 40)
+                    continue;
+
+                //  Fill a hit wirth a random X and Y within the sensors acceptance (graphical purposes)
+                h_xy_hitmap->Fill(recodata->get_hit_x_rnd(current_hit), recodata->get_hit_y_rnd(current_hit));
+            }
+        }
     }
-  }
 
-  TCanvas *c1 = new TCanvas("hitmap", "", 600, 500);
-  h_xy_hitmap->Draw("COLZ");
-  TCanvas *c2 = new TCanvas("time distribution of hits w.r.t. trigger", "", 500, 500);
-  h_t_hit_htrg_distribution->Draw();
-  TCanvas *c3 = new TCanvas("time distribution of hits w.r.t. timing trigger", "", 500, 500);
-  h_t_hit_ttrg_distribution->Draw();
-  TCanvas *c4 = new TCanvas("time difference between hardware and timing triggers", "", 500, 500);
-  h_t_htrg_ttrg_distribution->Draw();
+    TCanvas *c1 = new TCanvas("hitmap", "", 600, 500);
+    h_xy_hitmap->Draw("COLZ");
+    TCanvas *c2 = new TCanvas("time distribution of hits w.r.t. trigger", "", 500, 500);
+    h_t_hit_htrg_distribution->Draw();
+    TCanvas *c3 = new TCanvas("time distribution of hits w.r.t. timing trigger", "", 500, 500);
+    h_t_hit_ttrg_distribution->Draw();
+    TCanvas *c4 = new TCanvas("time difference between hardware and timing triggers", "", 500, 500);
+    h_t_htrg_ttrg_distribution->Draw();
 }
