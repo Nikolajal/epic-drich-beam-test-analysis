@@ -18,12 +18,6 @@ alcor_recotrackdata_struct &alcor_recotrackdata::recotrackdata_at(std::size_t id
     return recotrackdata.at(idx);
 }
 
-double alcor_recotrackdata::get_traj_angcoeff(std::size_t idx) const
-{
-    return std::hypot(recotrackdata.at(idx).traj_angcoeff_x,
-                      recotrackdata.at(idx).traj_angcoeff_y);
-}
-
 // --- I/O -----------------------------------------------------------------
 
 void alcor_recotrackdata::clear()
@@ -52,8 +46,8 @@ void alcor_recotrackdata::write_to_tree(TTree *output_tree)
         return;
     }
     output_tree->Branch("recotrackdata", &recotrackdata);
-    output_tree->Branch("recodata",       get_recodata_ptr());
-    output_tree->Branch("triggers",       get_triggers_ptr());
+    output_tree->Branch("recodata", get_recodata_ptr());
+    output_tree->Branch("triggers", get_triggers_ptr());
 }
 
 // --- import from tracking ------------------------------------------------
@@ -64,10 +58,10 @@ void alcor_recotrackdata::import_event(std::vector<tracking_altai_struct> vec)
     for (auto &v : vec)
     {
         i_trk++;
-        set_det_plane_x     (i_trk, v.zero_plane_x);
-        set_det_plane_y     (i_trk, v.zero_plane_y);
-        set_traj_angcoeff_x (i_trk, v.angcoeff_dx);
-        set_traj_angcoeff_y (i_trk, v.angcoeff_dy);
-        set_chi2ndof        (i_trk, v.chi2ndof);
+        set_det_plane_x(i_trk, v.zero_plane_x);
+        set_det_plane_y(i_trk, v.zero_plane_y);
+        set_traj_angcoeff_x(i_trk, v.angcoeff_dx);
+        set_traj_angcoeff_y(i_trk, v.angcoeff_dy);
+        set_chi2ndof(i_trk, v.chi2ndof);
     }
 }
