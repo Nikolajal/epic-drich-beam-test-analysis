@@ -1,4 +1,5 @@
 #include "../lib_loader.h"
+#include <mist/mist.h>
 
 /**
  * @file dark_count_rate.cpp
@@ -24,7 +25,8 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
   //  Link recodata tree locally
   TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
   alcor_recodata *recodata = new alcor_recodata();
-  recodata->link_to_tree(recodata_tree);
+  if (!recodata->link_to_tree(recodata_tree))
+    return;
 
   //  Get number of frames, limited to maximum requested frames
   auto n_frames = recodata_tree->GetEntries();
@@ -53,8 +55,8 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
       //  Keep track of current available sensors
       active_sensors.clear();
       active_sensors_count.clear();
-      for (const auto &hit : recodata->get_recodata())
-        active_sensors.insert(hit.global_index);
+      for (auto hit = 0; hit < recodata->get_recodata().size(); hit++)
+        active_sensors.insert(recodata->get_global_channel_index(hit));
 
       //  This event is not of physical interest, skip it
       continue;
@@ -69,14 +71,14 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
       used_frames++;
 
       //  Channel by channel hit counting
-      for (const auto &global_index : active_sensors)
-        active_sensors_count[global_index] = 0;
-      for (const auto &hit : recodata->get_recodata())
-        active_sensors_count[4 * (hit.global_index / 4)]++;
+      for (const auto &global_channel_index : active_sensors)
+        active_sensors_count[global_channel_index] = 0;
+      for (auto hit = 0; hit < recodata->get_recodata().size(); hit++)
+        active_sensors_count[recodata->get_global_channel_index(hit)]++;
 
       //  Fill the DCR histogram
-      for (auto &[global_index, count] : active_sensors_count)
-        h_dcr_per_channel->Fill(global_index / 4, count);
+      for (auto &[global_channel_index, count] : active_sensors_count)
+        h_dcr_per_channel->Fill(global_channel_index, count);
 
       h_dcr->Fill(recodata->get_recodata().size() * 1. / (_FRAME_LENGTH_NS_ * 1.e-6 * active_sensors.size()));
     }

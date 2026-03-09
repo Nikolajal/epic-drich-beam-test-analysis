@@ -11,6 +11,7 @@ int main(int argc, char **argv)
   std::string data_repository;
   std::string run_name;
   std::string mapping_conf = "conf/mapping_conf.2025.toml";
+  std::string trigger_config_file = "conf/trigger_conf.toml";
   std::string run_list;
 
   int max_spill = 1000;
@@ -22,6 +23,7 @@ int main(int argc, char **argv)
   app.add_option("--run-list", run_list, "Name of run list (required if run_name is a .toml runlist)");
   app.add_option("--max-spill", max_spill);
   app.add_option("--mapping-conf", mapping_conf);
+  app.add_option("--trigger-conf", trigger_config_file);
   app.add_flag("--force-recodata", force_recodata_rebuild);
   app.add_flag("--force-lightdata", force_lightdata_rebuild);
 
@@ -55,7 +57,7 @@ int main(int argc, char **argv)
       {
         auto start = std::chrono::high_resolution_clock::now();
         mist::logger::info(Form("(recodata_writer) Starting writing recodata for run '%s'", current_run_name.c_str()));
-        recodata_writer(data_repository, current_run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf);
+        recodata_writer(data_repository, current_run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf, trigger_config_file);
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed = end - start;
         mist::logger::info(Form("(recodata_writer) Total time taken: %f seconds", elapsed.count()));
@@ -67,7 +69,7 @@ int main(int argc, char **argv)
     else
     {
       auto start = std::chrono::high_resolution_clock::now();
-      recodata_writer(data_repository, run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf);
+      recodata_writer(data_repository, run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf, trigger_config_file);
       auto end = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> elapsed = end - start;
       mist::logger::info(Form("(recodata_writer) Total time taken: %f seconds", elapsed.count()));

@@ -26,13 +26,13 @@ struct alcor_finedata_struct
     /// @{
 
     /** @brief Rollover counter (most-significant timing word). */
-    int rollover;
+    uint32_t rollover;
 
     /** @brief Coarse timestamp (clock-cycle counter). */
-    int coarse;
+    uint16_t coarse;
 
     /** @brief Fine timestamp (TDC interpolation bin within a clock cycle). */
-    int fine;
+    uint8_t fine;
 
     /** @brief X-axis position from mapping. */
     float hit_x;
@@ -55,6 +55,26 @@ struct alcor_finedata_struct
 
     /** @brief Default constructor. */
     alcor_finedata_struct() = default;
+    
+    /**
+     * @brief Constructor from individual values.
+     */
+    alcor_finedata_struct(uint32_t rollover_,
+                          uint16_t coarse_,
+                          uint8_t fine_,
+                          float hit_x_,
+                          float hit_y_,
+                          uint32_t global_index_,
+                          uint32_t hit_mask_)
+        : rollover(rollover_),
+          coarse(coarse_),
+          fine(fine_),
+          hit_x(hit_x_),
+          hit_y(hit_y_),
+          global_index(global_index_),
+          hit_mask(hit_mask_)
+    {
+    }
 
     /**
      * @brief Construct from a raw @ref alcor_data_struct.
@@ -121,13 +141,13 @@ public:
     uint32_t get_global_index() const { return internal_data.global_index; }
 
     /** @brief Returns the rollover counter. */
-    int get_rollover() const { return internal_data.rollover; }
+    uint32_t get_rollover() const { return internal_data.rollover; }
 
     /** @brief Returns the coarse timestamp (clock-cycle count). */
-    int get_coarse() const { return internal_data.coarse; }
+    uint16_t get_coarse() const { return internal_data.coarse; }
 
     /** @brief Returns the fine timestamp (TDC bin within a clock cycle). */
-    int get_fine() const { return internal_data.fine; }
+    uint8_t get_fine() const { return internal_data.fine; }
 
     /** @brief Returns the x-axis position from mapping. */
     float get_hit_x() const { return internal_data.hit_x; }
@@ -156,8 +176,13 @@ public:
     /**
      * @brief Returns the calibrated hit time in clock cycles.
      * Combines rollover, coarse, and the fine-time phase correction.
+     * All unsigned fields are promoted to float before arithmetic to avoid
+     * unsigned underflow when subtracting the (potentially non-zero) phase.
      */
-    float get_time() const { return _ALCOR_ROLLOVER_TO_CC_ * get_rollover() + get_coarse() - get_phase(); }
+    float get_time() const
+    {
+        return static_cast<float>(_ALCOR_ROLLOVER_TO_CC_) * static_cast<float>(get_rollover()) + static_cast<float>(get_coarse()) - get_phase();
+    }
 
     /**
      * @brief Returns the calibrated hit time in nanoseconds.
@@ -304,19 +329,19 @@ public:
      * @brief Sets the rollover counter.
      * @param r New rollover value.
      */
-    void set_rollover(int r) { internal_data.rollover = r; }
+    void set_rollover(uint32_t r) { internal_data.rollover = r; }
 
     /**
      * @brief Sets the coarse timestamp.
      * @param c New coarse value.
      */
-    void set_coarse(int c) { internal_data.coarse = c; }
+    void set_coarse(uint16_t c) { internal_data.coarse = c; }
 
     /**
      * @brief Sets the fine timestamp.
      * @param f New fine value.
      */
-    void set_fine(int f) { internal_data.fine = f; }
+    void set_fine(uint8_t f) { internal_data.fine = f; }
 
     /**
      * @brief Sets the hit bitmask.
