@@ -9,3 +9,5 @@ PointerAlignment: Right
 AlignAfterOpenBracket: Align
 BreakConstructorInitializers: BeforeColon
 IndentAccessModifiers: false
+ReflowComments: false
+SortIncludes: Never
