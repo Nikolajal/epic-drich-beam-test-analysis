@@ -9,4 +9,3 @@ PointerAlignment: Right
 AlignAfterOpenBracket: Align
 BreakConstructorInitializers: BeforeColon
 IndentAccessModifiers: false
----
