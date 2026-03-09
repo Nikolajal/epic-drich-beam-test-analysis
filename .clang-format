@@ -11,3 +11,4 @@ BreakConstructorInitializers: BeforeColon
 IndentAccessModifiers: false
 ReflowComments: false
 SortIncludes: Never
+IncludeBlocks: Preserve
