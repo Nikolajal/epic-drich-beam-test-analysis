@@ -72,7 +72,7 @@ void recotrackdata_writer(
 
         //  _HITMASK_dead_lane signals the event is start of spill, tells which channels are available
         auto current_trigger = recodata->get_triggers();
-        auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
+        auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_event &t)
                                { return t.index == _TRIGGER_START_OF_SPILL_; });
         if (it != current_trigger.end())
         {
@@ -85,7 +85,7 @@ void recotrackdata_writer(
         }
 
         //  Select Luca AND trigger (0) or timing trigger (101)
-        it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_struct &t)
+        it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_event &t)
                           { return t.index == 0; });
         if (it != current_trigger.end())
         {
@@ -96,10 +96,8 @@ void recotrackdata_writer(
             altai_events_counter++;
 
             //  Exclude events with 0 or multiple tracks
-            if (!current_tracking.event_has_one_track(altai_events_counter))
-                continue;
-
-            test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
+            if (current_tracking.event_has_one_track(altai_events_counter))
+                test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
 
             //  Recotrack events counter
             recotrack_events_counter++;
@@ -138,12 +136,12 @@ void recotrackdata_writer(
             reco_spill_shift++;
             continue;
         }
-        logger::log_debug(Form("Spill %d, recodata nevs %d, recotrack nevs %d", spill, per_spill_events_counter_recodata[spill + reco_spill_shift], count));
+        mist::logger::debug(Form("Spill %d, recodata nevs %d, recotrack nevs %d", spill, per_spill_events_counter_recodata[spill + reco_spill_shift], count));
         if (per_spill_events_counter_recodata[spill + reco_spill_shift] == count)
-            logger::log_debug(Form("Spill %d, matched!", spill));
+            mist::logger::debug(Form("Spill %d, matched!", spill));
     }
 
-    logger::log_info(Form("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter));
+    mist::logger::info(Form("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter));
     recotrackdata_tree->Write();
     test->Write();
     test2->Write();

@@ -15,7 +15,7 @@
  */
 struct alcor_lightdata_struct
 {
-    std::vector<trigger_struct> trigger_hits;
+    std::vector<trigger_event> trigger_hits;
     std::vector<alcor_finedata_struct> timing_hits;
     std::vector<alcor_finedata_struct> tracking_hits;
     std::vector<alcor_finedata_struct> cherenkov_hits;
@@ -71,9 +71,9 @@ public:
 
     /**
      * @brief Get a copy of trigger hits.
-     * @return Vector of trigger_struct
+     * @return Vector of trigger_event
      */
-    std::vector<trigger_struct> get_triggers() const;
+    std::vector<trigger_event> get_triggers() const;
 
     /**
      * @brief Get a reference to the internal lightdata struct.
@@ -101,9 +101,9 @@ public:
 
     /**
      * @brief Get a reference to the internal trigger hits.
-     * @return Reference to vector of trigger_struct
+     * @return Reference to vector of trigger_event
      */
-    std::vector<trigger_struct> &get_triggers_link();
+    std::vector<trigger_event> &get_triggers_link();
     ///@}
 
     /** @name Setters */
@@ -117,13 +117,13 @@ public:
     void set_timing_hits(std::vector<alcor_finedata_struct> v);
     void set_tracking_hits(std::vector<alcor_finedata_struct> v);
     void set_cherenkov_hits(std::vector<alcor_finedata_struct> v);
-    void set_trigger(std::vector<trigger_struct> v);
+    void set_trigger(std::vector<trigger_event> v);
 
     void set_lightdata_link(alcor_lightdata_struct &v);
     void set_timing_hits_link(std::vector<alcor_finedata_struct> &v);
     void set_tracking_hits_link(std::vector<alcor_finedata_struct> &v);
     void set_cherenkov_hits_link(std::vector<alcor_finedata_struct> &v);
-    void set_trigger_link(std::vector<trigger_struct> &v);
+    void set_trigger_link(std::vector<trigger_event> &v);
     ///@}
 
     /** @name Utility Methods */

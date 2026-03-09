@@ -35,7 +35,7 @@ include(FetchContent)
 FetchContent_Declare(
     CLI11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-    GIT_TAG v2.4.2
+    GIT_TAG        v2.4.2
 )
 FetchContent_MakeAvailable(CLI11)
 
@@ -43,17 +43,18 @@ FetchContent_MakeAvailable(CLI11)
 FetchContent_Declare(
     tomlplusplus
     GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-    GIT_TAG v3.3.0
+    GIT_TAG        v3.3.0
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
-#   --- cppinfra
+# MIST — Make It Simple, Toolkit
+# Replace GIT_TAG with a release tag once available (e.g. v0.1.0).
 FetchContent_Declare(
-    cppinfra
-    GIT_REPOSITORY https://github.com/Nikolajal/ccpinfra.git
-    GIT_TAG main
+    mist
+    GIT_REPOSITORY https://github.com/Nikolajal/mist
+    GIT_TAG        main
 )
-FetchContent_MakeAvailable(cppinfra)
+FetchContent_MakeAvailable(mist)
 
 # --------------------------------------------------
 # ROOT
@@ -75,12 +76,15 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/mapping.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/tracking_altai.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data_streamer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/streaming_framer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/parallel_streaming_framer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/lightdata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recodata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recotrackdata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/standard_analysis.h
+    # hough_transform.h is now part of MIST — no longer a local header,
+    # so it does not need to be listed here for the ROOT dictionary.
+    # If any of the headers above include <mist/ring_finding/hough_transform.h>,
+    # the -I path below ensures rootcling can find it.
 )
 
 # --------------------------------------------------
@@ -90,10 +94,9 @@ ROOT_GENERATE_DICTIONARY(
     G__beam_test_analysis_dict
     ${DICT_HEADERS}
     LINKDEF ${CMAKE_CURRENT_SOURCE_DIR}/dict/alcor_linkdef.h
-    OPTIONS -I${CMAKE_CURRENT_SOURCE_DIR}/include
-        OPTIONS
+    OPTIONS
         -I${CMAKE_CURRENT_SOURCE_DIR}/include
-        -I${cppinfra_SOURCE_DIR}/include
+        -I${mist_SOURCE_DIR}/include
         -I${tomlplusplus_SOURCE_DIR}/include
 )
 
@@ -102,7 +105,6 @@ ROOT_GENERATE_DICTIONARY(
 # --------------------------------------------------
 set(SRC_FILES
     src/config_reader.cxx
-    src/triggers.cxx
     src/alcor_data.cxx
     src/alcor_finedata.cxx
     src/alcor_lightdata.cxx
@@ -112,12 +114,13 @@ set(SRC_FILES
     src/mapping.cxx
     src/tracking_altai.cxx
     src/alcor_data_streamer.cxx
-    src/streaming_framer.cxx
     src/parallel_streaming_framer.cxx
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
     src/recotrackdata_writer.cxx
     src/standard_analysis.cxx
+    # src/ring-finding-algorithms/hough-transform.cxx removed —
+    # hough_transform is now compiled as part of mist::mist.
 )
 
 # --------------------------------------------------
@@ -138,8 +141,9 @@ target_include_directories(beam_test_analysis
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
-        ${cppinfra_SOURCE_DIR}/include
         ${tomlplusplus_SOURCE_DIR}/include
+    # mist headers are transitively available via mist::mist —
+    # no manual -I needed here.
 )
 
 target_link_libraries(beam_test_analysis
@@ -151,6 +155,7 @@ target_link_libraries(beam_test_analysis
         ROOT::Gui
         CLI11::CLI11
         tomlplusplus::tomlplusplus
+        mist::mist
 )
 
 if(APPLE)
@@ -162,15 +167,15 @@ endif()
 # --------------------------------------------------
 # Executables
 # --------------------------------------------------
-add_executable(lightdata_writer macros/utilities/lightdata_writer.cpp)
-add_executable(recodata_writer macros/utilities/recodata_writer.cpp)
-add_executable(recotrackdata_writer macros/utilities/recotrackdata_writer.cpp)
-add_executable(standard_analysis macros/utilities/standard_analysis.cpp)
+add_executable(lightdata_writer      macros/utilities/lightdata_writer.cpp)
+add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
+add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
+add_executable(standard_analysis     macros/utilities/standard_analysis.cpp)
 
-target_link_libraries(lightdata_writer PRIVATE beam_test_analysis)
-target_link_libraries(recodata_writer PRIVATE beam_test_analysis)
-target_link_libraries(recotrackdata_writer PRIVATE beam_test_analysis)
-target_link_libraries(standard_analysis PRIVATE beam_test_analysis)
+target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
+target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
+target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
+target_link_libraries(standard_analysis     PRIVATE beam_test_analysis)
 
 # --------------------------------------------------
 # Install Rules
@@ -181,7 +186,7 @@ install(TARGETS
     recodata_writer
     recotrackdata_writer
     standard_analysis
-    EXPORT beam_test_analysisTargets
+    EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin

@@ -37,7 +37,7 @@
  *
  * This class manages multiple @ref alcor_data_streamer instances, one per input file,
  * and processes them concurrently to produce framed spill data. It supports optional
- * trigger and readout configuration, afterpulse suppression, and QA histogram generation.
+ * trigger and readout configuration and afterpulse suppression.
  *
  * @note Frame size and timing constants are defined via macros and should eventually
  *       be moved to a config file with a proper pass-down mechanism to @ref alcor_spilldata.
@@ -93,10 +93,17 @@ public:
     alcor_spilldata &get_spilldata_link();
 
     /**
-     * @brief Returns the QA histogram map.
-     * @return Map of histogram name to ROOT TH1 pointer.
+     * @brief Returns the number of triggers registered from the configuration file.
+     * @return Number of triggers registered from the configuration file.
+     * @todo Trigger number should be assigned by program, and checked to avoid using reserved numbers > should be [0-100[
      */
-    std::map<std::string, TH1 *> get_QA_plots();
+    int get_registered_triggers();
+
+    /**
+     * @brief Returns the fine tune distribution per tdc index.
+     * @return fine tune distribution per tdc index.
+     */
+    TH2F *get_fine_tune_distribution();
 
     // -------------------------------------------------------------------------
     // Setters
@@ -136,14 +143,7 @@ public:
      * @param _frame_size    Number of clock cycles per frame.
      * @return The framed @ref alcor_spilldata produced from the stream.
      */
-    alcor_spilldata process(alcor_data_streamer &current_stream, int _frame_size);
-
-    // -------------------------------------------------------------------------
-    // Internal Helpers
-    // -------------------------------------------------------------------------
-
-    /** @brief Initialises the QA histograms. Must be called before @ref get_QA_plots(). */
-    void init_QA_plots();
+    void process(alcor_data_streamer &current_stream, int _frame_size);
 
 private:
     /// @name Threading
@@ -151,6 +151,15 @@ private:
 
     /** @brief Number of parallel threads requested by the user. */
     uint16_t n_threads_requested;
+
+    /** @brief Protects creation of new mutex entries. */
+    std::mutex frame_mutexes_access;
+
+    /** @brief Protects creation of new entries for unknown triggers. */
+    std::mutex triggers_map_mutex;
+
+    /** @brief Protects creation of new participants and dead masks. */
+    std::mutex spilldata_masks_mutex;
 
     /// @}
 
@@ -178,10 +187,10 @@ private:
     /// @{
 
     /** @brief Ordered list of trigger configurations loaded from file. */
-    std::vector<trigger_config_struct> triggers;
+    std::vector<trigger_config> triggers;
 
     /** @brief Fast lookup map from channel ID to trigger configuration. */
-    std::unordered_map<uint8_t, trigger_config_struct> triggers_map;
+    std::unordered_map<uint8_t, trigger_config> triggers_map;
 
     /** @brief Readout configuration (channel masking, thresholds, etc.). */
     readout_config_list readout_config;
@@ -191,14 +200,11 @@ private:
 
     /// @}
 
-    /// @name Hit selection
+    /// @name Configuration
     /// @{
 
-    /**
-     * @brief Maps channel/pixel ID to the last hit timestamp (clock cycles).
-     * Hits within @ref _AFTERPULSE_DEADTIME_ cycles of a previous hit are suppressed.
-     */
-    std::unordered_map<int, uint64_t> afterpulse_map;
+    /** @brief Frame size in clock cycles used during processing. */
+    TH2F *h2_fine_tune_distribution;
 
     /// @}
 };

@@ -42,12 +42,12 @@ bool tracking_altai::event_has_at_least_one_track(uint32_t event_id) const { ret
 //  I/O
 void tracking_altai::load_tracking_file(const std::string &input_file)
 {
-    logger::log_info(Form("(tracking_altai::load_tracking_file) Loading tracking file"));
+    mist::logger::info(Form("(tracking_altai::load_tracking_file) Loading tracking file"));
     //  Open file
     std::ifstream infile(input_file);
     if (!infile.is_open())
     {
-        logger::log_warning(Form("Cannot open input file : %s", input_file.c_str()));
+        mist::logger::warning(Form("Cannot open input file : %s", input_file.c_str()));
         return;
     }
 
@@ -79,6 +79,6 @@ void tracking_altai::load_tracking_file(const std::string &input_file)
         data_map[event_id].back().event_id = event_id;
     }
 
-    logger::log_info(Form("(tracking_altai::load_tracking_file) Done! Found %zu track events", data_map.size()));
+    mist::logger::info(Form("(tracking_altai::load_tracking_file) Done! Found %zu track events", data_map.size()));
     infile.close();
 }
