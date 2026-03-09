@@ -1,5 +1,3 @@
-
-
 #include "mapping.h"
 
 //  Constructors
@@ -11,7 +9,7 @@ std::optional<int> mapping::get_do_channel(int matrix, int eo_channel) const
     auto it = matrix_to_do_channel.find(matrix);
     if (it == matrix_to_do_channel.end())
         return std::nullopt;
-    if (eo_channel < 0 || eo_channel >= it->second.size())
+    if (eo_channel < 0 || eo_channel >= (int)it->second.size())
         return std::nullopt;
     return it->second[eo_channel];
 }
@@ -83,6 +81,12 @@ void mapping::assign_position(alcor_finedata_struct &entry)
 //  I/O
 void mapping::load_calib(std::string filename, bool verbose)
 {
+    //  Invalidate caches whenever calibration is reloaded
+    index_to_hit_xy.clear();
+    hit_xy_to_index.clear();
+    cache_index_to_xy_built = false;
+    cache_xy_to_index_built = false;
+
     //  Parsing file
     auto loaded_tables = toml::parse_file(filename);
 
@@ -146,7 +150,113 @@ void mapping::load_calib(std::string filename, bool verbose)
     }
 }
 
-//  Private attributes
+//  Cache construction
+void mapping::build_index_to_position_cache(float origin_cut)
+{
+    index_to_hit_xy.clear();
+    cache_index_to_xy_built = false;
+    cache_xy_to_index_built = false;   // invalidate reverse cache too
+
+    // Global TDC indices are packed as index = 4 * (chip_offset + eo_group),
+    // so we step by 4 over the full range [0, 2048*4).
+    constexpr int kMaxIndex = 2048 * 4;
+    int n_mapped = 0;
+
+    for (int i_index = 0; i_index < kMaxIndex; i_index += 4)
+    {
+        auto position = get_position_from_global_index(i_index);
+        if (!position)
+            continue;
+
+        // Skip hits whose position is suspiciously close to the origin —
+        // these typically correspond to unmapped or dead channels that
+        // the position formula returns as (0+offsets, 0+offsets) ≈ (0,0).
+        if (std::fabs((*position)[0]) < origin_cut &&
+            std::fabs((*position)[1]) < origin_cut)
+            continue;
+
+        index_to_hit_xy[i_index] = (*position);
+        ++n_mapped;
+    }
+
+    cache_index_to_xy_built = true;
+    mist::logger::info(Form("(mapping::build_index_to_position_cache) "
+                            "Built cache with %d entries (origin_cut=%.1f mm).",
+                            n_mapped, origin_cut));
+}
+
+void mapping::build_position_to_index_cache(std::string collision_policy)
+{
+    // Ensure the forward cache exists first.
+    if (!cache_index_to_xy_built)
+    {
+        mist::logger::info("(mapping::build_position_to_index_cache) "
+                           "Forward cache not built yet — building with default parameters.");
+        build_index_to_position_cache();
+    }
+
+    hit_xy_to_index.clear();
+    cache_xy_to_index_built = false;
+    int n_collisions = 0;
+
+    for (auto const &[idx, pos] : index_to_hit_xy)
+    {
+        auto [it, inserted] = hit_xy_to_index.emplace(pos, idx);
+
+        if (!inserted)   // position key already present → collision
+        {
+            ++n_collisions;
+            if (collision_policy == "last")
+            {
+                it->second = idx;
+            }
+            else if (collision_policy == "warn")
+            {
+                mist::logger::info(Form("(mapping::build_position_to_index_cache) "
+                                        "Collision at (%.3f, %.3f): keeping index %d, "
+                                        "ignoring index %d.",
+                                        pos[0], pos[1], it->second, idx));
+            }
+            // "first" (default): do nothing — keep the already-stored entry.
+        }
+    }
+
+    cache_xy_to_index_built = true;
+    mist::logger::info(Form("(mapping::build_position_to_index_cache) "
+                            "Built reverse cache with %zu entries "
+                            "(%d collision(s), policy='%s').",
+                            hit_xy_to_index.size(),
+                            n_collisions,
+                            collision_policy.c_str()));
+}
+
+std::optional<std::array<float, 2>> mapping::get_cached_position(int global_index) const
+{
+    auto it = index_to_hit_xy.find(global_index);
+    if (it == index_to_hit_xy.end())
+        return std::nullopt;
+    return it->second;
+}
+
+std::optional<int> mapping::get_cached_index(float x, float y) const
+{
+    auto it = hit_xy_to_index.find({x, y});
+    if (it == hit_xy_to_index.end())
+        return std::nullopt;
+    return it->second;
+}
+
+const std::map<int, std::array<float, 2>> &mapping::get_index_to_position_map() const
+{
+    return index_to_hit_xy;
+}
+
+const std::map<std::array<float, 2>, int> &mapping::get_position_to_index_map() const
+{
+    return hit_xy_to_index;
+}
+
+//  Private static attributes
 std::map<int, std::vector<int>> mapping::matrix_to_do_channel = {
     {1, {3, 2, 1, 0, 8, 9, 10, 11, 17, 16, 12, 4, 18, 19, 5, 13, 25, 24, 21, 20, 26, 27, 28, 29, 30, 22, 14, 6, 7, 15, 23, 31, 35, 34, 33, 32, 36, 37, 38, 39, 43, 42, 41, 40, 44, 45, 46, 47, 51, 50, 49, 48, 52, 53, 54, 55, 59, 58, 57, 56, 60, 61, 62, 63}},
     {2, {59, 58, 57, 56, 60, 61, 62, 63, 51, 50, 49, 48, 52, 53, 54, 55, 43, 42, 41, 40, 44, 45, 46, 47, 35, 34, 33, 32, 36, 37, 38, 39, 0, 8, 16, 24, 25, 17, 26, 27, 29, 28, 1, 9, 30, 31, 18, 19, 21, 20, 2, 10, 22, 23, 11, 12, 3, 15, 14, 13, 4, 5, 6, 7}},

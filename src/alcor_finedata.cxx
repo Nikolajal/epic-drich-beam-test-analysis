@@ -10,9 +10,9 @@
 alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
 {
     global_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column, d.tdc);
-    rollover = d.rollover;
-    coarse = d.coarse;
-    fine = d.fine;
+    rollover = static_cast<uint32_t>(d.rollover);
+    coarse   = static_cast<uint16_t>(d.coarse);
+    fine     = static_cast<uint8_t>(d.fine);
     hit_mask = d.hit_mask;
 }
 
