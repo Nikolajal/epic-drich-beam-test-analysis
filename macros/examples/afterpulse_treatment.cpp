@@ -34,79 +34,79 @@
 
 void afterpulse_treatment(std::string data_repository, std::string run_name, int max_frames = 10000000)
 {
-  //  Input files
-  std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
+    //  Input files
+    std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
-  //  Load recodata, return if not available
-  TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
-  if (!input_file_recodata || input_file_recodata->IsZombie())
-  {
-    std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
-    return;
-  }
-
-  //  Link recodata tree locally
-  TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
-  alcor_recodata *recodata = new alcor_recodata();
-  recodata->link_to_tree(recodata_tree);
-
-  //  Get number of frames, limited to maximum requested frames
-  auto n_frames = recodata_tree->GetEntries();
-  auto all_frames = min((int)n_frames, (int)max_frames);
-
-  //  Time distribution
-  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  //  Time distribution
-  TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-
-  //  Loop over frames
-  auto i_spill = -1;
-  for (int i_frame = 0; i_frame < all_frames; ++i_frame)
-  {
-    //  Load data for current frame
-    recodata_tree->GetEntry(i_frame);
-
-    //  Takes note of spill evolution
-    if (recodata->is_start_of_spill())
+    //  Load recodata, return if not available
+    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    if (!input_file_recodata || input_file_recodata->IsZombie())
     {
-      //  You can internally keep track of spills
-      i_spill++;
-
-      //  This event is not of physical interest, skip it
-      continue;
+        std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
+        return;
     }
 
-    //  Select Luca AND trigger (0) or timing trigger (101)
-    auto default_hardware_trigger = recodata->get_trigger_by_index(0);
-    if (default_hardware_trigger)
+    //  Link recodata tree locally
+    TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
+    alcor_recodata *recodata = new alcor_recodata();
+    recodata->link_to_tree(recodata_tree);
+
+    //  Get number of frames, limited to maximum requested frames
+    auto n_frames = recodata_tree->GetEntries();
+    auto all_frames = min((int)n_frames, (int)max_frames);
+
+    //  Time distribution
+    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    //  Time distribution
+    TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+
+    //  Loop over frames
+    auto i_spill = -1;
+    for (int i_frame = 0; i_frame < all_frames; ++i_frame)
     {
-      //  Loop on hits
-      for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
-      {
-        //  Fill time distribution to check
-        h_t_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
+        //  Load data for current frame
+        recodata_tree->GetEntry(i_frame);
 
-        //  Remove afterpulse
-        if (recodata->is_afterpulse(current_hit))
-          h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
-        else
-          h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
-      }
+        //  Takes note of spill evolution
+        if (recodata->is_start_of_spill())
+        {
+            //  You can internally keep track of spills
+            i_spill++;
+
+            //  This event is not of physical interest, skip it
+            continue;
+        }
+
+        //  Select Luca AND trigger (0) or timing trigger (101)
+        auto default_hardware_trigger = recodata->get_trigger_by_index(0);
+        if (default_hardware_trigger)
+        {
+            //  Loop on hits
+            for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
+            {
+                //  Fill time distribution to check
+                h_t_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
+
+                //  Remove afterpulse
+                if (recodata->is_afterpulse(current_hit))
+                    h_t_AP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
+                else
+                    h_t_noAP_distribution->Fill(recodata->get_hit_t(current_hit) - default_hardware_trigger->fine_time);
+            }
+        }
     }
-  }
 
-  //  Plotting the result
-  TCanvas *c_time_delta = new TCanvas("c_time_delta", "Afterpulse check on coincidences of timing and cherenkov sensors");
-  gPad->SetLogy();
-  h_t_distribution->SetLineColor(kBlack);
-  h_t_distribution->SetLineWidth(2);
-  h_t_distribution->SetMinimum(1.);
-  h_t_distribution->Draw();
-  h_t_AP_distribution->SetLineColor(kRed);
-  h_t_AP_distribution->Draw("SAME");
-  h_t_noAP_distribution->SetLineColor(kBlue);
-  h_t_noAP_distribution->Draw("SAME");
+    //  Plotting the result
+    TCanvas *c_time_delta = new TCanvas("c_time_delta", "Afterpulse check on coincidences of timing and cherenkov sensors");
+    gPad->SetLogy();
+    h_t_distribution->SetLineColor(kBlack);
+    h_t_distribution->SetLineWidth(2);
+    h_t_distribution->SetMinimum(1.);
+    h_t_distribution->Draw();
+    h_t_AP_distribution->SetLineColor(kRed);
+    h_t_AP_distribution->Draw("SAME");
+    h_t_noAP_distribution->SetLineColor(kBlue);
+    h_t_noAP_distribution->Draw("SAME");
 }

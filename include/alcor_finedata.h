@@ -55,7 +55,7 @@ struct alcor_finedata_struct
 
     /** @brief Default constructor. */
     alcor_finedata_struct() = default;
-    
+
     /**
      * @brief Constructor from individual values.
      */
