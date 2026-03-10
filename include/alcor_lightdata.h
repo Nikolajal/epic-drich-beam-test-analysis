@@ -133,6 +133,6 @@ public:
      * @param trigger_index Index of the trigger in the vector
      * @return Time value of the trigger in ns
      */
-    std::optional<float>  get_trigger_time(uint8_t trigger_index);
+    std::optional<float> get_trigger_time(uint8_t trigger_index);
     ///@}
 };

@@ -155,7 +155,7 @@ void mapping::build_index_to_position_cache(float origin_cut)
 {
     index_to_hit_xy.clear();
     cache_index_to_xy_built = false;
-    cache_xy_to_index_built = false;   // invalidate reverse cache too
+    cache_xy_to_index_built = false; // invalidate reverse cache too
 
     // Global TDC indices are packed as index = 4 * (chip_offset + eo_group),
     // so we step by 4 over the full range [0, 2048*4).
@@ -203,7 +203,7 @@ void mapping::build_position_to_index_cache(std::string collision_policy)
     {
         auto [it, inserted] = hit_xy_to_index.emplace(pos, idx);
 
-        if (!inserted)   // position key already present → collision
+        if (!inserted) // position key already present → collision
         {
             ++n_collisions;
             if (collision_policy == "last")
