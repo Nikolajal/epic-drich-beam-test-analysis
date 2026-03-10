@@ -150,4 +150,5 @@ void analysis_example(std::string data_repository, std::string run_name, int max
     h_t_hit_ttrg_distribution->Draw();
     TCanvas *c4 = new TCanvas("time difference between hardware and timing triggers", "", 500, 500);
     h_t_htrg_ttrg_distribution->Draw();
+    
 }
