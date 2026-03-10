@@ -53,14 +53,14 @@
  */
 enum trigger_number : uint8_t
 {
-    _TRIGGER_FIRST_FRAMES_         = 100, ///< First frames of a run
-    _TRIGGER_TIMING_               = 101, ///< Timing trigger
-    _TRIGGER_TRACKING_             = 102, ///< Tracking trigger
-    _TRIGGER_RING_FOUND_           = 103, ///< Ring-finding trigger
+    _TRIGGER_FIRST_FRAMES_ = 100,         ///< First frames of a run
+    _TRIGGER_TIMING_ = 101,               ///< Timing trigger
+    _TRIGGER_TRACKING_ = 102,             ///< Tracking trigger
+    _TRIGGER_RING_FOUND_ = 103,           ///< Ring-finding trigger
     _TRIGGER_STREAMING_RING_FOUND_ = 104, ///< Streaming ring-finding trigger
-    _TRIGGER_HOUGH_RING_FOUND_     = 105, ///< Hough-transform ring-finding trigger
-    _TRIGGER_START_OF_SPILL_       = 200, ///< Start-of-spill signal
-    _TRIGGER_UNKNOWN_              = 255  ///< Unknown / unmapped trigger
+    _TRIGGER_HOUGH_RING_FOUND_ = 105,     ///< Hough-transform ring-finding trigger
+    _TRIGGER_START_OF_SPILL_ = 200,       ///< Start-of-spill signal
+    _TRIGGER_UNKNOWN_ = 255               ///< Unknown / unmapped trigger
 };
 
 /// @cond INTERNAL
@@ -73,16 +73,14 @@ constexpr trigger_number all_default_triggers[] = {
     _TRIGGER_STREAMING_RING_FOUND_,
     _TRIGGER_HOUGH_RING_FOUND_,
     _TRIGGER_START_OF_SPILL_,
-    _TRIGGER_UNKNOWN_
-};
+    _TRIGGER_UNKNOWN_};
 
 /// Human-readable names matching @ref all_default_triggers entry-for-entry.
 constexpr const char *default_names[] = {
     "FIRST_FRAMES", "TIMING", "TRACKING",
-    "RING_FOUND",   "STREAMING_RING_FOUND",
+    "RING_FOUND", "STREAMING_RING_FOUND",
     "HOUGH_RING_FOUND",
-    "START_OF_SPILL", "UNKNOWN"
-};
+    "START_OF_SPILL", "UNKNOWN"};
 
 /// Total number of built-in default triggers.
 constexpr int n_default_triggers = std::size(all_default_triggers);
@@ -114,9 +112,9 @@ constexpr int default_trigger_index(trigger_number t)
  */
 struct trigger_event
 {
-    uint8_t  index;     ///< Hardware trigger index
-    uint16_t coarse;    ///< Coarse timestamp (DAQ clock ticks)
-    float    fine_time; ///< Fine timestamp correction (ns)
+    uint8_t index;   ///< Hardware trigger index
+    uint16_t coarse; ///< Coarse timestamp (DAQ clock ticks)
+    float fine_time; ///< Fine timestamp correction (ns)
 
     trigger_event() = default;
 
@@ -153,10 +151,10 @@ struct trigger_event
  */
 struct trigger_config
 {
-    std::string name;   ///< Human-readable trigger label (e.g. `"luca_and_finger"`)
-    uint8_t     index;  ///< Trigger index in [0, 99] used in the data stream
-    uint16_t    delay;  ///< Delay applied to this trigger channel (DAQ units)
-    uint16_t    device; ///< Hardware device ID that produces this trigger
+    std::string name; ///< Human-readable trigger label (e.g. `"luca_and_finger"`)
+    uint8_t index;    ///< Trigger index in [0, 99] used in the data stream
+    uint16_t delay;   ///< Delay applied to this trigger channel (DAQ units)
+    uint16_t device;  ///< Hardware device ID that produces this trigger
 
     trigger_config() = default;
 
@@ -168,7 +166,7 @@ struct trigger_config
      * @param _device  Source device ID.
      */
     trigger_config(const std::string &_name,
-                   uint8_t  _index,
+                   uint8_t _index,
                    uint16_t _delay,
                    uint16_t _device)
         : name(_name), index(_index), delay(_delay), device(_device) {}
@@ -323,19 +321,22 @@ trigger_conf_reader(const std::string &config_file = "Data/triggers.toml")
     bool used_indices[100] = {};
 
     // Returns the earliest free slot in [0, 99], or -1 if all are taken.
-    auto earliest_free = [&]() -> int {
+    auto earliest_free = [&]() -> int
+    {
         for (int i = 0; i < 100; ++i)
-            if (!used_indices[i]) return i;
+            if (!used_indices[i])
+                return i;
         return -1;
     };
 
     for (const auto &node : *arr)
     {
         const auto *entry = node.as_table();
-        if (!entry) continue;
+        if (!entry)
+            continue;
 
         // Validate all required keys are present
-        if (!entry->contains("name")   || !entry->contains("index") ||
+        if (!entry->contains("name") || !entry->contains("index") ||
             !entry->contains("device") || !entry->contains("delay"))
         {
             std::cerr << "[WARN] Skipping incomplete [[trigger]] entry (missing required key)\n";
@@ -343,16 +344,16 @@ trigger_conf_reader(const std::string &config_file = "Data/triggers.toml")
         }
 
         trigger_config cfg;
-        cfg.name   = entry->at("name").value_or(std::string{});
+        cfg.name = entry->at("name").value_or(std::string{});
         uint16_t raw_index = static_cast<uint16_t>(entry->at("index").value_or(0));
         cfg.device = static_cast<uint16_t>(entry->at("device").value_or(0));
-        cfg.delay  = static_cast<uint16_t>(entry->at("delay").value_or(0));
+        cfg.delay = static_cast<uint16_t>(entry->at("delay").value_or(0));
 
         // Enforce [0, 99] index range — [100, 255] is reserved for built-in triggers.
         // Also catches duplicates: an already-used in-range index is treated the same
         // as an out-of-range one and gets reassigned to the earliest free slot.
         bool out_of_range = raw_index > 99;
-        bool duplicate    = !out_of_range && used_indices[raw_index];
+        bool duplicate = !out_of_range && used_indices[raw_index];
 
         if (out_of_range || duplicate)
         {
