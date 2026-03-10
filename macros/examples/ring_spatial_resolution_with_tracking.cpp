@@ -82,10 +82,15 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
   TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
   TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
+  TProfile *n_hits_vs_theta = new TProfile("n_hits_vs_theta", ";tracking #theta;N_{#gamma}", 100, 0, 0.1);
+  TProfile *n_hits_vs_phi = new TProfile("n_hits_vs_phi", ";tracking #phi;N_{#gamma}", 100, -3.1415, +3.1415);
+
+  TH2F *h_ring_cut_events = new TH2F("h_ring_cut_events", "Points excluded by cuts;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
 
   //  Saving the frame number you can speed up secondary loops
   std::vector<int> start_of_spill_frame_ref;
   std::vector<std::pair<int, float>> frame_of_interest_ref;
+  std::map<int, float> frame_of_interest_values;
 
   //  Loop over frames
   for (int i_frame = 0; i_frame < all_frames; ++i_frame)
@@ -114,19 +119,15 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
       h_tracking_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0));
       h_tracking_phi->Fill(recotrackdata->get_traj_angcoeff_phi(0));
 
-      //  Check the tracking of the event is within a certain range
-      // if (recotrackdata->get_traj_angcoeff_theta(0) > 0.001)
-      if (fabs(recotrackdata->get_traj_angcoeff_phi(0)) > 1)
-        continue;
-
       //  Save trigger frames for later, ref to the actual number of used frames in the analysis
       frame_of_interest_ref.push_back({i_frame, default_hardware_trigger->fine_time});
+      frame_of_interest_values[i_frame] = recotrackdata->get_traj_angcoeff_theta(0);
 
       //  Container for selected hits
       std::vector<std::array<float, 2>> selected_points;
       float avg_radius = 0.; // First estimate for radius
 
-      //  Loop on hits
+      //  Loop on hitse
       for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
       {
         //  Remove afterpulse
@@ -177,6 +178,9 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   auto found_ring_radius = h_first_round_R->GetMean();
   auto found_ring_radius_stddev = h_first_round_R->GetRMS();
 
+
+
+
   //  Second loop on frames of interest
   for (auto i_frame : frame_of_interest_ref)
   {
@@ -202,14 +206,33 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
       if (std::fabs(recotrackdata->get_hit_r(current_hit, {(float)found_ring_center_x, (float)found_ring_center_y}) - found_ring_radius) > 3 * found_ring_radius_stddev)
         continue;
 
-      //  Store selected points
-      selected_points.push_back({(float)recotrackdata->get_hit_x(current_hit), (float)recotrackdata->get_hit_y(current_hit)});
+      bool apply_tracking_cut = false;
+      bool tracking_cut_failed = apply_tracking_cut && (fabs(recotrackdata->get_traj_angcoeff_phi(0)) > 1 || recotrackdata->get_traj_angcoeff_theta(0) > 0.001);
 
+      // calcolo r rispetto centro trovato (solo se vuoi cut 3σ)
+      float hit_r = std::hypot(recotrackdata->get_hit_x(current_hit) - found_ring_center_x,
+                               recotrackdata->get_hit_y(current_hit) - found_ring_center_y);
+      bool radius_cut_failed = (std::fabs(hit_r - found_ring_radius) > 3 * found_ring_radius_stddev);
+
+      // se il punto è stato escluso da qualsiasi cut
+      if (tracking_cut_failed || radius_cut_failed)
+      {
+        h_ring_cut_events->Fill(recotrackdata->get_hit_x_rnd(current_hit),
+                                recotrackdata->get_hit_y_rnd(current_hit));
+        // non includere il punto nei selected_points
+        continue;
+      }
+
+      // Altrimenti lo salvo normalmente
+      selected_points.push_back({(float)recotrackdata->get_hit_x(current_hit),
+                                 (float)recotrackdata->get_hit_y(current_hit)});
       //  Plot the selection for QA
       //  *_rnd randomise the value within the sensor area, improves data visualisation
       //  Available for x, y, r, phi getters
       h_second_round_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
     }
+    n_hits_vs_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0), selected_points.size());
+    n_hits_vs_phi->Fill(recotrackdata->get_traj_angcoeff_phi(0), selected_points.size());
 
     //  Work on second round of selected points
 
@@ -229,6 +252,32 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
       h_second_round_R_global->Fill(found_ring_radius - radius);
     }
   }
+
+  // 1) Ring senza tagli: prendi i punti prima dei cut 3σ e tracking
+  TCanvas *c_ring_no_cut = new TCanvas("c_ring_no_cut", "Ring without final cuts", 800, 800);
+  TH2F *h_ring_no_cut = new TH2F("h_ring_no_cut", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+
+  // Loop frames of interest
+  for (auto i_frame : frame_of_interest_ref)
+  {
+    recotrackdata_tree->GetEntry(i_frame.first);
+    for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+    {
+      if (recotrackdata->is_afterpulse(current_hit))
+        continue;
+      auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - i_frame.second;
+      if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
+        continue;
+
+      // Senza 3σ e tracking cut: salvo tutti i punti “buoni”
+      h_ring_no_cut->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
+    }
+  }
+  h_ring_no_cut->Draw("COLZ");
+
+  // 2) Ring con tagli: usa l’istogramma già popolato h_second_round_xy_map
+  TCanvas *c_ring_cut = new TCanvas("c_ring_cut", "Ring with cuts", 800, 800);
+  h_second_round_xy_map->Draw("COLZ");
 
   //  Loop on the 2D histogram to find the resolution vs p.e.
   //  Generate a TGraph to hold each Ngamma resolution
@@ -308,8 +357,15 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
   h_second_round_R_global->Draw();
 
   new TCanvas();
-  h_tracking_phi->Draw();
+  // h_tracking_phi->Draw();
 
   new TCanvas();
-  h_tracking_theta->Draw();
+  // h_tracking_theta->Draw();
+  TCanvas *c_ring_cut_events = new TCanvas("c_ring_cut_events", "Events excluded by cuts", 800, 800);
+  h_ring_cut_events->Draw("COLZ");
+
+  new TCanvas();
+  n_hits_vs_theta->Draw();
+  new TCanvas();
+  n_hits_vs_phi->Draw();
 }
