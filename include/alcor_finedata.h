@@ -292,6 +292,9 @@ public:
     /** @brief Checks whether the hit is tagged as part of a ring (second pass). */
     bool is_ring_tag_second() const { return has_mask_bit(_HITMASK_ring_tag_second); }
 
+    /** @brief Checks whether the hit is tagged as a ring by hough transform */
+    bool is_hough_ring_tag() const { return has_mask_bit(_HITMASK_hough_ring_tag_first) || has_mask_bit(_HITMASK_hough_ring_tag_second); }
+
     /** @brief Checks whether the hit is flagged as cross-talk. */
     bool is_cross_talk() const { return has_mask_bit(_HITMASK_cross_talk); }
 

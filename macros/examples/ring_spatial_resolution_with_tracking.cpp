@@ -45,7 +45,7 @@
 //  This excercise is still a work in progress, stay tuned for updates!
 //  --- --- --- !!!
 
-std::array<float, 2> time_cut_boundaries = {-45., 20.};
+std::array<float, 2> time_cut_boundaries = {-15., 15.};
 
 void ring_spatial_resolution_with_tracking(std::string data_repository, std::string run_name, int max_frames = 100000)
 {
@@ -69,28 +69,276 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     auto n_frames = recotrackdata_tree->GetEntries();
     auto all_frames = min((int)n_frames, (int)max_frames);
 
-  //  Time distribution
-  TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-  //  First round X, Y, R
-  TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
-  TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
-  TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
-  TH1F *h_tracking_theta = new TH1F("h_tracking_theta", ";tracking #theta", 1000, 0, 0.1);
-  TH1F *h_tracking_phi = new TH1F("h_tracking_phi", ";tracking #phi", 1000, -3.1415, +3.1415);
-  //  Second round selection
-  TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-  TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
-  TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
-  TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
-  TProfile *n_hits_vs_theta = new TProfile("n_hits_vs_theta", ";tracking #theta;N_{#gamma}", 100, 0, 0.1);
-  TProfile *n_hits_vs_phi = new TProfile("n_hits_vs_phi", ";tracking #phi;N_{#gamma}", 100, -3.1415, +3.1415);
+    //  Time distribution
+    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    //  First round X, Y, R
+    TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
+    TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
+    TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
+    //  Second round
+    TH1F *h_tracking_theta = new TH1F("h_tracking_theta", ";tracking #theta", 1000, 0, 0.1);
+    TH1F *h_tracking_phi = new TH1F("h_tracking_phi", ";tracking #phi", 1000, -3.1415, +3.1415);
+    TH2F *h_intercept_projection = new TH2F("h_intercept_projection", ";x (mm);y (mm)", 200, -50., +50., 200, -50., +50.);
 
-  TH2F *h_ring_cut_events = new TH2F("h_ring_cut_events", "Points excluded by cuts;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    //  Loop over frames
+    mist::logger::progress_bar bar(mist::logger::bar_style::BLOCK);
+    for (int i_frame = 0; i_frame < all_frames; ++i_frame)
+    {
+        //  Load data for current frame
+        recotrackdata_tree->GetEntry(i_frame);
 
-  //  Saving the frame number you can speed up secondary loops
-  std::vector<int> start_of_spill_frame_ref;
-  std::vector<std::pair<int, float>> frame_of_interest_ref;
-  std::map<int, float> frame_of_interest_values;
+        //  Container for selected hits
+        std::vector<std::array<float, 2>> selected_points;
+        float avg_radius = 0.; // First estimate for radius
+
+        //  Progress
+        if (i_frame % 10000 == 0)
+            bar.update(i_frame, all_frames);
+
+        //  Takes note of spill evolution
+        if (recotrackdata->is_start_of_spill())
+        {
+            //  You can internally keep track of spills
+
+            //  This event is not of physical interest, skip it
+            continue;
+        }
+
+        //  QA
+        //  --- Checking
+        for (auto i = 0; i < recotrackdata->n_recotrackdata(); i++)
+        {
+            auto slope_theta = recotrackdata->get_traj_angcoeff_theta(0);
+            auto slope_phi = recotrackdata->get_traj_angcoeff_phi(0);
+            auto plane_x = recotrackdata->get_det_plane_x(0);
+            auto plane_y = recotrackdata->get_det_plane_y(0);
+            auto slope_x = recotrackdata->get_traj_angcoeff_x(0);
+            auto slope_y = recotrackdata->get_traj_angcoeff_y(0);
+
+            h_tracking_theta->Fill(slope_theta);
+            h_tracking_phi->Fill(slope_phi);
+            h_intercept_projection->Fill(plane_x - slope_x * 432.5, plane_y - slope_y * 432.5);
+        }
+
+        auto streaming_trigger = recotrackdata->get_trigger_by_index(104);
+        if (streaming_trigger)
+        {
+            //  Loop on hitse
+            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+            {
+                //  Remove afterpulse
+                if (recotrackdata->is_afterpulse(current_hit))
+                    continue;
+
+                //  Fill time distribution to check
+                auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - streaming_trigger->fine_time; //  ns
+                h_t_distribution->Fill(time_delta_wrt_ref);
+
+                //  Ask for time coincidence
+                if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
+                    continue;
+
+                //  Hough tagged
+                //if (recotrackdata->is_hough_ring_tag(current_hit))
+                //    continue;
+
+                //  Store selected points
+                selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
+                avg_radius += recotrackdata->get_hit_r(current_hit);
+            }
+
+            //  Fit selected points, if enough for circle fit (> 3)
+            if (selected_points.size() > 4)
+            {
+                //  Fitting the points
+                //  fit_result = {{center_x_value,center_x_error}, {center_y_value,center_y_error}, {radius_value,radius_error}}
+                //                fit_circle(points to fit,  starting values for the fit,  let X-Y free,  do not exclude any points)
+                auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false, {{}});
+
+                //  Save results for later QA
+                h_first_round_X->Fill(fit_result[0][0]);
+                h_first_round_Y->Fill(fit_result[1][0]);
+                h_first_round_R->Fill(fit_result[2][0]);
+            }
+        }
+    }
+    bar.update(all_frames, all_frames);
+    bar.finish();
+
+    float found_ring_center_x = h_first_round_X->GetMean();
+    float found_ring_center_y = h_first_round_Y->GetMean();
+    float found_ring_radius = h_first_round_R->GetMean();
+    h_first_round_R->Fit("gaus", "Q");
+    auto gaus_f = h_first_round_R->GetFunction("gaus");
+    float found_ring_radius_stddev = gaus_f->GetParameter(2);
+
+    //  First round X, Y, R
+    TH1F *h_second_round_R = new TH1F("h_second_round_R", ";circle radius (mm)", 200, -20, 20);
+    TH1F *h_n_selected_hits = new TH1F("h_n_selected_hits", ";circle radius (mm)", 100, 0, 100);
+    //double* binning = new double[5]{0.0, 1.0, 2.0, 3.0, 4.0};
+    TH2F *h_n_selected_hits_vs_theta = new TH2F("h_n_selected_hits_vs_theta", ";circle radius (mm)", 10, 0, 0.01, 100, -0.5, 99.5);
+    TH2F *h_second_round_R_vs_theta = new TH2F("h_second_round_R_vs_theta", ";circle radius (mm)", 10, -3.1415, 3.1415, 200, -20, 20);
+
+    //  Loop over frames
+    mist::logger::progress_bar bar_second(mist::logger::bar_style::BLOCK);
+    for (int i_frame = 0; i_frame < all_frames; ++i_frame)
+    {
+        //  Load data for current frame
+        recotrackdata_tree->GetEntry(i_frame);
+
+        std::vector<std::array<float, 2>> selected_points;
+
+        //  Progress
+        if (i_frame % 10000 == 0)
+            bar_second.update(i_frame, all_frames);
+
+        //  Takes note of spill evolution
+        if (recotrackdata->is_start_of_spill())
+        {
+            //  You can internally keep track of spills
+
+            //  This event is not of physical interest, skip it
+            continue;
+        }
+
+        //  Select Luca AND trigger (0) or timing trigger (101)
+        auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
+        auto streaming_trigger = recotrackdata->get_trigger_by_index(104);
+        if (streaming_trigger && default_hardware_trigger)
+        {
+            //  Loop on hitse
+            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+            {
+                //  Remove afterpulse
+                if (recotrackdata->is_afterpulse(current_hit))
+                    continue;
+
+                //  Ask for time coincidence
+                auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - streaming_trigger->fine_time; //  ns
+                if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
+                    continue;
+
+                //  Select points in ring
+                if (fabs(recotrackdata->get_hit_r(current_hit, {found_ring_center_x, found_ring_center_y}) - found_ring_radius) > 5 * found_ring_radius_stddev)
+                    continue;
+
+                //  Store selected points
+                selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
+            }
+
+            //  Fit selected points, if enough for circle fit (> 3)
+            h_n_selected_hits->Fill(selected_points.size());
+            if (recotrackdata->n_recotrackdata() == 1)
+                h_n_selected_hits_vs_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0), selected_points.size());
+            if (fabs(selected_points.size() - 15) < 2)
+            {
+                //  Fitting the points
+                //  fit_result = {{center_x_value,center_x_error}, {center_y_value,center_y_error}, {radius_value,radius_error}}
+                //                fit_circle(points to fit,  starting values for the fit,  let X-Y free,  do not exclude any points)
+                auto fit_result = fit_circle(selected_points, {found_ring_center_x, found_ring_center_y, found_ring_radius}, true, {{}});
+
+                //  Save results for later QA
+                h_second_round_R->Fill(fit_result[2][0] - found_ring_radius);
+
+                if (recotrackdata->n_recotrackdata() == 1)
+                {
+                    auto slope_theta = recotrackdata->get_traj_angcoeff_phi(0);
+                    h_second_round_R_vs_theta->Fill(slope_theta, fit_result[2][0] - found_ring_radius);
+                }
+            }
+        }
+    }
+    bar_second.update(all_frames, all_frames);
+    bar_second.finish();
+
+    TCanvas *c_time_delta = new TCanvas("c_time_delta", "Simple check on coincidences of timing and cherenkov sensors", 800, 800);
+    gPad->SetLogy();
+    h_t_distribution->SetLineColor(kBlack);
+    h_t_distribution->SetLineWidth(2);
+    h_t_distribution->Draw();
+
+    TCanvas *c_first_round = new TCanvas("c_first_round", "First round fit on ring-like tagged points", 1200, 400);
+    c_first_round->Divide(3, 1);
+    c_first_round->cd(1);
+    h_first_round_X->Draw();
+    c_first_round->cd(2);
+    h_first_round_Y->Draw();
+    c_first_round->cd(3);
+    h_first_round_R->Draw();
+
+    TCanvas *c_second_round_tracking = new TCanvas("c_second_round_tracking", "First round fit on ring-like tagged points", 800, 400);
+    c_second_round_tracking->Divide(2, 1);
+    c_second_round_tracking->cd(1);
+    h_tracking_theta->Draw();
+    c_second_round_tracking->cd(2);
+    h_tracking_phi->Draw();
+
+    TCanvas *c_intercept_projection = new TCanvas("c_intercept_projection", "First round fit on ring-like tagged points", 800, 800);
+    h_intercept_projection->Draw("COLZ");
+
+    TCanvas *c_second_round_R = new TCanvas("c_second_round_R", "First round fit on ring-like tagged points", 800, 800);
+    c_second_round_R->Divide(2, 1);
+    c_second_round_R->cd(1);
+    h_second_round_R->Draw();
+    c_second_round_R->cd(2);
+    h_second_round_R_vs_theta->Draw();
+
+    TCanvas *c_n_selected_hits = new TCanvas("c_n_selected_hits", "First round fit on ring-like tagged points", 800, 800);
+    c_n_selected_hits->Divide(2, 1);
+    c_n_selected_hits->cd(1);
+    h_n_selected_hits->Draw();
+    c_n_selected_hits->cd(2);
+    h_n_selected_hits_vs_theta->Draw("COLZ");
+
+    new TCanvas();
+    TGraphErrors *g_sigma = new TGraphErrors();
+    for (auto x_bin = 1; x_bin <= h_second_round_R_vs_theta->GetNbinsX(); x_bin++)
+    {
+        auto current_point = g_sigma->GetN();
+        auto current_slice = h_second_round_R_vs_theta->ProjectionY(Form("%i", x_bin), x_bin, x_bin);
+        if (current_slice->GetEntries() < 50)
+            continue;
+        current_slice->Fit("gaus", "Q");
+        auto gaus_f = current_slice->GetFunction("gaus");
+        g_sigma->SetPoint(current_point, h_second_round_R_vs_theta->GetXaxis()->GetBinCenter(x_bin), gaus_f->GetParameter(2));
+        g_sigma->SetPointError(current_point, 0.5 * h_second_round_R_vs_theta->GetXaxis()->GetBinWidth(x_bin), gaus_f->GetParError(2));
+    }
+    g_sigma->Draw("ALP");
+
+    new TCanvas();
+    TF1 *fitfunc = new TF1("fitfunc", "[1]*TMath::PoissonI(x,[0])", 1);
+    TGraphErrors *g_photons = new TGraphErrors();
+    for (auto x_bin = 1; x_bin <= h_n_selected_hits_vs_theta->GetNbinsX(); x_bin++)
+    {
+        auto current_point = g_photons->GetN();
+        auto current_slice = h_n_selected_hits_vs_theta->ProjectionY(Form("%i", x_bin), x_bin, x_bin);
+        if (current_slice->GetEntries() < 50)
+            continue;
+        fitfunc->SetParameter(0, 16.);
+        fitfunc->SetParameter(1, 1.);
+        current_slice->Fit("fitfunc", "Q");
+        auto gaus_f = current_slice->GetFunction("fitfunc");
+        g_photons->SetPoint(current_point, h_n_selected_hits_vs_theta->GetXaxis()->GetBinCenter(x_bin), gaus_f->GetParameter(0));
+        g_photons->SetPointError(current_point, 0.5 * h_n_selected_hits_vs_theta->GetXaxis()->GetBinWidth(x_bin), gaus_f->GetParError(0));
+    }
+    g_photons->Draw("ALP");
+
+    /*
+
+    //  Second round selection
+    TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
+    TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
+    TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
+    TProfile *n_hits_vs_theta = new TProfile("n_hits_vs_theta", ";tracking #theta;N_{#gamma}", 100, 0, 0.1);
+    TProfile *n_hits_vs_phi = new TProfile("n_hits_vs_phi", ";tracking #phi;N_{#gamma}", 100, -3.1415, +3.1415);
+
+    TH2F *h_ring_cut_events = new TH2F("h_ring_cut_events", "Points excluded by cuts;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+
+    //  Saving the frame number you can speed up secondary loops
+    std::vector<int> start_of_spill_frame_ref;
+    std::vector<std::pair<int, float>> frame_of_interest_ref;
+    std::map<int, float> frame_of_interest_values;
 
     //  Loop over frames
     for (int i_frame = 0; i_frame < all_frames; ++i_frame)
@@ -119,76 +367,22 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
             h_tracking_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0));
             h_tracking_phi->Fill(recotrackdata->get_traj_angcoeff_phi(0));
 
-      //  Save trigger frames for later, ref to the actual number of used frames in the analysis
-      frame_of_interest_ref.push_back({i_frame, default_hardware_trigger->fine_time});
-      frame_of_interest_values[i_frame] = recotrackdata->get_traj_angcoeff_theta(0);
-
-            //  Container for selected hits
-            std::vector<std::array<float, 2>> selected_points;
-            float avg_radius = 0.; // First estimate for radius
-
-      //  Loop on hitse
-      for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
-      {
-        //  Remove afterpulse
-        //  Ref: afterpulse_treatment.cpp
-        if (recotrackdata->is_afterpulse(current_hit))
-          continue;
-
-                //  Fill time distribution to check
-                auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - default_hardware_trigger->fine_time; //  ns
-                h_t_distribution->Fill(time_delta_wrt_ref);
-
-                //  Ask for time coincidence
-                if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
-                    continue;
-
-                //  Check the hit has been labeled as ring-belonging
-                //  This is done through a simple DBSCAN implementation
-                //  Density-Based Spatial Clustering of Applications with Noise > https://it.wikipedia.org/wiki/DBSCAN
-                //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
-                //  Clustering is done in alcor_recotrackdata::find_rings(...)
-                //  TODO: add a flag for sensor type
-                if (recotrackdata->is_ring_tagged(current_hit))
-                    continue;
-
-                //  Store selected points
-                selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
-                avg_radius += recotrackdata->get_hit_r(current_hit);
-            }
-
-            //  Fit selected points, if enough for circle fit (> 3)
-            if (selected_points.size() > 4)
-            {
-                //  Fitting the points
-                //  fit_result = {{center_x_value,center_x_error}, {center_y_value,center_y_error}, {radius_value,radius_error}}
-                //                fit_circle(points to fit,  starting values for the fit,  let X-Y free,  do not exclude any points)
-                auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false, {{}});
-
-                //  Save results for later QA
-                h_first_round_X->Fill(fit_result[0][0]);
-                h_first_round_Y->Fill(fit_result[1][0]);
-                h_first_round_R->Fill(fit_result[2][0]);
-            }
+            //  Save trigger frames for later, ref to the actual number of used frames in the analysis
+            frame_of_interest_ref.push_back({i_frame, default_hardware_trigger->fine_time});
+            frame_of_interest_values[i_frame] = recotrackdata->get_traj_angcoeff_theta(0);
         }
     }
 
-  auto found_ring_center_x = h_first_round_X->GetMean();
-  auto found_ring_center_y = h_first_round_Y->GetMean();
-  auto found_ring_radius = h_first_round_R->GetMean();
-  auto found_ring_radius_stddev = h_first_round_R->GetRMS();
-
-
-
+    auto found_ring_center_x = h_first_round_X->GetMean();
+    auto found_ring_center_y = h_first_round_Y->GetMean();
+    auto found_ring_radius = h_first_round_R->GetMean();
+    auto found_ring_radius_stddev = h_first_round_R->GetRMS();
 
     //  Second loop on frames of interest
     for (auto i_frame : frame_of_interest_ref)
     {
         //  Load data for current frame
         recotrackdata_tree->GetEntry(i_frame.first);
-
-        //  Container for selected hits
-        std::vector<std::array<float, 2>> selected_points;
 
         //  Loop on hits
         for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
@@ -206,33 +400,33 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
             if (std::fabs(recotrackdata->get_hit_r(current_hit, {(float)found_ring_center_x, (float)found_ring_center_y}) - found_ring_radius) > 3 * found_ring_radius_stddev)
                 continue;
 
-      bool apply_tracking_cut = false;
-      bool tracking_cut_failed = apply_tracking_cut && (fabs(recotrackdata->get_traj_angcoeff_phi(0)) > 1 || recotrackdata->get_traj_angcoeff_theta(0) > 0.001);
+            bool apply_tracking_cut = false;
+            bool tracking_cut_failed = apply_tracking_cut && (fabs(recotrackdata->get_traj_angcoeff_phi(0)) > 1 || recotrackdata->get_traj_angcoeff_theta(0) > 0.001);
 
-      // calcolo r rispetto centro trovato (solo se vuoi cut 3σ)
-      float hit_r = std::hypot(recotrackdata->get_hit_x(current_hit) - found_ring_center_x,
-                               recotrackdata->get_hit_y(current_hit) - found_ring_center_y);
-      bool radius_cut_failed = (std::fabs(hit_r - found_ring_radius) > 3 * found_ring_radius_stddev);
+            // calcolo r rispetto centro trovato (solo se vuoi cut 3σ)
+            float hit_r = std::hypot(recotrackdata->get_hit_x(current_hit) - found_ring_center_x,
+                                     recotrackdata->get_hit_y(current_hit) - found_ring_center_y);
+            bool radius_cut_failed = (std::fabs(hit_r - found_ring_radius) > 3 * found_ring_radius_stddev);
 
-      // se il punto è stato escluso da qualsiasi cut
-      if (tracking_cut_failed || radius_cut_failed)
-      {
-        h_ring_cut_events->Fill(recotrackdata->get_hit_x_rnd(current_hit),
-                                recotrackdata->get_hit_y_rnd(current_hit));
-        // non includere il punto nei selected_points
-        continue;
-      }
+            // se il punto è stato escluso da qualsiasi cut
+            if (tracking_cut_failed || radius_cut_failed)
+            {
+                h_ring_cut_events->Fill(recotrackdata->get_hit_x_rnd(current_hit),
+                                        recotrackdata->get_hit_y_rnd(current_hit));
+                // non includere il punto nei selected_points
+                continue;
+            }
 
-      // Altrimenti lo salvo normalmente
-      selected_points.push_back({(float)recotrackdata->get_hit_x(current_hit),
-                                 (float)recotrackdata->get_hit_y(current_hit)});
-      //  Plot the selection for QA
-      //  *_rnd randomise the value within the sensor area, improves data visualisation
-      //  Available for x, y, r, phi getters
-      h_second_round_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
-    }
-    n_hits_vs_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0), selected_points.size());
-    n_hits_vs_phi->Fill(recotrackdata->get_traj_angcoeff_phi(0), selected_points.size());
+            // Altrimenti lo salvo normalmente
+            selected_points.push_back({(float)recotrackdata->get_hit_x(current_hit),
+                                       (float)recotrackdata->get_hit_y(current_hit)});
+            //  Plot the selection for QA
+            //  *_rnd randomise the value within the sensor area, improves data visualisation
+            //  Available for x, y, r, phi getters
+            h_second_round_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
+        }
+        n_hits_vs_theta->Fill(recotrackdata->get_traj_angcoeff_theta(0), selected_points.size());
+        n_hits_vs_phi->Fill(recotrackdata->get_traj_angcoeff_phi(0), selected_points.size());
 
         //  Work on second round of selected points
 
@@ -242,42 +436,42 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
         //  R vs Ngamma for resolution estimation
         h_second_round_R_Ngamma->Fill(fit_result[2][0], selected_points.size());
 
-    //  Fitting the points, excluding one at a time
-    for (auto i_ter = 0; i_ter < selected_points.size(); i_ter++)
-    {
-      fit_result = fit_circle(selected_points, {(float)found_ring_center_x, (float)found_ring_center_y, (float)found_ring_radius}, true, {i_ter});
-      //  Temp fix
-      auto radius = std::hypot(selected_points[i_ter][0] - found_ring_center_x, selected_points[i_ter][1] - found_ring_center_y);
-      h_second_round_R_excluded->Fill(fit_result[2][0] - radius);
-      h_second_round_R_global->Fill(found_ring_radius - radius);
+        //  Fitting the points, excluding one at a time
+        for (auto i_ter = 0; i_ter < selected_points.size(); i_ter++)
+        {
+            fit_result = fit_circle(selected_points, {(float)found_ring_center_x, (float)found_ring_center_y, (float)found_ring_radius}, true, {i_ter});
+            //  Temp fix
+            auto radius = std::hypot(selected_points[i_ter][0] - found_ring_center_x, selected_points[i_ter][1] - found_ring_center_y);
+            h_second_round_R_excluded->Fill(fit_result[2][0] - radius);
+            h_second_round_R_global->Fill(found_ring_radius - radius);
+        }
     }
-  }
 
-  // 1) Ring senza tagli: prendi i punti prima dei cut 3σ e tracking
-  TCanvas *c_ring_no_cut = new TCanvas("c_ring_no_cut", "Ring without final cuts", 800, 800);
-  TH2F *h_ring_no_cut = new TH2F("h_ring_no_cut", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    // 1) Ring senza tagli: prendi i punti prima dei cut 3σ e tracking
+    TCanvas *c_ring_no_cut = new TCanvas("c_ring_no_cut", "Ring without final cuts", 800, 800);
+    TH2F *h_ring_no_cut = new TH2F("h_ring_no_cut", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
 
-  // Loop frames of interest
-  for (auto i_frame : frame_of_interest_ref)
-  {
-    recotrackdata_tree->GetEntry(i_frame.first);
-    for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+    // Loop frames of interest
+    for (auto i_frame : frame_of_interest_ref)
     {
-      if (recotrackdata->is_afterpulse(current_hit))
-        continue;
-      auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - i_frame.second;
-      if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
-        continue;
+        recotrackdata_tree->GetEntry(i_frame.first);
+        for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+        {
+            if (recotrackdata->is_afterpulse(current_hit))
+                continue;
+            auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - i_frame.second;
+            if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
+                continue;
 
-      // Senza 3σ e tracking cut: salvo tutti i punti “buoni”
-      h_ring_no_cut->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
+            // Senza 3σ e tracking cut: salvo tutti i punti “buoni”
+            h_ring_no_cut->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
+        }
     }
-  }
-  h_ring_no_cut->Draw("COLZ");
+    h_ring_no_cut->Draw("COLZ");
 
-  // 2) Ring con tagli: usa l’istogramma già popolato h_second_round_xy_map
-  TCanvas *c_ring_cut = new TCanvas("c_ring_cut", "Ring with cuts", 800, 800);
-  h_second_round_xy_map->Draw("COLZ");
+    // 2) Ring con tagli: usa l’istogramma già popolato h_second_round_xy_map
+    TCanvas *c_ring_cut = new TCanvas("c_ring_cut", "Ring with cuts", 800, 800);
+    h_second_round_xy_map->Draw("COLZ");
 
     //  Loop on the 2D histogram to find the resolution vs p.e.
     //  Generate a TGraph to hold each Ngamma resolution
@@ -356,16 +550,17 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     c_second_round_R_exc_global->cd(2);
     h_second_round_R_global->Draw();
 
-  new TCanvas();
-  // h_tracking_phi->Draw();
+    new TCanvas();
+    // h_tracking_phi->Draw();
 
-  new TCanvas();
-  // h_tracking_theta->Draw();
-  TCanvas *c_ring_cut_events = new TCanvas("c_ring_cut_events", "Events excluded by cuts", 800, 800);
-  h_ring_cut_events->Draw("COLZ");
+    new TCanvas();
+    // h_tracking_theta->Draw();
+    TCanvas *c_ring_cut_events = new TCanvas("c_ring_cut_events", "Events excluded by cuts", 800, 800);
+    h_ring_cut_events->Draw("COLZ");
 
-  new TCanvas();
-  n_hits_vs_theta->Draw();
-  new TCanvas();
-  n_hits_vs_phi->Draw();
+    new TCanvas();
+    n_hits_vs_theta->Draw();
+    new TCanvas();
+    n_hits_vs_phi->Draw();
+    */
 }

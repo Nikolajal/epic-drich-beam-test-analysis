@@ -361,6 +361,9 @@ public:
     /// @brief True if hit @p i has been associated with a reconstructed ring.
     inline bool is_ring_tagged(int i) { return check_hit_mask(i, encode_bits({_HITMASK_ring_tag_first, _HITMASK_ring_tag_second})); }
 
+    /** @brief Checks whether the hit is tagged as a ring by hough transform */
+    inline bool is_hough_ring_tag(int i) { return check_hit_mask(i, encode_bits({_HITMASK_hough_ring_tag_first, _HITMASK_hough_ring_tag_second})); }
+
     ///@}
 
     // ================================================================
