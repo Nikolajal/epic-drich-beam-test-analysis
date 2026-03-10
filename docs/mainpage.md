@@ -1,4 +1,4 @@
-@mainpage ePIC dRICH Beam Test Analysis
+\mainpage ePIC dRICH Beam Test Analysis
 
 A C++/ROOT framework for processing and analysing ePIC dRICH beam-test data,
 covering the full chain from raw ALCOR readout to reconstructed Cherenkov rings.

@@ -5,6 +5,7 @@
 #include <string>
 #include <map>
 #include <unordered_map>
+#include <variant>
 #include "TFile.h"
 #include "TTree.h"
 #include "TH1.h"
@@ -39,6 +40,27 @@
  * and processes them concurrently to produce framed spill data. It supports optional
  * trigger and readout configuration and afterpulse suppression.
  *
+ * ### Progress reporting
+ * The framer can optionally report its progress through a `mist::logger` bar.
+ * Either a standalone `progress_bar` or a `subtask_progress_bar` from a
+ * `multi_progress_bar` group can be assigned via `assign_bar()`. The framer
+ * holds a non-owning pointer — the caller is responsible for keeping the bar
+ * alive for the duration of processing.
+ *
+ * @code{.cpp}
+ * // Option A — standalone bar
+ * mist::logger::progress_bar bar;
+ * framer.assign_bar(bar);
+ *
+ * // Option B — subtask inside a multi_progress_bar group
+ * mist::logger::multi_progress_bar mb;
+ * auto& s = mb.add_subtask("Streaming");
+ * framer.assign_bar(s);   // mb (and s) must outlive framer
+ *
+ * framer.next_spill();    // bar updates automatically during processing
+ * framer.clear_bar();     // detach when done (optional)
+ * @endcode
+ *
  * @note Frame size and timing constants are defined via macros and should eventually
  *       be moved to a config file with a proper pass-down mechanism to @ref alcor_spilldata.
  */
@@ -57,7 +79,8 @@ public:
      * @param filenames  Paths to the raw ALCOR data files to stream.
      * @param frame_size Number of clock cycles per frame (default: @ref _FRAME_SIZE_).
      */
-    parallel_streaming_framer(std::vector<std::string> filenames, uint16_t frame_size = _FRAME_SIZE_);
+    parallel_streaming_framer(std::vector<std::string> filenames, uint16_t frame_size = _FRAME_SIZE_)
+        : parallel_streaming_framer(filenames, "", "", frame_size) {}
 
     /**
      * @brief Construct a framer with trigger configuration.
@@ -65,7 +88,8 @@ public:
      * @param trigger_config_file Path to the trigger configuration file.
      * @param frame_size          Number of clock cycles per frame (default: @ref _FRAME_SIZE_).
      */
-    parallel_streaming_framer(std::vector<std::string> filenames, std::string trigger_config_file, uint16_t frame_size = _FRAME_SIZE_);
+    parallel_streaming_framer(std::vector<std::string> filenames, std::string trigger_config_file, uint16_t frame_size = _FRAME_SIZE_)
+        : parallel_streaming_framer(filenames, trigger_config_file, "", frame_size) {}
 
     /**
      * @brief Construct a framer with trigger and readout configuration.
@@ -128,6 +152,40 @@ public:
     void set_parallel_cores(uint16_t v);
 
     // -------------------------------------------------------------------------
+    // Progress bar assignment
+    // -------------------------------------------------------------------------
+
+    /**
+     * @brief Assign a standalone progress bar for reporting streaming progress.
+     *
+     * The framer holds a non-owning pointer — @p bar must remain alive for
+     * the entire duration of processing. Replaces any previously assigned bar.
+     *
+     * @param bar  A `progress_bar` instance owned by the caller.
+     */
+    void assign_bar(mist::logger::progress_bar& bar);
+
+    /**
+     * @brief Assign a subtask bar from a `multi_progress_bar` group.
+     *
+     * Use this when the framer is one of several concurrent tasks displayed
+     * together. The parent `multi_progress_bar` (and therefore this subtask
+     * handle) must outlive the framer. Replaces any previously assigned bar.
+     *
+     * @param bar  A `subtask_progress_bar` handle returned by
+     *             `multi_progress_bar::add_subtask()`.
+     */
+    void assign_bar(mist::logger::subtask_progress_bar& bar);
+
+    /**
+     * @brief Detach the currently assigned bar without finishing it.
+     *
+     * After this call the framer reports no progress. The bar itself is
+     * unaffected — the caller retains full ownership.
+     */
+    void clear_bar();
+
+    // -------------------------------------------------------------------------
     // I/O Operations
     // -------------------------------------------------------------------------
 
@@ -141,11 +199,25 @@ public:
      * @brief Processes a single data stream and returns the framed spill data.
      * @param current_stream Reference to the @ref alcor_data_streamer to process.
      * @param _frame_size    Number of clock cycles per frame.
-     * @return The framed @ref alcor_spilldata produced from the stream.
      */
     void process(alcor_data_streamer &current_stream, int _frame_size);
 
 private:
+    // -------------------------------------------------------------------------
+    // Internal progress helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * @brief Update whichever bar is currently assigned, if any.
+     *
+     * Uses `std::visit` over the variant — the monostate arm is a no-op,
+     * so callers never need to check whether a bar is assigned before calling this.
+     *
+     * Thread-safe: both `progress_bar` and `subtask_progress_bar` are internally
+     * mutex-guarded, so concurrent calls from worker threads are safe.
+     */
+    void _update_bar(int64_t current, int64_t total);
+
     /// @name Threading
     /// @{
 
@@ -175,6 +247,20 @@ private:
      */
     std::map<std::string, uint32_t> _next_spill;
 
+    /**
+     * @brief Non-owning handle to an optional progress bar.
+     *
+     * Holds one of:
+     *  - `std::monostate`                       — no bar assigned (default)
+     *  - `mist::logger::progress_bar*`          — standalone bar
+     *  - `mist::logger::subtask_progress_bar*`  — subtask handle
+     *
+     * The pointed-to object is owned by the caller and must outlive the framer.
+     */
+    std::variant<std::monostate,
+                 mist::logger::progress_bar*,
+                 mist::logger::subtask_progress_bar*> assigned_bar_;
+
     /** @brief Accumulated framed data for the current spill. */
     alcor_spilldata spilldata;
 
@@ -200,10 +286,10 @@ private:
 
     /// @}
 
-    /// @name Configuration
+    /// @name Histograms
     /// @{
 
-    /** @brief Frame size in clock cycles used during processing. */
+    /** @brief Fine tune distribution per tdc index. */
     TH2F *h2_fine_tune_distribution;
 
     /// @}
