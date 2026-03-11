@@ -68,6 +68,15 @@ void parallel_streaming_framer::_update_bar(int64_t current, int64_t total)
                        bar_or_none->update(current, total); }, assigned_bar_);
 }
 
+void parallel_streaming_framer::_finish_bar()
+{
+    std::visit([&](auto &bar_or_none)
+               {
+                   using T = std::decay_t<decltype(bar_or_none)>;
+                   if constexpr (!std::is_same_v<T, std::monostate>)
+                       bar_or_none->finish(); }, assigned_bar_);
+}
+
 // I/O operations
 void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int _frame_size)
 {
@@ -255,6 +264,8 @@ bool parallel_streaming_framer::next_spill()
 
     for (auto &f : thread_pool)
         f.get();
+
+    _finish_bar();
 
     mist::logger::info("(parallel_streaming_framer::next_spill) Spill " +
                        std::to_string(_current_spill) +

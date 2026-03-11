@@ -40,26 +40,6 @@
  * and processes them concurrently to produce framed spill data. It supports optional
  * trigger and readout configuration and afterpulse suppression.
  *
- * ### Progress reporting
- * The framer can optionally report its progress through a `mist::logger` bar.
- * Either a standalone `progress_bar` or a `subtask_progress_bar` from a
- * `multi_progress_bar` group can be assigned via `assign_bar()`. The framer
- * holds a non-owning pointer — the caller is responsible for keeping the bar
- * alive for the duration of processing.
- *
- * @code{.cpp}
- * // Option A — standalone bar
- * mist::logger::progress_bar bar;
- * framer.assign_bar(bar);
- *
- * // Option B — subtask inside a multi_progress_bar group
- * mist::logger::multi_progress_bar mb;
- * auto& s = mb.add_subtask("Streaming");
- * framer.assign_bar(s);   // mb (and s) must outlive framer
- *
- * framer.next_spill();    // bar updates automatically during processing
- * framer.clear_bar();     // detach when done (optional)
- * @endcode
  *
  * @note Frame size and timing constants are defined via macros and should eventually
  *       be moved to a config file with a proper pass-down mechanism to @ref alcor_spilldata.
@@ -163,7 +143,7 @@ public:
      *
      * @param bar  A `progress_bar` instance owned by the caller.
      */
-    void assign_bar(mist::logger::progress_bar& bar);
+    void assign_bar(mist::logger::progress_bar &bar);
 
     /**
      * @brief Assign a subtask bar from a `multi_progress_bar` group.
@@ -175,7 +155,7 @@ public:
      * @param bar  A `subtask_progress_bar` handle returned by
      *             `multi_progress_bar::add_subtask()`.
      */
-    void assign_bar(mist::logger::subtask_progress_bar& bar);
+    void assign_bar(mist::logger::subtask_progress_bar &bar);
 
     /**
      * @brief Detach the currently assigned bar without finishing it.
@@ -218,6 +198,8 @@ private:
      */
     void _update_bar(int64_t current, int64_t total);
 
+    void _finish_bar();
+
     /// @name Threading
     /// @{
 
@@ -258,8 +240,9 @@ private:
      * The pointed-to object is owned by the caller and must outlive the framer.
      */
     std::variant<std::monostate,
-                 mist::logger::progress_bar*,
-                 mist::logger::subtask_progress_bar*> assigned_bar_;
+                 mist::logger::progress_bar *,
+                 mist::logger::subtask_progress_bar *>
+        assigned_bar_;
 
     /** @brief Accumulated framed data for the current spill. */
     alcor_spilldata spilldata;
