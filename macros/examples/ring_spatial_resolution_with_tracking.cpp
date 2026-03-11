@@ -695,4 +695,47 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
         TCanvas *c = (TCanvas *)obj;
         c->SaveAs(Form("%s/%s.png", output_dir.c_str(), c->GetName()));
     }
+
+    // --- Save histograms and settings to ROOT file ---
+    std::string output_root = data_repository + "/" + run_name + "/plots/histograms.root";
+    TFile *output_file = new TFile(output_root.c_str(), "RECREATE");
+
+    // Salva tutti gli istogrammi
+    h_t_distribution->Write();
+    h_first_round_X->Write();
+    h_first_round_Y->Write();
+    h_first_round_R->Write();
+    h_tracking_theta->Write();
+    h_tracking_phi->Write();
+    h_intercept_drich->Write();
+    h_intercept_scint->Write();
+    h_second_round_xy_map->Write();
+    h_second_round_R->Write();
+    h_n_selected_hits->Write();
+    h_n_selected_hits_vs_theta->Write();
+    h_second_round_R_vs_theta->Write();
+    h_n_selected_hits_vs_ix_drich->Write();
+    h_n_selected_hits_vs_iy_drich->Write();
+    h_second_round_R_vs_ix_drich->Write();
+    h_ring_x0_vs_ix_drich->Write();
+    h_ring_y0_vs_ix_drich->Write();
+    h_ring_R_vs_ix_drich->Write();
+
+    // Salva i parametri di selezione come TNamed
+    TNamed("cut_plane", Form("%i", (int)cut_plane)).Write();
+    TNamed("cut_side", Form("%i", (int)cut_side)).Write();
+    TNamed("apply_multiplicity_cut", Form("%i", apply_multiplicity_cut)).Write();
+    TNamed("apply_radial_cut", Form("%i", apply_radial_cut)).Write();
+    TNamed("require_single_track", Form("%i", require_single_track)).Write();
+    TNamed("apply_theta_phi_cut", Form("%i", apply_theta_phi_cut)).Write();
+    TNamed("apply_slope_xy_cut", Form("%i", apply_slope_xy_cut)).Write();
+    TNamed("theta_min", Form("%f", theta_min)).Write();
+    TNamed("theta_max", Form("%f", theta_max)).Write();
+    TNamed("slope_x_min", Form("%f", slope_x_min)).Write();
+    TNamed("slope_x_max", Form("%f", slope_x_max)).Write();
+    TNamed("slope_y_min", Form("%f", slope_y_min)).Write();
+    TNamed("slope_y_max", Form("%f", slope_y_max)).Write();
+    TNamed("cutg_title", cutg->GetTitle()).Write();
+
+    output_file->Close();
 }
