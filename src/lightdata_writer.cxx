@@ -121,9 +121,11 @@ void lightdata_writer(
     //  The framer subtask is wired directly into the framer via assign_bar() so it
     //  updates automatically during next_spill(). The post-processing subtask is
     //  driven manually inside the frame loop below.
-    mist::logger::multi_progress_bar general_bar(mist::logger::bar_style::BLOCK);
-    mist::logger::subtask_progress_bar &progress_framer = general_bar.add_subtask("Streaming framer");
-    mist::logger::subtask_progress_bar &progress_postprocessing = general_bar.add_subtask("Post-processing");
+    mist::logger::progress_bar progress_framer("framer         ", mist::logger::bar_style::BLOCK);
+    mist::logger::progress_bar progress_postprocessing("post-processing", mist::logger::bar_style::BLOCK);
+    mist::logger::update("spill_counter  ", "Current spill: " +
+                                                std::to_string(0) +
+                                                " - framing raw data");
 
     //  Create streaming framer
     parallel_streaming_framer framer(filenames, trigger_setup_file, readout_config_file);
@@ -208,14 +210,15 @@ void lightdata_writer(
     if (max_spill != 1000)
         mist::logger::info("(parallel_streaming_framer::next_spill) Requested to stop at spill : " +
                            std::to_string(max_spill));
+
     for (int ispill = 0; ispill < max_spill && framer.next_spill(); ++ispill)
     {
-        // framer.next_spill() drives progress_framer internally via assign_bar().
-        // Reset progress_postprocessing for this spill's frame loop.
-        progress_framer.update(0, 1, false);
-        progress_postprocessing.update(0, 1, false);
-
-        //general_bar.update(ispill, max_spill);
+        //  Signal current spill
+        mist::logger::update("spill_counter", "Current spill: " +
+                                                  std::to_string(ispill) +
+                                                  " - Requested: " +
+                                                  std::to_string(max_spill) +
+                                                  " (may be less)");
 
         //  Generate the calibration at each spill if new channels get available
         spilldata.update_calibration(framer.get_fine_tune_distribution());
@@ -651,18 +654,24 @@ void lightdata_writer(
                 }
             }
         }
-        progress_postprocessing.finish();
+        progress_postprocessing.update(1, 1);
+
+        //  Signal current spill
+        mist::logger::update("spill_counter", "Current spill: " +
+                                                  std::to_string(ispill + 1) +
+                                                  " - framing raw data");
 
         outfile->cd();
         spilldata.prepare_tree_fill();
         lightdata_tree->Fill();
         outfile->Flush();
     }
-
-    // All spills done — commit the main bar.
-    general_bar.finish();
-
+    // All spills done
+    progress_framer.finish();
+    progress_postprocessing.finish();
+    mist::logger::end_update("spill_counter");
     mist::logger::info("(lightdata_writer) Finished spills loop, writing to file");
+
     //  ---
     //  End: Loop on data streamers
     //  --- --- --- --- --- ---
