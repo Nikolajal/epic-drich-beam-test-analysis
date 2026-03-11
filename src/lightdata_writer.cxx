@@ -122,13 +122,13 @@ void lightdata_writer(
     //  updates automatically during next_spill(). The post-processing subtask is
     //  driven manually inside the frame loop below.
     mist::logger::multi_progress_bar general_bar(mist::logger::bar_style::BLOCK);
-    mist::logger::subtask_progress_bar &progress_framer         = general_bar.add_subtask("Streaming framer");
+    mist::logger::subtask_progress_bar &progress_framer = general_bar.add_subtask("Streaming framer");
     mist::logger::subtask_progress_bar &progress_postprocessing = general_bar.add_subtask("Post-processing");
 
     //  Create streaming framer
     parallel_streaming_framer framer(filenames, trigger_setup_file, readout_config_file);
     framer.set_parallel_cores(requested_n_threads);
-    framer.assign_bar(progress_framer);   // framer drives progress_framer automatically
+    framer.assign_bar(progress_framer); // framer drives progress_framer automatically
 
     auto config_triggers = trigger_conf_reader(trigger_setup_file);
     trigger_registry registry(config_triggers);
@@ -175,6 +175,12 @@ void lightdata_writer(
     TH1F *h_streaming_trigger_ring_finder_nrings = new TH1F("h_streaming_trigger_ring_finder_nrings", ";timing chip 0 - timing chip 1", 3, -.5, 2.5);
     TH2F *h_streaming_trigger_ring_finder_first_hitmap = new TH2F("h_streaming_trigger_ring_finder_first_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH2F *h_streaming_trigger_ring_finder_second_hitmap = new TH2F("h_streaming_trigger_ring_finder_second_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH1F *h_streaming_trigger_center_X_first = new TH1F("h_streaming_trigger_center_X_first", ";x (mm)", 100, -25, 25);
+    TH1F *h_streaming_trigger_center_Y_first = new TH1F("h_streaming_trigger_center_Y_first", ";y (mm)", 100, -25, 25);
+    TH1F *h_streaming_trigger_center_R_first = new TH1F("h_streaming_trigger_center_R_first", ";R (mm)", 200, 20, 120);
+    TH1F *h_streaming_trigger_center_X_second = new TH1F("h_streaming_trigger_center_X_second", ";x (mm)", 100, -25, 25);
+    TH1F *h_streaming_trigger_center_Y_second = new TH1F("h_streaming_trigger_center_Y_second", ";y (mm)", 100, -25, 25);
+    TH1F *h_streaming_trigger_center_R_second = new TH1F("h_streaming_trigger_center_R_second", ";R (mm)", 200, 20, 120);
     //  ---
     //  End: Framing data & output definition
     //  --- --- --- --- --- ---
@@ -206,7 +212,10 @@ void lightdata_writer(
     {
         // framer.next_spill() drives progress_framer internally via assign_bar().
         // Reset progress_postprocessing for this spill's frame loop.
+        progress_framer.update(0, 1, false);
         progress_postprocessing.update(0, 1, false);
+
+        //general_bar.update(ispill, max_spill);
 
         //  Generate the calibration at each spill if new channels get available
         spilldata.update_calibration(framer.get_fine_tune_distribution());
@@ -527,6 +536,8 @@ void lightdata_writer(
                         index = -1;
                         std::array<int, 2> hough_trigger_hits = {0, 0};
                         std::array<float, 2> hough_trigger_time = {0.f, 0.f};
+                        std::vector<std::array<float, 2>> hough_triggered_first;
+                        std::vector<std::array<float, 2>> hough_triggered_second;
                         for (auto current_hit : ring_candidates)
                         {
                             index++;
@@ -537,20 +548,40 @@ void lightdata_writer(
                                 h_streaming_trigger_ring_finder_first_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                                 hough_trigger_hits[0]++;
                                 hough_trigger_time[0] += current_hit.get_time_ns();
+                                hough_triggered_first.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
                             }
                             if (current_hit.has_mask_bit(_HITMASK_hough_ring_tag_second))
                             {
                                 h_streaming_trigger_ring_finder_second_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                                 hough_trigger_hits[1]++;
                                 hough_trigger_time[1] += current_hit.get_time_ns();
+                                hough_triggered_second.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
                             }
                             cherenkov_hits[ring_candidates_index[index]].hit_mask = current_hit.get_mask();
                         }
 
-                        if (found_rings.size() == 1)
+                        if (found_rings.size() > 0)
+                        {
                             hough_triggers.emplace_back(static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
                                                         static_cast<uint16_t>(found_rings.size()),
                                                         static_cast<float>(hough_trigger_time[0] / hough_trigger_hits[0]));
+
+                            auto fit_circle_result = fit_circle(hough_triggered_first, {0., 0., 50.}, false);
+                            h_streaming_trigger_center_X_first->Fill(fit_circle_result[0][0]);
+                            h_streaming_trigger_center_Y_first->Fill(fit_circle_result[1][0]);
+                            h_streaming_trigger_center_R_first->Fill(fit_circle_result[2][0]);
+                        }
+                        if (found_rings.size() > 1)
+                        {
+                            hough_triggers.emplace_back(static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
+                                                        static_cast<uint16_t>(found_rings.size()),
+                                                        static_cast<float>(hough_trigger_time[1] / hough_trigger_hits[1]));
+
+                            auto fit_circle_result = fit_circle(hough_triggered_second, {0., 0., 50.}, false);
+                            h_streaming_trigger_center_X_second->Fill(fit_circle_result[0][0]);
+                            h_streaming_trigger_center_Y_second->Fill(fit_circle_result[1][0]);
+                            h_streaming_trigger_center_R_second->Fill(fit_circle_result[2][0]);
+                        }
                     }
 
                 for (auto &t : hough_triggers)
@@ -620,9 +651,6 @@ void lightdata_writer(
                 }
             }
         }
-
-        // Post-processing done for this spill — commit the subtask row.
-        // This also auto-ticks the main bar by 1/2 (2 subtasks total).
         progress_postprocessing.finish();
 
         outfile->cd();
@@ -695,6 +723,12 @@ void lightdata_writer(
     h_streaming_trigger_ring_finder_hitmap->Write();
     h_streaming_trigger_ring_finder_first_hitmap->Write();
     h_streaming_trigger_ring_finder_second_hitmap->Write();
+    h_streaming_trigger_center_X_first->Write();
+    h_streaming_trigger_center_Y_first->Write();
+    h_streaming_trigger_center_R_first->Write();
+    h_streaming_trigger_center_X_second->Write();
+    h_streaming_trigger_center_Y_second->Write();
+    h_streaming_trigger_center_R_second->Write();
     if (h_trigger_frame_population.count(streaming_ring_index))
     {
         h_trigger_frame_population[streaming_ring_index]->Write();
