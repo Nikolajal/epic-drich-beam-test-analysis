@@ -198,8 +198,6 @@ private:
      */
     void _update_bar(int64_t current, int64_t total);
 
-    void _finish_bar();
-
     /// @name Threading
     /// @{
 
