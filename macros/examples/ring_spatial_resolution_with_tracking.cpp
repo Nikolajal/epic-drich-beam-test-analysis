@@ -190,6 +190,37 @@ bool is_track_selected(float plane_x, float plane_y, float slope_x, float slope_
         return true;
     }
 }
+
+std::string cut_plane_to_string(CutPlane p)
+{
+    switch (p)
+    {
+    case CutPlane::NONE:
+        return "NONE";
+    case CutPlane::DRICH:
+        return "DRICH";
+    case CutPlane::SCINT:
+        return "SCINT";
+    case CutPlane::BOTH:
+        return "BOTH";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+std::string cut_side_to_string(CutSide s)
+{
+    switch (s)
+    {
+    case CutSide::INSIDE:
+        return "INSIDE";
+    case CutSide::OUTSIDE:
+        return "OUTSIDE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 void ring_spatial_resolution_with_tracking(std::string data_repository, std::string run_name, int max_frames = 100000)
@@ -494,7 +525,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     bar_second.finish();
 
     //  --- Drawing ---
-    // gROOT->SetBatch(true); // sopprime tutti i canvas a schermo
+    gROOT->SetBatch(true); // sopprime tutti i canvas a schermo
 
     TCanvas *c_time_delta = new TCanvas("c_time_delta", "Hit time wrt trigger", 800, 800);
     gPad->SetLogy();
@@ -595,7 +626,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
                                     f->GetParError(0));
     }
     g_photons_ix->Draw("ALP");
-    h_n_selected_hits_vs_ix_drich->Draw("COLZ");
+    h_n_selected_hits_vs_ix_drich->Draw("SCAT");
     gPad->SetRightMargin(0.18);
     gPad->Update();
     TPaletteAxis *palette_ix = (TPaletteAxis *)gPad->GetListOfPrimitives()->FindObject("palette");
@@ -630,7 +661,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
                                     f->GetParError(0));
     }
     g_photons_iy->Draw("ALP");
-    h_n_selected_hits_vs_iy_drich->Draw("COLZ");
+    h_n_selected_hits_vs_iy_drich->Draw("SCAT");
     gPad->SetRightMargin(0.18);
     gPad->Update();
     TPaletteAxis *palette_iy = (TPaletteAxis *)gPad->GetListOfPrimitives()->FindObject("palette");
@@ -686,15 +717,30 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     TCanvas *c_show_ring = new TCanvas("c_ring_show", "Ring map", 800, 800);
     h_second_round_xy_map->Draw("COLZ");
 
-    // --- Save all canvases to PNG ---
-    std::string output_dir = data_repository + "/" + run_name + "/plots";
-    gSystem->mkdir(output_dir.c_str(), true);
+    TCanvas *c_settings = new TCanvas("c_settings", "Analysis settings", 600, 600);
+    TPaveText *pt = new TPaveText(0.05, 0.05, 0.95, 0.95, "NDC");
+    pt->SetTextAlign(12);
+    pt->SetTextFont(42);
+    pt->SetFillColor(0);
+    pt->SetBorderSize(1);
 
-    for (auto obj : *gROOT->GetListOfCanvases())
-    {
-        TCanvas *c = (TCanvas *)obj;
-        c->SaveAs(Form("%s/%s.png", output_dir.c_str(), c->GetName()));
-    }
+    pt->AddText(Form("cut_plane:             %s", cut_plane_to_string(cut_plane).c_str()));
+    pt->AddText(Form("cut_side:              %s", cut_side_to_string(cut_side).c_str()));
+    pt->AddText(Form("cutg:                  %s", cutg->GetTitle()));
+    pt->AddText(Form("require_single_track:  %i", require_single_track));
+    pt->AddText(Form("apply_multiplicity_cut:%i", apply_multiplicity_cut));
+    pt->AddText(Form("apply_radial_cut:      %i", apply_radial_cut));
+    pt->AddText(Form("apply_theta_phi_cut:   %i", apply_theta_phi_cut));
+    pt->AddText(Form("apply_slope_xy_cut:    %i", apply_slope_xy_cut));
+    pt->AddText(Form("theta_min:             %.4f", theta_min));
+    pt->AddText(Form("theta_max:             %.4f", theta_max));
+    pt->AddText(Form("slope_x_min:           %.4f", slope_x_min));
+    pt->AddText(Form("slope_x_max:           %.4f", slope_x_max));
+    pt->AddText(Form("slope_y_min:           %.4f", slope_y_min));
+    pt->AddText(Form("slope_y_max:           %.4f", slope_y_max));
+    pt->AddText(Form("run:                   %s", run_name.c_str()));
+
+    pt->Draw();
 
     // --- Save histograms and settings to ROOT file ---
     std::string output_root = data_repository + "/" + run_name + "/plots/histograms.root";
@@ -721,21 +767,18 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     h_ring_y0_vs_ix_drich->Write();
     h_ring_R_vs_ix_drich->Write();
 
-    // Salva i parametri di selezione come TNamed
-    TNamed("cut_plane", Form("%i", (int)cut_plane)).Write();
-    TNamed("cut_side", Form("%i", (int)cut_side)).Write();
-    TNamed("apply_multiplicity_cut", Form("%i", apply_multiplicity_cut)).Write();
-    TNamed("apply_radial_cut", Form("%i", apply_radial_cut)).Write();
-    TNamed("require_single_track", Form("%i", require_single_track)).Write();
-    TNamed("apply_theta_phi_cut", Form("%i", apply_theta_phi_cut)).Write();
-    TNamed("apply_slope_xy_cut", Form("%i", apply_slope_xy_cut)).Write();
-    TNamed("theta_min", Form("%f", theta_min)).Write();
-    TNamed("theta_max", Form("%f", theta_max)).Write();
-    TNamed("slope_x_min", Form("%f", slope_x_min)).Write();
-    TNamed("slope_x_max", Form("%f", slope_x_max)).Write();
-    TNamed("slope_y_min", Form("%f", slope_y_min)).Write();
-    TNamed("slope_y_max", Form("%f", slope_y_max)).Write();
-    TNamed("cutg_title", cutg->GetTitle()).Write();
+    // --- Save all canvases to PNG ---
+    std::string output_dir = data_repository + "/" + run_name + "/plots";
+    gSystem->mkdir(output_dir.c_str(), true);
 
+    for (auto obj : *gROOT->GetListOfCanvases())
+    {
+        TCanvas *c = (TCanvas *)obj;
+        c->SaveAs(Form("%s/%s.png", output_dir.c_str(), c->GetName()));
+    }
+
+    // Salva il canvas dei settings nel root file e chiudi
+    output_file->cd();
+    c_settings->Write();
     output_file->Close();
 }
