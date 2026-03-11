@@ -33,7 +33,7 @@
 // =========================================================================
 
 /// Named roles that are mutually exclusive per (device, chip) pair.
-static const std::set<std::string> lightdata_core_tags = { "timing", "tracking", "cherenkov" };
+static const std::set<std::string> lightdata_core_tags = {"timing", "tracking", "cherenkov"};
 
 // =========================================================================
 //  Readout configuration
@@ -47,7 +47,7 @@ static const std::set<std::string> lightdata_core_tags = { "timing", "tracking",
  */
 struct readout_config_struct
 {
-    std::string name;                                    ///< Human-readable role name (e.g. @c "cherenkov").
+    std::string name;                                      ///< Human-readable role name (e.g. @c "cherenkov").
     std::map<uint16_t, std::vector<uint16_t>> device_chip; ///< Active chips per device.
 
     readout_config_struct() = default;
@@ -158,7 +158,7 @@ std::vector<std::string> find_by_device_and_chip(
  * @param config_file Path to the TOML configuration file.
  * @return Vector of @ref readout_config_struct, one per named role.
  */
-std::vector<readout_config_struct> readout_config_reader(std::string config_file = "conf/readout_config.txt");
+std::vector<readout_config_struct> readout_config_reader(std::string config_file = "conf/readout_config.toml");
 
 // =========================================================================
 //  Run metadata
@@ -167,11 +167,11 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
 /// @brief Optical radiator properties for one radiator layer.
 struct radiator_info_struct
 {
-    std::string type;     ///< Radiator material identifier (e.g. @c "aerogel").
-    std::string tag;      ///< Short label used in histogram naming.
-    double      refindex; ///< Refractive index at the nominal beam energy.
-    double      depth;    ///< Radiator depth along the beam axis [cm].
-    std::string side;     ///< Detector side (@c "left" / @c "right").
+    std::string type; ///< Radiator material identifier (e.g. @c "aerogel").
+    std::string tag;  ///< Short label used in histogram naming.
+    double refindex;  ///< Refractive index at the nominal beam energy.
+    double depth;     ///< Radiator depth along the beam axis [cm].
+    std::string side; ///< Detector side (@c "left" / @c "right").
 };
 
 /**
@@ -186,7 +186,7 @@ struct run_info_struct
     /** @name Beam configuration */
     /// @{
     std::string beam_polarity; ///< Beam particle sign (@c "+" or @c "-").
-    int         beam_energy;   ///< Nominal beam momentum [GeV/c].
+    int beam_energy;           ///< Nominal beam momentum [GeV/c].
     /// @}
 
     // -------------------------------------------------------------------------
@@ -194,10 +194,10 @@ struct run_info_struct
     /// @{
     std::string rdo_firmware;    ///< RDO firmware version string.
     std::string timing_firmware; ///< Timing board firmware version string.
-    int         n_spills;        ///< Number of spills in the run.
-    bool        timing_on_axis;  ///< @c true if the timing channel is on the beam axis.
-    int         op_mode;         ///< ALCOR operational mode index.
-    int         delta_thr;       ///< ALCOR Δ-threshold setting [LSB].
+    int n_spills;                ///< Number of spills in the run.
+    bool timing_on_axis;         ///< @c true if the timing channel is on the beam axis.
+    int op_mode;                 ///< ALCOR operational mode index.
+    int delta_thr;               ///< ALCOR Δ-threshold setting [LSB].
     /// @}
 
     // -------------------------------------------------------------------------
@@ -289,8 +289,8 @@ private:
     /** @name Static databases */
     /// @{
 
-    static std::unordered_map<std::string, run_info_struct>          run_info_database;  ///< run_id → metadata.
-    static std::unordered_map<std::string, std::vector<std::string>> run_list_database;  ///< list_name → run IDs.
+    static std::unordered_map<std::string, run_info_struct> run_info_database;          ///< run_id → metadata.
+    static std::unordered_map<std::string, std::vector<std::string>> run_list_database; ///< list_name → run IDs.
 
     /// @}
 };

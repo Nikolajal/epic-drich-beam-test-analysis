@@ -1,5 +1,6 @@
 *~
 Data
+extData
 .DS_Store
 */.DS_Store
 */*.d
@@ -7,3 +8,4 @@ Data
 *alcor_fine_calibration.txt
 build/
 macros/*.h
+.claude

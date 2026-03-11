@@ -52,7 +52,7 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    GIT_TAG        main
+    GIT_TAG        dev
 )
 FetchContent_MakeAvailable(mist)
 

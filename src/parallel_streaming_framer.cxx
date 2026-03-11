@@ -3,29 +3,18 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <iostream>
-#include <vector>
-#include <string>
 #include <thread>
 #include <execution>
 #include <future>
 #include <chrono>
-#include <thread>
 using namespace std;
 
-//  Constructors
-parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> filenames,
-                                                     uint16_t frame_size)
-    : parallel_streaming_framer(filenames, "", "", frame_size) {}
-parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> filenames,
-                                                     std::string trigger_config_file,
-                                                     uint16_t frame_size)
-    : parallel_streaming_framer(filenames, trigger_config_file, "", frame_size) {}
+//  Constructor
 parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> filenames,
                                                      std::string trigger_config_file,
                                                      std::string readout_config_file,
                                                      uint16_t frame_size)
-    : _frame_size(frame_size), n_threads_requested(0)
+    : _frame_size(frame_size), n_threads_requested(0), assigned_bar_(std::monostate{})
 {
     // Create streams
     data_streams.reserve(filenames.size());
@@ -47,7 +36,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
     // Initialize spill counter
     _current_spill = -1;
 
-    //  Initialise the fine tune container
+    // Initialise the fine tune container
     h2_fine_tune_distribution = new TH2F("h2_fine_tune_distribution", ";global tdc index;fine parameter", 1e4, 0, 1e4, 256, 0, 256);
 }
 
@@ -62,24 +51,41 @@ void parallel_streaming_framer::set_spilldata(alcor_spilldata v) { spilldata = v
 void parallel_streaming_framer::set_spilldata_link(alcor_spilldata &v) { spilldata = v; }
 void parallel_streaming_framer::set_parallel_cores(uint16_t v) { n_threads_requested = v; }
 
+// Bar assignment
+void parallel_streaming_framer::assign_bar(mist::logger::progress_bar &bar) { assigned_bar_ = &bar; }
+void parallel_streaming_framer::assign_bar(mist::logger::subtask_progress_bar &bar) { assigned_bar_ = &bar; }
+void parallel_streaming_framer::clear_bar() { assigned_bar_ = std::monostate{}; }
+
+// Internal bar update — no-op if nothing assigned.
+// progress_bar and subtask_progress_bar are both internally thread-safe, so no
+// additional locking is needed here beyond what the bars already do.
+void parallel_streaming_framer::_update_bar(int64_t current, int64_t total)
+{
+    std::visit([&](auto &bar_or_none)
+               {
+                   using T = std::decay_t<decltype(bar_or_none)>;
+                   if constexpr (!std::is_same_v<T, std::monostate>)
+                       bar_or_none->update(current, total); }, assigned_bar_);
+}
+
 // I/O operations
 void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int _frame_size)
 {
-    //  Local istance of result
+    // Local instance of result
     auto &frame_map = spilldata.get_frame_link();
     std::unordered_map<int, uint64_t> afterpulse_map;
 
-    //  Start loop on streamer data
+    // Start loop on streamer data
     while (current_stream.read_next())
     {
-        //  Recover data from streamer
+        // Recover data from streamer
         auto &current_data = current_stream.current();
-        //  --- Set aside useful variables
+        // --- Set aside useful variables
         auto current_device = current_data.get_device();
         auto current_chip = current_data.get_chip();
         auto current_readout_tag_list = readout_config.find_by_device_and_chip(current_device, current_chip);
 
-        //  Stop streamer reading if not tagged for readout
+        // Stop streamer reading if not tagged for readout
         if (current_readout_tag_list.size() == 0 && (current_chip != (99 / 4)))
             break;
 
@@ -91,7 +97,7 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
         //  ----    ----    ----    ALCOR hit  ----    ----    ----
         if (current_data.is_alcor_hit())
         {
-            //  Make afterpulse check
+            // Make afterpulse check
             current_data.set_mask(0);
             auto current_channel = current_data.get_global_index();
             if (auto search = afterpulse_map.find(current_channel); search != afterpulse_map.end())
@@ -99,7 +105,7 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
                     current_data.add_mask_bit(_HITMASK_afterpulse);
             afterpulse_map[current_channel] = hit_frame_coarse_global + _AFTERPULSE_DEADTIME_;
 
-            //  Assigning frame-time values
+            // Assigning frame-time values
             current_data.set_rollover(0);
             current_data.set_coarse(hit_frame_coarse);
 
@@ -107,7 +113,7 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
             {
                 std::lock_guard<std::mutex> map_lock(frame_mutexes_access);
                 auto &current_lightdata = frame_map[hit_frame_index];
-                //  Assign to correct lightdata hit label
+                // Assign to correct lightdata hit label
                 for (auto &tag : current_readout_tag_list)
                 {
                     if (tag == "timing")
@@ -167,17 +173,17 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
         //  ----    ----    ----    Start of spill  ----    ----    ----
         if (current_data.is_start_spill())
         {
-            //  Lock the spilldata info
+            // Lock the spilldata info
             std::lock_guard<std::mutex> lock(spilldata_masks_mutex);
 
-            //  Gather infos on the fifo
+            // Gather infos on the fifo
             auto current_fifo = current_data.get_fifo();
 
-            //  Encode participation of lane
+            // Encode participation of lane
             auto &current_participants_mask = spilldata.get_participants_mask_link();
             current_participants_mask[static_cast<uint8_t>(current_device)] += encode_bits({(uint8_t)current_fifo});
 
-            //  Encode dead lane
+            // Encode dead lane
             if (current_data.coarse_time_clock() != 0)
             {
                 auto &current_dead_mask = spilldata.get_dead_mask_link();
@@ -191,6 +197,7 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
             break;
     }
 }
+
 bool parallel_streaming_framer::next_spill()
 {
     spilldata.clear();
@@ -205,25 +212,23 @@ bool parallel_streaming_framer::next_spill()
         current_trigger_hits.push_back({100, static_cast<uint16_t>(_frame_size / 2.), static_cast<float>(_ALCOR_CC_TO_NS_ * _frame_size / 2.)});
     }
 
-    //  Start of parallel work
-    //  --- Remove invalide streams before feeding to the parallel unit
-    //  Re-orders array so that last elements, from it to end, are the invalid ones
+    // --- Remove invalid streams before feeding to the parallel unit
     auto it = std::remove_if(data_streams.begin(), data_streams.end(), [](const alcor_data_streamer &stream)
                              { return !stream.is_valid(); });
     for (auto it_ = it; it_ != data_streams.end(); it_++)
-        std::cout << "[WARNING] Invalid datastream discarded: " << it_->get_filename() << endl;
+        mist::logger::warning("Invalid datastream discarded: " + it_->get_filename());
     data_streams.erase(it, data_streams.end());
 
-    //  Check machine cores for safe threading
+    // Check machine cores for safe threading
     unsigned int n_threads = std::thread::hardware_concurrency();
-    n_threads = n_threads_requested > 0 ? std::min<uint16_t>(n_threads_requested, 8 * std::min<size_t>(n_threads - 2, 2)) : 8 * std::min<size_t>(n_threads - 2, 2); //  Leave 2 cores free for general machine work, 8 streams per core are manageable
+    n_threads = n_threads_requested > 0
+                    ? std::min<uint16_t>(n_threads_requested, 8 * std::min<size_t>(n_threads - 2, 2))
+                    : 8 * std::min<size_t>(n_threads - 2, 2);
 
     std::atomic<size_t> next_streamer_atomic(0);
-    std::atomic<size_t> completed(0); // tracks finished streams
-    std::mutex bar_mutex;             // serialises bar.update() calls
+    std::atomic<size_t> completed(0);
     const size_t total = data_streams.size();
 
-    mist::logger::progress_bar bar(mist::logger::bar_style::BLOCK);
     mist::logger::info("(parallel_streaming_framer::next_spill) Starting reading data streams");
 
     std::vector<std::future<void>> thread_pool;
@@ -232,7 +237,7 @@ bool parallel_streaming_framer::next_spill()
     for (size_t i = 0; i < n_threads; ++i)
     {
         thread_pool.push_back(std::async(std::launch::async,
-                                         [this, &next_streamer_atomic, &completed, &bar_mutex, &bar, total]()
+                                         [this, &next_streamer_atomic, &completed, total]()
                                          {
                                              while (true)
                                              {
@@ -242,13 +247,8 @@ bool parallel_streaming_framer::next_spill()
 
                                                  process(data_streams[my_stream], this->_frame_size);
 
-                                                 // Increment *after* work is done so progress reflects
-                                                 // completed streams, not just claimed ones.
                                                  size_t done = ++completed;
-                                                 {
-                                                     std::lock_guard<std::mutex> lock(bar_mutex);
-                                                     bar.update(done, total);
-                                                 }
+                                                 _update_bar(static_cast<int64_t>(done), static_cast<int64_t>(total));
                                              }
                                          }));
     }
@@ -256,9 +256,8 @@ bool parallel_streaming_framer::next_spill()
     for (auto &f : thread_pool)
         f.get();
 
-    bar.finish();
+    _update_bar(static_cast<int64_t>(total), static_cast<int64_t>(total));
 
-    //  Finished Processing spills
     mist::logger::info("(parallel_streaming_framer::next_spill) Spill " +
                        std::to_string(_current_spill) +
                        " processing finished! Successfully processed " +
