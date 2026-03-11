@@ -158,7 +158,7 @@ std::vector<std::string> find_by_device_and_chip(
  * @param config_file Path to the TOML configuration file.
  * @return Vector of @ref readout_config_struct, one per named role.
  */
-std::vector<readout_config_struct> readout_config_reader(std::string config_file = "conf/readout_config.txt");
+std::vector<readout_config_struct> readout_config_reader(std::string config_file = "conf/readout_config.toml");
 
 // =========================================================================
 //  Run metadata
