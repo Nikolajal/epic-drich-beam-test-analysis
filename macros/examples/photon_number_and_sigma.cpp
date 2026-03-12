@@ -24,7 +24,6 @@
  * @author Mattia Valenti
  */
 
- //commenta ogni parte del codice, spiegando cosa fa e perché è stata fatta in quel modo, facendo riferimento alla logica dell'analisi e alle scelte fatte per l'estrazione dei risultati.
 
 namespace
 {
