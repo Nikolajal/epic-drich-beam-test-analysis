@@ -1,0 +1,536 @@
+#include "../lib_loader.h"
+#include "TCutG.h"
+
+int n_rejected = 0;
+
+std::array<float, 2> time_cut_boundaries = {-6., 6.};
+
+constexpr float z_drich = 4325;
+constexpr float z_scint = 1150;
+
+enum class CutPlane { NONE, DRICH, SCINT, BOTH };
+enum class CutSide  { INSIDE, OUTSIDE };
+
+TCutG *make_cutg_scint_stretto()
+{
+    TCutG *cutg = new TCutG("cutg_scint_stretto", 8);
+    cutg->SetPoint(0, -8.0798, -1.49754);
+    cutg->SetPoint(1, -5.97317, 2.84483);
+    cutg->SetPoint(2, -2.97012, 2.81117);
+    cutg->SetPoint(3, 0.660441, 0.95977);
+    cutg->SetPoint(4, -3.05976, -3.07964);
+    cutg->SetPoint(5, -8.16944, -1.43021);
+    cutg->SetPoint(6, -8.16944, -1.43021);
+    cutg->SetPoint(7, -8.0798, -1.49754);
+    cutg->SetVarX("x"); cutg->SetVarY("y");
+    cutg->SetTitle("Scint stretto");
+    return cutg;
+}
+
+TCutG *make_cutg_scint_largo()
+{
+    TCutG *cutg = new TCutG("cutg_scint_largo", 10);
+    cutg->SetPoint(0, -8.34873, -1.49754);
+    cutg->SetPoint(1, -4.9871, 5.50411);
+    cutg->SetPoint(2, 0.525976, 5.53777);
+    cutg->SetPoint(3, 11.7314, 0.95977);
+    cutg->SetPoint(4, 11.5073, -6.1092);
+    cutg->SetPoint(5, 0.436333, -6.04187);
+    cutg->SetPoint(6, -8.39355, -1.86782);
+    cutg->SetPoint(7, -8.39355, -1.49754);
+    cutg->SetPoint(8, -8.39355, -1.49754);
+    cutg->SetPoint(9, -8.34873, -1.49754);
+    cutg->SetVarX("x"); cutg->SetVarY("y");
+    cutg->SetTitle("Scint largo");
+    return cutg;
+}
+
+TCutG *make_cutg_drich_stretto()
+{
+    TCutG *cutg = new TCutG("cutg_drich_stretto", 7);
+    cutg->SetPoint(0, -4.92388, -0.289291);
+    cutg->SetPoint(1, -3.30728, 3.0507);
+    cutg->SetPoint(2, -0.67378, 0.447086);
+    cutg->SetPoint(3, -2.21216, -2.68252);
+    cutg->SetPoint(4, -4.92388, -0.31559);
+    cutg->SetPoint(5, -4.94996, -0.31559);
+    cutg->SetPoint(6, -4.92388, -0.289291);
+    cutg->SetVarX("x"); cutg->SetVarY("y");
+    cutg->SetTitle("dRICH stretto");
+    return cutg;
+}
+
+TCutG *make_cutg_drich_largo()
+{
+    TCutG *cutg = new TCutG("cutg_drich_largo", 9);
+    cutg->SetPoint(0, -5.65396, -0.525984);
+    cutg->SetPoint(1, -2.78579, 5.25984);
+    cutg->SetPoint(2, 3.78492, 0.657479);
+    cutg->SetPoint(3, 3.81099, -4.15527);
+    cutg->SetPoint(4, 2.53335, -5.31243);
+    cutg->SetPoint(5, -1.03882, -5.31243);
+    cutg->SetPoint(6, -5.68004, -0.473385);
+    cutg->SetPoint(7, -5.68004, -0.473385);
+    cutg->SetPoint(8, -5.65396, -0.525984);
+    cutg->SetVarX("x"); cutg->SetVarY("y");
+    cutg->SetTitle("dRICH largo");
+    return cutg;
+}
+
+TCutG *make_cutg_rect(float xmin, float xmax, float ymin, float ymax)
+{
+    TCutG *cutg = new TCutG("cutg_rect", 5);
+    cutg->SetPoint(0, xmin, ymin);
+    cutg->SetPoint(1, xmax, ymin);
+    cutg->SetPoint(2, xmax, ymax);
+    cutg->SetPoint(3, xmin, ymax);
+    cutg->SetPoint(4, xmin, ymin);
+    cutg->SetVarX("x"); cutg->SetVarY("y");
+    cutg->SetTitle(Form("rect_%.0f_%.0f_%.0f_%.0f", xmin, xmax, ymin, ymax));
+    return cutg;
+}
+
+bool is_track_selected(float plane_x, float plane_y, float slope_x, float slope_y,
+                       TCutG *cutg1, CutPlane plane1, CutSide side1,
+                       TCutG *cutg2 = nullptr, CutPlane plane2 = CutPlane::NONE, CutSide side2 = CutSide::INSIDE)
+{
+    float ix_drich = plane_x - slope_x * z_drich;
+    float iy_drich = plane_y - slope_y * z_drich;
+    float ix_scint = plane_x - slope_x * z_scint;
+    float iy_scint = plane_y - slope_y * z_scint;
+
+    auto eval = [&](TCutG *cutg, CutPlane plane, CutSide side) -> bool
+    {
+        if (plane == CutPlane::NONE) return true;
+
+        auto pass = [&](bool is_inside) {
+            return (side == CutSide::INSIDE) ? is_inside : !is_inside;
+        };
+
+        switch (plane) {
+        case CutPlane::DRICH: return pass(cutg->IsInside(ix_drich, iy_drich));
+        case CutPlane::SCINT: return pass(cutg->IsInside(ix_scint, iy_scint));
+        case CutPlane::BOTH:  return pass(cutg->IsInside(ix_drich, iy_drich)) &&
+                                     pass(cutg->IsInside(ix_scint, iy_scint));
+        default: return true;
+        }
+    };
+
+    bool pass1 = eval(cutg1, plane1, side1);
+    bool pass2 = (cutg2 == nullptr) ? true : eval(cutg2, plane2, side2);
+    return pass1 && pass2;
+}
+
+std::string cut_plane_to_string(CutPlane p)
+{
+    switch (p) {
+    case CutPlane::NONE:  return "NONE";
+    case CutPlane::DRICH: return "DRICH";
+    case CutPlane::SCINT: return "SCINT";
+    case CutPlane::BOTH:  return "BOTH";
+    default:              return "UNKNOWN";
+    }
+}
+
+std::string cut_side_to_string(CutSide s)
+{
+    switch (s) {
+    case CutSide::INSIDE:  return "INSIDE";
+    case CutSide::OUTSIDE: return "OUTSIDE";
+    default:               return "UNKNOWN";
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+void ringtrack_analysis(std::string data_repository, std::string run_name, int max_frames = 100000)
+{
+    std::string input_filename = data_repository + "/" + run_name + "/recotrackdata.root";
+    TFile *input_file = new TFile(input_filename.c_str());
+    if (!input_file || input_file->IsZombie()) {
+        std::cerr << "[ERROR] Could not open " << input_filename << std::endl;
+        return;
+    }
+
+    TTree *recotrackdata_tree = (TTree *)input_file->Get("recotrackdata");
+    alcor_recotrackdata *recotrackdata = new alcor_recotrackdata();
+    recotrackdata->link_to_tree(recotrackdata_tree);
+
+    auto n_frames   = recotrackdata_tree->GetEntries();
+    auto all_frames = min((int)n_frames, (int)max_frames);
+
+    // -------------------------------------------------------------------------
+    //  >>> SELECTION SETTINGS — change these lines <<<
+    // -------------------------------------------------------------------------
+    bool apply_multiplicity_cut = false;
+    bool apply_radial_cut       = false;
+    bool require_single_track   = false;
+    bool require_multi_track    = false;
+
+    bool apply_theta_phi_cut  = false;
+    bool apply_angle_xy_cut   = false;
+
+    float theta_min   = 0.0;
+    float theta_max   = 0.02;
+    float phi_min     = -1.0;
+    float phi_max     = 1.0;
+    float angle_x_min = -0.05;
+    float angle_x_max =  0.05;
+    float angle_y_min = -0.05;
+    float angle_y_max =  0.05;
+
+    // --- Cut 1 ---
+    TCutG   *cutg1  = make_cutg_scint_largo();
+    CutPlane plane1 = CutPlane::SCINT;
+    CutSide  side1  = CutSide::INSIDE;
+
+    // --- Cut 2 (optional — set plane2 = CutPlane::NONE to disable) ---
+    TCutG   *cutg2  = make_cutg_drich_largo();
+    CutPlane plane2 = CutPlane::NONE;
+    CutSide  side2  = CutSide::INSIDE;
+    // -------------------------------------------------------------------------
+
+    if (require_single_track && require_multi_track)
+        std::cerr << "[WARNING] require_single_track and require_multi_track are both true — no events will pass\n";
+
+    // =========================================================================
+    //  HISTOGRAMS — first round
+    // =========================================================================
+    TH1F *h_t_distribution = new TH1F("h_t_distribution",
+        "Hit time wrt trigger;t_{hit} - t_{timing} (ns);counts", 200, -312.5, 312.5);
+    TH1F *h_first_round_X = new TH1F("h_first_round_X",
+        "Ring center X (1st round);x_{0} (mm);counts", 120, -30, 30);
+    TH1F *h_first_round_Y = new TH1F("h_first_round_Y",
+        "Ring center Y (1st round);y_{0} (mm);counts", 120, -30, 30);
+    TH1F *h_first_round_R = new TH1F("h_first_round_R",
+        "Ring radius (1st round);R (mm);counts", 200, 30, 130);
+    TH1F *h_tracking_theta = new TH1F("h_tracking_theta",
+        "Track polar angle;#theta (rad);counts", 1000, 0, 0.1);
+    TH1F *h_tracking_phi = new TH1F("h_tracking_phi",
+        "Track azimuthal angle;#phi (rad);counts", 1000, -3.1415, +3.1415);
+    TH1F *h_tracking_angle_x = new TH1F("h_tracking_angle_x",
+        "Track angle X;#alpha_{x} (rad);counts", 1000, -0.1, 0.1);
+    TH1F *h_tracking_angle_y = new TH1F("h_tracking_angle_y",
+        "Track angle Y;#alpha_{y} (rad);counts", 1000, -0.1, 0.1);
+    TH2F *h_intercept_drich = new TH2F("h_intercept_drich",
+        "Track intercept at dRICH plane;x (mm);y (mm)", 500, -50., +50., 200, -50., +50.);
+    TH2F *h_intercept_scint = new TH2F("h_intercept_scint",
+        "Track intercept at scintillator plane;x (mm);y (mm)", 500, -50., +50., 200, -50., +50.);
+
+    // =========================================================================
+    //  FIRST LOOP
+    // =========================================================================
+    mist::logger::progress_bar bar(mist::logger::bar_style::BLOCK);
+    for (int i_frame = 0; i_frame < all_frames; ++i_frame)
+    {
+        recotrackdata_tree->GetEntry(i_frame);
+        std::vector<std::array<float, 2>> selected_points;
+        float avg_radius = 0.;
+
+        if (i_frame % 10000 == 0) bar.update(i_frame, all_frames);
+        if (recotrackdata->is_start_of_spill()) continue;
+
+        for (auto i = 0; i < recotrackdata->n_recotrackdata(); i++) {
+            h_tracking_theta->Fill(recotrackdata->get_traj_angcoeff_theta(i));
+            h_tracking_phi->Fill(recotrackdata->get_traj_angcoeff_phi(i));
+            h_tracking_angle_x->Fill(atan(recotrackdata->get_traj_angcoeff_x(i)));
+            h_tracking_angle_y->Fill(atan(recotrackdata->get_traj_angcoeff_y(i)));
+        }
+
+        auto streaming_trigger = recotrackdata->get_trigger_by_index(104);
+        if (streaming_trigger) {
+            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++) {
+                if (recotrackdata->is_afterpulse(current_hit)) continue;
+                auto time_delta = recotrackdata->get_hit_t(current_hit) - streaming_trigger->fine_time;
+                h_t_distribution->Fill(time_delta);
+                if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
+                selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
+                avg_radius += recotrackdata->get_hit_r(current_hit);
+            }
+            if (selected_points.size() > 4) {
+                auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false, {{}});
+                h_first_round_X->Fill(fit_result[0][0]);
+                h_first_round_Y->Fill(fit_result[1][0]);
+                h_first_round_R->Fill(fit_result[2][0]);
+            }
+        }
+    }
+    bar.update(all_frames, all_frames);
+    bar.finish();
+
+    float found_ring_center_x      = h_first_round_X->GetMean();
+    float found_ring_center_y      = h_first_round_Y->GetMean();
+    float found_ring_radius        = h_first_round_R->GetMean();
+    h_first_round_R->Fit("gaus", "Q");
+    auto gaus_f = h_first_round_R->GetFunction("gaus");
+    float found_ring_radius_stddev = gaus_f->GetParameter(2);
+
+    // =========================================================================
+    //  HISTOGRAMS — second round
+    // =========================================================================
+    std::vector<double> ix_drich_range = {-60, -40, -20, -10, -6, -2, 0, 2, 6, 10, 20, 40, 60};
+
+    TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map",
+        "Selected hits on detector plane;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_second_round_xy_map_rejected = new TH2F("h_second_round_xy_map_rejected",
+        "Rejected hits on detector plane;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH1F *h_second_round_R = new TH1F("h_second_round_R",
+        "Ring radius residual (2nd round);#DeltaR (mm);counts", 200, -20, 20);
+    TH1F *h_n_selected_hits = new TH1F("h_n_selected_hits",
+        "Selected hits per event;n hits;counts", 100, 0, 100);
+    TH2F *h_n_selected_hits_vs_multiplicity = new TH2F("h_n_selected_hits_vs_multiplicity",
+        "Selected hits vs track multiplicity;n tracks;n hits", 100, -0.5, 9.5, 100, -0.5, 99.5);
+    TH2F *h_n_selected_hits_vs_theta = new TH2F("h_n_selected_hits_vs_theta",
+        "Selected hits vs track polar angle;#theta (rad);n hits", 2000, 0, 0.1, 100, -0.5, 99.5);
+    TH2F *h_n_selected_hits_vs_ix_drich = new TH2F("h_n_selected_hits_vs_ix_drich",
+        "Selected hits vs track intercept X at dRICH;x_{dRICH} (mm);n hits",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 100, -0.5, 99.5);
+    TH2F *h_n_selected_hits_vs_iy_drich = new TH2F("h_n_selected_hits_vs_iy_drich",
+        "Selected hits vs track intercept Y at dRICH;y_{dRICH} (mm);n hits",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 100, -0.5, 99.5);
+
+    TH2F *h_deltaR_vs_theta = new TH2F("h_deltaR_vs_theta",
+        "#DeltaR vs track #theta;#theta (rad);#DeltaR (mm)", 50, 0, 0.1, 200, -20, 20);
+    TH2F *h_deltaR_vs_phi = new TH2F("h_deltaR_vs_phi",
+        "#DeltaR vs track #phi;#phi (rad);#DeltaR (mm)", 50, -3.1415, 3.1415, 200, -20, 20);
+    TH2F *h_deltaR_vs_ix_drich = new TH2F("h_deltaR_vs_ix_drich",
+        "#DeltaR vs track intercept X at dRICH;x_{dRICH} (mm);#DeltaR (mm)",
+        50, -60., 60., 200, -20., 20.);
+    TH2F *h_deltaR_vs_iy_drich = new TH2F("h_deltaR_vs_iy_drich",
+        "#DeltaR vs track intercept Y at dRICH;y_{dRICH} (mm);#DeltaR (mm)",
+        50, -60., 60., 200, -20., 20.);
+
+    // --- Distance intercept-center ---
+    std::vector<double> d_intercept_range = {0, 2, 4, 6, 8, 10, 15, 20, 30, 50};
+    TH1F *h_d_intercept = new TH1F("h_d_intercept",
+        "Distance intercept-ring center at dRICH;d_{intercept} (mm);counts",
+        d_intercept_range.size() - 1, d_intercept_range.data());
+    TH2F *h_deltaR_vs_d_intercept = new TH2F("h_deltaR_vs_d_intercept",
+        "#DeltaR vs distance intercept-ring center;d_{intercept} (mm);#DeltaR (mm)",
+        d_intercept_range.size() - 1, d_intercept_range.data(), 500, -20., 20.);
+    TH2F *h_ring_R_vs_d_intercept = new TH2F("h_ring_R_vs_d_intercept",
+        "Ring radius vs distance intercept-ring center;d_{intercept} (mm);R (mm)",
+        d_intercept_range.size() - 1, d_intercept_range.data(), 200, 30, 130);
+
+    TH2F *h_ring_x0_vs_ix_drich = new TH2F("h_ring_x0_vs_ix_drich",
+        "Ring center X vs intercept X at dRICH;x_{dRICH} (mm);x_{0} (mm)",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+    TH2F *h_ring_y0_vs_ix_drich = new TH2F("h_ring_y0_vs_ix_drich",
+        "Ring center Y vs intercept X at dRICH;x_{dRICH} (mm);y_{0} (mm)",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+    TH2F *h_ring_R_vs_ix_drich = new TH2F("h_ring_R_vs_ix_drich",
+        "Ring radius vs intercept X at dRICH;x_{dRICH} (mm);R (mm)",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 200, 30, 130);
+
+    TH2F *h_ring_x0_vs_iy_drich = new TH2F("h_ring_x0_vs_iy_drich",
+        "Ring center X vs intercept Y at dRICH;y_{dRICH} (mm);x_{0} (mm)",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+    TH2F *h_ring_y0_vs_iy_drich = new TH2F("h_ring_y0_vs_iy_drich",
+        "Ring center Y vs intercept Y at dRICH;y_{dRICH} (mm);y_{0} (mm)",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+    TH2F *h_ring_R_vs_iy_drich = new TH2F("h_ring_R_vs_iy_drich",
+        "Ring radius vs intercept Y at dRICH;y_{dRICH} (mm);R (mm)",
+        ix_drich_range.size() - 1, ix_drich_range.data(), 200, 30, 130);
+
+    TH2F *h_ring_x0_vs_theta = new TH2F("h_ring_x0_vs_theta",
+        "Ring center X vs track #theta;#theta (rad);x_{0} (mm)", 50, 0, 0.1, 120, -30, 30);
+    TH2F *h_ring_y0_vs_theta = new TH2F("h_ring_y0_vs_theta",
+        "Ring center Y vs track #theta;#theta (rad);y_{0} (mm)", 50, 0, 0.1, 120, -30, 30);
+    TH2F *h_ring_R_vs_theta = new TH2F("h_ring_R_vs_theta",
+        "Ring radius vs track #theta;#theta (rad);R (mm)", 50, 0, 0.1, 200, 30, 130);
+
+    TH2F *h_ring_x0_vs_phi = new TH2F("h_ring_x0_vs_phi",
+        "Ring center X vs track #phi;#phi (rad);x_{0} (mm)", 50, -3.1415, 3.1415, 120, -30, 30);
+    TH2F *h_ring_y0_vs_phi = new TH2F("h_ring_y0_vs_phi",
+        "Ring center Y vs track #phi;#phi (rad);y_{0} (mm)", 50, -3.1415, 3.1415, 120, -30, 30);
+    TH2F *h_ring_R_vs_phi = new TH2F("h_ring_R_vs_phi",
+        "Ring radius vs track #phi;#phi (rad);R (mm)", 50, -3.1415, 3.1415, 200, 30, 130);
+
+    // =========================================================================
+    //  SECOND LOOP
+    // =========================================================================
+    mist::logger::progress_bar bar_second(mist::logger::bar_style::BLOCK);
+    for (int i_frame = 0; i_frame < all_frames; ++i_frame)
+    {
+        recotrackdata_tree->GetEntry(i_frame);
+        std::vector<std::array<float, 2>> selected_points;
+
+        if (i_frame % 1000 == 0) bar_second.update(i_frame, all_frames);
+        if (recotrackdata->is_start_of_spill()) continue;
+
+        auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
+        auto streaming_trigger        = recotrackdata->get_trigger_by_index(104);
+        if (streaming_trigger && default_hardware_trigger)
+        {
+            if (require_single_track && recotrackdata->n_recotrackdata() != 1) continue;
+            if (!require_single_track && recotrackdata->n_recotrackdata() < 1)  continue;
+            if (require_multi_track  && recotrackdata->n_recotrackdata() < 2)   continue;
+
+            // Select track with best chi2/ndf
+            int best_track = 0;
+            float best_chi2 = recotrackdata->get_chi2ndof(0);
+            for (int i = 1; i < (int)recotrackdata->n_recotrackdata(); i++) {
+                float chi2 = recotrackdata->get_chi2ndof(i);
+                if (chi2 < best_chi2) { best_chi2 = chi2; best_track = i; }
+            }
+
+            float plane_x  = recotrackdata->get_det_plane_x(best_track);
+            float plane_y  = recotrackdata->get_det_plane_y(best_track);
+            float slope_x  = recotrackdata->get_traj_angcoeff_x(best_track);
+            float slope_y  = recotrackdata->get_traj_angcoeff_y(best_track);
+            float ix_drich = plane_x - slope_x * z_drich;
+            float iy_drich = plane_y - slope_y * z_drich;
+            float d_intercept = sqrt(pow(ix_drich - found_ring_center_x, 2) +
+                                     pow(iy_drich - found_ring_center_y, 2));
+
+            if (!is_track_selected(plane_x, plane_y, slope_x, slope_y,
+                                   cutg1, plane1, side1,
+                                   cutg2, plane2, side2)) {
+                n_rejected++;
+                continue;
+            }
+
+            float track_theta   = recotrackdata->get_traj_angcoeff_theta(best_track);
+            float track_phi     = recotrackdata->get_traj_angcoeff_phi(best_track);
+            float track_angle_x = atan(slope_x);
+            float track_angle_y = atan(slope_y);
+
+            if (apply_theta_phi_cut) {
+                if (track_theta < theta_min || track_theta > theta_max) continue;
+                if (track_phi   < phi_min   || track_phi   > phi_max)   continue;
+            }
+            if (apply_angle_xy_cut) {
+                if (track_angle_x < angle_x_min || track_angle_x > angle_x_max) continue;
+                if (track_angle_y < angle_y_min || track_angle_y > angle_y_max) continue;
+            }
+
+            h_intercept_drich->Fill(ix_drich, iy_drich);
+            h_intercept_scint->Fill(plane_x - slope_x * z_scint, plane_y - slope_y * z_scint);
+            h_d_intercept->Fill(d_intercept);
+
+            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++) {
+                if (recotrackdata->is_afterpulse(current_hit)) continue;
+                auto time_delta = recotrackdata->get_hit_t(current_hit) - streaming_trigger->fine_time;
+                if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
+                if (apply_radial_cut &&
+                    fabs(recotrackdata->get_hit_r(current_hit, {found_ring_center_x, found_ring_center_y}) - found_ring_radius) > 5 * found_ring_radius_stddev)
+                    continue;
+                selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
+                h_second_round_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
+            }
+
+            h_n_selected_hits->Fill(selected_points.size());
+            h_n_selected_hits_vs_multiplicity->Fill(recotrackdata->n_recotrackdata(), selected_points.size());
+            h_n_selected_hits_vs_theta->Fill(track_theta, selected_points.size());
+            h_n_selected_hits_vs_ix_drich->Fill(ix_drich, selected_points.size());
+            h_n_selected_hits_vs_iy_drich->Fill(iy_drich, selected_points.size());
+
+            if (!apply_multiplicity_cut || fabs((int)selected_points.size() - 15) < 2)
+            {
+                auto fit_result = fit_circle(selected_points, {found_ring_center_x, found_ring_center_y, found_ring_radius}, true, {{}});
+                float deltaR = fit_result[2][0] - found_ring_radius;
+
+                h_second_round_R->Fill(deltaR);
+                h_deltaR_vs_theta->Fill(track_theta, deltaR);
+                h_deltaR_vs_phi->Fill(track_phi, deltaR);
+                h_deltaR_vs_ix_drich->Fill(ix_drich, deltaR);
+                h_deltaR_vs_iy_drich->Fill(iy_drich, deltaR);
+                h_deltaR_vs_d_intercept->Fill(d_intercept, deltaR);
+
+                h_ring_x0_vs_ix_drich->Fill(ix_drich, fit_result[0][0]);
+                h_ring_y0_vs_ix_drich->Fill(ix_drich, fit_result[1][0]);
+                h_ring_R_vs_ix_drich->Fill(ix_drich, fit_result[2][0]);
+
+                h_ring_x0_vs_iy_drich->Fill(iy_drich, fit_result[0][0]);
+                h_ring_y0_vs_iy_drich->Fill(iy_drich, fit_result[1][0]);
+                h_ring_R_vs_iy_drich->Fill(iy_drich, fit_result[2][0]);
+
+                h_ring_x0_vs_theta->Fill(track_theta, fit_result[0][0]);
+                h_ring_y0_vs_theta->Fill(track_theta, fit_result[1][0]);
+                h_ring_R_vs_theta->Fill(track_theta, fit_result[2][0]);
+
+                h_ring_x0_vs_phi->Fill(track_phi, fit_result[0][0]);
+                h_ring_y0_vs_phi->Fill(track_phi, fit_result[1][0]);
+                h_ring_R_vs_phi->Fill(track_phi, fit_result[2][0]);
+
+                h_ring_R_vs_d_intercept->Fill(d_intercept, fit_result[2][0]);
+            }
+        }
+    }
+    bar_second.update(all_frames, all_frames);
+    bar_second.finish();
+
+    // =========================================================================
+    //  SAVE settings as TNamed strings + all histograms
+    // =========================================================================
+    std::string output_dir  = data_repository + "/" + run_name + "/plots";
+    std::string output_root = output_dir + "/histograms.root";
+    gSystem->mkdir(output_dir.c_str(), true);
+
+    TFile *output_file = new TFile(output_root.c_str(), "RECREATE");
+
+    TNamed("plane1",               cut_plane_to_string(plane1).c_str()).Write();
+    TNamed("side1",                cut_side_to_string(side1).c_str()).Write();
+    TNamed("cutg1_title",          cutg1->GetTitle()).Write();
+    TNamed("plane2",               cut_plane_to_string(plane2).c_str()).Write();
+    TNamed("side2",                cut_side_to_string(side2).c_str()).Write();
+    TNamed("cutg2_title",          cutg2 ? cutg2->GetTitle() : "none").Write();
+    TNamed("require_single_track", Form("%i", require_single_track)).Write();
+    TNamed("require_multi_track",  Form("%i", require_multi_track)).Write();
+    TNamed("apply_multiplicity_cut", Form("%i", apply_multiplicity_cut)).Write();
+    TNamed("apply_radial_cut",     Form("%i", apply_radial_cut)).Write();
+    TNamed("apply_theta_phi_cut",  Form("%i", apply_theta_phi_cut)).Write();
+    TNamed("apply_angle_xy_cut",   Form("%i", apply_angle_xy_cut)).Write();
+    TNamed("theta_min",            Form("%.4f", theta_min)).Write();
+    TNamed("theta_max",            Form("%.4f", theta_max)).Write();
+    TNamed("phi_min",              Form("%.4f", phi_min)).Write();
+    TNamed("phi_max",              Form("%.4f", phi_max)).Write();
+    TNamed("angle_x_min",          Form("%.4f", angle_x_min)).Write();
+    TNamed("angle_x_max",          Form("%.4f", angle_x_max)).Write();
+    TNamed("angle_y_min",          Form("%.4f", angle_y_min)).Write();
+    TNamed("angle_y_max",          Form("%.4f", angle_y_max)).Write();
+    TNamed("run_name",             run_name.c_str()).Write();
+
+    h_t_distribution->Write();
+    h_first_round_X->Write();
+    h_first_round_Y->Write();
+    h_first_round_R->Write();
+    h_tracking_theta->Write();
+    h_tracking_phi->Write();
+    h_tracking_angle_x->Write();
+    h_tracking_angle_y->Write();
+    h_intercept_drich->Write();
+    h_intercept_scint->Write();
+    h_second_round_xy_map->Write();
+    h_second_round_xy_map_rejected->Write();
+    h_second_round_R->Write();
+    h_n_selected_hits->Write();
+    h_n_selected_hits_vs_multiplicity->Write();
+    h_n_selected_hits_vs_theta->Write();
+    h_n_selected_hits_vs_ix_drich->Write();
+    h_n_selected_hits_vs_iy_drich->Write();
+    h_deltaR_vs_theta->Write();
+    h_deltaR_vs_phi->Write();
+    h_deltaR_vs_ix_drich->Write();
+    h_deltaR_vs_iy_drich->Write();
+    h_d_intercept->Write();
+    h_deltaR_vs_d_intercept->Write();
+    h_ring_R_vs_d_intercept->Write();
+    h_ring_x0_vs_ix_drich->Write();
+    h_ring_y0_vs_ix_drich->Write();
+    h_ring_R_vs_ix_drich->Write();
+    h_ring_x0_vs_iy_drich->Write();
+    h_ring_y0_vs_iy_drich->Write();
+    h_ring_R_vs_iy_drich->Write();
+    h_ring_x0_vs_theta->Write();
+    h_ring_y0_vs_theta->Write();
+    h_ring_R_vs_theta->Write();
+    h_ring_x0_vs_phi->Write();
+    h_ring_y0_vs_phi->Write();
+    h_ring_R_vs_phi->Write();
+
+    output_file->Close();
+
+    cout << "Output: " << output_root << endl;
+    cout << "Rejected tracks: " << n_rejected << endl;
+}
