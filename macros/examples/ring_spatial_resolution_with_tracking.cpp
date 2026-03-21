@@ -47,12 +47,12 @@ int n_rejected = 0;
 //  This excercise is still a work in progress, stay tuned for updates!
 //  --- --- --- !!!
 
-std::array<float, 2> time_cut_boundaries = {-15., 15.};
+std::array<float, 2> time_cut_boundaries = {-6., 6.};
 
 // ---------------------------------------------------------------------------
 //  Z positions of the two detector planes
 // ---------------------------------------------------------------------------
-constexpr float z_drich = 4325; // dRICH detector plane (mm)
+constexpr float z_drich = 4377; // dRICH detector plane (mm) was -4325
 constexpr float z_scint = 1150; // Scintillator plane (mm)
 
 // ---------------------------------------------------------------------------
@@ -206,11 +206,16 @@ std::string cut_plane_to_string(CutPlane p)
 {
     switch (p)
     {
-    case CutPlane::NONE:  return "NONE";
-    case CutPlane::DRICH: return "DRICH";
-    case CutPlane::SCINT: return "SCINT";
-    case CutPlane::BOTH:  return "BOTH";
-    default:              return "UNKNOWN";
+    case CutPlane::NONE:
+        return "NONE";
+    case CutPlane::DRICH:
+        return "DRICH";
+    case CutPlane::SCINT:
+        return "SCINT";
+    case CutPlane::BOTH:
+        return "BOTH";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -218,9 +223,12 @@ std::string cut_side_to_string(CutSide s)
 {
     switch (s)
     {
-    case CutSide::INSIDE:  return "INSIDE";
-    case CutSide::OUTSIDE: return "OUTSIDE";
-    default:               return "UNKNOWN";
+    case CutSide::INSIDE:
+        return "INSIDE";
+    case CutSide::OUTSIDE:
+        return "OUTSIDE";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -242,33 +250,34 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     alcor_recotrackdata *recotrackdata = new alcor_recotrackdata();
     recotrackdata->link_to_tree(recotrackdata_tree);
 
-    auto n_frames  = recotrackdata_tree->GetEntries();
+    auto n_frames = recotrackdata_tree->GetEntries();
     auto all_frames = min((int)n_frames, (int)max_frames);
 
     // -------------------------------------------------------------------------
     //  >>> SELECTION SETTINGS — change these lines <<<
     // -------------------------------------------------------------------------
-    CutPlane cut_plane = CutPlane::NONE; // NONE / DRICH / SCINT / BOTH
-    CutSide cut_side   = CutSide::INSIDE;
+    CutPlane cut_plane = CutPlane::SCINT; // NONE / DRICH / SCINT / BOTH
+    CutSide cut_side = CutSide::INSIDE;
 
     bool apply_multiplicity_cut = false;
-    bool apply_radial_cut       = false;
-    bool require_single_track   = false;
-    bool require_multi_track    = true;
+    bool apply_radial_cut = false;
+    bool require_single_track = true;
+    bool require_multi_track = false;
 
     bool apply_theta_phi_cut = false;
-    bool apply_slope_xy_cut  = false;
+    bool apply_slope_xy_cut = false;
 
-    float theta_min   = 0.0;
-    float theta_max   = 1.0;
-    float phi_min     = -2.2;
-    float phi_max     = -1.5;
+    float theta_min = 0.0;
+    float theta_max = .02;
+    float phi_min = -1;
+    float phi_max = 1;
     float slope_x_min = 0.02;
     float slope_x_max = 1.0;
     float slope_y_min = 0.02;
     float slope_y_max = 1.0;
 
-    TCutG *cutg = make_cutg_rect(-100, 100, -100, 100);
+    // TCutG *cutg = make_cutg_rect(-100, 100, -100, 100);
+    TCutG *cutg = make_cutg_scint_largo();
     // -------------------------------------------------------------------------
 
     // =========================================================================
@@ -277,30 +286,30 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
 
     // --- Time distribution ---
     TH1F *h_t_distribution = new TH1F("h_t_distribution",
-        "Hit time wrt trigger;t_{hit} - t_{timing} (ns);counts",
-        200, -312.5, 312.5);
+                                      "Hit time wrt trigger;t_{hit} - t_{timing} (ns);counts",
+                                      200, -312.5, 312.5);
 
     // --- First round ring fit ---
     TH1F *h_first_round_X = new TH1F("h_first_round_X",
-        "Ring center X (1st round);x_{0} (mm);counts", 120, -30, 30);
+                                     "Ring center X (1st round);x_{0} (mm);counts", 120, -30, 30);
     TH1F *h_first_round_Y = new TH1F("h_first_round_Y",
-        "Ring center Y (1st round);y_{0} (mm);counts", 120, -30, 30);
+                                     "Ring center Y (1st round);y_{0} (mm);counts", 120, -30, 30);
     TH1F *h_first_round_R = new TH1F("h_first_round_R",
-        "Ring radius (1st round);R (mm);counts", 200, 30, 130);
+                                     "Ring radius (1st round);R (mm);counts", 200, 30, 130);
 
     // --- Tracking QA ---
     TH1F *h_tracking_theta = new TH1F("h_tracking_theta",
-        "Track polar angle;#theta (rad);counts", 1000, 0, 0.1);
+                                      "Track polar angle;#theta (rad);counts", 1000, 0, 0.1);
     TH1F *h_tracking_phi = new TH1F("h_tracking_phi",
-        "Track azimuthal angle;#phi (rad);counts", 1000, -3.1415, +3.1415);
+                                    "Track azimuthal angle;#phi (rad);counts", 1000, -3.1415, +3.1415);
 
     // --- Intercept maps ---
     TH2F *h_intercept_drich = new TH2F("h_intercept_drich",
-        "Track intercept at dRICH plane (z=4325 mm);x (mm);y (mm)",
-        500, -50., +50., 200, -50., +50.);
+                                       "Track intercept at dRICH plane (z=4325 mm);x (mm);y (mm)",
+                                       500, -50., +50., 200, -50., +50.);
     TH2F *h_intercept_scint = new TH2F("h_intercept_scint",
-        "Track intercept at scintillator plane (z=1150 mm);x (mm);y (mm)",
-        500, -50., +50., 200, -50., +50.);
+                                       "Track intercept at scintillator plane (z=1150 mm);x (mm);y (mm)",
+                                       500, -50., +50., 200, -50., +50.);
 
     // =========================================================================
     //  FIRST LOOP
@@ -355,9 +364,9 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     bar.update(all_frames, all_frames);
     bar.finish();
 
-    float found_ring_center_x      = h_first_round_X->GetMean();
-    float found_ring_center_y      = h_first_round_Y->GetMean();
-    float found_ring_radius        = h_first_round_R->GetMean();
+    float found_ring_center_x = h_first_round_X->GetMean();
+    float found_ring_center_y = h_first_round_Y->GetMean();
+    float found_ring_radius = h_first_round_R->GetMean();
     h_first_round_R->Fit("gaus", "Q");
     auto gaus_f = h_first_round_R->GetFunction("gaus");
     float found_ring_radius_stddev = gaus_f->GetParameter(2);
@@ -371,96 +380,98 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
 
     // --- Hit maps ---
     TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map",
-        "Selected hits on detector plane;x (mm);y (mm)",
-        396, -99, 99, 396, -99, 99);
+                                           "Selected hits on detector plane;x (mm);y (mm)",
+                                           396, -99, 99, 396, -99, 99);
     TH2F *h_second_round_xy_map_rejected = new TH2F("h_second_round_xy_map_rejected",
-        "Rejected hits on detector plane;x (mm);y (mm)",
-        396, -99, 99, 396, -99, 99);
+                                                    "Rejected hits on detector plane;x (mm);y (mm)",
+                                                    396, -99, 99, 396, -99, 99);
 
     // --- Basic ring residual and hit yield ---
     TH1F *h_second_round_R = new TH1F("h_second_round_R",
-        "Ring radius residual (2nd round);#DeltaR (mm);counts", 200, -20, 20);
+                                      "Ring radius residual (2nd round);#DeltaR (mm);counts", 200, -20, 20);
     TH1F *h_n_selected_hits = new TH1F("h_n_selected_hits",
-        "Selected hits per event;n hits;counts", 100, 0, 100);
+                                       "Selected hits per event;n hits;counts", 100, 0, 100);
 
     // --- Multiplicity ---
     TH2F *h_n_selected_hits_vs_multiplicity = new TH2F("h_n_selected_hits_vs_multiplicity",
-        "Selected hits vs track multiplicity;n tracks;n hits",
-        10, -0.5, 9.5, 100, -0.5, 99.5);
+                                                       "Selected hits vs track multiplicity;n tracks;n hits",
+                                                       100, -0.5, 9.5, 100, -0.5, 99.5);
 
     // --- Photon yield vs tracking variables ---
     TH2F *h_n_selected_hits_vs_theta = new TH2F("h_n_selected_hits_vs_theta",
-        "Selected hits vs track polar angle;#theta (rad);n hits",
-        10, 0, 0.1, 100, -0.5, 99.5);
+                                                "Selected hits vs track polar angle;#theta (rad);n hits",
+                                                2000, 0, 0.1, 100, -0.5, 99.5);
     TH2F *h_n_selected_hits_vs_ix_drich = new TH2F("h_n_selected_hits_vs_ix_drich",
-        "Selected hits vs track intercept X at dRICH;x_{dRICH} (mm);n hits",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 100, -0.5, 99.5);
+                                                   "Selected hits vs track intercept X at dRICH;x_{dRICH} (mm);n hits",
+                                                   ix_drich_range.size() - 1, ix_drich_range.data(), 100, -0.5, 99.5);
     TH2F *h_n_selected_hits_vs_iy_drich = new TH2F("h_n_selected_hits_vs_iy_drich",
-        "Selected hits vs track intercept Y at dRICH;y_{dRICH} (mm);n hits",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 100, -0.5, 99.5);
+                                                   "Selected hits vs track intercept Y at dRICH;y_{dRICH} (mm);n hits",
+                                                   ix_drich_range.size() - 1, ix_drich_range.data(), 100, -0.5, 99.5);
 
     // --- DeltaR vs tracking variables (for sigma plots) ---
+    double theta_binning[]{
+        0., 0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.00075, 0.001, 0.0015, 0.002, 0.0025, 0.005};
     TH2F *h_deltaR_vs_theta = new TH2F("h_deltaR_vs_theta",
-        "#DeltaR vs track #theta;#theta (rad);#DeltaR (mm)",
-        50, 0, 0.1, 200, -20, 20);
+                                       "#DeltaR vs track #theta;#theta (rad);#DeltaR (mm)",
+                                       11, 0, 0.1, 200, -20, 20);
     TH2F *h_deltaR_vs_phi = new TH2F("h_deltaR_vs_phi",
-        "#DeltaR vs track #phi;#phi (rad);#DeltaR (mm)",
-        50, -3.1415, 3.1415, 200, -20, 20);
+                                     "#DeltaR vs track #phi;#phi (rad);#DeltaR (mm)",
+                                     50, -3.1415, 3.1415, 200, -20, 20);
     TH2F *h_deltaR_vs_ix_drich = new TH2F("h_deltaR_vs_ix_drich",
-        "#DeltaR vs track intercept X at dRICH;x_{dRICH} (mm);#DeltaR (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 200, -20., 20.);
+                                          "#DeltaR vs track intercept X at dRICH;x_{dRICH} (mm);#DeltaR (mm)",
+                                          ix_drich_range.size() - 1, ix_drich_range.data(), 500, -20., 20.);
 
     // =========================================================================
     //  RING FIT PARAMS vs ix_drich  (x0, y0, R)
     // =========================================================================
     TH2F *h_ring_x0_vs_ix_drich = new TH2F("h_ring_x0_vs_ix_drich",
-        "Ring center X vs intercept X at dRICH;x_{dRICH} (mm);x_{0} (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+                                           "Ring center X vs intercept X at dRICH;x_{dRICH} (mm);x_{0} (mm)",
+                                           ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
     TH2F *h_ring_y0_vs_ix_drich = new TH2F("h_ring_y0_vs_ix_drich",
-        "Ring center Y vs intercept X at dRICH;x_{dRICH} (mm);y_{0} (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+                                           "Ring center Y vs intercept X at dRICH;x_{dRICH} (mm);y_{0} (mm)",
+                                           ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
     TH2F *h_ring_R_vs_ix_drich = new TH2F("h_ring_R_vs_ix_drich",
-        "Ring radius vs intercept X at dRICH;x_{dRICH} (mm);R (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 200, 30, 130);
+                                          "Ring radius vs intercept X at dRICH;x_{dRICH} (mm);R (mm)",
+                                          ix_drich_range.size() - 1, ix_drich_range.data(), 200, 30, 130);
 
     // =========================================================================
     //  RING FIT PARAMS vs iy_drich  (x0, y0, R)
     // =========================================================================
     TH2F *h_ring_x0_vs_iy_drich = new TH2F("h_ring_x0_vs_iy_drich",
-        "Ring center X vs intercept Y at dRICH;y_{dRICH} (mm);x_{0} (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+                                           "Ring center X vs intercept Y at dRICH;y_{dRICH} (mm);x_{0} (mm)",
+                                           ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
     TH2F *h_ring_y0_vs_iy_drich = new TH2F("h_ring_y0_vs_iy_drich",
-        "Ring center Y vs intercept Y at dRICH;y_{dRICH} (mm);y_{0} (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
+                                           "Ring center Y vs intercept Y at dRICH;y_{dRICH} (mm);y_{0} (mm)",
+                                           ix_drich_range.size() - 1, ix_drich_range.data(), 120, -30, 30);
     TH2F *h_ring_R_vs_iy_drich = new TH2F("h_ring_R_vs_iy_drich",
-        "Ring radius vs intercept Y at dRICH;y_{dRICH} (mm);R (mm)",
-        ix_drich_range.size() - 1, ix_drich_range.data(), 200, 30, 130);
+                                          "Ring radius vs intercept Y at dRICH;y_{dRICH} (mm);R (mm)",
+                                          ix_drich_range.size() - 1, ix_drich_range.data(), 200, 30, 130);
 
     // =========================================================================
     //  RING FIT PARAMS vs theta  (x0, y0, R)
     // =========================================================================
     TH2F *h_ring_x0_vs_theta = new TH2F("h_ring_x0_vs_theta",
-        "Ring center X vs track #theta;#theta (rad);x_{0} (mm)",
-        50, 0, 0.1, 120, -30, 30);
+                                        "Ring center X vs track #theta;#theta (rad);x_{0} (mm)",
+                                        50, 0, 0.1, 120, -30, 30);
     TH2F *h_ring_y0_vs_theta = new TH2F("h_ring_y0_vs_theta",
-        "Ring center Y vs track #theta;#theta (rad);y_{0} (mm)",
-        50, 0, 0.1, 120, -30, 30);
+                                        "Ring center Y vs track #theta;#theta (rad);y_{0} (mm)",
+                                        50, 0, 0.1, 120, -30, 30);
     TH2F *h_ring_R_vs_theta = new TH2F("h_ring_R_vs_theta",
-        "Ring radius vs track #theta;#theta (rad);R (mm)",
-        50, 0, 0.1, 200, 30, 130);
+                                       "Ring radius vs track #theta;#theta (rad);R (mm)",
+                                       50, 0, 0.1, 200, 30, 130);
 
     // =========================================================================
     //  RING FIT PARAMS vs phi  (x0, y0, R)
     // =========================================================================
     TH2F *h_ring_x0_vs_phi = new TH2F("h_ring_x0_vs_phi",
-        "Ring center X vs track #phi;#phi (rad);x_{0} (mm)",
-        50, -3.1415, 3.1415, 120, -30, 30);
+                                      "Ring center X vs track #phi;#phi (rad);x_{0} (mm)",
+                                      50, -3.1415, 3.1415, 120, -30, 30);
     TH2F *h_ring_y0_vs_phi = new TH2F("h_ring_y0_vs_phi",
-        "Ring center Y vs track #phi;#phi (rad);y_{0} (mm)",
-        50, -3.1415, 3.1415, 120, -30, 30);
+                                      "Ring center Y vs track #phi;#phi (rad);y_{0} (mm)",
+                                      50, -3.1415, 3.1415, 120, -30, 30);
     TH2F *h_ring_R_vs_phi = new TH2F("h_ring_R_vs_phi",
-        "Ring radius vs track #phi;#phi (rad);R (mm)",
-        50, -3.1415, 3.1415, 200, 30, 130);
+                                     "Ring radius vs track #phi;#phi (rad);R (mm)",
+                                     50, -3.1415, 3.1415, 200, 30, 130);
 
     // =========================================================================
     //  SECOND LOOP
@@ -479,12 +490,15 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
             continue;
 
         auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
-        auto streaming_trigger        = recotrackdata->get_trigger_by_index(104);
+        auto streaming_trigger = recotrackdata->get_trigger_by_index(104);
         if (streaming_trigger && default_hardware_trigger)
         {
-            if (require_single_track && recotrackdata->n_recotrackdata() != 1) continue;
-            if (!require_single_track && recotrackdata->n_recotrackdata() < 1) continue;
-            if (require_multi_track && recotrackdata->n_recotrackdata() > 2) continue;
+            if (require_single_track && recotrackdata->n_recotrackdata() != 1)
+                continue;
+            if (!require_single_track && recotrackdata->n_recotrackdata() < 1)
+                continue;
+            if (require_multi_track && recotrackdata->n_recotrackdata() > 2)
+                continue;
 
             float plane_x = recotrackdata->get_det_plane_x(0);
             float plane_y = recotrackdata->get_det_plane_y(0);
@@ -501,18 +515,22 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
             }
 
             float track_theta = recotrackdata->get_traj_angcoeff_theta(0);
-            float track_phi   = recotrackdata->get_traj_angcoeff_phi(0);
+            float track_phi = recotrackdata->get_traj_angcoeff_phi(0);
 
             if (apply_theta_phi_cut)
             {
-                if (track_theta < theta_min || track_theta > theta_max) continue;
-                if (track_phi   < phi_min   || track_phi   > phi_max)   continue;
+                if (track_theta < theta_min || track_theta > theta_max)
+                    continue;
+                if (track_phi < phi_min || track_phi > phi_max)
+                    continue;
             }
 
             if (apply_slope_xy_cut)
             {
-                if (fabs(slope_x) < slope_x_min || fabs(slope_x) > slope_x_max) continue;
-                if (fabs(slope_y) < slope_y_min || fabs(slope_y) > slope_y_max) continue;
+                if (fabs(slope_x) < slope_x_min || fabs(slope_x) > slope_x_max)
+                    continue;
+                if (fabs(slope_y) < slope_y_min || fabs(slope_y) > slope_y_max)
+                    continue;
             }
 
             // Intercept maps
@@ -522,7 +540,8 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
             // Hit selection
             for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
             {
-                if (recotrackdata->is_afterpulse(current_hit)) continue;
+                if (recotrackdata->is_afterpulse(current_hit))
+                    continue;
 
                 auto time_delta_wrt_ref = recotrackdata->get_hit_t(current_hit) - streaming_trigger->fine_time;
                 if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
@@ -594,9 +613,15 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
         for (int xb = 1; xb <= h2->GetNbinsX(); xb++)
         {
             auto sl = h2->ProjectionY(Form("sg_%s_%i", h2->GetName(), xb), xb, xb);
-            if (sl->GetEntries() < 50) continue;
+            if (sl->GetEntries() < 100)
+                continue;
             sl->Fit("gaus", "Q");
             auto f = sl->GetFunction("gaus");
+            f->SetParameter(0, sl->GetMaximum());
+            f->SetParameter(1, sl->GetMean());
+            f->SetParameter(2, sl->GetRMS());
+            sl->Fit(f, "Q");
+            sl->Fit(f, "Q");
             int n = g->GetN();
             g->SetPoint(n, h2->GetXaxis()->GetBinCenter(xb), f->GetParameter(2));
             g->SetPointError(n, 0.5 * h2->GetXaxis()->GetBinWidth(xb), f->GetParError(2));
@@ -614,43 +639,66 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     // --- First round ring fit ---
     TCanvas *c_first_round = new TCanvas("c_first_round", "Ring fit results - 1st round", 1200, 400);
     c_first_round->Divide(3, 1);
-    c_first_round->cd(1); h_first_round_X->Draw();
-    c_first_round->cd(2); h_first_round_Y->Draw();
-    c_first_round->cd(3); h_first_round_R->Draw();
+    c_first_round->cd(1);
+    h_first_round_X->Draw();
+    c_first_round->cd(2);
+    h_first_round_Y->Draw();
+    c_first_round->cd(3);
+    h_first_round_R->Draw();
 
     // --- Tracking angle distributions ---
     TCanvas *c_tracking_angles = new TCanvas("c_tracking_angles", "Tracking angle distributions", 1600, 800);
     c_tracking_angles->Divide(2, 1);
-    c_tracking_angles->cd(1); h_tracking_theta->Draw();
-    c_tracking_angles->cd(2); h_tracking_phi->Draw();
+    c_tracking_angles->cd(1);
+    h_tracking_theta->Draw();
+    if (apply_theta_phi_cut)
+    {
+        TBox *box_theta = new TBox(theta_min, 0, theta_max, h_tracking_theta->GetMaximum());
+        box_theta->SetFillColorAlpha(kGreen, 0.3);
+        box_theta->SetLineWidth(0);
+        box_theta->Draw("SAME");
+        h_tracking_theta->Draw("SAME");
+    }
+    c_tracking_angles->cd(2);
+    h_tracking_phi->Draw();
+    if (apply_theta_phi_cut)
+    {
+        TBox *box_phi = new TBox(phi_min, 0, phi_max, h_tracking_phi->GetMaximum());
+        box_phi->SetFillColorAlpha(kGreen, 0.3);
+        box_phi->SetLineWidth(0);
+        box_phi->Draw("SAME");
+        h_tracking_phi->Draw("SAME");
+    }
 
     // --- Intercept maps ---
     TCanvas *c_intercepts = new TCanvas("c_intercepts", "Track intercept maps (selected tracks)", 1600, 800);
     c_intercepts->Divide(2, 1);
-    c_intercepts->cd(1); h_intercept_drich->Draw("COLZ");
-    c_intercepts->cd(2); h_intercept_scint->Draw("COLZ");
+    c_intercepts->cd(1);
+    h_intercept_drich->Draw("COLZ");
+    c_intercepts->cd(2);
+    h_intercept_scint->Draw("COLZ");
 
     // --- Hit maps ---
     TCanvas *c_second_round_map = new TCanvas("c_second_round_map",
-        "Selected hits on detector plane - 2nd round", 800, 800);
+                                              "Selected hits on detector plane - 2nd round", 800, 800);
     h_second_round_xy_map->Draw("COLZ");
 
     TCanvas *c_second_round_map_rejected = new TCanvas("c_second_round_map_rejected",
-        "Rejected hits on detector plane - 2nd round", 800, 800);
+                                                       "Rejected hits on detector plane - 2nd round", 800, 800);
     h_second_round_xy_map_rejected->Draw("COLZ");
 
     // --- Basic ring residual ---
     TCanvas *c_second_round_R = new TCanvas("c_second_round_R",
-        "Ring radius residual - 2nd round", 800, 600);
+                                            "Ring radius residual - 2nd round", 800, 600);
     h_second_round_R->Draw();
 
     // --- Hit yield distributions ---
     TCanvas *c_n_selected_hits = new TCanvas("c_n_selected_hits",
-        "Selected hits per event", 800, 600);
+                                             "Selected hits per event", 800, 600);
     h_n_selected_hits->Draw();
 
     TCanvas *c_hits_vs_multiplicity = new TCanvas("c_hits_vs_multiplicity",
-        "Selected hits vs track multiplicity", 800, 800);
+                                                  "Selected hits vs track multiplicity", 800, 800);
     h_n_selected_hits_vs_multiplicity->Draw("SCAT");
 
     // --- Photon yield vs tracking variables (scatter + Poisson profile) ---
@@ -664,8 +712,10 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
         {
             auto current_point = g->GetN();
             auto sl = h2->ProjectionY(Form("py_%s_%i", h2->GetName(), x_bin), x_bin, x_bin);
-            if (sl->GetEntries() < 50) continue;
-            fitfunc->SetParameter(0, 16.); fitfunc->SetParameter(1, 1.);
+            if (sl->GetEntries() < 50)
+                continue;
+            fitfunc->SetParameter(0, 16.);
+            fitfunc->SetParameter(1, 1.);
             sl->Fit("fitfunc", "Q");
             auto f = sl->GetFunction("fitfunc");
             g->SetPoint(current_point, h2->GetXaxis()->GetBinCenter(x_bin), f->GetParameter(0));
@@ -678,58 +728,81 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     TGraphErrors *g_photons_theta = new TGraphErrors();
     g_photons_theta->SetTitle("Mean photon yield vs #theta;#theta (rad);#mu_{p.e.}");
     draw_photon_yield(c_photons_theta, h_n_selected_hits_vs_theta, g_photons_theta);
+    h_n_selected_hits_vs_theta->Draw("COLZ");
 
     TCanvas *c_photons_ix = new TCanvas("c_photons_ix", "Photon yield vs x_{dRICH}", 800, 800);
     TGraphErrors *g_photons_ix = new TGraphErrors();
     g_photons_ix->SetTitle("Mean photon yield vs x_{dRICH};x_{dRICH} (mm);#mu_{p.e.}");
     draw_photon_yield(c_photons_ix, h_n_selected_hits_vs_ix_drich, g_photons_ix);
+    h_n_selected_hits_vs_ix_drich->Draw("COLZ");
 
     TCanvas *c_photons_iy = new TCanvas("c_photons_iy", "Photon yield vs y_{dRICH}", 800, 800);
     TGraphErrors *g_photons_iy = new TGraphErrors();
     g_photons_iy->SetTitle("Mean photon yield vs y_{dRICH};y_{dRICH} (mm);#mu_{p.e.}");
     draw_photon_yield(c_photons_iy, h_n_selected_hits_vs_iy_drich, g_photons_iy);
+    h_n_selected_hits_vs_iy_drich->Draw("COLZ");
 
     // --- Ring fit params vs ix_drich (x0, y0, R — scatter) ---
     TCanvas *c_ring_params_ix = new TCanvas("c_ring_params_ix",
-        "Ring fit params vs x_{dRICH}", 1800, 600);
+                                            "Ring fit params vs x_{dRICH}", 1800, 600);
     c_ring_params_ix->Divide(3, 1);
-    c_ring_params_ix->cd(1); h_ring_x0_vs_ix_drich->Draw("SCAT");
-    c_ring_params_ix->cd(2); h_ring_y0_vs_ix_drich->Draw("SCAT");
-    c_ring_params_ix->cd(3); h_ring_R_vs_ix_drich->Draw("SCAT");
+    c_ring_params_ix->cd(1);
+    h_ring_x0_vs_ix_drich->Draw("SCAT");
+    c_ring_params_ix->cd(2);
+    h_ring_y0_vs_ix_drich->Draw("SCAT");
+    c_ring_params_ix->cd(3);
+    h_ring_R_vs_ix_drich->Draw("SCAT");
 
     // --- Ring fit params vs iy_drich (x0, y0, R — scatter) ---
     TCanvas *c_ring_params_iy = new TCanvas("c_ring_params_iy",
-        "Ring fit params vs y_{dRICH}", 1800, 600);
+                                            "Ring fit params vs y_{dRICH}", 1800, 600);
     c_ring_params_iy->Divide(3, 1);
-    c_ring_params_iy->cd(1); h_ring_x0_vs_iy_drich->Draw("SCAT");
-    c_ring_params_iy->cd(2); h_ring_y0_vs_iy_drich->Draw("SCAT");
-    c_ring_params_iy->cd(3); h_ring_R_vs_iy_drich->Draw("SCAT");
+    c_ring_params_iy->cd(1);
+    h_ring_x0_vs_iy_drich->Draw("SCAT");
+    c_ring_params_iy->cd(2);
+    h_ring_y0_vs_iy_drich->Draw("SCAT");
+    c_ring_params_iy->cd(3);
+    h_ring_R_vs_iy_drich->Draw("SCAT");
 
     // --- Ring fit params vs theta (x0, y0, R — scatter) ---
     TCanvas *c_ring_params_theta = new TCanvas("c_ring_params_theta",
-        "Ring fit params vs #theta", 1800, 600);
+                                               "Ring fit params vs #theta", 1800, 600);
     c_ring_params_theta->Divide(3, 1);
-    c_ring_params_theta->cd(1); h_ring_x0_vs_theta->Draw("SCAT");
-    c_ring_params_theta->cd(2); h_ring_y0_vs_theta->Draw("SCAT");
-    c_ring_params_theta->cd(3); h_ring_R_vs_theta->Draw("SCAT");
+    c_ring_params_theta->cd(1);
+    h_ring_x0_vs_theta->Draw("SCAT");
+    c_ring_params_theta->cd(2);
+    h_ring_y0_vs_theta->Draw("SCAT");
+    c_ring_params_theta->cd(3);
+    h_ring_R_vs_theta->Draw("SCAT");
 
     // --- Ring fit params vs phi (x0, y0, R — scatter) ---
     TCanvas *c_ring_params_phi = new TCanvas("c_ring_params_phi",
-        "Ring fit params vs #phi", 1800, 600);
+                                             "Ring fit params vs #phi", 1800, 600);
     c_ring_params_phi->Divide(3, 1);
-    c_ring_params_phi->cd(1); h_ring_x0_vs_phi->Draw("SCAT");
-    c_ring_params_phi->cd(2); h_ring_y0_vs_phi->Draw("SCAT");
-    c_ring_params_phi->cd(3); h_ring_R_vs_phi->Draw("SCAT");
+    c_ring_params_phi->cd(1);
+    h_ring_x0_vs_phi->Draw("SCAT");
+    c_ring_params_phi->cd(2);
+    h_ring_y0_vs_phi->Draw("SCAT");
+    c_ring_params_phi->cd(3);
+    h_ring_R_vs_phi->Draw("SCAT");
 
-    // --- Sigma (spatial resolution) vs theta ---
     TCanvas *c_sigma_theta = new TCanvas("c_sigma_theta", "Spatial resolution vs #theta", 800, 800);
-    make_sigma_graph(h_deltaR_vs_theta,
-        "Spatial resolution vs track #theta;#theta (rad);#sigma_{R} (mm)")->Draw("ALP");
+    int n_bins_theta = std::max(1, (int)(50 / std::max(1000, (int)(h_deltaR_vs_theta->GetEntries() / 500))));
+    h_deltaR_vs_theta->RebinX(n_bins_theta);
+    auto current_graph = make_sigma_graph(h_deltaR_vs_theta,
+                                          "Spatial resolution vs track #theta;#theta (rad);#sigma_{R} (mm)");
+    current_graph->SetMinimum(1.5);
+    current_graph->SetMaximum(2.5);
+    current_graph->Draw("ALP");
+    gPad->SetLogx();
+    // current_graph->Draw("COLZ");
 
     // --- Sigma (spatial resolution) vs phi ---
     TCanvas *c_sigma_phi = new TCanvas("c_sigma_phi", "Spatial resolution vs #phi", 800, 800);
     make_sigma_graph(h_deltaR_vs_phi,
-        "Spatial resolution vs track #phi;#phi (rad);#sigma_{R} (mm)")->Draw("ALP");
+                     "Spatial resolution vs track #phi;#phi (rad);#sigma_{R} (mm)")
+        ->Draw("ALP");
+    h_deltaR_vs_phi->Draw("COLZ");
 
     // --- Settings ---
     TCanvas *c_settings = new TCanvas("c_settings", "Analysis settings", 600, 600);
@@ -760,7 +833,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     //  SAVE
     // =========================================================================
     std::string output_root = data_repository + "/" + run_name + "/plots/histograms.root";
-    std::string output_dir  = data_repository + "/" + run_name + "/plots";
+    std::string output_dir = data_repository + "/" + run_name + "/plots";
     gSystem->mkdir(output_dir.c_str(), true);
 
     TFile *output_file = new TFile(output_root.c_str(), "RECREATE");
@@ -796,6 +869,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     h_ring_x0_vs_phi->Write();
     h_ring_y0_vs_phi->Write();
     h_ring_R_vs_phi->Write();
+    current_graph->Write("g_sigma_vs_theta");
 
     for (auto obj : *gROOT->GetListOfCanvases())
     {
