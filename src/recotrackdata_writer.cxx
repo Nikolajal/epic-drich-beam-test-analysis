@@ -96,18 +96,25 @@ void recotrackdata_writer(
             altai_events_counter++;
 
             //  Exclude events with 0 or multiple tracks
-            if (current_tracking.event_has_one_track(altai_events_counter))
-                test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
+            //if (current_tracking.event_has_one_track(altai_events_counter))
+            //    test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
 
             //  Recotrack events counter
             recotrack_events_counter++;
             recotrackdata->import_event(current_tracking.get_event_tracks(altai_events_counter));
+
+            if (recotrack_events_counter < 25)
+            {
+                mist::logger::debug("frame: " + std::to_string(i_frame));
+                mist::logger::debug("altai_events_counter: " + std::to_string(altai_events_counter));
+            }
 
             recotrackdata_tree->Fill();
             recotrackdata->clear();
         }
     }
 
+    /*
     i_spill = 0;
     double previous_timestamp = current_tracking.get_timestamp(0, 0); // Timestamp of first track of first event -> Could be null/0 to check
     double starting_timestamp = current_tracking.get_timestamp(0, 0); // Timestamp of first track of first event -> Could be null/0 to check
@@ -139,7 +146,7 @@ void recotrackdata_writer(
         mist::logger::debug(Form("Spill %d, recodata nevs %d, recotrack nevs %d", spill, per_spill_events_counter_recodata[spill + reco_spill_shift], count));
         if (per_spill_events_counter_recodata[spill + reco_spill_shift] == count)
             mist::logger::debug(Form("Spill %d, matched!", spill));
-    }
+    }*/
 
     mist::logger::info(Form("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter));
     recotrackdata_tree->Write();
