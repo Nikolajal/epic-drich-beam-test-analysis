@@ -83,7 +83,6 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     std::string angle_y_min            = read_setting("angle_y_min");
     std::string angle_y_max            = read_setting("angle_y_max");
 
-    // parse numeric values for highlight boxes (before f->Close())
     auto safe_stof = [](const std::string &s, float fallback = 0.f) -> float {
         try { return std::stof(s); } catch (...) { return fallback; }
     };
@@ -106,6 +105,7 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     auto get = [&](const char *name) -> TObject * { return f->Get(name); };
 
     TH1F *h_t_distribution               = (TH1F *)get("h_t_distribution");
+    TH1F *h_t_distribution_track         = (TH1F *)get("h_t_distribution_track");
     TH1F *h_first_round_X                = (TH1F *)get("h_first_round_X");
     TH1F *h_first_round_Y                = (TH1F *)get("h_first_round_Y");
     TH1F *h_first_round_R                = (TH1F *)get("h_first_round_R");
@@ -129,19 +129,20 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     TH2F *h_deltaR_vs_iy_drich           = (TH2F *)get("h_deltaR_vs_iy_drich");
     TH1F *h_d_intercept                  = (TH1F *)get("h_d_intercept");
     TH2F *h_deltaR_vs_d_intercept        = (TH2F *)get("h_deltaR_vs_d_intercept");
-    TH2F *h_ring_x0_vs_ix_drich          = (TH2F *)get("h_ring_x0_vs_ix_drich");
-    TH2F *h_ring_y0_vs_ix_drich          = (TH2F *)get("h_ring_y0_vs_ix_drich");
-    TH2F *h_ring_R_vs_ix_drich           = (TH2F *)get("h_ring_R_vs_ix_drich");
-    TH2F *h_ring_x0_vs_iy_drich          = (TH2F *)get("h_ring_x0_vs_iy_drich");
-    TH2F *h_ring_y0_vs_iy_drich          = (TH2F *)get("h_ring_y0_vs_iy_drich");
-    TH2F *h_ring_R_vs_iy_drich           = (TH2F *)get("h_ring_R_vs_iy_drich");
+    TH2F *h_ring_R_vs_d_intercept        = (TH2F *)get("h_ring_R_vs_d_intercept");
     TH2F *h_ring_x0_vs_theta             = (TH2F *)get("h_ring_x0_vs_theta");
     TH2F *h_ring_y0_vs_theta             = (TH2F *)get("h_ring_y0_vs_theta");
     TH2F *h_ring_R_vs_theta              = (TH2F *)get("h_ring_R_vs_theta");
     TH2F *h_ring_x0_vs_phi               = (TH2F *)get("h_ring_x0_vs_phi");
     TH2F *h_ring_y0_vs_phi               = (TH2F *)get("h_ring_y0_vs_phi");
     TH2F *h_ring_R_vs_phi                = (TH2F *)get("h_ring_R_vs_phi");
-    TH2F *h_ring_R_vs_d_intercept        = (TH2F *)get("h_ring_R_vs_d_intercept");
+    TH2F *h_display_hits                 = (TH2F *)get("h_display_hits");
+    TGraph *g_display_intercepts_single  = (TGraph *)get("g_display_intercepts_single");
+    TGraph *g_display_intercepts_multi   = (TGraph *)get("g_display_intercepts_multi");
+    TCutG  *cutg2_display                = (TCutG  *)get("cutg2_display");
+    TH2F *h_notrack_xy_map               = (TH2F *)get("h_notrack_xy_map");
+    TH1F *h_notrack_R                    = (TH1F *)get("h_notrack_R");
+    TH1F *h_notrack_n_hits               = (TH1F *)get("h_notrack_n_hits");
 
     f->Close();
 
@@ -153,7 +154,6 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     TF1 *gaus = new TF1("gaus_fit", "gaus", -20, 20);
     const int entries_threshold = 200;
 
-    // param 2 = sigma, param 1 = mean
     auto make_sigma = [&](TH2F *h) { return fit_histogram(h, gaus, entries_threshold, 2); };
     auto make_mean  = [&](TH2F *h) { return fit_histogram(h, gaus, entries_threshold, 1); };
 
@@ -172,17 +172,16 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
 
     auto make_trio_canvas = [&](const char *name, const char *title,
                                 TH2F *h_deltaR, TGraphErrors *g_fit,
-                                const char *g_fit_title, TH2F *h_R_abs)
+                                const char *g_fit_title, TH2F *h_third)
     {
         TCanvas *c = new TCanvas(name, title, 1800, 600);
         c->Divide(3, 1);
         c->cd(1); h_deltaR->Draw("SCAT");
         c->cd(2); draw_graph(g_fit, g_fit_title);
-        c->cd(3); h_R_abs->Draw("SCAT");
+        c->cd(3); h_third->Draw("SCAT");
         return c;
     };
 
-    // Draw TH1 with optional highlighted range (semitransparent red box)
     auto draw_with_range = [&](TH1F *h, bool highlight, float xlo, float xhi)
     {
         h->SetLineColor(kBlack);
@@ -216,9 +215,21 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     // =========================================================================
     TCanvas *c_time_delta = new TCanvas("c_time_delta", "Hit time wrt trigger", 800, 600);
     gPad->SetLogy();
-    h_t_distribution->SetLineColor(kBlack);
-    h_t_distribution->SetLineWidth(2);
-    h_t_distribution->Draw();
+    {
+        TH1F *h_t_clone  = (TH1F *)h_t_distribution->Clone("h_t_clone");
+        TH1F *h_tt_clone = (TH1F *)h_t_distribution_track->Clone("h_tt_clone");
+        h_t_clone->SetLineColor(kBlack);  h_t_clone->SetLineWidth(2);
+        h_tt_clone->SetLineColor(kRed);   h_tt_clone->SetLineWidth(2);
+        h_tt_clone->SetStats(0);
+        h_t_clone->SetTitle("Hit time wrt trigger;t_{hit} - t_{timing} (ns);counts");
+        h_t_clone->Draw("HIST");
+        h_tt_clone->Draw("HIST SAME");
+        TLegend *leg = new TLegend(0.12, 0.75, 0.55, 0.88);
+        leg->SetBorderSize(1); leg->SetTextFont(42); leg->SetTextSize(0.035);
+        leg->AddEntry(h_t_clone,  "all hits",        "l");
+        leg->AddEntry(h_tt_clone, "hits with track", "l");
+        leg->Draw();
+    }
 
     TCanvas *c_first_round = new TCanvas("c_first_round", "Ring fit results - 1st round", 1800, 600);
     c_first_round->Divide(3, 1);
@@ -232,6 +243,61 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     c_tracking_angles->cd(2); draw_with_range(h_tracking_phi,     do_theta_phi_highlight, f_phi_min,     f_phi_max);
     c_tracking_angles->cd(3); draw_with_range(h_tracking_angle_x, do_angle_xy_highlight,  f_angle_x_min, f_angle_x_max);
     c_tracking_angles->cd(4); draw_with_range(h_tracking_angle_y, do_angle_xy_highlight,  f_angle_y_min, f_angle_y_max);
+
+    // =========================================================================
+    //  CANVAS — display: accumulated hits + intercepts single/multi
+    // =========================================================================
+    TCanvas *c_display = new TCanvas("c_display",
+        Form("Hits + intercepts (%s)", read_setting("n_display_events").c_str()), 800, 800);
+    h_display_hits->Draw("SCAT");
+
+    if (cutg2_display)
+    {
+        // ricava xmin, xmax, ymin, ymax dal TCutG
+        double xmin = 1e9, xmax = -1e9, ymin = 1e9, ymax = -1e9;
+        for (int i = 0; i < cutg2_display->GetN(); i++)
+        {
+            double x, y;
+            cutg2_display->GetPoint(i, x, y);
+            xmin = std::min(xmin, x);
+            xmax = std::max(xmax, x);
+            ymin = std::min(ymin, y);
+            ymax = std::max(ymax, y);
+        }
+        TBox *box_cutg2 = new TBox(xmin, ymin, xmax, ymax);
+        box_cutg2->SetFillColorAlpha(kGreen, 0.25);
+        box_cutg2->SetLineColor(kYellow + 1);
+        box_cutg2->SetLineWidth(2);
+        box_cutg2->Draw("SAME");
+    }
+
+    if (g_display_intercepts_single && g_display_intercepts_single->GetN() > 0)
+    {
+        g_display_intercepts_single->SetMarkerStyle(29);
+        g_display_intercepts_single->SetMarkerColor(kRed);
+        g_display_intercepts_single->SetMarkerSize(1.5);
+        g_display_intercepts_single->Draw("P SAME");
+    }
+    if (g_display_intercepts_multi && g_display_intercepts_multi->GetN() > 0)
+    {
+        g_display_intercepts_multi->SetMarkerStyle(29);
+        g_display_intercepts_multi->SetMarkerColor(kBlue);
+        g_display_intercepts_multi->SetMarkerSize(1.5);
+        g_display_intercepts_multi->Draw("P SAME");
+    }
+
+    // legenda solo se almeno uno dei due graph ha punti
+    if ((g_display_intercepts_single && g_display_intercepts_single->GetN() > 0) ||
+        (g_display_intercepts_multi  && g_display_intercepts_multi->GetN()  > 0))
+    {
+        TLegend *leg = new TLegend(0.12, 0.82, 0.55, 0.92);
+        leg->SetBorderSize(1); leg->SetTextFont(42); leg->SetTextSize(0.030);
+        if (g_display_intercepts_single && g_display_intercepts_single->GetN() > 0)
+            leg->AddEntry(g_display_intercepts_single, "single track", "p");
+        if (g_display_intercepts_multi && g_display_intercepts_multi->GetN() > 0)
+            leg->AddEntry(g_display_intercepts_multi,  "multi track",  "p");
+        leg->Draw();
+    }
 
     // =========================================================================
     //  CANVAS — intercept maps
@@ -276,20 +342,12 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     c_photons_intercepts->cd(1); h_n_selected_hits_vs_ix_drich->Draw("SCAT");
     c_photons_intercepts->cd(2); h_n_selected_hits_vs_iy_drich->Draw("SCAT");
 
-    // =========================================================================
-    //  CANVAS — ring params vs ix/iy
-    // =========================================================================
-    TCanvas *c_ring_params_ix = new TCanvas("c_ring_params_ix", "Ring params vs x_{dRICH}", 1800, 600);
-    c_ring_params_ix->Divide(3, 1);
-    c_ring_params_ix->cd(1); h_ring_x0_vs_ix_drich->Draw("SCAT");
-    c_ring_params_ix->cd(2); h_ring_y0_vs_ix_drich->Draw("SCAT");
-    c_ring_params_ix->cd(3); h_ring_R_vs_ix_drich->Draw("SCAT");
-
-    TCanvas *c_ring_params_iy = new TCanvas("c_ring_params_iy", "Ring params vs y_{dRICH}", 1800, 600);
-    c_ring_params_iy->Divide(3, 1);
-    c_ring_params_iy->cd(1); h_ring_x0_vs_iy_drich->Draw("SCAT");
-    c_ring_params_iy->cd(2); h_ring_y0_vs_iy_drich->Draw("SCAT");
-    c_ring_params_iy->cd(3); h_ring_R_vs_iy_drich->Draw("SCAT");
+    TCanvas *c_photons_intercepts_proj = new TCanvas("c_photons_intercepts_proj", "Photon yield vs intercepts - projections", 1600, 800);
+    c_photons_intercepts_proj->Divide(2, 1);
+    c_photons_intercepts_proj->cd(1); ((TH1F *)h_n_selected_hits_vs_ix_drich->ProjectionX())->Draw();
+    gPad->SetLogy();
+    c_photons_intercepts_proj->cd(2); ((TH1F *)h_n_selected_hits_vs_iy_drich->ProjectionX())->Draw();
+    gPad->SetLogy();
 
     // =========================================================================
     //  CANVAS — ring params vs theta/phi
@@ -307,7 +365,7 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
     c_ring_params_phi->cd(3); h_ring_R_vs_phi->Draw("SCAT");
 
     // =========================================================================
-    //  CANVAS — deltaR + sigma + R_abs, per variabile
+    //  CANVAS — deltaR + sigma + n_hits, per variabile
     // =========================================================================
     auto c_res_theta = make_trio_canvas("c_sigma_theta",
         "#sigma(#DeltaR) vs #theta",
@@ -325,13 +383,13 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
         "#sigma(#DeltaR) vs x_{dRICH}",
         h_deltaR_vs_ix_drich, g_sigma_ix,
         "#sigma(#DeltaR) vs x_{dRICH};x_{dRICH} (mm);#sigma(#DeltaR) (mm)",
-        h_ring_R_vs_ix_drich);
+        h_n_selected_hits_vs_ix_drich);
 
     auto c_res_iy = make_trio_canvas("c_sigma_iy",
         "#sigma(#DeltaR) vs y_{dRICH}",
         h_deltaR_vs_iy_drich, g_sigma_iy,
         "#sigma(#DeltaR) vs y_{dRICH};y_{dRICH} (mm);#sigma(#DeltaR) (mm)",
-        h_ring_R_vs_iy_drich);
+        h_n_selected_hits_vs_iy_drich);
 
     auto c_res_d = make_trio_canvas("c_sigma_d",
         "#sigma(#DeltaR) vs d_{intercept}",
@@ -355,19 +413,64 @@ void ringtrack_draw(std::string data_repository, std::string run_name)
         "#mu(#DeltaR) vs x_{dRICH}",
         h_deltaR_vs_ix_drich, g_mean_ix,
         "#mu(#DeltaR) vs x_{dRICH};x_{dRICH} (mm);#mu(#DeltaR) (mm)",
-        h_ring_R_vs_ix_drich);
+        h_n_selected_hits_vs_ix_drich);
 
     auto c_mean_iy = make_trio_canvas("c_mean_iy",
         "#mu(#DeltaR) vs y_{dRICH}",
         h_deltaR_vs_iy_drich, g_mean_iy,
         "#mu(#DeltaR) vs y_{dRICH};y_{dRICH} (mm);#mu(#DeltaR) (mm)",
-        h_ring_R_vs_iy_drich);
+        h_n_selected_hits_vs_iy_drich);
 
     auto c_mean_d = make_trio_canvas("c_mean_d",
         "#mu(#DeltaR) vs d_{intercept}",
         h_deltaR_vs_d_intercept, g_mean_d_intercept,
         "#mu(#DeltaR) vs d_{intercept};d_{intercept} (mm);#mu(#DeltaR) (mm)",
         h_ring_R_vs_d_intercept);
+
+    // =========================================================================
+    //  CANVAS — no-track comparison
+    // =========================================================================
+    TCanvas *c_notrack = new TCanvas("c_notrack", "No-track events", 1800, 600);
+    c_notrack->Divide(3, 1);
+    c_notrack->cd(1); h_notrack_xy_map->Draw("COLZ");
+    c_notrack->cd(2);
+    {
+        TH1F *h_r_clone  = (TH1F *)h_second_round_R->Clone("h_r_clone");
+        TH1F *h_nt_clone = (TH1F *)h_notrack_R->Clone("h_nt_clone");
+
+        if (h_r_clone->Integral()  > 0) h_r_clone->Scale(1. / h_r_clone->Integral());
+        if (h_nt_clone->Integral() > 0) h_nt_clone->Scale(1. / h_nt_clone->Integral());
+
+        h_r_clone->SetLineColor(kBlack);  h_r_clone->SetLineWidth(2);
+        h_nt_clone->SetLineColor(kRed);   h_nt_clone->SetLineWidth(2);
+        h_nt_clone->SetStats(0);
+
+        double ymax = std::max(h_r_clone->GetMaximum(), h_nt_clone->GetMaximum()) * 1.15;
+        h_r_clone->SetMaximum(ymax);
+        h_r_clone->SetMinimum(0);
+
+        h_r_clone->SetTitle("#DeltaR: with track vs no track;#DeltaR (mm);probability / bin");
+        h_r_clone->Draw("HIST");
+        h_nt_clone->Draw("HIST SAME");
+
+        TLegend *leg = new TLegend(0.12, 0.75, 0.55, 0.88);
+        leg->SetBorderSize(1); leg->SetTextFont(42); leg->SetTextSize(0.035);
+        leg->AddEntry(h_r_clone,  "with track", "l");
+        leg->AddEntry(h_nt_clone, "no track",   "l");
+        leg->Draw();
+    }
+    c_notrack->cd(3);
+    {
+        TH1F *h_n_clone    = (TH1F *)h_n_selected_hits->Clone();
+        TH1F *h_nt_n_clone = (TH1F *)h_notrack_n_hits->Clone();
+        h_n_clone->SetLineColor(kBlack);  h_n_clone->SetLineWidth(2);
+        h_nt_n_clone->SetLineColor(kRed); h_nt_n_clone->SetLineWidth(2);
+        if (h_n_clone->GetMaximum()    > 0) h_n_clone->Scale(1. / h_n_clone->GetMaximum());
+        if (h_nt_n_clone->GetMaximum() > 0) h_nt_n_clone->Scale(1. / h_nt_n_clone->GetMaximum());
+        h_n_clone->SetTitle("N hits: with track (black) vs no track (red);n hits;normalized");
+        h_n_clone->Draw();
+        h_nt_n_clone->Draw("SAME");
+    }
 
     // =========================================================================
     //  CANVAS — settings
