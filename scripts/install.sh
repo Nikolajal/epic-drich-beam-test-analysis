@@ -10,6 +10,8 @@ BUILD_DIR="$PROJECT_ROOT/build"
 
 cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR"    \
     -DCMAKE_BUILD_TYPE=Release              \
-    -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+    -DCMAKE_INSTALL_PREFIX="$HOME/.local"   \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON    \
+    -DCMAKE_CXX_STANDARD=17
 cmake --build "$BUILD_DIR" --parallel
 cmake --install "$BUILD_DIR"
