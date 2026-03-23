@@ -7,9 +7,6 @@
 
 int n_rejected = 0;
 
-constexpr float z_drich = -4250;
-constexpr float z_scint = -1150;
-
 enum class CutPlane { NONE, DRICH, SCINT, BOTH };
 enum class CutSide  { INSIDE, OUTSIDE };
 
@@ -142,7 +139,8 @@ std::string cut_plane_to_string(CutPlane p)
 // ---------------------------------------------------------------------------
 bool is_track_selected(float plane_x, float plane_y, float slope_x, float slope_y,
                        TCutG *cutg1, CutPlane plane1, CutSide side1,
-                       TCutG *cutg2, CutPlane plane2, CutSide side2)
+                       TCutG *cutg2, CutPlane plane2, CutSide side2,
+                       float z_drich, float z_scint)
 {
     float ix_drich = plane_x + slope_x * z_drich;
     float iy_drich = plane_y + slope_y * z_drich;
@@ -181,14 +179,21 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
 
     const int   first_event  = cfg.get_int("first_event", 0);
     const int   max_frames_  = cfg.get_int("max_frames",  1000000);
-    const int   event_shift  = cfg.get_int("event_shift", 0);
+
+    const float z_drich = cfg.get_float("z_drich", -4250.f);
+    const float z_scint = cfg.get_float("z_scint", -1150.f);
 
     const bool require_single_track   = cfg.get_bool("require_single_track",   false);
     const bool require_multi_track    = cfg.get_bool("require_multi_track",    false);
     const bool apply_theta_phi_cut    = cfg.get_bool("apply_theta_phi_cut",    false);
-    const bool apply_angle_xy_cut     = cfg.get_bool("apply_angle_xy_cut",     false);
-    const bool apply_radial_cut       = cfg.get_bool("apply_radial_cut",       false);
-    const bool apply_multiplicity_cut = cfg.get_bool("apply_multiplicity_cut", false);
+    const bool  apply_angle_xy_cut     = cfg.get_bool("apply_angle_xy_cut",     false);
+    const bool  apply_afterpulse_cut   = cfg.get_bool("apply_afterpulse_cut",   true);
+    const bool  apply_chi2_cut         = cfg.get_bool("apply_chi2_cut",         false);
+    const float chi2_max               = cfg.get_float("chi2_max",              5.f);
+    const bool  use_best_track_only    = cfg.get_bool("use_best_track_only",    true);
+    const bool  apply_radial_cut       = cfg.get_bool("apply_radial_cut",       false);
+    const bool  apply_multiplicity_cut = cfg.get_bool("apply_multiplicity_cut", false);
+    const bool  require_all_tracks_pass_geometric_cuts = cfg.get_bool("require_all_tracks_pass_geometric_cuts", false);
 
     const float theta_min   = cfg.get_float("theta_min",    0.f);
     const float theta_max   = cfg.get_float("theta_max",    0.0001f);
@@ -296,7 +301,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         {
             for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
             {
-                if (recotrackdata->is_afterpulse(current_hit)) continue;
+                if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
                 auto time_delta = recotrackdata->get_hit_t(current_hit) - default_hardware_trigger->fine_time;
                 h_t_distribution->Fill(time_delta);
                 if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
@@ -318,9 +323,19 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     float found_ring_center_x    = h_first_round_X->GetMean();
     float found_ring_center_y    = h_first_round_Y->GetMean();
     float found_ring_radius      = h_first_round_R->GetMean();
-    h_first_round_R->Fit("gaus", "Q");
-    auto  gaus_f                 = h_first_round_R->GetFunction("gaus");
-    float found_ring_radius_stddev = gaus_f->GetParameter(2);
+    float found_ring_radius_stddev = 5.f; // default
+
+    if (h_first_round_R->GetEntries() > 10)
+    {
+        h_first_round_R->Fit("gaus", "Q");
+        auto gaus_f = h_first_round_R->GetFunction("gaus");
+        if (gaus_f) found_ring_radius_stddev = gaus_f->GetParameter(2);
+    }
+    else
+    {
+        std::cerr << "[WARNING] h_first_round_R è quasi vuoto — ring center/radius non affidabili. "
+                  << "Controlla il time cut.\n";
+    }
 
     // =========================================================================
     //  HISTOGRAMS — second round
@@ -328,12 +343,10 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     std::vector<double> ix_drich_range = {-60, -40, -20, -10, -6, -2, 0, 2, 6, 10, 20, 40, 60};
 
     std::ofstream intercept_file(data_repository + "/" + run_name + "/intercepts.txt");
-    intercept_file << "track_frame\thit_frame\tplane_x\tplane_y\tix_drich\tiy_drich\n";
+    intercept_file << "track_frame\thit_frame\tplane_x\tplane_y\tslope_x\tslope_y\tix_drich\tiy_drich\n";
 
     TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map",
         "Selected hits on detector plane;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_second_round_xy_map_rejected = new TH2F("h_second_round_xy_map_rejected",
-        "Rejected hits on detector plane;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH1F *h_second_round_R = new TH1F("h_second_round_R",
         "Ring radius residual (2nd round);#DeltaR (mm);counts", 200, -20, 20);
     TH1F *h_n_selected_hits = new TH1F("h_n_selected_hits",
@@ -414,6 +427,11 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     TH2F *h_intercept_drich_zero_hits = new TH2F("h_intercept_drich_zero_hits",
         "Track intercept at dRICH (0 hit events);x (mm);y (mm)", 120, -60., 60., 120, -60., 60.);
 
+    // distribuzione temporale per eventi che passano i tagli (senza time cut)
+    TH1F *h_t_distribution_selected = new TH1F("h_t_distribution_selected",
+        "Hit time wrt trigger (selected events);t_{hit} - t_{timing} (ns);counts",
+        200, -312.5, 312.5);
+
     // =========================================================================
     //  SECOND LOOP
     // =========================================================================
@@ -426,8 +444,8 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         if (i_frame % 1000 == 0) bar_second.update(i_frame, all_frames);
         if (recotrackdata->is_start_of_spill()) continue;
 
-        auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
-        if (!default_hardware_trigger) continue;
+        auto trigger = recotrackdata->get_trigger_by_index(0);
+        if (!trigger) continue;
 
         const int n_tracks = recotrackdata->n_recotrackdata();
 
@@ -446,40 +464,57 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             if (chi2 < best_chi2) { best_chi2 = chi2; best_track = i; }
         }
 
-        const float plane_x     = recotrackdata->get_det_plane_x(best_track);
-        const float plane_y     = recotrackdata->get_det_plane_y(best_track);
-        const float slope_x     = recotrackdata->get_traj_angcoeff_x(best_track);
-        const float slope_y     = recotrackdata->get_traj_angcoeff_y(best_track);
-        const float ix_drich    = plane_x + slope_x * z_drich;
-        const float iy_drich    = plane_y + slope_y * z_drich;
-        const float d_intercept = sqrt(pow(ix_drich - found_ring_center_x, 2) +
-                                       pow(iy_drich - found_ring_center_y, 2));
+        if (apply_chi2_cut && best_chi2 > chi2_max) continue;
 
-        if (!is_track_selected(plane_x, plane_y, slope_x, slope_y,
-                               cutg1, plane1, side1, cutg2, plane2, side2))
+        // require_all_tracks_pass
+        if (require_all_tracks_pass_geometric_cuts && n_tracks > 1)
         {
-            n_rejected++;
-            continue;
+            bool all_pass = true;
+            for (int i = 0; i < n_tracks; i++)
+            {
+                float px = recotrackdata->get_det_plane_x(i);
+                float py = recotrackdata->get_det_plane_y(i);
+                float sx = recotrackdata->get_traj_angcoeff_x(i);
+                float sy = recotrackdata->get_traj_angcoeff_y(i);
+                if (!is_track_selected(px, py, sx, sy,
+                                       cutg1, plane1, side1, cutg2, plane2, side2,
+                                       z_drich, z_scint))
+                { all_pass = false; break; }
+            }
+            if (!all_pass) { n_rejected++; continue; }
         }
 
-        const float track_theta   = recotrackdata->get_traj_angcoeff_theta(best_track);
-        const float track_phi     = recotrackdata->get_traj_angcoeff_phi(best_track);
-        const float track_angle_x = atan(slope_x);
-        const float track_angle_y = atan(slope_y);
-
-        if (apply_theta_phi_cut)
+        // costruisci lista tracce da processare
+        std::vector<int> tracks_to_process;
+        if (use_best_track_only)
         {
-            if (track_theta < theta_min || track_theta > theta_max) continue;
-            if (track_phi   < phi_min   || track_phi   > phi_max)   continue;
+            float px = recotrackdata->get_det_plane_x(best_track);
+            float py = recotrackdata->get_det_plane_y(best_track);
+            float sx = recotrackdata->get_traj_angcoeff_x(best_track);
+            float sy = recotrackdata->get_traj_angcoeff_y(best_track);
+            if (!is_track_selected(px, py, sx, sy,
+                                   cutg1, plane1, side1, cutg2, plane2, side2,
+                                   z_drich, z_scint))
+            { n_rejected++; continue; }
+            tracks_to_process.push_back(best_track);
         }
-        if (apply_angle_xy_cut)
+        else
         {
-            if (track_angle_x < angle_x_min || track_angle_x > angle_x_max) continue;
-            if (track_angle_y < angle_y_min || track_angle_y > angle_y_max) continue;
+            for (int i = 0; i < n_tracks; i++)
+            {
+                float px = recotrackdata->get_det_plane_x(i);
+                float py = recotrackdata->get_det_plane_y(i);
+                float sx = recotrackdata->get_traj_angcoeff_x(i);
+                float sy = recotrackdata->get_traj_angcoeff_y(i);
+                float chi2_i = recotrackdata->get_chi2ndof(i);
+                if (apply_chi2_cut && chi2_i > chi2_max) continue;
+                if (!is_track_selected(px, py, sx, sy,
+                                       cutg1, plane1, side1, cutg2, plane2, side2,
+                                       z_drich, z_scint)) continue;
+                tracks_to_process.push_back(i);
+            }
+            if (tracks_to_process.empty()) { n_rejected++; continue; }
         }
-
-        const float saved_ix_scint = plane_x + slope_x * z_scint;
-        const float saved_iy_scint = plane_y + slope_y * z_scint;
 
         // intercette di tutte le tracce per display multi
         std::vector<std::pair<float,float>> all_track_intercepts;
@@ -495,20 +530,13 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             }
         }
 
-        // shift
-        int hit_frame = i_frame + event_shift;
-        if (hit_frame < first_event || hit_frame >= all_frames) continue;
-
-        recotrackdata_tree->GetEntry(hit_frame);
-        auto hit_frame_trigger = recotrackdata->get_trigger_by_index(0);
-        if (!hit_frame_trigger) continue;
-
-        // loop hit
+        // loop hit — una volta sola per evento, stesso frame
         selected_points.clear();
         for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
         {
-            if (recotrackdata->is_afterpulse(current_hit)) continue;
-            auto time_delta = recotrackdata->get_hit_t(current_hit) - hit_frame_trigger->fine_time;
+            if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
+            auto time_delta = recotrackdata->get_hit_t(current_hit) - trigger->fine_time;
+            h_t_distribution_selected->Fill(time_delta);
             if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
             if (apply_radial_cut &&
                 fabs(recotrackdata->get_hit_r(current_hit, {found_ring_center_x, found_ring_center_y}) - found_ring_radius) > 5 * found_ring_radius_stddev)
@@ -516,87 +544,122 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
             h_second_round_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
         }
-
         const int n_hits = (int)selected_points.size();
 
-        h_n_selected_hits->Fill(n_hits);
-        h_n_selected_hits_vs_multiplicity->Fill(n_tracks, n_hits);
-        h_n_selected_hits_vs_theta->Fill(track_theta, n_hits);
-        h_n_selected_hits_vs_ix_drich->Fill(ix_drich, n_hits);
-        h_n_selected_hits_vs_iy_drich->Fill(iy_drich, n_hits);
-
-        intercept_file << i_frame << "\t" << hit_frame << "\t"
-                       << plane_x << "\t" << plane_y << "\t"
-                       << ix_drich << "\t" << iy_drich << "\n";
-
-        if (n_hits == 0) h_intercept_drich_zero_hits->Fill(ix_drich, iy_drich);
-
-        // display nhits cut
-        bool pass_display_nhits = true;
-        if (display_nhits_cut_mode == "greater")
-            pass_display_nhits = (n_hits > display_nhits_min);
-        else if (display_nhits_cut_mode == "range")
-            pass_display_nhits = (n_hits >= display_nhits_min && n_hits <= display_nhits_max);
-
-        if (n_display_filled < n_display_events && pass_display_nhits)
+        // itera sulle tracce selezionate
+        bool first_track_in_event = true;
+        for (int track_idx : tracks_to_process)
         {
-            if (n_tracks == 1)
-                g_display_intercepts_single->AddPoint(ix_drich, iy_drich);
-            else if (display_all_tracks)
-                for (auto &p : all_track_intercepts)
-                    g_display_intercepts_multi->AddPoint(p.first, p.second);
-            else
-                g_display_intercepts_multi->AddPoint(ix_drich, iy_drich);
+            const float plane_x      = recotrackdata->get_det_plane_x(track_idx);
+            const float plane_y      = recotrackdata->get_det_plane_y(track_idx);
+            const float slope_x      = recotrackdata->get_traj_angcoeff_x(track_idx);
+            const float slope_y      = recotrackdata->get_traj_angcoeff_y(track_idx);
+            const float ix_drich     = plane_x + slope_x * z_drich;
+            const float iy_drich     = plane_y + slope_y * z_drich;
+            const float d_intercept  = sqrt(pow(ix_drich - found_ring_center_x, 2) +
+                                            pow(iy_drich - found_ring_center_y, 2));
+            const float track_theta   = recotrackdata->get_traj_angcoeff_theta(track_idx);
+            const float track_phi     = recotrackdata->get_traj_angcoeff_phi(track_idx);
+            const float track_angle_x = atan(slope_x);
+            const float track_angle_y = atan(slope_y);
+            const float saved_ix_scint = plane_x + slope_x * z_scint;
+            const float saved_iy_scint = plane_y + slope_y * z_scint;
 
-            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+            if (apply_theta_phi_cut)
             {
-                if (recotrackdata->is_afterpulse(current_hit)) continue;
-                auto time_delta = recotrackdata->get_hit_t(current_hit) - hit_frame_trigger->fine_time;
-                if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
-                h_display_hits->Fill(recotrackdata->get_hit_x_rnd(current_hit),
-                                     recotrackdata->get_hit_y_rnd(current_hit));
+                if (track_theta < theta_min || track_theta > theta_max) continue;
+                if (track_phi   < phi_min   || track_phi   > phi_max)   continue;
             }
-        }
-        if (n_display_filled < n_display_events) n_display_filled++;
-
-        // fit
-        if (n_hits > 4 && (!apply_multiplicity_cut || fabs(n_hits - 15) < 2))
-        {
-            h_intercept_drich->Fill(ix_drich, iy_drich);
-            h_intercept_scint->Fill(saved_ix_scint, saved_iy_scint);
-            h_d_intercept->Fill(d_intercept);
-
-            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+            if (apply_angle_xy_cut)
             {
-                if (recotrackdata->is_afterpulse(current_hit)) continue;
-                auto time_delta = recotrackdata->get_hit_t(current_hit) - hit_frame_trigger->fine_time;
-                h_t_distribution_track->Fill(time_delta);
+                if (track_angle_x < angle_x_min || track_angle_x > angle_x_max) continue;
+                if (track_angle_y < angle_y_min || track_angle_y > angle_y_max) continue;
             }
 
-            auto fit_result = fit_circle(selected_points,
-                {found_ring_center_x, found_ring_center_y, found_ring_radius}, true, {{}});
-            float deltaR = fit_result[2][0] - found_ring_radius;
+            h_n_selected_hits->Fill(n_hits);
+            h_n_selected_hits_vs_multiplicity->Fill(n_tracks, n_hits);
+            h_n_selected_hits_vs_theta->Fill(track_theta, n_hits);
+            h_n_selected_hits_vs_ix_drich->Fill(ix_drich, n_hits);
+            h_n_selected_hits_vs_iy_drich->Fill(iy_drich, n_hits);
 
-            h_second_round_R->Fill(deltaR);
-            h_deltaR_vs_theta->Fill(track_theta, deltaR);
-            h_deltaR_vs_phi->Fill(track_phi, deltaR);
-            h_deltaR_vs_ix_drich->Fill(ix_drich, deltaR);
-            h_deltaR_vs_iy_drich->Fill(iy_drich, deltaR);
-            h_deltaR_vs_d_intercept->Fill(d_intercept, deltaR);
-            h_ring_x0_vs_ix_drich->Fill(ix_drich, fit_result[0][0]);
-            h_ring_y0_vs_ix_drich->Fill(ix_drich, fit_result[1][0]);
-            h_ring_R_vs_ix_drich->Fill(ix_drich,  fit_result[2][0]);
-            h_ring_x0_vs_iy_drich->Fill(iy_drich, fit_result[0][0]);
-            h_ring_y0_vs_iy_drich->Fill(iy_drich, fit_result[1][0]);
-            h_ring_R_vs_iy_drich->Fill(iy_drich,  fit_result[2][0]);
-            h_ring_x0_vs_theta->Fill(track_theta, fit_result[0][0]);
-            h_ring_y0_vs_theta->Fill(track_theta, fit_result[1][0]);
-            h_ring_R_vs_theta->Fill(track_theta,  fit_result[2][0]);
-            h_ring_x0_vs_phi->Fill(track_phi, fit_result[0][0]);
-            h_ring_y0_vs_phi->Fill(track_phi, fit_result[1][0]);
-            h_ring_R_vs_phi->Fill(track_phi,  fit_result[2][0]);
-            h_ring_R_vs_d_intercept->Fill(d_intercept, fit_result[2][0]);
-        }
+            intercept_file << i_frame << "\t" << i_frame << "\t"
+                           << plane_x << "\t" << plane_y << "\t"
+                           << slope_x << "\t" << slope_y << "\t"
+                           << ix_drich << "\t" << iy_drich << "\n";
+
+            if (n_hits == 0) h_intercept_drich_zero_hits->Fill(ix_drich, iy_drich);
+
+            // display: solo alla prima traccia per evento
+            if (first_track_in_event && n_display_filled < n_display_events)
+            {
+                bool pass_display_nhits = true;
+                if (display_nhits_cut_mode == "greater")
+                    pass_display_nhits = (n_hits > display_nhits_min);
+                else if (display_nhits_cut_mode == "range")
+                    pass_display_nhits = (n_hits >= display_nhits_min && n_hits <= display_nhits_max);
+
+                if (pass_display_nhits)
+                {
+                    if (n_tracks == 1)
+                        g_display_intercepts_single->AddPoint(ix_drich, iy_drich);
+                    else if (display_all_tracks)
+                        for (auto &p : all_track_intercepts)
+                            g_display_intercepts_multi->AddPoint(p.first, p.second);
+                    else
+                        g_display_intercepts_multi->AddPoint(ix_drich, iy_drich);
+
+                    for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+                    {
+                        if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
+                        auto time_delta = recotrackdata->get_hit_t(current_hit) - trigger->fine_time;
+                        if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
+                        h_display_hits->Fill(recotrackdata->get_hit_x_rnd(current_hit),
+                                             recotrackdata->get_hit_y_rnd(current_hit));
+                    }
+                }
+                n_display_filled++;
+                first_track_in_event = false;
+            }
+
+            // fit
+            if (n_hits > 4 && (!apply_multiplicity_cut || fabs(n_hits - 15) < 2))
+            {
+                h_intercept_drich->Fill(ix_drich, iy_drich);
+                h_intercept_scint->Fill(saved_ix_scint, saved_iy_scint);
+                h_d_intercept->Fill(d_intercept);
+
+                for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+                {
+                    if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
+                    auto time_delta = recotrackdata->get_hit_t(current_hit) - trigger->fine_time;
+                    h_t_distribution_track->Fill(time_delta);
+                }
+
+                auto fit_result = fit_circle(selected_points,
+                    {found_ring_center_x, found_ring_center_y, found_ring_radius}, true, {{}});
+                float deltaR = fit_result[2][0] - found_ring_radius;
+
+                h_second_round_R->Fill(deltaR);
+                h_deltaR_vs_theta->Fill(track_theta, deltaR);
+                h_deltaR_vs_phi->Fill(track_phi, deltaR);
+                h_deltaR_vs_ix_drich->Fill(ix_drich, deltaR);
+                h_deltaR_vs_iy_drich->Fill(iy_drich, deltaR);
+                h_deltaR_vs_d_intercept->Fill(d_intercept, deltaR);
+                h_ring_x0_vs_ix_drich->Fill(ix_drich, fit_result[0][0]);
+                h_ring_y0_vs_ix_drich->Fill(ix_drich, fit_result[1][0]);
+                h_ring_R_vs_ix_drich->Fill(ix_drich,  fit_result[2][0]);
+                h_ring_x0_vs_iy_drich->Fill(iy_drich, fit_result[0][0]);
+                h_ring_y0_vs_iy_drich->Fill(iy_drich, fit_result[1][0]);
+                h_ring_R_vs_iy_drich->Fill(iy_drich,  fit_result[2][0]);
+                h_ring_x0_vs_theta->Fill(track_theta, fit_result[0][0]);
+                h_ring_y0_vs_theta->Fill(track_theta, fit_result[1][0]);
+                h_ring_R_vs_theta->Fill(track_theta,  fit_result[2][0]);
+                h_ring_x0_vs_phi->Fill(track_phi, fit_result[0][0]);
+                h_ring_y0_vs_phi->Fill(track_phi, fit_result[1][0]);
+                h_ring_R_vs_phi->Fill(track_phi,  fit_result[2][0]);
+                h_ring_R_vs_d_intercept->Fill(d_intercept, fit_result[2][0]);
+            }
+        } // fine loop tracce
     }
     bar_second.update(all_frames, all_frames);
     bar_second.finish();
@@ -626,7 +689,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         std::vector<std::array<float, 2>> selected_points;
         for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
         {
-            if (recotrackdata->is_afterpulse(current_hit)) continue;
+            if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
             auto time_delta = recotrackdata->get_hit_t(current_hit) - default_hardware_trigger->fine_time;
             if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
             if (apply_radial_cut &&
@@ -669,6 +732,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
 
     h_t_distribution->Write();
     h_t_distribution_track->Write();
+    h_t_distribution_selected->Write();
     h_first_round_X->Write();
     h_first_round_Y->Write();
     h_first_round_R->Write();
@@ -679,7 +743,6 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     h_intercept_drich->Write();
     h_intercept_scint->Write();
     h_second_round_xy_map->Write();
-    h_second_round_xy_map_rejected->Write();
     h_second_round_R->Write();
     h_n_selected_hits->Write();
     h_n_selected_hits_vs_multiplicity->Write();
