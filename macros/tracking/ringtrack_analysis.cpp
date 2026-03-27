@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <array>
+#include <unordered_set>
 
 int n_rejected = 0;
 
@@ -168,7 +169,8 @@ bool is_track_selected(float plane_x, float plane_y, float slope_x, float slope_
 //  MAIN FUNCTION
 // ===========================================================================
 void ringtrack_analysis(std::string data_repository, std::string run_name,
-                        std::string conf_path = "ringtrack.conf")
+                        std::string conf_path = "ringtrack.conf",
+                        std::string output_dir = "")
 {
     // -------------------------------------------------------------------------
     //  Load config
@@ -177,8 +179,40 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     cfg.load(conf_path);
     cfg.print();
 
+    // output_dir default: data_repository/run_name/plots
+    if (output_dir.empty())
+        output_dir = data_repository + "/" + run_name + "/plots";
+    std::string txt_dir = output_dir; // txt files go to same dir
+
     const int   first_event  = cfg.get_int("first_event", 0);
     const int   max_frames_  = cfg.get_int("max_frames",  1000000);
+
+    // frame list opzionale
+    const std::string frame_list_file = cfg.get_string("frame_list_file", "");
+    std::unordered_set<int> allowed_frames;
+    bool use_frame_list = false;
+    if (!frame_list_file.empty())
+    {
+        std::ifstream fl(frame_list_file);
+        if (fl.is_open())
+        {
+            std::string line;
+            std::getline(fl, line); // skip header
+            while (std::getline(fl, line))
+            {
+                if (line.empty()) continue;
+                std::istringstream ss(line);
+                int frame_id; ss >> frame_id;
+                allowed_frames.insert(frame_id);
+            }
+            fl.close();
+            use_frame_list = true;
+            std::cout << "[INFO] Loaded " << allowed_frames.size()
+                      << " frames from " << frame_list_file << std::endl;
+        }
+        else
+            std::cerr << "[WARNING] Cannot open frame_list_file: " << frame_list_file << std::endl;
+    }
 
     const float z_drich = cfg.get_float("z_drich", -4250.f);
     const float z_scint = cfg.get_float("z_scint", -1150.f);
@@ -193,6 +227,18 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     const bool  use_best_track_only    = cfg.get_bool("use_best_track_only",    true);
     const bool  apply_radial_cut       = cfg.get_bool("apply_radial_cut",       false);
     const bool  apply_multiplicity_cut = cfg.get_bool("apply_multiplicity_cut", false);
+    const bool  apply_window_selection  = cfg.get_bool("apply_window_selection", false);
+    const float window_sel_min          = cfg.get_float("window_sel_min",        -10.f);
+    const float window_sel_max          = cfg.get_float("window_sel_max",         10.f);
+    const int   window_sel_threshold    = cfg.get_int("window_sel_threshold",    5);
+    const bool  apply_window_veto       = cfg.get_bool("apply_window_veto",      false);
+    const float window_veto_min         = cfg.get_float("window_veto_min",       -65.f);
+    const float window_veto_max         = cfg.get_float("window_veto_max",       -25.f);
+    const int   window_veto_threshold   = cfg.get_int("window_veto_threshold",   3);
+    const bool  apply_window_veto_2     = cfg.get_bool("apply_window_veto_2",    false);
+    const float window_veto_2_min       = cfg.get_float("window_veto_2_min",      80.f);
+    const float window_veto_2_max       = cfg.get_float("window_veto_2_max",     120.f);
+    const int   window_veto_2_threshold = cfg.get_int("window_veto_2_threshold", 3);
     const bool  require_all_tracks_pass_geometric_cuts = cfg.get_bool("require_all_tracks_pass_geometric_cuts", false);
 
     const float theta_min   = cfg.get_float("theta_min",    0.f);
@@ -253,6 +299,8 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         "Hit time wrt trigger;t_{hit} - t_{timing} (ns);counts", 200, -312.5, 312.5);
     TH1F *h_t_distribution_track = new TH1F("h_t_distribution_track",
         "Hit time wrt trigger (with track);t_{hit} - t_{timing} (ns);counts", 200, -312.5, 312.5);
+    TH1F *h_all_n_hits = new TH1F("h_all_n_hits",
+        "N hits per event (all events);n hits;counts", 100, 0, 100);
     TH1F *h_first_round_X = new TH1F("h_first_round_X",
         "Ring center X (1st round);x_{0} (mm);counts", 120, -30, 30);
     TH1F *h_first_round_Y = new TH1F("h_first_round_Y",
@@ -273,6 +321,14 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         "Track intercept at scintillator plane;x (mm);y (mm)", 500, -200., +200., 200, -200., +200.);
     TH1F *h_event_multiplicity = new TH1F("h_event_multiplicity",
         "Track multiplicity per event;n tracks;n events", 10, -0.5, 9.5);
+    TH1F *h_track_multiplicity = new TH1F("h_track_multiplicity",
+        "Track multiplicity;n tracks;n events", 10, -0.5, 9.5);
+
+    int n_frames_no_trigger  = 0;
+    int n_frames_single_track = 0;
+    int n_frames_multi_track  = 0;
+    int n_frames_no_track     = 0;
+    int n_frames_total        = 0;
 
     // =========================================================================
     //  FIRST LOOP
@@ -287,35 +343,44 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         if (i_frame % 10000 == 0) bar.update(i_frame, all_frames);
         if (recotrackdata->is_start_of_spill()) continue;
 
-        for (auto i = 0; i < recotrackdata->n_recotrackdata(); i++)
+        ++n_frames_total;
+
+        auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
+        if (!default_hardware_trigger) { ++n_frames_no_trigger; continue; }
+
+        const int n_trk = recotrackdata->n_recotrackdata();
+        if      (n_trk == 0) ++n_frames_no_track;
+        else if (n_trk == 1) ++n_frames_single_track;
+        else                 ++n_frames_multi_track;
+
+        h_track_multiplicity->Fill(n_trk);
+
+        for (auto i = 0; i < n_trk; i++)
         {
             h_tracking_theta->Fill(recotrackdata->get_traj_angcoeff_theta(i));
             h_tracking_phi->Fill(recotrackdata->get_traj_angcoeff_phi(i));
             h_tracking_angle_x->Fill(atan(recotrackdata->get_traj_angcoeff_x(i)));
             h_tracking_angle_y->Fill(atan(recotrackdata->get_traj_angcoeff_y(i)));
         }
-        h_event_multiplicity->Fill(recotrackdata->n_recotrackdata());
+        h_event_multiplicity->Fill(n_trk);
 
-        auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
-        if (default_hardware_trigger)
+        for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
         {
-            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
-            {
-                if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
-                auto time_delta = recotrackdata->get_hit_t(current_hit) - default_hardware_trigger->fine_time;
-                h_t_distribution->Fill(time_delta);
-                if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
-                selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
-                avg_radius += recotrackdata->get_hit_r(current_hit);
-            }
-            if (selected_points.size() > 4)
-            {
-                auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false, {{}});
-                h_first_round_X->Fill(fit_result[0][0]);
-                h_first_round_Y->Fill(fit_result[1][0]);
-                h_first_round_R->Fill(fit_result[2][0]);
-            }
+            if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
+            auto time_delta = recotrackdata->get_hit_t(current_hit) - default_hardware_trigger->fine_time;
+            h_t_distribution->Fill(time_delta);
+            if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
+            selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
+            avg_radius += recotrackdata->get_hit_r(current_hit);
         }
+        if (selected_points.size() > 4)
+        {
+            auto fit_result = fit_circle(selected_points, {0., 0., avg_radius / selected_points.size()}, false, {{}});
+            h_first_round_X->Fill(fit_result[0][0]);
+            h_first_round_Y->Fill(fit_result[1][0]);
+            h_first_round_R->Fill(fit_result[2][0]);
+        }
+        h_all_n_hits->Fill((int)selected_points.size());
     }
     bar.update(all_frames, all_frames);
     bar.finish();
@@ -342,11 +407,21 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     // =========================================================================
     std::vector<double> ix_drich_range = {-60, -40, -20, -10, -6, -2, 0, 2, 6, 10, 20, 40, 60};
 
-    std::ofstream intercept_file(data_repository + "/" + run_name + "/intercepts.txt");
+    std::ofstream intercept_file(output_dir + "/intercepts.txt");
     intercept_file << "track_frame\thit_frame\tplane_x\tplane_y\tslope_x\tslope_y\tix_drich\tiy_drich\n";
+
+    std::ofstream signal_frames_file(output_dir + "/signal_frames.txt");
+    signal_frames_file << "frame\tn_signal_hits\tn_background_hits\tn_hits_total\n";
+
+    std::ofstream background_frames_file(output_dir + "/background_frames.txt");
+    background_frames_file << "frame\tn_signal_hits\tn_background_hits\tn_hits_total\n";
 
     TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map",
         "Selected hits on detector plane;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_signal_xy_map = new TH2F("h_signal_xy_map",
+        "Hit map - signal frames;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_background_xy_map = new TH2F("h_background_xy_map",
+        "Hit map - background frames;x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH1F *h_second_round_R = new TH1F("h_second_round_R",
         "Ring radius residual (2nd round);#DeltaR (mm);counts", 200, -20, 20);
     TH1F *h_n_selected_hits = new TH1F("h_n_selected_hits",
@@ -360,6 +435,25 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         120, -200., 200., 100, -0.5, 99.5);
     TH2F *h_n_selected_hits_vs_iy_drich = new TH2F("h_n_selected_hits_vs_iy_drich",
         "Selected hits vs track intercept Y at dRICH;y_{dRICH} (mm);n hits",
+        120, -200., 200., 100, -0.5, 99.5);
+
+    // hit nel ring (segnale) e fuori dal ring (background) vs intercetta
+    // segnale:    |r_hit - R_ring| < ring_band_sigma * sigma
+    // background: |r_hit - R_ring| >= ring_band_sigma * sigma
+    const float ring_band_sigma        = cfg.get_float("ring_band_sigma",        2.f);
+    const int   signal_frame_threshold = cfg.get_int("signal_frame_threshold",   3);
+
+    TH2F *h_signal_vs_ix = new TH2F("h_signal_vs_ix",
+        "Signal hits vs intercept X;x_{dRICH} (mm);n hits on ring",
+        120, -200., 200., 100, -0.5, 99.5);
+    TH2F *h_background_vs_ix = new TH2F("h_background_vs_ix",
+        "Background hits vs intercept X;x_{dRICH} (mm);n hits off ring",
+        120, -200., 200., 100, -0.5, 99.5);
+    TH2F *h_signal_vs_iy = new TH2F("h_signal_vs_iy",
+        "Signal hits vs intercept Y;y_{dRICH} (mm);n hits on ring",
+        120, -200., 200., 100, -0.5, 99.5);
+    TH2F *h_background_vs_iy = new TH2F("h_background_vs_iy",
+        "Background hits vs intercept Y;y_{dRICH} (mm);n hits off ring",
         120, -200., 200., 100, -0.5, 99.5);
     TH2F *h_deltaR_vs_theta = new TH2F("h_deltaR_vs_theta",
         "#DeltaR vs track #theta;#theta (rad);#DeltaR (mm)", 50, 0, 0.1, 200, -20, 20);
@@ -424,9 +518,6 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
 
     int n_display_filled = 0;
 
-    TH2F *h_intercept_drich_zero_hits = new TH2F("h_intercept_drich_zero_hits",
-        "Track intercept at dRICH (0 hit events);x (mm);y (mm)", 120, -60., 60., 120, -60., 60.);
-
     // distribuzione temporale per eventi che passano i tagli (senza time cut)
     TH1F *h_t_distribution_selected = new TH1F("h_t_distribution_selected",
         "Hit time wrt trigger (selected events);t_{hit} - t_{timing} (ns);counts",
@@ -443,9 +534,29 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
 
         if (i_frame % 1000 == 0) bar_second.update(i_frame, all_frames);
         if (recotrackdata->is_start_of_spill()) continue;
+        if (use_frame_list && allowed_frames.find(i_frame) == allowed_frames.end()) continue;
 
         auto trigger = recotrackdata->get_trigger_by_index(0);
         if (!trigger) continue;
+
+        // window selection: tieni solo frame con abbastanza hit nella finestra scelta
+        if (apply_window_selection || apply_window_veto || apply_window_veto_2)
+        {
+            int n_hits_sel   = 0;
+            int n_hits_veto  = 0;
+            int n_hits_veto2 = 0;
+            for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+            {
+                if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
+                float dt = recotrackdata->get_hit_t(current_hit) - trigger->fine_time;
+                if (apply_window_selection && dt >= window_sel_min    && dt <= window_sel_max)    ++n_hits_sel;
+                if (apply_window_veto      && dt >= window_veto_min   && dt <= window_veto_max)   ++n_hits_veto;
+                if (apply_window_veto_2    && dt >= window_veto_2_min && dt <= window_veto_2_max) ++n_hits_veto2;
+            }
+            if (apply_window_selection && n_hits_sel   <  window_sel_threshold)    continue;
+            if (apply_window_veto      && n_hits_veto  >= window_veto_threshold)   continue;
+            if (apply_window_veto_2    && n_hits_veto2 >= window_veto_2_threshold) continue;
+        }
 
         const int n_tracks = recotrackdata->n_recotrackdata();
 
@@ -532,6 +643,8 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
 
         // loop hit — una volta sola per evento, stesso frame
         selected_points.clear();
+        int n_signal_hits     = 0;
+        int n_background_hits = 0;
         for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
         {
             if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
@@ -543,8 +656,33 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
                 continue;
             selected_points.push_back({recotrackdata->get_hit_x(current_hit), recotrackdata->get_hit_y(current_hit)});
             h_second_round_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit), recotrackdata->get_hit_y_rnd(current_hit));
+
+            // signal vs background
+            float r_hit = recotrackdata->get_hit_r(current_hit, {found_ring_center_x, found_ring_center_y});
+            if (fabs(r_hit - found_ring_radius) < ring_band_sigma * found_ring_radius_stddev)
+                ++n_signal_hits;
+            else
+                ++n_background_hits;
         }
         const int n_hits = (int)selected_points.size();
+
+        // scrivi frame in signal o background file
+        bool is_signal_frame = (n_signal_hits >= signal_frame_threshold);
+        auto &frame_file = is_signal_frame ? signal_frames_file : background_frames_file;
+        frame_file << i_frame << "\t" << n_signal_hits << "\t"
+                   << n_background_hits << "\t" << n_hits << "\n";
+        for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
+        {
+            if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
+            auto time_delta = recotrackdata->get_hit_t(current_hit) - trigger->fine_time;
+            if (time_delta < time_cut_boundaries[0] || time_delta > time_cut_boundaries[1]) continue;
+            if (is_signal_frame)
+                h_signal_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit),
+                                      recotrackdata->get_hit_y_rnd(current_hit));
+            else
+                h_background_xy_map->Fill(recotrackdata->get_hit_x_rnd(current_hit),
+                                          recotrackdata->get_hit_y_rnd(current_hit));
+        }
 
         // itera sulle tracce selezionate
         bool first_track_in_event = true;
@@ -576,18 +714,19 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
                 if (track_angle_y < angle_y_min || track_angle_y > angle_y_max) continue;
             }
 
-            h_n_selected_hits->Fill(n_hits);
             h_n_selected_hits_vs_multiplicity->Fill(n_tracks, n_hits);
             h_n_selected_hits_vs_theta->Fill(track_theta, n_hits);
             h_n_selected_hits_vs_ix_drich->Fill(ix_drich, n_hits);
             h_n_selected_hits_vs_iy_drich->Fill(iy_drich, n_hits);
+            h_signal_vs_ix->Fill(ix_drich, n_signal_hits);
+            h_background_vs_ix->Fill(ix_drich, n_background_hits);
+            h_signal_vs_iy->Fill(iy_drich, n_signal_hits);
+            h_background_vs_iy->Fill(iy_drich, n_background_hits);
 
             intercept_file << i_frame << "\t" << i_frame << "\t"
                            << plane_x << "\t" << plane_y << "\t"
                            << slope_x << "\t" << slope_y << "\t"
                            << ix_drich << "\t" << iy_drich << "\n";
-
-            if (n_hits == 0) h_intercept_drich_zero_hits->Fill(ix_drich, iy_drich);
 
             // display: solo alla prima traccia per evento
             if (first_track_in_event && n_display_filled < n_display_events)
@@ -598,16 +737,18 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
                 else if (display_nhits_cut_mode == "range")
                     pass_display_nhits = (n_hits >= display_nhits_min && n_hits <= display_nhits_max);
 
+                // traccia sempre aggiunta — indipendentemente dal nhits cut
+                if (n_tracks == 1)
+                    g_display_intercepts_single->AddPoint(ix_drich, iy_drich);
+                else if (display_all_tracks)
+                    for (auto &p : all_track_intercepts)
+                        g_display_intercepts_multi->AddPoint(p.first, p.second);
+                else
+                    g_display_intercepts_multi->AddPoint(ix_drich, iy_drich);
+
+                // hit solo se il frame passa il nhits cut
                 if (pass_display_nhits)
                 {
-                    if (n_tracks == 1)
-                        g_display_intercepts_single->AddPoint(ix_drich, iy_drich);
-                    else if (display_all_tracks)
-                        for (auto &p : all_track_intercepts)
-                            g_display_intercepts_multi->AddPoint(p.first, p.second);
-                    else
-                        g_display_intercepts_multi->AddPoint(ix_drich, iy_drich);
-
                     for (auto current_hit = 0; current_hit < recotrackdata->get_recodata().size(); current_hit++)
                     {
                         if (apply_afterpulse_cut && recotrackdata->is_afterpulse(current_hit)) continue;
@@ -660,10 +801,13 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
                 h_ring_R_vs_d_intercept->Fill(d_intercept, fit_result[2][0]);
             }
         } // fine loop tracce
+        h_n_selected_hits->Fill(n_hits); // una volta per frame
     }
     bar_second.update(all_frames, all_frames);
     bar_second.finish();
     intercept_file.close();
+    signal_frames_file.close();
+    background_frames_file.close();
 
     // =========================================================================
     //  THIRD LOOP — no track
@@ -681,6 +825,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         recotrackdata_tree->GetEntry(i_frame);
         if (i_frame % 10000 == 0) bar_notrack.update(i_frame, all_frames);
         if (recotrackdata->is_start_of_spill()) continue;
+        if (use_frame_list && allowed_frames.find(i_frame) == allowed_frames.end()) continue;
         if (recotrackdata->n_recotrackdata() != 0) continue;
 
         auto default_hardware_trigger = recotrackdata->get_trigger_by_index(0);
@@ -712,7 +857,6 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     // =========================================================================
     //  SAVE
     // =========================================================================
-    std::string output_dir  = data_repository + "/" + run_name + "/plots";
     std::string output_root = output_dir + "/histograms.root";
     gSystem->mkdir(output_dir.c_str(), true);
 
@@ -732,6 +876,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
 
     h_t_distribution->Write();
     h_t_distribution_track->Write();
+    h_all_n_hits->Write();
     h_t_distribution_selected->Write();
     h_first_round_X->Write();
     h_first_round_Y->Write();
@@ -743,12 +888,18 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     h_intercept_drich->Write();
     h_intercept_scint->Write();
     h_second_round_xy_map->Write();
+    h_signal_xy_map->Write();
+    h_background_xy_map->Write();
     h_second_round_R->Write();
     h_n_selected_hits->Write();
     h_n_selected_hits_vs_multiplicity->Write();
     h_n_selected_hits_vs_theta->Write();
     h_n_selected_hits_vs_ix_drich->Write();
     h_n_selected_hits_vs_iy_drich->Write();
+    h_signal_vs_ix->Write();
+    h_background_vs_ix->Write();
+    h_signal_vs_iy->Write();
+    h_background_vs_iy->Write();
     h_deltaR_vs_theta->Write();
     h_deltaR_vs_phi->Write();
     h_deltaR_vs_ix_drich->Write();
@@ -774,12 +925,20 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     h_display_hits->Write();
     g_display_intercepts_single->Write();
     g_display_intercepts_multi->Write();
-    h_intercept_drich_zero_hits->Write();
     h_event_multiplicity->Write();
+    h_track_multiplicity->Write();
 
     output_file->Close();
 
     cout << "Output: " << output_root << endl;
+    cout << "========================================" << endl;
+    cout << "Frame statistics:" << endl;
+    cout << "  Total frames processed:  " << n_frames_total        << endl;
+    cout << "  No trigger:              " << n_frames_no_trigger    << endl;
+    cout << "  No track:                " << n_frames_no_track      << endl;
+    cout << "  Single track:            " << n_frames_single_track  << endl;
+    cout << "  Multi track:             " << n_frames_multi_track   << endl;
+    cout << "========================================" << endl;
     cout << "Rejected tracks: " << n_rejected << endl;
 
     int n_eventi_multi = 0, n_tracce_totali_multi = 0, n_tracce_extra_multi = 0;

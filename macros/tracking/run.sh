@@ -1,93 +1,116 @@
 #!/bin/bash
 
 usage() {
-    echo "Usage: $0 <data_folder> <run_id> [conf_file] [options]"
+    echo "Usage: $0 --data <folder> --run <run_id> [options]"
+    echo ""
+    echo "Required:"
+    echo "  --data <folder>   Data folder"
+    echo "  --run <run_id>    Run ID"
     echo ""
     echo "Options:"
-    echo "  --analysis        Run ringtrack_analysis (default if no options given)"
+    echo "  --conf <file>     Config file (default: ringtrack.conf)"
+    echo "  --output <dir>    Output directory (default: data/run/plots)"
+    echo "  --analysis        Run ringtrack_analysis (default if no macro option given)"
     echo "  --draw            Run ringtrack_draw"
     echo "  --draw-optional   Run ringtrack_draw_optional"
     echo "  --display         Run ringtrack_draw_display"
-    echo "  --all             Run all four"
+    echo "  --timing          Run ringtrack_timing"
+    echo "  --mult-windows    Run ringtrack_mult_windows"
+    echo "  --all             Run all six"
     echo ""
     echo "Examples:"
-    echo "  $0 /data run123                              # runs only analysis"
-    echo "  $0 /data run123 ringtrack.conf --all         # runs everything"
-    echo "  $0 /data run123 ringtrack.conf --draw --display"
+    echo "  $0 --data /data --run run123"
+    echo "  $0 --data /data --run run123 --conf ringtrack.conf --all"
+    echo "  $0 --data /data --run run123 --conf ringtrack.conf --output /output/plots --draw --display"
     exit 1
 }
 
-if [ "$#" -lt 2 ]; then
+if [ "$#" -lt 1 ]; then
     usage
 fi
 
-DATA_FOLDER="$1"
-RUN_ID="$2"
-
-# terzo argomento: se non inizia con -- è il conf, altrimenti default
-if [ "$#" -ge 3 ] && [[ "$3" != --* ]]; then
-    CONF="$3"
-    shift 3
-else
-    CONF="ringtrack.conf"
-    shift 2
-fi
-
-# parse options
+DATA_FOLDER=""
+RUN_ID=""
+CONF="ringtrack.conf"
+OUTPUT_DIR=""
 RUN_ANALYSIS=false
 RUN_DRAW=false
 RUN_DRAW_OPTIONAL=false
 RUN_DISPLAY=false
+RUN_TIMING=false
+RUN_MULT_WINDOWS=false
 
-if [ "$#" -eq 0 ]; then
-    # nessuna opzione → solo analysis
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --data)           DATA_FOLDER="$2"; shift 2 ;;
+        --run)            RUN_ID="$2";      shift 2 ;;
+        --conf)           CONF="$2";        shift 2 ;;
+        --output)         OUTPUT_DIR="$2";  shift 2 ;;
+        --analysis)       RUN_ANALYSIS=true;      shift ;;
+        --draw)           RUN_DRAW=true;           shift ;;
+        --draw-optional)  RUN_DRAW_OPTIONAL=true;  shift ;;
+        --display)        RUN_DISPLAY=true;        shift ;;
+        --timing)         RUN_TIMING=true;         shift ;;
+        --mult-windows)   RUN_MULT_WINDOWS=true;   shift ;;
+        --all)
+            RUN_ANALYSIS=true
+            RUN_DRAW=true
+            RUN_DRAW_OPTIONAL=true
+            RUN_DISPLAY=true
+            RUN_TIMING=true
+            RUN_MULT_WINDOWS=true
+            shift ;;
+        *)
+            echo "Unknown option: $1"
+            usage ;;
+    esac
+done
+
+if [ -z "$DATA_FOLDER" ] || [ -z "$RUN_ID" ]; then
+    echo "Error: --data and --run are required"
+    usage
+fi
+
+# default: solo analysis se nessuna macro specificata
+if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DRAW_OPTIONAL && ! $RUN_DISPLAY && ! $RUN_TIMING && ! $RUN_MULT_WINDOWS; then
     RUN_ANALYSIS=true
-else
-    for arg in "$@"; do
-        case $arg in
-            --analysis)       RUN_ANALYSIS=true ;;
-            --draw)           RUN_DRAW=true ;;
-            --draw-optional)  RUN_DRAW_OPTIONAL=true ;;
-            --display)        RUN_DISPLAY=true ;;
-            --all)
-                RUN_ANALYSIS=true
-                RUN_DRAW=true
-                RUN_DRAW_OPTIONAL=true
-                RUN_DISPLAY=true
-                ;;
-            *)
-                echo "Unknown option: $arg"
-                usage
-                ;;
-        esac
-    done
 fi
 
 echo "========================================"
 echo "Data folder: $DATA_FOLDER"
 echo "Run ID:      $RUN_ID"
 echo "Config:      $CONF"
+echo "Output dir:  ${OUTPUT_DIR:-<default>}"
 echo "========================================"
 
 if $RUN_ANALYSIS; then
     echo "-> Running ringtrack_analysis"
-    root -l -b -q "ringtrack_analysis.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\")"
-    # root -l -b -q "ringbug.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\")"
+    root -l -b -q "ringtrack_analysis.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
 fi
 
 if $RUN_DRAW; then
     echo "-> Running ringtrack_draw"
-    root -l -b -q "ringtrack_draw.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\")"
+    root -l -b -q "ringtrack_draw.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
 fi
 
 if $RUN_DRAW_OPTIONAL; then
     echo "-> Running ringtrack_draw_optional"
-    root -l -b -q "ringtrack_draw_optional.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\")"
+    root -l -b -q "ringtrack_draw_optional.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
 fi
 
 if $RUN_DISPLAY; then
     echo "-> Running ringtrack_draw_display"
-    root -l -b -q "ringtrack_draw_display.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\")"
+    root -l -b -q "ringtrack_draw_display.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
+fi
+
+if $RUN_TIMING; then
+    echo "-> Running ringtrack_timing"
+    root -l -b -q "ringtrack_timing.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
+fi
+
+if $RUN_MULT_WINDOWS; then
+    echo "-> Running ringtrack_mult_windows"
+    root -l -b -q "ringtrack_mult_windows.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
 fi
 
 echo "========================================"
