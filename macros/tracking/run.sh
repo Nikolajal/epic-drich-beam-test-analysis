@@ -1,5 +1,10 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOG_DIR"
+
 usage() {
     echo "Usage: $0 --data <folder> --run <run_id> [options]"
     echo ""
@@ -9,7 +14,7 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --conf <file>     Config file (default: ringtrack.conf)"
-    echo "  --output <dir>    Output directory (default: data/run/plots)"
+    echo "  --output <dir>    Output directory (default: <repo>/plots/<run_id>/<datetime>)"
     echo "  --analysis        Run ringtrack_analysis (default if no macro option given)"
     echo "  --draw            Run ringtrack_draw"
     echo "  --draw-optional   Run ringtrack_draw_optional"
@@ -21,7 +26,7 @@ usage() {
     echo "Examples:"
     echo "  $0 --data /data --run run123"
     echo "  $0 --data /data --run run123 --conf ringtrack.conf --all"
-    echo "  $0 --data /data --run run123 --conf ringtrack.conf --output /output/plots --draw --display"
+    echo "  $0 --data /data --run run123 --conf ringtrack.conf --output /custom/output --draw --display"
     exit 1
 }
 
@@ -76,11 +81,23 @@ if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DRAW_OPTIONAL && ! $RUN_DISPLAY && !
     RUN_ANALYSIS=true
 fi
 
+# output dir: repo/plots/run_id/datetime se non specificato
+if [ -z "$OUTPUT_DIR" ]; then
+    DATETIME="$(date +%Y%m%d_%H%M%S)"
+    OUTPUT_DIR="$REPO_ROOT/plots/$RUN_ID/$DATETIME"
+fi
+mkdir -p "$OUTPUT_DIR"
+
+# log: tutto su schermo e su file
+LOG_FILE="$LOG_DIR/last_run.log"
+exec > >(tee "$LOG_FILE") 2>&1
+
 echo "========================================"
 echo "Data folder: $DATA_FOLDER"
 echo "Run ID:      $RUN_ID"
 echo "Config:      $CONF"
-echo "Output dir:  ${OUTPUT_DIR:-<default>}"
+echo "Output dir:  $OUTPUT_DIR"
+echo "Log:         $LOG_FILE"
 echo "========================================"
 
 if $RUN_ANALYSIS; then
@@ -114,5 +131,5 @@ if $RUN_MULT_WINDOWS; then
 fi
 
 echo "========================================"
-echo "All done."
+echo "All done. Output: $OUTPUT_DIR"
 echo "========================================"

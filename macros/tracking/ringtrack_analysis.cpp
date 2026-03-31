@@ -24,7 +24,12 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     cfg.print();
 
     if (output_dir.empty())
-        output_dir = data_repository + "/plots/" + run_name;
+        {
+        TString _repo = gSystem->DirName(gSystem->DirName(gSystem->DirName(__FILE__)));
+        TDatime _now;
+        TString _dt = Form("%04d%02d%02d_%02d%02d%02d", _now.GetYear(), _now.GetMonth(), _now.GetDay(), _now.GetHour(), _now.GetMinute(), _now.GetSecond());
+        output_dir = std::string(_repo.Data()) + "/plots/" + run_name + "/" + std::string(_dt.Data());
+    }
 
     const int   first_event = cfg.get_int("first_event", 0);
     const int   max_frames_ = cfg.get_int("max_frames",  1000000);
