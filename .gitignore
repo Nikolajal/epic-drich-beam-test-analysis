@@ -8,3 +8,5 @@ Data
 build/
 macros/*.h
 .claude
+plots/
+macros/tracking/logs/
