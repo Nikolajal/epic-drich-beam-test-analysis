@@ -11,7 +11,7 @@ void ringtrack_draw_display(std::string data_repository, std::string run_name,
     cfg.load(conf_path);
 
     if (output_dir.empty())
-        output_dir = data_repository + "/" + run_name + "/plots";
+        output_dir = data_repository + "/plots/" + run_name;
 
     std::string input_root = output_dir + "/histograms.root";
 

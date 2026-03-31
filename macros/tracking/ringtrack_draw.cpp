@@ -9,7 +9,7 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
     cfg.load(conf_path);
 
     if (output_dir.empty())
-        output_dir = data_repository + "/" + run_name + "/plots";
+        output_dir = data_repository + "/plots/" + run_name;
 
     std::string input_root = output_dir + "/histograms.root";
 
@@ -37,33 +37,19 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
     TH1F *h_t_distribution               = (TH1F *)get("h_t_distribution");
     TH1F *h_t_distribution_track         = (TH1F *)get("h_t_distribution_track");
     TH1F *h_t_distribution_selected      = (TH1F *)get("h_t_distribution_selected");
-    TH1F *h_first_round_X                = (TH1F *)get("h_first_round_X");
-    TH1F *h_first_round_Y                = (TH1F *)get("h_first_round_Y");
-    TH1F *h_first_round_R                = (TH1F *)get("h_first_round_R");
     TH1F *h_tracking_theta               = (TH1F *)get("h_tracking_theta");
     TH1F *h_tracking_phi                 = (TH1F *)get("h_tracking_phi");
     TH1F *h_tracking_angle_x             = (TH1F *)get("h_tracking_angle_x");
     TH1F *h_tracking_angle_y             = (TH1F *)get("h_tracking_angle_y");
     TH2F *h_intercept_drich              = (TH2F *)get("h_intercept_drich");
     TH2F *h_intercept_scint              = (TH2F *)get("h_intercept_scint");
-    TH2F *h_second_round_xy_map          = (TH2F *)get("h_second_round_xy_map");
-    TH2F *h_signal_xy_map                = (TH2F *)get("h_signal_xy_map");
-    TH2F *h_background_xy_map            = (TH2F *)get("h_background_xy_map");
-    TH1F *h_second_round_R               = (TH1F *)get("h_second_round_R");
+    TH2F *h_hit_xy_map                   = (TH2F *)get("h_hit_xy_map");
     TH1F *h_n_selected_hits              = (TH1F *)get("h_n_selected_hits");
     TH1F *h_all_n_hits                   = (TH1F *)get("h_all_n_hits");
     TH2F *h_n_selected_hits_vs_multiplicity = (TH2F *)get("h_n_selected_hits_vs_multiplicity");
     TH2F *h_n_selected_hits_vs_theta     = (TH2F *)get("h_n_selected_hits_vs_theta");
     TH2F *h_n_selected_hits_vs_ix_drich  = (TH2F *)get("h_n_selected_hits_vs_ix_drich");
     TH2F *h_n_selected_hits_vs_iy_drich  = (TH2F *)get("h_n_selected_hits_vs_iy_drich");
-    TH2F *h_signal_vs_ix     = (TH2F *)get("h_signal_vs_ix");
-    TH2F *h_background_vs_ix = (TH2F *)get("h_background_vs_ix");
-    TH2F *h_signal_vs_iy     = (TH2F *)get("h_signal_vs_iy");
-    TH2F *h_background_vs_iy = (TH2F *)get("h_background_vs_iy");
-    TH2F *h_notrack_xy_map               = (TH2F *)get("h_notrack_xy_map");
-    TH1F *h_notrack_R                    = (TH1F *)get("h_notrack_R");
-    TH1F *h_notrack_n_hits               = (TH1F *)get("h_notrack_n_hits");
-
     TH1F *h_track_multiplicity           = (TH1F *)get("h_track_multiplicity");
 
     f->Close();
@@ -173,13 +159,6 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
         pt->Draw();
     }
 
-    // --- first round ring fit ---
-    TCanvas *c_first_round = new TCanvas("c_first_round", "Ring fit - 1st round", 1800, 600);
-    c_first_round->Divide(3, 1);
-    c_first_round->cd(1); h_first_round_X->Draw();
-    c_first_round->cd(2); h_first_round_Y->Draw();
-    c_first_round->cd(3); h_first_round_R->Draw();
-
     // --- tracking angles ---
     TCanvas *c_tracking_angles = new TCanvas("c_tracking_angles", "Tracking angles", 2400, 600);
     c_tracking_angles->Divide(4, 1);
@@ -196,47 +175,36 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
     c_intercepts->cd(3); ((TH2F *)h_intercept_drich->Clone())->Draw("SCAT");
     c_intercepts->cd(4); ((TH2F *)h_intercept_scint->Clone())->Draw("SCAT");
 
-    // --- hit maps: totale, segnale, background ---
-    TCanvas *c_hit_map = new TCanvas("c_hit_map", "Hit map", 1800, 600);
-    c_hit_map->Divide(3, 1);
-    c_hit_map->cd(1); h_second_round_xy_map->Draw("COLZ");
-    c_hit_map->cd(2); h_signal_xy_map->Draw("COLZ");
-    c_hit_map->cd(3); h_background_xy_map->Draw("COLZ");
+    // --- hit map ---
+    TCanvas *c_hit_map = new TCanvas("c_hit_map", "Hit map", 800, 700);
+    h_hit_xy_map->Draw("COLZ");
 
     // --- hit map 3D ---
     TCanvas *c_hit_map_3d = new TCanvas("c_hit_map_3d", "Hit map 3D", 800, 700);
     gPad->SetLogz();
     {
-        TH2F *h3d = (TH2F *)h_second_round_xy_map->Clone("h_hit_map_3d");
+        TH2F *h3d = (TH2F *)h_hit_xy_map->Clone("h_hit_map_3d");
         h3d->SetTitle("Selected hits on detector plane;x (mm);y (mm);counts");
         h3d->Draw("SURF2Z");
     }
 
-    // --- second round R ---
-    TCanvas *c_second_round_R = new TCanvas("c_second_round_R", "Ring radius residual", 800, 600);
-    h_second_round_R->Draw();
-
-    // --- hit multiplicity: tutti vs con traccia vs senza traccia ---
+    // --- hit multiplicity: tutti vs con traccia ---
     TCanvas *c_hit_mult = new TCanvas("c_hit_mult", "Hit multiplicity comparison", 900, 600);
     {
         TH1F *h1 = (TH1F *)h_all_n_hits->Clone("h_all_clone");
         TH1F *h2 = (TH1F *)h_n_selected_hits->Clone("h_sel_clone");
-        TH1F *h3 = (TH1F *)h_notrack_n_hits->Clone("h_notrk_clone");
 
         h1->SetLineColor(kBlack); h1->SetLineWidth(2);
         h2->SetLineColor(kRed);   h2->SetLineWidth(2); h2->SetStats(0);
-        h3->SetLineColor(kBlue);  h3->SetLineWidth(2); h3->SetStats(0);
 
         h1->SetTitle("Hit multiplicity per event;n hits;counts");
         h1->Draw("HIST");
         h2->Draw("HIST SAME");
-        h3->Draw("HIST SAME");
 
         TLegend *leg = new TLegend(0.55, 0.75, 0.88, 0.88);
         leg->SetBorderSize(1); leg->SetTextFont(42); leg->SetTextSize(0.035);
         leg->AddEntry(h1, "all events", "l");
         leg->AddEntry(h2, "with track", "l");
-        leg->AddEntry(h3, "no track",   "l");
         leg->Draw();
     }
 
@@ -273,48 +241,6 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
     ((TH1F *)h_n_selected_hits_vs_ix_drich->ProjectionX())->Draw(); gPad->SetLogy();
     c_nhits_intercepts_proj->cd(2);
     ((TH1F *)h_n_selected_hits_vs_iy_drich->ProjectionX())->Draw(); gPad->SetLogy();
-
-    // --- signal vs background vs intercepts ---
-    TCanvas *c_sig_bkg = new TCanvas("c_sig_bkg", "Signal vs background vs intercepts", 1600, 1200);
-    c_sig_bkg->Divide(2, 2);
-    c_sig_bkg->cd(1); h_signal_vs_ix->Draw("SCAT");
-    c_sig_bkg->cd(2); h_background_vs_ix->Draw("SCAT");
-    c_sig_bkg->cd(3); h_signal_vs_iy->Draw("SCAT");
-    c_sig_bkg->cd(4); h_background_vs_iy->Draw("SCAT");
-
-    // --- no-track comparison ---
-    TCanvas *c_notrack = new TCanvas("c_notrack", "No-track events", 1800, 600);
-    c_notrack->Divide(3, 1);
-    c_notrack->cd(1); h_notrack_xy_map->Draw("COLZ");
-    c_notrack->cd(2);
-    {
-        TH1F *h1 = (TH1F *)h_second_round_R->Clone("h_r_clone");
-        TH1F *h2 = (TH1F *)h_notrack_R->Clone("h_nt_clone");
-        if (h1->Integral() > 0) h1->Scale(1. / h1->Integral());
-        if (h2->Integral() > 0) h2->Scale(1. / h2->Integral());
-        h1->SetLineColor(kBlack); h1->SetLineWidth(2);
-        h2->SetLineColor(kRed);   h2->SetLineWidth(2); h2->SetStats(0);
-        double ymax = std::max(h1->GetMaximum(), h2->GetMaximum()) * 1.15;
-        h1->SetMaximum(ymax); h1->SetMinimum(0);
-        h1->SetTitle("#DeltaR: with track vs no track;#DeltaR (mm);probability / bin");
-        h1->Draw("HIST"); h2->Draw("HIST SAME");
-        TLegend *leg = new TLegend(0.12, 0.75, 0.55, 0.88);
-        leg->SetBorderSize(1); leg->SetTextFont(42); leg->SetTextSize(0.035);
-        leg->AddEntry(h1, "with track", "l");
-        leg->AddEntry(h2, "no track",   "l");
-        leg->Draw();
-    }
-    c_notrack->cd(3);
-    {
-        TH1F *h1 = (TH1F *)h_n_selected_hits->Clone();
-        TH1F *h2 = (TH1F *)h_notrack_n_hits->Clone();
-        h1->SetLineColor(kBlack); h1->SetLineWidth(2);
-        h2->SetLineColor(kRed);   h2->SetLineWidth(2);
-        if (h1->GetMaximum() > 0) h1->Scale(1. / h1->GetMaximum());
-        if (h2->GetMaximum() > 0) h2->Scale(1. / h2->GetMaximum());
-        h1->SetTitle("N hits: with track (black) vs no track (red);n hits;normalized");
-        h1->Draw(); h2->Draw("SAME");
-    }
 
     // --- settings ---
     TCanvas *c_settings = new TCanvas("c_settings", "Analysis settings", 600, 700);
