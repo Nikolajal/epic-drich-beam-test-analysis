@@ -2,8 +2,6 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-LOG_DIR="$SCRIPT_DIR/logs"
-mkdir -p "$LOG_DIR"
 
 usage() {
     echo "Usage: $0 --data <folder> --run <run_id> [options]"
@@ -88,14 +86,17 @@ if [ -z "$OUTPUT_DIR" ]; then
 fi
 mkdir -p "$OUTPUT_DIR"
 
-# log: tutto su schermo e su file
-LOG_FILE="$LOG_DIR/last_run.log"
+# copia del conf usato
+cp "$CONF" "$OUTPUT_DIR/run.conf"
+
+# log con datetime nella cartella dei plot
+LOG_FILE="$OUTPUT_DIR/run_${DATETIME}.log"
 exec > >(tee "$LOG_FILE") 2>&1
 
 echo "========================================"
 echo "Data folder: $DATA_FOLDER"
 echo "Run ID:      $RUN_ID"
-echo "Config:      $CONF"
+echo "Config:      $CONF  →  $OUTPUT_DIR/run.conf"
 echo "Output dir:  $OUTPUT_DIR"
 echo "Log:         $LOG_FILE"
 echo "========================================"
