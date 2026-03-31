@@ -13,7 +13,8 @@
 // ===========================================================================
 
 void ringtrack_timing(std::string data_repository, std::string run_name,
-                      std::string conf_path = "ringtrack.conf")
+                      std::string conf_path = "ringtrack.conf",
+                      std::string output_dir = "")
 {
     RingtrackConfig cfg;
     cfg.load(conf_path);
@@ -51,7 +52,13 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
     // -------------------------------------------------------------------------
     //  Output txt
     // -------------------------------------------------------------------------
-    std::string output_dir = data_repository + "/" + run_name;
+    if (output_dir.empty())
+        {
+        TString _repo = gSystem->DirName(gSystem->DirName(gSystem->DirName(__FILE__)));
+        TDatime _now;
+        TString _dt = Form("%04d%02d%02d_%02d%02d%02d", _now.GetYear(), _now.GetMonth(), _now.GetDay(), _now.GetHour(), _now.GetMinute(), _now.GetSecond());
+        output_dir = std::string(_repo.Data()) + "/plots/" + run_name + "/" + std::string(_dt.Data());
+    }
     std::ofstream txt(output_dir + "/track_timing.txt");
     txt << "frame\ttrack_idx\tix_drich\tiy_drich\ttheta\tphi\tchi2ndof\t"
         << "dominant_window_center\tn_hits_dominant\tn_hits_total\tdominance_ratio\n";
@@ -178,8 +185,8 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
     //  Save
     // -------------------------------------------------------------------------
     gROOT->SetBatch(true);
-    std::string output_root = output_dir + "/plots/track_timing.root";
-    gSystem->mkdir((output_dir + "/plots").c_str(), true);
+    std::string output_root = output_dir + "/track_timing.root";
+    gSystem->mkdir(output_dir.c_str(), true);
 
     TFile *fout = new TFile(output_root.c_str(), "RECREATE");
 
@@ -201,31 +208,31 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
 
     // canvas di controllo
     TCanvas *c_t = new TCanvas("c_t", "Hit time distribution", 800, 600);
-    gPad->SetLogy(); h_t_all->Draw(); c_t->Write(); c_t->SaveAs((output_dir + "/plots/track_timing_t.png").c_str());
+    gPad->SetLogy(); h_t_all->Draw(); c_t->Write(); c_t->SaveAs((output_dir + "/track_timing_t.png").c_str());
 
     TCanvas *c_dom = new TCanvas("c_dom", "Dominant window", 800, 600);
-    gPad->SetLogy(); h_dominant_window->Draw(); c_dom->Write(); c_dom->SaveAs((output_dir + "/plots/track_timing_dom.png").c_str());
+    gPad->SetLogy(); h_dominant_window->Draw(); c_dom->Write(); c_dom->SaveAs((output_dir + "/track_timing_dom.png").c_str());
 
     TCanvas *c_ix_win = new TCanvas("c_ix_win", "ix vs window", 1200, 600);
     c_ix_win->Divide(2,1);
     c_ix_win->cd(1); h_ix_vs_window->Draw("COLZ");
     c_ix_win->cd(2); h_iy_vs_window->Draw("COLZ");
-    c_ix_win->Write(); c_ix_win->SaveAs((output_dir + "/plots/track_timing_ix_iy.png").c_str());
+    c_ix_win->Write(); c_ix_win->SaveAs((output_dir + "/track_timing_ix_iy.png").c_str());
 
     TCanvas *c_theta = new TCanvas("c_theta", "theta vs window", 800, 600);
-    h_theta_vs_window->Draw("COLZ"); c_theta->Write(); c_theta->SaveAs((output_dir + "/plots/track_timing_theta.png").c_str());
+    h_theta_vs_window->Draw("COLZ"); c_theta->Write(); c_theta->SaveAs((output_dir + "/track_timing_theta.png").c_str());
 
     TCanvas *c_chi2 = new TCanvas("c_chi2", "chi2 vs window", 800, 600);
-    h_chi2_vs_window->Draw("COLZ"); c_chi2->Write(); c_chi2->SaveAs((output_dir + "/plots/track_timing_chi2.png").c_str());
+    h_chi2_vs_window->Draw("COLZ"); c_chi2->Write(); c_chi2->SaveAs((output_dir + "/track_timing_chi2.png").c_str());
 
     TCanvas *c_dominance = new TCanvas("c_dominance", "Dominance ratio", 1200, 600);
     c_dominance->Divide(2, 1);
     c_dominance->cd(1); h_dominance_ratio->Draw();
     c_dominance->cd(2); h_dominance_vs_window->Draw("COLZ");
-    c_dominance->Write(); c_dominance->SaveAs((output_dir + "/plots/track_timing_dominance.png").c_str());
+    c_dominance->Write(); c_dominance->SaveAs((output_dir + "/track_timing_dominance.png").c_str());
 
     TCanvas *c_mult = new TCanvas("c_mult", "multiplicity vs window", 800, 600);
-    h_mult_vs_window->Draw("COLZ"); c_mult->Write(); c_mult->SaveAs((output_dir + "/plots/track_timing_mult.png").c_str());
+    h_mult_vs_window->Draw("COLZ"); c_mult->Write(); c_mult->SaveAs((output_dir + "/track_timing_mult.png").c_str());
 
     // canvas confronto: sovrappone solo i bin con >= min_entries intercette
     const int min_entries = 50;
@@ -266,14 +273,14 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
 
     make_compare("c_compare_ix", "Track intercept X by dominant window",
         h_ix_per_bin, "x_{dRICH} (mm)",
-        (output_dir + "/plots/track_timing_compare_ix.png").c_str());
+        (output_dir + "/track_timing_compare_ix.png").c_str());
 
     make_compare("c_compare_iy", "Track intercept Y by dominant window",
         h_iy_per_bin, "y_{dRICH} (mm)",
-        (output_dir + "/plots/track_timing_compare_iy.png").c_str());
+        (output_dir + "/track_timing_compare_iy.png").c_str());
 
     fout->Close();
 
     std::cout << "Output: " << output_root << std::endl;
-    std::cout << "Track timing txt: " << output_dir + "/track_timing.txt" << std::endl;
+    std::cout << "Track timing txt: " << output_dir << "/track_timing.txt" << std::endl;
 }

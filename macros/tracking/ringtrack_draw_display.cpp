@@ -11,7 +11,12 @@ void ringtrack_draw_display(std::string data_repository, std::string run_name,
     cfg.load(conf_path);
 
     if (output_dir.empty())
-        output_dir = data_repository + "/" + run_name + "/plots";
+        {
+        TString _repo = gSystem->DirName(gSystem->DirName(gSystem->DirName(__FILE__)));
+        TDatime _now;
+        TString _dt = Form("%04d%02d%02d_%02d%02d%02d", _now.GetYear(), _now.GetMonth(), _now.GetDay(), _now.GetHour(), _now.GetMinute(), _now.GetSecond());
+        output_dir = std::string(_repo.Data()) + "/plots/" + run_name + "/" + std::string(_dt.Data());
+    }
 
     std::string input_root = output_dir + "/histograms.root";
 
