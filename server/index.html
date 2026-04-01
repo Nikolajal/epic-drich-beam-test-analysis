@@ -92,13 +92,6 @@ select option { background: var(--bg3); }
 .badge.idle    { background: var(--bg3); color: var(--text2); }
 
 /* Plot browser */
-.session-card { background: var(--bg2); border: 1px solid var(--border);
-                border-radius: var(--radius); padding: 14px; margin-bottom: 12px; cursor: pointer; }
-.session-card:hover { border-color: var(--accent); }
-.session-header { display: flex; justify-content: space-between; align-items: flex-start; }
-.session-run { font-weight: 600; font-size: 0.95rem; }
-.session-dt  { font-size: 0.78rem; color: var(--text2); margin-top: 2px; }
-.session-confs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .conf-chip { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px;
              padding: 3px 10px; font-size: 0.72rem; color: var(--text2); cursor: pointer; }
 .conf-chip:hover { border-color: var(--accent); color: var(--accent); }
@@ -411,10 +404,13 @@ select option { background: var(--bg3); }
 
 <!-- ===================== PLOTS PANEL ===================== -->
 <div id="panel-plots" class="panel">
-  <div class="refresh-row">
-    <button class="btn-sm" onclick="loadSessions()">↻ Refresh</button>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+    <select id="session-select" style="flex:1" onchange="onSessionChange()">
+      <option value="">— no sessions —</option>
+    </select>
+    <button class="btn-sm" onclick="loadSessions()">↻</button>
   </div>
-  <div id="sessions-list"></div>
+  <div id="conf-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
   <div id="img-grid-container"></div>
 </div>
 
@@ -612,44 +608,55 @@ function setStatus(s) {
 // ---------------------------------------------------------------------------
 // Plot browser
 // ---------------------------------------------------------------------------
+let allSessions = [];
+
 async function loadSessions() {
   const res = await fetch('/api/plot-sessions').catch(() => null);
   if (!res) return;
-  const sessions = await res.json();
-  const container = document.getElementById('sessions-list');
-  if (sessions.length === 0) {
-    container.innerHTML = '<p style="color:var(--text2);font-size:.9rem;">No plots yet.</p>';
-    document.getElementById('img-grid-container').innerHTML = '';
+  allSessions = await res.json();
+  const sel = document.getElementById('session-select');
+  if (allSessions.length === 0) {
+    sel.innerHTML = '<option value="">— no sessions —</option>';
+    document.getElementById('conf-chips').innerHTML = '';
+    document.getElementById('img-grid-container').innerHTML =
+      '<p style="color:var(--text2);font-size:.9rem;">No plots yet.</p>';
     return;
   }
-  container.innerHTML = sessions.map(s => `
-    <div class="session-card">
-      <div class="session-header">
-        <div>
-          <div class="session-run">${s.run}</div>
-          <div class="session-dt">${s.datetime} &middot; ${s.total_plots} plots</div>
-        </div>
-      </div>
-      ${s.confs.length ? `
-      <div class="session-confs">
-        <span class="conf-chip" onclick="loadPlots('${s.run}','${s.datetime}','')">all</span>
-        ${s.confs.map(c => `
-          <span class="conf-chip" onclick="loadPlots('${s.run}','${s.datetime}','${c}')">${c}</span>
-        `).join('')}
-      </div>` : `
-      <div style="margin-top:8px">
-        <span class="conf-chip" onclick="loadPlots('${s.run}','${s.datetime}','')">view plots</span>
-      </div>`}
-    </div>
-  `).join('');
+  sel.innerHTML = allSessions.map((s, i) =>
+    `<option value="${i}">${s.run} &nbsp;·&nbsp; ${s.datetime} &nbsp;(${s.total_plots} plots)</option>`
+  ).join('');
+  sel.value = '0';
+  renderConfChips(0);
+  loadPlotsForSession(0, '');
 }
 
-async function loadPlots(run, datetime, conf) {
-  // highlight active chip
-  document.querySelectorAll('.conf-chip').forEach(c => c.classList.remove('active'));
-  event.target.classList.add('active');
+function onSessionChange() {
+  const i = parseInt(document.getElementById('session-select').value);
+  renderConfChips(i);
+  loadPlotsForSession(i, '');
+}
 
-  const url = `/api/plot-files?run=${encodeURIComponent(run)}&datetime=${encodeURIComponent(datetime)}&conf=${encodeURIComponent(conf)}`;
+function renderConfChips(i) {
+  const s = allSessions[i];
+  const box = document.getElementById('conf-chips');
+  if (!s || s.confs.length === 0) { box.innerHTML = ''; return; }
+  box.innerHTML =
+    `<span class="conf-chip active" onclick="selectChip(this,${i},'')">all</span>` +
+    s.confs.map(c =>
+      `<span class="conf-chip" onclick="selectChip(this,${i},'${c}')">${c}</span>`
+    ).join('');
+}
+
+function selectChip(el, i, conf) {
+  document.querySelectorAll('#conf-chips .conf-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  loadPlotsForSession(i, conf);
+}
+
+async function loadPlotsForSession(i, conf) {
+  const s = allSessions[i];
+  if (!s) return;
+  const url = `/api/plot-files?run=${encodeURIComponent(s.run)}&datetime=${encodeURIComponent(s.datetime)}&conf=${encodeURIComponent(conf)}`;
   const res = await fetch(url).catch(() => null);
   if (!res) return;
   const files = await res.json();
@@ -660,7 +667,6 @@ async function loadPlots(run, datetime, conf) {
     return;
   }
   container.innerHTML = `
-    <div class="section-title">${run} / ${datetime}${conf ? ' / ' + conf : ''} — ${files.length} plots</div>
     <div class="img-grid">
       ${files.map(f => {
         const name = f.split('/').pop().replace('.png','');
