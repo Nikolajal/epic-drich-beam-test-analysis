@@ -37,10 +37,11 @@ header .dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
 /* Form elements */
 .field { margin-bottom: 14px; }
 label  { display: block; font-size: 0.78rem; color: var(--text2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .05em; }
-input, select { width: 100%; background: var(--bg3); border: 1px solid var(--border);
+input:not([type="checkbox"]), select {
+                width: 100%; background: var(--bg3); border: 1px solid var(--border);
                 color: var(--text); padding: 10px 12px; border-radius: var(--radius);
                 font-size: 0.95rem; outline: none; -webkit-appearance: none; }
-input:focus, select:focus { border-color: var(--accent); }
+input:not([type="checkbox"]):focus, select:focus { border-color: var(--accent); }
 select option { background: var(--bg3); }
 
 /* Toggle */
