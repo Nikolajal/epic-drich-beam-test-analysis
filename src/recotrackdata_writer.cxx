@@ -108,6 +108,7 @@ void recotrackdata_writer(
         }
     }
 
+    /*
     i_spill = 0;
     double previous_timestamp = current_tracking.get_timestamp(0, 0); // Timestamp of first track of first event -> Could be null/0 to check
     double starting_timestamp = current_tracking.get_timestamp(0, 0); // Timestamp of first track of first event -> Could be null/0 to check
@@ -140,6 +141,7 @@ void recotrackdata_writer(
         if (per_spill_events_counter_recodata[spill + reco_spill_shift] == count)
             mist::logger::debug(Form("Spill %d, matched!", spill));
     }
+            */
 
     mist::logger::info(Form("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter));
     recotrackdata_tree->Write();

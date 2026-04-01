@@ -7,11 +7,13 @@
 #pragma link C++ class std::vector<alcor_data_struct> + ;
 
 #include "alcor_finedata.h"
+#pragma link C++ class alcor_finedata + ;
 #pragma link C++ struct alcor_finedata_struct + ;
 #pragma link C++ class std::vector<alcor_finedata_struct> + ;
 
 #include "alcor_lightdata.h"
 #pragma link C++ struct trigger_event + ;
+#pragma link C++ class alcor_lightdata + ;
 #pragma link C++ struct alcor_lightdata_struct + ;
 #pragma link C++ class std::vector<trigger_event> + ;
 #pragma link C++ class std::vector<alcor_lightdata_struct> + ;
@@ -27,6 +29,7 @@
 
 #include "alcor_spilldata.h"
 #pragma link C++ struct data_mask_struct + ;
+#pragma link C++ class alcor_spilldata + ;
 #pragma link C++ struct alcor_spilldata_struct + ;
 #pragma link C++ class std::vector<data_mask_struct> + ;
 #pragma link C++ class std::vector<uint32_t> + ;
@@ -37,11 +40,13 @@
 #pragma link C++ class run_list + ;
 #pragma link C++ class run_info + ;
 
+#include "mapping.h"
+#pragma link C++ class mapping + ;
+
 #include "alcor_data_streamer.h"
 #include "alcor_data_streamer.h"
 #include "lightdata_writer.h"
 #include "recodata_writer.h"
-#include "mapping.h"
 #include "parallel_streaming_framer.h"
 #include "triggers.h"
 #include "utility.h"

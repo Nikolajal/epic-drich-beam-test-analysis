@@ -62,7 +62,9 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
     TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
 
-    //  Loop over frames
+    //  --- --- --- --- --- ---
+    //  Loop on data
+    //  ---
     auto i_spill = -1;
     for (int i_frame = 0; i_frame < all_frames; ++i_frame)
     {
@@ -97,6 +99,9 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
             }
         }
     }
+    //  ---
+    //  Loop on data
+    //  --- --- --- --- --- ---
 
     //  Plotting the result
     TCanvas *c_time_delta = new TCanvas("c_time_delta", "Afterpulse check on coincidences of timing and cherenkov sensors");

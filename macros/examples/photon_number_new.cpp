@@ -3,7 +3,7 @@
 // ─── Global analysis parameters ──────────────────────────────────────────────
 
 static constexpr int kCoverageGranularity = 10;
-static constexpr std::array<float, 2> kTimeCutNs = {-40.f, 50.f};
+static constexpr std::array<float, 2> kTimeCutNs = {-1.f, +1.f};
 static const std::vector<std::array<float, 2>> kPhiGapRanges = {
     {-2.6f, -1.9f}, {2.4f, 2.95f}, {-1.65f, -1.1f}, {-0.1f, 0.15f}};
 
@@ -11,7 +11,8 @@ static const std::vector<std::array<float, 2>> kPhiGapRanges = {
 static constexpr int kRBins = 40;
 static constexpr float kRLo = 25.f;
 static constexpr float kRHi = 125.f;
-static constexpr float kFitLo = 40.f; // fit start — avoids low-R structure
+static constexpr float kFitLo = 30.f;  // fit start — avoids low-R structure
+static constexpr float kFitHi = 105.f; // fit end — avoids high-R sparsely populated bins
 
 enum class SensorType
 {
@@ -128,9 +129,9 @@ static void store_result(FitResultMap &out, const std::string &hname,
     out[hname + ".chi2_ndf"] = chi2_ndf;
 }
 
-void photon_number(std::string data_repository, std::string run_name,
-                   FitResultMap &fit_results = dummy_map,
-                   int max_frames = 10000000)
+void photon_number_new(std::string data_repository, std::string run_name,
+                       FitResultMap &fit_results = dummy_map,
+                       int max_frames = 10000000)
 {
     std::string fname = data_repository + "/" + run_name + "/recodata.root";
     TFile *f_in = new TFile(fname.c_str());
@@ -143,6 +144,7 @@ void photon_number(std::string data_repository, std::string run_name,
     alcor_recodata *reco = new alcor_recodata();
     reco->link_to_tree(tree);
     int all_frames = (int)std::min((Long64_t)max_frames, tree->GetEntries());
+    alcor_finedata::read_calib_from_file(data_repository + "/" + run_name + "/gold_timing_fine_calib.txt");
 
     // ── Pass 0 ───────────────────────────────────────────────────────────────
     std::vector<int> spill_of_frame(all_frames, -1);
@@ -163,7 +165,7 @@ void photon_number(std::string data_repository, std::string run_name,
         if (current_spill < 0)
             continue;
         spill_of_frame[iframe] = current_spill;
-        if (reco->get_trigger_by_index(0))
+        if (reco->get_trigger_by_index(104))
         {
             ++spill_trigger_count[current_spill];
             ++total_used_frames_prescan;
@@ -185,7 +187,7 @@ void photon_number(std::string data_repository, std::string run_name,
     TH1F *h_fit_x = new TH1F("h_fit_x", ";circle center x (mm)", 240, -30, 30);
     TH1F *h_fit_y = new TH1F("h_fit_y", ";circle center y (mm)", 240, -30, 30);
     TH1F *h_fit_r = new TH1F("h_fit_r", ";circle radius (mm)", 400, 30, 130);
-    TH1F *h_dt = new TH1F("h_dt", ";t_{hit}-t_{trig} (ns)", 200, -312.5, 312.5);
+    TH1F *h_dt = new TH1F("h_dt", ";t_{hit}-t_{trig} (ns)", 10000, -312.5, 312.5);
 
     TH2F *h_xy_hits = new TH2F("h_xy_hits", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH2F *h_rphi_hits = new TH2F("h_rphi_hits", ";#phi (rad);R (mm)",
@@ -223,7 +225,7 @@ void photon_number(std::string data_repository, std::string run_name,
         tree->GetEntry(iframe);
         if (reco->is_start_of_spill())
             continue;
-        auto trig = reco->get_trigger_by_index(0);
+        auto trig = reco->get_trigger_by_index(104);
         if (!trig)
             continue;
         std::vector<std::array<float, 2>> pts;
@@ -337,7 +339,7 @@ void photon_number(std::string data_repository, std::string run_name,
             continue;
         }
 
-        auto trig = reco->get_trigger_by_index(0);
+        auto trig = reco->get_trigger_by_index(104);
         if (trig)
         {
             ++used_frames;
@@ -455,169 +457,181 @@ void photon_number(std::string data_repository, std::string run_name,
 
     // ── Fit model ─────────────────────────────────────────────────────────────
     //
-    // Gaussian + broad Gaussian (right shoulder) + pol2 background.
-    // Fit range starts at kFitLo=40 mm to exclude the low-R structure
-    // (whatever it is — air Cherenkov, reflected photons, beam halo)
-    // which is not part of the aerogel ring signal and would bias sigma.
-    //
-    // The fit integrates from kFitLo to kRHi for N_gamma. Bins between
-    // kRLo and kFitLo are drawn but excluded from the fit.
+    // Crystal Ball (left power-law tail for chromatic dispersion) + pol3 background.
+    // Fit range: [kFitLo, kFitHi] — excludes low-R structure and right-side bump.
     //
     // Parameters:
-    //   p[0]  gaus_amp  — Gaussian amplitude (hits/trigger/mm at peak)
-    //   p[1]  mu        — peak position (mm)
-    //   p[2]  sigma     — single-photon spatial resolution (mm)
-    //   p[3]  gs_amp    — broad Gaussian amplitude (right shoulder)
-    //   p[4]  gs_sig    — broad Gaussian sigma (mm)
-    //   p[5]  pol2_c0   — background constant
-    //   p[6]  pol2_c1   — background slope
-    //   p[7]  pol2_c2   — background curvature
+    //   p[0]  cb_amp   — CB amplitude
+    //   p[1]  mu       — peak position (mm)
+    //   p[2]  sigma    — core Gaussian width (mm)
+    //   p[3]  alpha    — transition point in units of sigma (>0 → left tail)
+    //   p[4]  n        — power-law exponent (n > 1)
+    //   p[5]  pol3_c0  — background constant
+    //   p[6]  pol3_c1  — background slope
+    //   p[7]  pol3_c2  — background curvature
+    //   p[8]  pol3_c3  — background cubic
 
-    auto full_model = [](double *x, double *p) -> double
+    auto cb_model = [](double *x, double *p) -> double
     {
+        double t = (x[0] - p[1]) / p[2];
+        double alpha = p[3];
+        double n = p[4];
+        double cb;
+        if (t > -alpha) // Gaussian core
+        {
+            cb = p[0] * std::exp(-0.5 * t * t);
+        }
+        else // Left power-law tail
+        {
+            double A = std::pow(n / alpha, n) * std::exp(-0.5 * alpha * alpha);
+            double B = n / alpha - alpha;
+            cb = p[0] * A * std::pow(B - t, -n);
+        }
         double xx = x[0];
-        double gaus = p[0] * std::exp(-0.5 * std::pow((xx - p[1]) / p[2], 2));
-        double gs = p[3] * std::exp(-0.5 * std::pow((xx - p[1]) / p[4], 2));
-        double bkg = p[5] + p[6] * xx + p[7] * xx * xx;
-        return gaus + gs + bkg;
+        double bkg = p[5] + p[6] * xx + p[7] * xx * xx + p[8] * xx * xx * xx;
+        return cb + bkg;
     };
 
     int fit_line_color = kRed;
 
-    auto fit_r_dist = [&](TH1F *h) // captures fit_results
+    auto fit_r_dist = [&](TH1F *h)
     {
         float mu0 = G[2];
         float rms = h->GetRMS();
-        float sig_seed = std::clamp(rms * 0.5f, 0.5f, 5.0f);
+        float sig_seed = std::clamp(rms * 0.4f, 0.5f, 4.0f);
         float pk = h->GetMaximum();
 
-        // Sideband background fit over [kFitLo, kRHi] with signal masked
-        TF1 f_bkg(Form("f_bkg_%s", h->GetName()), "pol2", kFitLo, kRHi);
+        // ── Sideband pol3 background fit ──────────────────────────────────────
+        // Signal masked asymmetrically: wider on the left (CB tail region),
+        // tighter on the right (Gaussian falloff is fast).
+        TF1 f_bkg(Form("f_bkg_%s", h->GetName()), "pol3", kFitLo, kFitHi);
         {
             TH1F *h_sb = (TH1F *)h->Clone(Form("h_sb_%s", h->GetName()));
-            float mask = 3.5f * sig_seed;
+            float mask_l = 4.f * sig_seed;
+            float mask_r = 2.f * sig_seed;
             for (int i = 1; i <= h_sb->GetNbinsX(); ++i)
             {
                 double xc = h_sb->GetBinCenter(i);
-                if (xc < kFitLo || std::fabs(xc - mu0) < mask)
+                bool in_signal = (xc > mu0 - mask_l && xc < mu0 + mask_r);
+                if (xc < kFitLo || xc > kFitHi || in_signal)
                 {
                     h_sb->SetBinContent(i, 0.);
                     h_sb->SetBinError(i, 1e10);
                 }
             }
-            f_bkg.SetParameters(h->GetBinContent(h->FindBin(kFitLo + 1.)), 0., 0.);
+            f_bkg.SetParameters(0.08, 0., 0., 0.);
             h_sb->Fit(&f_bkg, "RQ0");
             delete h_sb;
         }
         double bkg_c0 = f_bkg.GetParameter(0);
         double bkg_c1 = f_bkg.GetParameter(1);
         double bkg_c2 = f_bkg.GetParameter(2);
+        double bkg_c3 = f_bkg.GetParameter(3);
 
-        TF1 f_model(Form("f_model_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
+        // ── Crystal Ball + pol3 model ─────────────────────────────────────────
+        TF1 f_model(Form("f_cb_%s", h->GetName()), cb_model, kFitLo, kFitHi, 9);
         {
-            const char *pnames[8] = {"gaus_amp", "mu", "sigma", "gs_amp", "gs_sig",
-                                     "pol2_c0", "pol2_c1", "pol2_c2"};
-            for (int i = 0; i < 8; ++i)
+            const char *pnames[9] = {"cb_amp", "mu", "sigma", "alpha", "n",
+                                     "pol3_c0", "pol3_c1", "pol3_c2", "pol3_c3"};
+            for (int i = 0; i < 9; ++i)
                 f_model.SetParName(i, pnames[i]);
         }
-        f_model.SetParLimits(2, 0.3, 5.0);  // sigma
-        f_model.SetParLimits(3, 0.0, 1e9);  // gs_amp >= 0
-        f_model.SetParLimits(4, 4.0, 40.0); // gs_sig > core sigma
 
-        // Pass 1: background fixed, no broad Gaussian
-        {
-            double pars[8] = {pk, mu0, sig_seed, 0.0, 8.0, bkg_c0, bkg_c1, bkg_c2};
-            f_model.SetParameters(pars);
-        }
-        f_model.FixParameter(3, 0.);
+        // Seeds
+        f_model.SetParameter(0, pk);
+        f_model.SetParameter(1, mu0);
+        f_model.SetParameter(2, sig_seed);
+        f_model.SetParameter(3, 1.5); // alpha > 0 → left tail
+        f_model.SetParameter(4, 3.0); // moderate power-law index
+        f_model.SetParameter(5, bkg_c0);
+        f_model.SetParameter(6, bkg_c1);
+        f_model.SetParameter(7, bkg_c2);
+        f_model.SetParameter(8, bkg_c3);
+
+        // Limits
+        f_model.SetParLimits(0, 0., 1e9);
+        f_model.SetParLimits(2, 0.3, 5.0);
+        f_model.SetParLimits(3, 0.5, 5.0);
+        f_model.SetParLimits(4, 1.1, 20.0);
+
+        // Pass 1: background fixed, fit CB shape only
         f_model.FixParameter(5, bkg_c0);
         f_model.FixParameter(6, bkg_c1);
         f_model.FixParameter(7, bkg_c2);
+        f_model.FixParameter(8, bkg_c3);
         h->Fit(&f_model, "RQ");
 
-        // Pass 2: release broad Gaussian, background still fixed
-        f_model.ReleaseParameter(3);
-        h->Fit(&f_model, "RQ");
-
-        // Pass 3: release background, full joint fit
+        // Pass 2: full joint fit — release background
         f_model.ReleaseParameter(5);
         f_model.ReleaseParameter(6);
         f_model.ReleaseParameter(7);
+        f_model.ReleaseParameter(8);
         TFitResultPtr res = h->Fit(&f_model, "RSQE");
 
-        // Draw components
+        // ── Draw components ───────────────────────────────────────────────────
+
+        // Full model
         f_model.SetLineColor(fit_line_color);
         f_model.SetLineWidth(2);
         f_model.SetLineStyle(1);
         f_model.DrawCopy("SAME");
 
-        // Core Gaussian (dashed)
-        TF1 f_core(Form("f_core_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
-        for (int i = 0; i < 8; ++i)
+        // CB signal only (no background)
+        TF1 f_core(Form("f_core_%s", h->GetName()), cb_model, kFitLo, kFitHi, 9);
+        for (int i = 0; i < 9; ++i)
             f_core.SetParameter(i, f_model.GetParameter(i));
-        f_core.SetParameter(3, 0.);
         f_core.SetParameter(5, 0.);
         f_core.SetParameter(6, 0.);
         f_core.SetParameter(7, 0.);
+        f_core.SetParameter(8, 0.);
         f_core.SetLineColor(fit_line_color);
         f_core.SetLineWidth(1);
         f_core.SetLineStyle(kDashed);
         f_core.DrawCopy("SAME");
 
-        // Broad Gaussian / right shoulder (dotted, orange)
-        TF1 f_gs(Form("f_gs_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
-        for (int i = 0; i < 8; ++i)
-            f_gs.SetParameter(i, f_model.GetParameter(i));
-        f_gs.SetParameter(0, 0.);
-        f_gs.SetParameter(5, 0.);
-        f_gs.SetParameter(6, 0.);
-        f_gs.SetParameter(7, 0.);
-        f_gs.SetLineColor(kOrange + 1);
-        f_gs.SetLineWidth(1);
-        f_gs.SetLineStyle(kDotted);
-        f_gs.DrawCopy("SAME");
-
-        // Background (dash-dot, gray)
-        TF1 f_bkg_draw(Form("f_bkgd_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
-        for (int i = 0; i < 8; ++i)
-            f_bkg_draw.SetParameter(i, f_model.GetParameter(i));
-        f_bkg_draw.SetParameter(0, 0.);
-        f_bkg_draw.SetParameter(3, 0.);
+        // Background only
+        TF1 f_bkg_draw(Form("f_bkgd_%s", h->GetName()), "pol3", kFitLo, kFitHi);
+        f_bkg_draw.SetParameter(0, f_model.GetParameter(5));
+        f_bkg_draw.SetParameter(1, f_model.GetParameter(6));
+        f_bkg_draw.SetParameter(2, f_model.GetParameter(7));
+        f_bkg_draw.SetParameter(3, f_model.GetParameter(8));
         f_bkg_draw.SetLineColor(kGray + 1);
         f_bkg_draw.SetLineWidth(1);
         f_bkg_draw.SetLineStyle(9);
         f_bkg_draw.DrawCopy("SAME");
 
-        // N_gamma: integrate signal only (zero background) over [kFitLo, kRHi]
-        TF1 f_sig(Form("f_sig_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
-        for (int i = 0; i < 8; ++i)
+        // ── N_gamma: integrate CB signal over fit range ───────────────────────
+        TF1 f_sig(Form("f_sig_%s", h->GetName()), cb_model, kFitLo, kFitHi, 9);
+        for (int i = 0; i < 9; ++i)
             f_sig.SetParameter(i, f_model.GetParameter(i));
         f_sig.SetParameter(5, 0.);
         f_sig.SetParameter(6, 0.);
         f_sig.SetParameter(7, 0.);
+        f_sig.SetParameter(8, 0.);
 
         const int kNGL = 500;
         double glX[500], glW[500];
         TF1::CalcGaussLegendreSamplingPoints(kNGL, glX, glW, 1e-10);
-        double N_gamma = f_sig.IntegralFast(kNGL, glX, glW, kFitLo, kRHi);
+        double N_gamma = f_sig.IntegralFast(kNGL, glX, glW, kFitLo, kFitHi);
         double frac_err = (f_model.GetParameter(0) > 0)
                               ? f_model.GetParError(0) / f_model.GetParameter(0)
                               : 0.;
         double N_gamma_err = N_gamma * frac_err;
         double chi2_ndf = (res->Ndf() > 0) ? res->Chi2() / res->Ndf() : -1.;
 
-        double gs_frac = f_model.GetParameter(3) / (f_model.GetParameter(0) + 1e-9);
         std::cout << "[" << h->GetName() << "]"
                   << "  N_gamma = " << N_gamma << " +/- " << N_gamma_err
                   << "  mu = " << f_model.GetParameter(1) << " mm"
                   << "  sigma = " << f_model.GetParameter(2) << " mm"
-                  << "  gs_frac = " << gs_frac
-                  << "  chi2/ndf = " << chi2_ndf
-                  << "\n";
+                  << "  alpha = " << f_model.GetParameter(3)
+                  << "  n = " << f_model.GetParameter(4)
+                  << "  chi2/ndf = " << chi2_ndf << "\n";
+
         store_result(fit_results, h->GetName(),
                      N_gamma, N_gamma_err,
                      f_model.GetParameter(1), f_model.GetParameter(2),
-                     gs_frac, chi2_ndf);
+                     f_model.GetParameter(3), // alpha stored in gs_frac slot
+                     chi2_ndf);
     };
 
     // ── Drawing ───────────────────────────────────────────────────────────────
@@ -663,20 +677,27 @@ void photon_number(std::string data_repository, std::string run_name,
     fit_start->SetLineColor(kBlue);
     fit_start->SetLineStyle(kDotted);
     fit_start->SetLineWidth(2);
+    TLine *fit_end = new TLine(kFitHi, 0, kFitHi, 1e9);
+    fit_end->SetLineColor(kBlue);
+    fit_end->SetLineStyle(kDotted);
+    fit_end->SetLineWidth(2);
 
     TCanvas *c3 = new TCanvas("c_r_distributions", "Corrected radial distributions", 1800, 600);
     c3->Divide(3, 1);
     c3->cd(1);
     h_r_full->Draw();
     fit_start->DrawLine(kFitLo, gPad->GetUymin(), kFitLo, gPad->GetUymax());
+    fit_end->DrawLine(kFitHi, gPad->GetUymin(), kFitHi, gPad->GetUymax());
     fit_r_dist(h_r_full);
     c3->cd(2);
     h_r_in_gap->Draw();
     fit_start->DrawLine(kFitLo, gPad->GetUymin(), kFitLo, gPad->GetUymax());
+    fit_end->DrawLine(kFitHi, gPad->GetUymin(), kFitHi, gPad->GetUymax());
     fit_r_dist(h_r_in_gap);
     c3->cd(3);
     h_r_ex_gap->Draw();
     fit_start->DrawLine(kFitLo, gPad->GetUymin(), kFitLo, gPad->GetUymax());
+    fit_end->DrawLine(kFitHi, gPad->GetUymin(), kFitHi, gPad->GetUymax());
     fit_r_dist(h_r_ex_gap);
 
     TCanvas *c5 = new TCanvas("c_r_by_sensor", "By sensor type", 1200, 600);
@@ -718,6 +739,11 @@ void photon_number(std::string data_repository, std::string run_name,
     h_xy_cov->Draw("COLZ");
     c4->cd(2);
     h_rphi_cov->Draw("COLZ");
+
+    new TCanvas();
+    h_r_ex_gap_1350->Draw();
+    new TCanvas();
+    h_r_ex_gap_1375->Draw();
 
     // ── Persist fit results to standard result store ───────────────────────
     //

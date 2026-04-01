@@ -19,6 +19,7 @@ int main(int argc, char **argv)
     std::string trigger_config_file = "conf/trigger_conf.toml";
     std::string readout_config_file = "conf/readout_config.toml";
     std::string mapping_config_file = "conf/mapping_conf.toml";
+    std::string fine_calibration_config_file = data_repository + "/" + run_name + "/fine_calibration.txt";
 
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
@@ -28,6 +29,7 @@ int main(int argc, char **argv)
     app.add_option("--trigger-conf", trigger_config_file);
     app.add_option("--readout-conf", readout_config_file);
     app.add_option("--mapping-conf", mapping_config_file);
+    app.add_option("--fine-calib-conf", fine_calibration_config_file);
     app.add_flag("--force-rebuild", force_lightdata_rebuild);
 
     try
@@ -57,7 +59,7 @@ int main(int argc, char **argv)
             {
                 auto start = std::chrono::high_resolution_clock::now();
                 mist::logger::info(Form("(lightdata_writer) Starting writing lightdata for run '%s'", current_run_name.c_str()));
-                lightdata_writer(data_repository, current_run_name, max_spill, force_lightdata_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file);
+                lightdata_writer(data_repository, current_run_name, max_spill, force_lightdata_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
                 mist::logger::info(Form("(lightdata_writer) Total time taken: %f seconds", elapsed.count()));
@@ -69,7 +71,7 @@ int main(int argc, char **argv)
         else
         {
             auto start = std::chrono::high_resolution_clock::now();
-            lightdata_writer(data_repository, run_name, max_spill, force_lightdata_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file);
+            lightdata_writer(data_repository, run_name, max_spill, force_lightdata_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
             mist::logger::info(Form("(lightdata_writer) Total time taken: %f seconds", elapsed.count()));
