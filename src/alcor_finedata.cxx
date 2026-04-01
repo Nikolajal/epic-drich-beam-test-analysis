@@ -1,4 +1,5 @@
 #include "alcor_finedata.h"
+#include "TROOT.h"
 
 //  TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression | merge data here
 //  TODO: understand what is the issue with generate calibration
@@ -17,38 +18,40 @@ alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
 }
 
 // =============================================================================
-// alcor_finedata — Constructors
-// =============================================================================
-
-alcor_finedata::alcor_finedata() {}
-
-alcor_finedata::alcor_finedata(const alcor_data_struct &s)
-    : internal_data(s) {}
-
-alcor_finedata::alcor_finedata(const alcor_finedata_struct &d)
-    : internal_data(d) {}
-
-alcor_finedata::alcor_finedata(const alcor_finedata &o)
-    : internal_data(o.get_data_struct()) {}
-
-// =============================================================================
 // alcor_finedata — Derived timing getters
 // =============================================================================
 
 float alcor_finedata::get_phase() const
 {
     auto calib_it = calibration_parameters.find(get_global_index());
-    if (calib_it != calibration_parameters.end())
+    if (calib_it == calibration_parameters.end())
+        return 0.f;
+
+    const auto &calibration_parameter = calib_it->second;
+
+    switch (get_calibration_method(get_global_index()))
     {
-        auto calibration_parameter = calib_it->second;
-        if ((calibration_parameter[1] == 0) && (calibration_parameter[0] == 0))
-            return 0.;
+    case calibration_method_t::_ALCOR_v2_BASE_CALIB_:
+    {
         auto current_fine_value = static_cast<float>(get_fine());
-        auto phase = -(current_fine_value - calibration_parameter[0]) / (calibration_parameter[1] - calibration_parameter[0]);
+        if ((calibration_parameter[1] == 0) && (calibration_parameter[0] == 0))
+            return 0.f;
+        if ((calibration_parameter[1] < current_fine_value) && (calibration_parameter[0] > current_fine_value))
+            return -9999.f;
+        auto phase = (current_fine_value - calibration_parameter[0]) / (calibration_parameter[1] - calibration_parameter[0]);
         phase -= calibration_parameter[2];
         return phase;
     }
-    return 0.;
+
+    case calibration_method_t::_ALCOR_v2_FIT_CALIB_:
+    {
+        auto current_fine_value = static_cast<float>(get_fine());
+        return (current_fine_value * calibration_parameter[0] - calibration_parameter[1]);
+    }
+
+    default:
+        return 0.f;
+    }
 }
 
 // =============================================================================
@@ -75,57 +78,112 @@ float alcor_finedata::get_hit_phi_rnd(std::array<float, 2> v) const
 
 void alcor_finedata::write_calib_to_file(const std::string &filename)
 {
+    mist::logger::info("(alcor_finedata::write_calib_to_file) Requested to write calibration to file");
     std::ofstream calib_file(filename);
     if (!calib_file)
         throw std::runtime_error("Cannot open file");
     for (auto [tdc_index, calib_params] : calibration_parameters)
-        calib_file << tdc_index << " " << calib_params[0] << " " << calib_params[1] << " " << calib_params[2] << std::endl;
+    {
+        auto method_it = channel_calibration_method.find(tdc_index);
+        auto method = (method_it != channel_calibration_method.end())
+                          ? method_it->second
+                          : default_calibration_method;
+        calib_file << tdc_index << " "
+                   << static_cast<int>(method) << " "
+                   << calib_params[0] << " "
+                   << calib_params[1] << " "
+                   << calib_params[2] << std::endl;
+    }
 }
 
 void alcor_finedata::read_calib_from_file(const std::string &filename, bool clear_first, bool overwrites)
 {
     if (clear_first)
+    {
         calibration_parameters.clear();
+        channel_calibration_method.clear();
+    }
     std::ifstream calib_file(filename);
     if (!calib_file)
-        throw std::runtime_error("Cannot open file");
+    {
+        mist::logger::warning("(alcor_finedata::read_calib_from_file) Cannot open " + filename + ", skipping load calibration");
+        return;
+    }
     std::string line;
     while (std::getline(calib_file, line))
     {
         std::stringstream ss(line);
-        int key;
+        int method_int, key;
         float a, b, c;
-        ss >> key >> a >> b >> c;
+        ss >> key >> method_int >> a >> b >> c;
         if (calibration_parameters.count(key) && !overwrites)
             continue;
         calibration_parameters[key] = {a, b, c};
+        channel_calibration_method[key] = static_cast<calibration_method_t>(method_int);
     }
+}
+
+void alcor_finedata::switch_to_fit_v2(int global_index, calibration_method_t calibration_type, float angular_coeff, float offset, float sigma)
+{
+    set_calibration_method(global_index, calibration_method_t::_ALCOR_v2_FIT_CALIB_);
+    auto prev_min = get_param0(global_index) < 1 ? 30 : get_param0(global_index);
+    auto prev_max = get_param1(global_index) < 1 ? 100 : get_param1(global_index);
+    set_param0(global_index, angular_coeff);
+    set_param1(global_index, -(angular_coeff * (prev_max + prev_min) * 0.5 + offset));
+    set_param2(global_index, sigma);
 }
 
 void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool overwrite_calibration)
 {
-    calibration_parameters.clear();
+    //  Check the batch status
+    auto current_batch_ROOT = gROOT->IsBatch();
+    gROOT->SetBatch(true);
 
+    //  Check the histogram is valid
+    if (!calibration_histogram)
+    {
+        mist::logger::warning("(alcor_finedata::generate_calibration) Invalid histogram given, aborting calibration");
+        return;
+    }
+
+    //  Start calibration
+    mist::logger::info("(alcor_finedata::generate_calibration) Starting fine data calibration from: " + std::string(calibration_histogram->GetName()));
+
+    //  Overwrite protection
+    if (overwrite_calibration)
+    {
+        mist::logger::info("(alcor_finedata::generate_calibration) Requested clear of previous calibration");
+        calibration_parameters.clear();
+    }
+
+    //  Fit function
     TF1 *fine_dist_fit_function = new TF1("fine_dist_fit_function", "[0]*((1./(1+TMath::Exp(-[1]*(x-[2]))))-(1./(1+TMath::Exp(-[1]*(x-[3])))))", 0, 256);
     fine_dist_fit_function->SetParLimits(0, 0., 1e6);
     fine_dist_fit_function->SetParLimits(1, 0.5, 5.);
     fine_dist_fit_function->SetParLimits(2, 10., 50.);
     fine_dist_fit_function->SetParLimits(3, 80., 120.);
 
-    TH1F *h_par1 = new TH1F("h_par1", "h_par1", 40, 10, 50);
-    TH1F *h_par2 = new TH1F("h_par2", "h_par2", 40, 80, 120);
-    TH2F *h_par_corr = new TH2F("h_par_corr", "", 120, 0, 120, 120, 0, 120);
+    //  Reporting
+    auto calibrated_channels_before_calibration = calibration_parameters.size();
+    std::vector<int> skipped_channels;
 
-    auto channels = 0;
-    new TCanvas();
+    //  Loop on calibration histogram
     for (auto xbin = 1; xbin <= calibration_histogram->GetNbinsX(); xbin++)
     {
+        //  Overwrite protection
         if (!overwrite_calibration && calibration_parameters.count(xbin - 1))
             continue;
+
+        //  Small set protection
         auto current_tdc_fine_calib = calibration_histogram->ProjectionY(Form("tmp_%i", xbin), xbin, xbin);
         if (current_tdc_fine_calib->GetEntries() < 250)
+        {
+            skipped_channels.push_back(xbin - 1);
+            delete current_tdc_fine_calib;
             continue;
-        channels++;
+        }
+
+        //  Start calibration
         double found_minimum = 0;
         double found_maximum = 0;
         for (auto ibin = 1; ibin <= current_tdc_fine_calib->GetNbinsX(); ibin++)
@@ -160,18 +218,24 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool over
             continue;
 
         calibration_parameters[xbin - 1] = {first_parameter, second_parameter, 0.};
-        h_par1->Fill(first_parameter);
-        h_par2->Fill(second_parameter);
-        h_par_corr->Fill(first_parameter, second_parameter);
+        delete current_tdc_fine_calib;
     }
 
-    //  --- TFIX
-    new TCanvas();
-    h_par1->Draw();
-    new TCanvas();
-    h_par2->Draw();
-    new TCanvas();
-    h_par_corr->Draw("COLZ");
+    //  Debug
+    std::string msg = "(alcor_finedata::generate_calibration) channels: ";
+    for (auto channel : skipped_channels)
+        msg += std::to_string(channel) + " ";
+    msg += "skipped, projection too sparsely";
+    mist::logger::debug(msg);
+
+    //  Reporting
+    auto calibrated_channels_after_calibration = calibration_parameters.size();
+    mist::logger::info("(alcor_finedata::generate_calibration) Finished calibration! updated " +
+                       std::to_string(calibrated_channels_after_calibration - calibrated_channels_before_calibration) +
+                       " was: " + std::to_string(calibrated_channels_before_calibration) +
+                       " is now: " + std::to_string(calibrated_channels_after_calibration));
+
+    gROOT->SetBatch(current_batch_ROOT);
 }
 
 // =============================================================================

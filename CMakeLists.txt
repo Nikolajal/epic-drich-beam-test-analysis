@@ -52,7 +52,7 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    GIT_TAG        dev
+    GIT_TAG        main
 )
 FetchContent_MakeAvailable(mist)
 
@@ -80,7 +80,7 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/lightdata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recodata_writer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/recotrackdata_writer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/standard_analysis.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/analysis_results.h
     # hough_transform.h is now part of MIST — no longer a local header,
     # so it does not need to be listed here for the ROOT dictionary.
     # If any of the headers above include <mist/ring_finding/hough_transform.h>,
@@ -118,9 +118,7 @@ set(SRC_FILES
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
     src/recotrackdata_writer.cxx
-    src/standard_analysis.cxx
-    # src/ring-finding-algorithms/hough-transform.cxx removed —
-    # hough_transform is now compiled as part of mist::mist.
+    src/analysis_results.cxx
 )
 
 # --------------------------------------------------
@@ -170,12 +168,10 @@ endif()
 add_executable(lightdata_writer      macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
-add_executable(standard_analysis     macros/utilities/standard_analysis.cpp)
 
 target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
 target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
-target_link_libraries(standard_analysis     PRIVATE beam_test_analysis)
 
 # --------------------------------------------------
 # Install Rules
@@ -185,7 +181,6 @@ install(TARGETS
     lightdata_writer
     recodata_writer
     recotrackdata_writer
-    standard_analysis
     EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

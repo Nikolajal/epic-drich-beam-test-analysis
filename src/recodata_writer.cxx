@@ -32,6 +32,15 @@ void recodata_writer(
     alcor_spilldata *spilldata = new alcor_spilldata();
     spilldata->link_to_tree(lightdata_tree);
 
+    alcor_finedata::read_calib_from_file(data_repository + "/" + run_name + "/fine_calib.txt");
+
+    auto fine_time_calib_th2f = (TH2F *)input_file->Get("h_fine_calib");
+    alcor_finedata::generate_calibration(fine_time_calib_th2f, true);
+
+    mist::logger::progress_bar post_processing("post_processing", mist::logger::bar_style::BLOCK);
+    mist::logger::update("spill_counter  ", "Current spill: " +
+                                                std::to_string(0));
+
     //  Generate mapping
     mapping current_mapping(mapping_conf);
 
@@ -62,6 +71,7 @@ void recodata_writer(
     recodata.write_to_tree(recodata_tree);
 
     //  Cache channel positions from mapping
+
     std::map<int, std::array<float, 2>> index_to_hit_xy;
     for (auto i_index = 0; i_index < 2048 * 4; i_index += 4)
     {
@@ -115,14 +125,89 @@ void recodata_writer(
     for (int i = 0; i < n_triggers; ++i)
         h_edge_trigger_position->GetXaxis()->SetBinLabel(i + 1, registry.triggers[i].second.c_str());
 
+    std::unordered_map<int, TH1F *> h_trigger_time_diff_w_cherenkov;
+
     //  ── Loop over spills ─────────────────────────────────────────────────────
+    std::map<int, std::vector<float>> map_of_offsets;
     for (int i_spill = 0; i_spill < all_spills; ++i_spill)
     {
         lightdata_tree->GetEntry(i_spill);
         spilldata->get_entry();
         auto &frames_in_spill = spilldata->get_frame_list_link();
         auto &frame_reference = spilldata->get_frame_reference_list_link();
-        mist::logger::info(Form("Spill %i with %zu frames", i_spill, frames_in_spill.size()));
+
+        //  ── First loop for calibration ──────────────────────────────────────────
+        for (auto &current_lightdata_struct : frames_in_spill)
+        {
+            alcor_lightdata current_lightdata(current_lightdata_struct);
+            auto current_trigger_list = current_lightdata.get_triggers();
+            auto timing_trigger = std::find_if(current_trigger_list.begin(),
+                                               current_trigger_list.end(),
+                                               [](const trigger_event &e)
+                                               {
+                                                   return e.index == _TRIGGER_STREAMING_RING_FOUND_;
+                                               });
+            if (timing_trigger != current_trigger_list.end())
+            {
+                for (auto current_cherenkov : current_lightdata.get_cherenkov_hits_link())
+                {
+                    alcor_finedata current_hit(current_cherenkov);
+                    auto index = current_hit.get_global_index();
+                    map_of_offsets[index].push_back(
+                        current_hit.get_time_ns() - timing_trigger->fine_time);
+                }
+            }
+        }
+    }
+    for (auto &[channel_index, values_list] : map_of_offsets)
+    {
+        if (values_list.size() < 20)
+            continue;
+
+        auto offset_value = 0.f;
+        auto offset_participants = 0;
+        for (auto &value : values_list)
+        {
+            if (fabs(value) > 30)
+                continue;
+            offset_value += value;
+            offset_participants++;
+        }
+        offset_value /= offset_participants;
+
+        if (offset_participants < 20)
+            continue;
+
+        if (!channel_index)
+        {
+            alcor_finedata temy_testt;
+            temy_testt.set_global_index(0);
+            temy_testt.set_rollover(0);
+            temy_testt.set_coarse(0);
+            temy_testt.set_fine(0);
+            mist::logger::debug(Form("channel %i - offset: %f", channel_index, offset_value));
+            mist::logger::debug(Form("channel %i - param0: %f", channel_index, alcor_finedata::get_param0(channel_index)));
+            mist::logger::debug(Form("channel %i - param1: %f", channel_index, alcor_finedata::get_param1(channel_index)));
+            mist::logger::debug(Form("channel %i - param2: %f", channel_index, alcor_finedata::get_param2(channel_index)));
+            mist::logger::debug(Form("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()));
+            alcor_finedata::set_param2(channel_index, -offset_value / _ALCOR_CC_TO_NS_);
+            mist::logger::debug(Form("channel %i - param0: %f", channel_index, alcor_finedata::get_param0(channel_index)));
+            mist::logger::debug(Form("channel %i - param1: %f", channel_index, alcor_finedata::get_param1(channel_index)));
+            mist::logger::debug(Form("channel %i - param2: %f", channel_index, alcor_finedata::get_param2(channel_index)));
+            mist::logger::debug(Form("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()));
+        }
+        alcor_finedata::set_param2(channel_index, -offset_value / _ALCOR_CC_TO_NS_);
+    }
+    mist::logger::debug("Save face");
+    mist::logger::debug("Save face");
+    mist::logger::debug("Save face");
+    for (int i_spill = 0; i_spill < all_spills; ++i_spill)
+    {
+        lightdata_tree->GetEntry(i_spill);
+        spilldata->get_entry();
+        auto &frames_in_spill = spilldata->get_frame_list_link();
+        auto &frame_reference = spilldata->get_frame_reference_list_link();
+        mist::logger::update("spill_counter  ", Form("Spill %i with %zu frames", i_spill, frames_in_spill.size()));
 
         //  Start-of-spill event: dead lane map
         auto lanes_participating = spilldata->get_not_dead_participants();
@@ -147,14 +232,14 @@ void recodata_writer(
         //  ── Loop over frames ──────────────────────────────────────────────────
         int n_accepted = 0, n_edge = 0, n_duplicate = 0;
         int i_saved_frame = -1;
-
+        i_saved_frame = -1;
         for (auto &current_lightdata_struct : frames_in_spill)
         {
             i_saved_frame++;
             alcor_lightdata current_lightdata(current_lightdata_struct);
 
             if (i_saved_frame % 1000 == 0)
-                mist::logger::info(Form("\033[2K\rProcessing frame %i", i_saved_frame), true);
+                post_processing.update(i_saved_frame, frames_in_spill.size());
 
             h_frames_per_spill->Fill(i_spill, 0.5); // total
 
@@ -174,13 +259,15 @@ void recodata_writer(
                 if (current_trigger.index == _TRIGGER_UNKNOWN_)
                     continue;
 
+                accepted_triggers[current_trigger.index] = current_trigger;
+
                 const int reg_bin = registry.index_of(current_trigger.index) + 0.5; // centre of bin
 
-                bool is_edge = (current_trigger.coarse < edge_rejection_cc) ||
-                               (current_trigger.coarse > _FRAME_SIZE_ - edge_rejection_cc);
+                bool is_edge = (current_trigger.fine_time < edge_rejection_cc) ||
+                               (current_trigger.fine_time > _FRAME_SIZE_ - edge_rejection_cc);
                 if (is_edge)
                 {
-                    h_edge_trigger_position->Fill(reg_bin, current_trigger.coarse);
+                    h_edge_trigger_position->Fill(reg_bin, current_trigger.fine_time);
                     h_trigger_qa->Fill(reg_bin, 1.5); // edge-rejected
                     had_edge = true;
                     continue;
@@ -198,6 +285,18 @@ void recodata_writer(
                 }
 
                 accepted_triggers[current_trigger.index] = current_trigger;
+                if (!h_trigger_time_diff_w_cherenkov.count(current_trigger.index))
+                    h_trigger_time_diff_w_cherenkov[current_trigger.index] =
+                        new TH1F(
+                            Form("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()),
+                            ";#Delta_{t} (t_{hit} - t_{trigger}) ns;Normalised entries",
+                            5e3,
+                            -500,
+                            500);
+                for (auto current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
+                    h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(
+                        alcor_finedata(current_cherenkov_hit_struct).get_time_ns() -
+                        current_trigger.fine_time);
             }
 
             if (frame_rejected)
@@ -231,15 +330,33 @@ void recodata_writer(
 
         mist::logger::info(Form("Spill %i done — accepted: %i  had-edge: %i  duplicate-rejected: %i  total: %zu",
                                 i_spill, n_accepted, n_edge, n_duplicate, frames_in_spill.size()));
-    }
+    } // end spill loop
 
-    //  Save output
+    mist::logger::end_update("spill_counter  ");
+    post_processing.finish();
+
+    //  --- --- --- --- --- ---
+    //  QA plots
+    //  ---
+    output_file->cd();
     recodata_tree->Write();
+    //  ---
+    //  --- Trigger QA
+    TDirectory *trigger_dir = output_file->mkdir("Triggers");
+    trigger_dir->cd();
     h_trigger_qa->Write();
     h_frames_per_spill->Write();
     h_edge_trigger_position->Write();
+    for (auto [key, val] : h_trigger_time_diff_w_cherenkov)
+        val->Write();
+    //
+    //  ---
+    //  --- Close file
     input_file->Close();
     output_file->Close();
+    //  ---
+    //  End: QA plots
+    //  --- --- --- --- --- ---
 }
 
 /*

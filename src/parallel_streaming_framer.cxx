@@ -37,7 +37,7 @@ parallel_streaming_framer::parallel_streaming_framer(std::vector<std::string> fi
     _current_spill = -1;
 
     // Initialise the fine tune container
-    h2_fine_tune_distribution = new TH2F("h2_fine_tune_distribution", ";global tdc index;fine parameter", 1e4, 0, 1e4, 256, 0, 256);
+    h2_fine_tune_distribution = new TH2F("h2_fine_tune_distribution", ";global tdc index;fine parameter", 1e4, -0.5, 1e4 - 0.5, 256, 0, 256);
 }
 
 // Getters
@@ -117,13 +117,13 @@ void parallel_streaming_framer::process(alcor_data_streamer &current_stream, int
                 for (auto &tag : current_readout_tag_list)
                 {
                     if (tag == "timing")
-                        current_lightdata.timing_hits.emplace_back(current_data.get_data_struct());
+                        current_lightdata.timing_hits.emplace_back(current_data.get_data());
                     else if (tag == "tracking")
-                        current_lightdata.tracking_hits.emplace_back(current_data.get_data_struct());
+                        current_lightdata.tracking_hits.emplace_back(current_data.get_data());
                     else if (tag == "cherenkov")
-                        current_lightdata.cherenkov_hits.emplace_back(current_data.get_data_struct());
+                        current_lightdata.cherenkov_hits.emplace_back(current_data.get_data());
                 }
-                h2_fine_tune_distribution->Fill(current_data.get_global_tdc_index() + 1, current_data.get_fine());
+                h2_fine_tune_distribution->Fill(current_data.get_global_tdc_index(), current_data.get_fine());
             }
             continue;
         }

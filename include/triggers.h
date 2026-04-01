@@ -35,7 +35,10 @@
 #include <vector>
 #include <cstdint>
 #include <iostream>
-#include <toml++/toml.h>
+#include <toml++/toml.h>// triggers.h
+#ifndef __CLING__
+#include <mist/logger/logger.h>
+#endif
 #include "TH2.h"
 
 // ============================================================
@@ -302,17 +305,20 @@ trigger_conf_reader(const std::string &config_file = "Data/triggers.toml")
     }
     catch (const toml::parse_error &e)
     {
-        std::cerr << "[ERROR] Failed to parse trigger config \"" << config_file
-                  << "\": " << e.description() << "\n";
+        mist::logger::error("(trigger_conf_reader) Failed to parse trigger config \"" +
+                            config_file +
+                            "\": " +
+                            std::string(e.description()));
         return triggers;
     }
 
-    std::cout << "[INFO] Loaded trigger config: " << config_file << "\n";
+    mist::logger::info("(trigger_conf_reader) Loaded trigger config: " + config_file);
 
     auto arr = tbl.get_as<toml::array>("trigger");
     if (!arr)
     {
-        std::cerr << "[WARN] No [[trigger]] entries found in \"" << config_file << "\"\n";
+        mist::logger::warning("(trigger_conf_reader) No [[trigger]] entries found in \"" +
+                              config_file);
         return triggers;
     }
 
@@ -339,7 +345,7 @@ trigger_conf_reader(const std::string &config_file = "Data/triggers.toml")
         if (!entry->contains("name") || !entry->contains("index") ||
             !entry->contains("device") || !entry->contains("delay"))
         {
-            std::cerr << "[WARN] Skipping incomplete [[trigger]] entry (missing required key)\n";
+            mist::logger::warning("(trigger_conf_reader) Skipping incomplete [[trigger]] entry (missing required key)");
             continue;
         }
 
@@ -360,17 +366,20 @@ trigger_conf_reader(const std::string &config_file = "Data/triggers.toml")
             int free_slot = earliest_free();
             if (free_slot == -1)
             {
-                std::cerr << "[ERROR] \"" << cfg.name << "\""
-                          << (duplicate ? " has duplicate index " : " has out-of-range index ")
-                          << raw_index
-                          << " and no free slot remains in [0, 99] — entry dropped\n";
+                mist::logger::error("(trigger_conf_reader) \"" +
+                                    cfg.name +
+                                    (duplicate ? "\" has duplicate index " : "\" has out-of-range index ") +
+                                    std::to_string(raw_index) +
+                                    " and no free slot remains in [0, 99] — entry dropped");
                 continue;
             }
 
-            std::cerr << "[WARN] \"" << cfg.name << "\""
-                      << (duplicate ? " has duplicate index " : " has out-of-range index ")
-                      << raw_index << " (valid range: 0-99, unique)"
-                      << " — reassigned to earliest available index " << free_slot << "\n";
+            mist::logger::warning("(trigger_conf_reader) \"" +
+                                  cfg.name +
+                                  (duplicate ? "\" has duplicate index " : "\" has out-of-range index ") +
+                                  std::to_string(raw_index) +
+                                  " (valid range: 0-99, unique) — reassigned to earliest available index " +
+                                  std::to_string(free_slot));
             raw_index = static_cast<uint16_t>(free_slot);
         }
 
@@ -378,10 +387,10 @@ trigger_conf_reader(const std::string &config_file = "Data/triggers.toml")
         used_indices[cfg.index] = true;
         triggers.push_back(cfg);
 
-        std::cout << "[INFO]  " << cfg.name
-                  << " | index=" << static_cast<int>(cfg.index)
-                  << " | device=" << cfg.device
-                  << " | delay=" << cfg.delay << "\n";
+        mist::logger::info("(trigger_conf_reader) Loaded trigger \"" + cfg.name +
+                           "\" | index=" + std::to_string(static_cast<int>(cfg.index)) +
+                           " | device=" + std::to_string(cfg.device) +
+                           " | delay=" + std::to_string(cfg.delay));
     }
 
     return triggers;

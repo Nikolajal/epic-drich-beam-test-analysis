@@ -157,7 +157,7 @@ public:
 
     /** @name Raw field getters */
     ///@{
-    alcor_data_struct get_data_struct() const { return data; } ///< Return a copy of the underlying storage struct.
+    alcor_data_struct get_data() const { return data; } ///< Return a copy of the underlying storage struct.
     int get_device() const { return data.device; }             ///< Device ID (192+)
     int get_fifo() const { return data.fifo; }                 ///< FIFO number
     int get_type() const { return data.type; }                 ///< Hit type — see @ref alcor_hit_struct

@@ -203,6 +203,9 @@ public:
     /// @brief FIFO number for hit @p i.
     inline int get_fifo(int i) const { return get_finedata(i).get_fifo(); }
 
+    /// @brief Lane number for hit @p i.
+    inline int get_lane(int i) const { return get_fifo(i); }
+
     /// @brief Chip ID for hit @p i.
     inline int get_chip(int i) const { return get_finedata(i).get_chip(); }
 
@@ -307,7 +310,7 @@ public:
     /// @brief Append a hit from an @ref alcor_finedata object (stores its underlying struct).
     inline int add_hit(const alcor_finedata &hit)
     {
-        recodata_ptr->push_back(hit.get_data_struct());
+        recodata_ptr->push_back(hit.get_data());
         return recodata_ptr->size() - 1;
     }
 
