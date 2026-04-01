@@ -177,13 +177,10 @@ select option { background: var(--bg3); }
 
   <div class="field">
     <label>Run ID</label>
-    <div style="display:flex;gap:8px;">
-      <input id="run-id" type="text" placeholder="20251117-173828" style="flex:1">
-      <button class="btn-sm" onclick="loadRuns()">↻ List</button>
-    </div>
-    <select id="run-select" style="margin-top:6px;display:none" onchange="document.getElementById('run-id').value=this.value">
-      <option value="">— select run —</option>
+    <select id="run-select" onchange="document.getElementById('run-id').value=this.value">
+      <option value="">— loading... —</option>
     </select>
+    <input id="run-id" type="text" placeholder="or type manually" style="margin-top:6px">
   </div>
 
   <div class="toggle-row">
@@ -409,11 +406,16 @@ select option { background: var(--bg3); }
 
 <!-- ===================== PLOTS PANEL ===================== -->
 <div id="panel-plots" class="panel">
-  <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-    <select id="session-select" style="flex:1" onchange="onSessionChange()">
-      <option value="">— no sessions —</option>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <select id="plot-run-select" style="flex:1" onchange="onPlotRunChange()">
+      <option value="">— run —</option>
     </select>
-    <button class="btn-sm" onclick="loadSessions()">↻</button>
+    <button class="btn-sm" onclick="loadPlotRuns()">↻</button>
+  </div>
+  <div style="margin-bottom:10px">
+    <select id="plot-dt-select" style="width:100%" onchange="onPlotDtChange()">
+      <option value="">— session —</option>
+    </select>
   </div>
   <div id="conf-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
   <div id="img-grid-container"></div>
@@ -501,7 +503,7 @@ async function loadConfs() {
 }
 
 // ---------------------------------------------------------------------------
-// Load runs from data folder
+// Load runs from data folder (auto on init)
 // ---------------------------------------------------------------------------
 async function loadRuns() {
   const folder = document.getElementById('data-folder').value;
@@ -509,10 +511,17 @@ async function loadRuns() {
   if (!res) return;
   const runs = await res.json();
   const sel = document.getElementById('run-select');
-  if (runs.length === 0) { sel.style.display = 'none'; return; }
+  if (runs.length === 0) {
+    sel.innerHTML = '<option value="">— no runs found —</option>';
+    return;
+  }
   sel.innerHTML = '<option value="">— select run —</option>' +
     runs.map(r => `<option value="${r}">${r}</option>`).join('');
-  sel.style.display = 'block';
+  // Auto-select first (latest)
+  if (runs.length > 0) {
+    sel.value = runs[0];
+    document.getElementById('run-id').value = runs[0];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -528,10 +537,10 @@ function toggleVariantMode() {
 // Run analysis via WebSocket + background polling fallback
 // ---------------------------------------------------------------------------
 let ws = null;
-let wsPingInterval = null;
-let pollInterval   = null;
-let pollOffset     = 0;
-let runActive      = false;
+let wsPingInterval  = null;
+let pollInterval    = null;
+let pollByteOffset  = 0;   // byte offset into server log file
+let runActive       = false;
 
 function startRun() {
   const dataFolder = document.getElementById('data-folder').value.trim();
@@ -550,12 +559,12 @@ function startRun() {
   const confLabel   = confMode === 'custom' ? '(custom)' : (conf || '(default)');
 
   runActive = true;
+  pollByteOffset = 0;
   document.getElementById('goto-plots-wrap').style.display = 'none';
   setStatus('running');
   switchTab('log');
   clearLog();
   appendLog(`Starting analysis...\nRun: ${runId}\nConf: ${confLabel}\nMacros: ${macros.join(' ')}\n\n`);
-  pollOffset = 1; // skip header line already shown
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws/run`);
@@ -570,9 +579,8 @@ function startRun() {
     }, 25000);
   };
   ws.onmessage = e => {
-    if (e.data === '__pong__') return;
+    if (e.data === '__ping__') return;
     appendLog(e.data);
-    pollOffset++;
     if (e.data.includes('[Done') || e.data.includes('[Error]')) onRunDone();
   };
   ws.onclose = () => {
@@ -604,16 +612,15 @@ function startPolling() {
   if (pollInterval) return;
   appendLog('\n[Connection lost — continuing in background, polling for updates...]\n');
   pollInterval = setInterval(async () => {
-    const res = await fetch(`/api/run-log?offset=${pollOffset}`).catch(() => null);
+    const res = await fetch(`/api/run-log?offset=${pollByteOffset}`).catch(() => null);
     if (!res) return;
     const data = await res.json();
-    if (data.lines.length) {
-      data.lines.forEach(l => appendLog(l));
-      pollOffset += data.lines.length;
+    if (data.text) {
+      appendLog(data.text);
+      pollByteOffset = data.offset;
     }
     if (data.done) {
       onRunDone();
-      appendLog(`\n[Run finished — exit code ${data.exit_code}]\n`);
     }
   }, 2000);
 }
@@ -660,36 +667,60 @@ function setStatus(s) {
 // ---------------------------------------------------------------------------
 // Plot browser
 // ---------------------------------------------------------------------------
-let allSessions = [];
+// Plot browser — two-level: run → datetime → conf chips
+// ---------------------------------------------------------------------------
+let _plotSessions = [];  // sessions for currently selected run
 
-async function loadSessions() {
-  const res = await fetch('/api/plot-sessions').catch(() => null);
+async function loadPlotRuns() {
+  const res = await fetch('/api/plot-runs').catch(() => null);
   if (!res) return;
-  allSessions = await res.json();
-  const sel = document.getElementById('session-select');
-  if (allSessions.length === 0) {
-    sel.innerHTML = '<option value="">— no sessions —</option>';
+  const runs = await res.json();
+  const sel = document.getElementById('plot-run-select');
+  if (runs.length === 0) {
+    sel.innerHTML = '<option value="">— no plots yet —</option>';
+    document.getElementById('plot-dt-select').innerHTML = '<option value="">— session —</option>';
     document.getElementById('conf-chips').innerHTML = '';
     document.getElementById('img-grid-container').innerHTML =
       '<p style="color:var(--text2);font-size:.9rem;">No plots yet.</p>';
     return;
   }
-  sel.innerHTML = allSessions.map((s, i) =>
-    `<option value="${i}">${s.run} &nbsp;·&nbsp; ${s.datetime} &nbsp;(${s.total_plots} plots)</option>`
+  sel.innerHTML = runs.map(r => `<option value="${r}">${r}</option>`).join('');
+  sel.value = runs[0];   // auto-select latest
+  await loadPlotDatetimes(runs[0]);
+}
+
+async function onPlotRunChange() {
+  const run = document.getElementById('plot-run-select').value;
+  if (run) await loadPlotDatetimes(run);
+}
+
+async function loadPlotDatetimes(run) {
+  const res = await fetch(`/api/plot-sessions?run=${encodeURIComponent(run)}`).catch(() => null);
+  if (!res) return;
+  _plotSessions = await res.json();
+  const sel = document.getElementById('plot-dt-select');
+  if (_plotSessions.length === 0) {
+    sel.innerHTML = '<option value="">— no sessions —</option>';
+    document.getElementById('conf-chips').innerHTML = '';
+    document.getElementById('img-grid-container').innerHTML = '';
+    return;
+  }
+  sel.innerHTML = _plotSessions.map((s, i) =>
+    `<option value="${i}">${s.datetime} &nbsp;(${s.total_plots} plots)</option>`
   ).join('');
-  sel.value = '0';
+  sel.value = '0';   // auto-select latest
   renderConfChips(0);
   loadPlotsForSession(0, '');
 }
 
-function onSessionChange() {
-  const i = parseInt(document.getElementById('session-select').value);
+function onPlotDtChange() {
+  const i = parseInt(document.getElementById('plot-dt-select').value);
   renderConfChips(i);
   loadPlotsForSession(i, '');
 }
 
 function renderConfChips(i) {
-  const s = allSessions[i];
+  const s = _plotSessions[i];
   const box = document.getElementById('conf-chips');
   if (!s || s.confs.length === 0) { box.innerHTML = ''; return; }
   box.innerHTML =
@@ -706,29 +737,26 @@ function selectChip(el, i, conf) {
 }
 
 async function loadPlotsForSession(i, conf) {
-  const s = allSessions[i];
+  const s = _plotSessions[i];
   if (!s) return;
   const url = `/api/plot-files?run=${encodeURIComponent(s.run)}&datetime=${encodeURIComponent(s.datetime)}&conf=${encodeURIComponent(conf)}`;
   const res = await fetch(url).catch(() => null);
   if (!res) return;
   const files = await res.json();
-
   const container = document.getElementById('img-grid-container');
   if (files.length === 0) {
     container.innerHTML = '<p style="color:var(--text2);font-size:.9rem;margin-top:8px">No PNG plots found.</p>';
     return;
   }
-  container.innerHTML = `
-    <div class="img-grid">
-      ${files.map(f => {
-        const name = f.split('/').pop().replace('.png','');
-        return `<div class="img-card" onclick="openLightbox('${f}','${name}')">
-          <img src="${f}" loading="lazy" alt="${name}">
-          <p>${name}</p>
-        </div>`;
-      }).join('')}
-    </div>`;
+  container.innerHTML = `<div class="img-grid">${files.map(f => {
+    const name = f.split('/').pop().replace('.png','');
+    return `<div class="img-card" onclick="openLightbox('${f}','${name}')">
+      <img src="${f}" loading="lazy" alt="${name}"><p>${name}</p></div>`;
+  }).join('')}</div>`;
 }
+
+// Called when switching to Plots tab
+function loadSessions() { loadPlotRuns(); }
 
 // ---------------------------------------------------------------------------
 // Lightbox
@@ -763,6 +791,8 @@ function switchTab(name) {
 // ---------------------------------------------------------------------------
 async function init() {
   loadConfs();
+  loadRuns();
+  loadPlotRuns();
 
   // Restore previous tab
   const savedTab = localStorage.getItem('activeTab') || 'run';
@@ -774,7 +804,7 @@ async function init() {
   const status = await statusRes.json();
 
   if (!status.running && status.exit_code === null) {
-    // Server idle, no previous run — just restore tab normally
+    // Server idle, no previous run — restore tab normally
     switchTab(savedTab);
     return;
   }
@@ -784,20 +814,19 @@ async function init() {
   if (!logRes) { switchTab(savedTab); return; }
   const logData = await logRes.json();
 
-  if (logData.lines.length > 0) {
-    logData.lines.forEach(l => appendLog(l));
-    pollOffset = logData.lines.length;
+  if (logData.text) {
+    clearLog();
+    appendLog(logData.text);
+    pollByteOffset = logData.offset;
     document.getElementById('log-status').textContent = 'Restored from server log.';
-    switchTab('log');  // always go to log if there's something to show
+    switchTab('log');
 
     if (!logData.done) {
-      // Still running — start polling
       runActive = true;
       setRunBtn(true);
       setStatus('running');
       startPolling();
     } else {
-      // Finished — show button
       setStatus('done');
       document.getElementById('goto-plots-wrap').style.display = 'block';
     }

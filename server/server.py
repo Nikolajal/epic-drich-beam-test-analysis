@@ -6,10 +6,11 @@ Mobile-friendly web UI to trigger ROOT analyses and browse plots.
 import asyncio
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,27 +30,76 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.mount("/plots", StaticFiles(directory=str(PLOTS_DIR)), name="plots")
 
 # ---------------------------------------------------------------------------
-# Global run state — survives WebSocket disconnects
+# Global run state — survives WebSocket disconnects and page reloads
+# The subprocess is launched with start_new_session=True so it lives
+# independently of the Python/uvicorn process.
 # ---------------------------------------------------------------------------
-_run: dict = {"proc": None, "log": [], "done": True, "exit_code": None}
+_run: dict = {
+    "proc":      None,   # subprocess.Popen object
+    "log_path":  None,   # temp log file path
+    "done":      True,
+    "exit_code": None,
+}
 
 
-@app.get("/api/run-status")
-def run_status():
-    return {"running": not _run["done"], "exit_code": _run["exit_code"]}
+async def _monitor_proc(proc: subprocess.Popen) -> None:
+    """Wait for the process to exit in a thread pool, then update state."""
+    loop = asyncio.get_event_loop()
+    exit_code = await loop.run_in_executor(None, proc.wait)
+    _run["done"]      = True
+    _run["exit_code"] = exit_code
 
 
-@app.get("/api/run-log")
-def run_log(offset: int = 0):
-    return {"lines": _run["log"][offset:], "done": _run["done"], "exit_code": _run["exit_code"]}
+async def _tail_to_ws(websocket: WebSocket, log_path: str) -> None:
+    """Stream the log file to the WebSocket until process is done."""
+    offset = 0
+    try:
+        while True:
+            try:
+                size = os.path.getsize(log_path)
+            except OSError:
+                break
+            if size > offset:
+                with open(log_path, "rb") as f:
+                    f.seek(offset)
+                    chunk = f.read(size - offset)
+                offset = size
+                text = chunk.decode("utf-8", errors="replace")
+                try:
+                    await websocket.send_text(text)
+                except Exception:
+                    # WS gone — process keeps running, just stop streaming
+                    return
+            elif _run["done"]:
+                # Drain any final bytes
+                try:
+                    size2 = os.path.getsize(log_path)
+                except OSError:
+                    break
+                if size2 > offset:
+                    with open(log_path, "rb") as f:
+                        f.seek(offset)
+                        chunk = f.read()
+                    text = chunk.decode("utf-8", errors="replace")
+                    try:
+                        await websocket.send_text(text)
+                    except Exception:
+                        pass
+                break
+            else:
+                await asyncio.sleep(0.15)
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
-# API
+# REST API
 # ---------------------------------------------------------------------------
 
 @app.get("/api/confs")
 def list_confs():
     return sorted(c.stem for c in CONF_DIR.glob("*.conf") if not c.stem.startswith("example"))
+
 
 @app.get("/api/runs")
 def list_runs(data_folder: str = ""):
@@ -58,25 +108,38 @@ def list_runs(data_folder: str = ""):
         return []
     return sorted((d.name for d in folder.iterdir() if d.is_dir()), reverse=True)
 
-@app.get("/api/plot-sessions")
-def list_plot_sessions():
-    sessions = []
+
+@app.get("/api/plot-runs")
+def list_plot_runs():
+    """List run-number folders inside plots/, newest first."""
     if not PLOTS_DIR.exists():
-        return sessions
-    for run_dir in sorted(PLOTS_DIR.iterdir(), key=lambda p: p.name, reverse=True):
-        if not run_dir.is_dir():
+        return []
+    return sorted(
+        (d.name for d in PLOTS_DIR.iterdir() if d.is_dir()),
+        reverse=True,
+    )
+
+
+@app.get("/api/plot-sessions")
+def list_plot_sessions(run: str = ""):
+    """List datetime sessions for a given run (or all runs if run is empty)."""
+    sessions = []
+    runs = [PLOTS_DIR / run] if run else sorted(PLOTS_DIR.iterdir(), key=lambda p: p.name, reverse=True)
+    for run_dir in runs:
+        if not Path(run_dir).is_dir():
             continue
-        for dt_dir in sorted(run_dir.iterdir(), key=lambda p: p.name, reverse=True):
+        for dt_dir in sorted(Path(run_dir).iterdir(), key=lambda p: p.name, reverse=True):
             if not dt_dir.is_dir():
                 continue
             confs = [d.name for d in sorted(dt_dir.iterdir()) if d.is_dir()]
             sessions.append({
-                "run": run_dir.name,
-                "datetime": dt_dir.name,
-                "confs": confs,
+                "run":         Path(run_dir).name,
+                "datetime":    dt_dir.name,
+                "confs":       confs,
                 "total_plots": len(list(dt_dir.rglob("*.png"))),
             })
     return sessions
+
 
 @app.get("/api/plot-files")
 def list_plot_files(run: str, datetime: str, conf: str = ""):
@@ -87,12 +150,36 @@ def list_plot_files(run: str, datetime: str, conf: str = ""):
         return []
     return ["/plots/" + str(p.relative_to(PLOTS_DIR)) for p in sorted(base.rglob("*.png"))]
 
+
+@app.get("/api/run-status")
+def run_status():
+    return {"running": not _run["done"], "exit_code": _run["exit_code"]}
+
+
+@app.get("/api/run-log")
+def run_log(offset: int = 0):
+    """Return log content from byte offset. Client tracks offset for polling."""
+    log_path = _run.get("log_path")
+    if not log_path or not os.path.exists(log_path):
+        return {"text": "", "offset": 0, "done": _run["done"], "exit_code": _run["exit_code"]}
+    with open(log_path, "r", errors="replace") as f:
+        f.seek(offset)
+        text = f.read()
+    return {
+        "text":      text,
+        "offset":    offset + len(text),
+        "done":      _run["done"],
+        "exit_code": _run["exit_code"],
+    }
+
+
 @app.get("/")
 def index():
     return FileResponse(str(SERVER_DIR / "index.html"))
 
+
 # ---------------------------------------------------------------------------
-# WebSocket: run analysis and stream output live
+# WebSocket: launch analysis and stream output
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/run")
@@ -109,13 +196,18 @@ async def ws_run(websocket: WebSocket):
     conf         = data.get("conf", "").strip()
     macros       = data.get("macros", ["--analysis"])
     use_variants = data.get("use_variants", False)
-    custom_conf  = data.get("custom_conf", None)  # dict of conf key→value
+    custom_conf  = data.get("custom_conf", None)
 
     if not data_folder or not run_id:
         await websocket.send_text("[Error] data_folder and run_id are required\n")
         return
 
-    # If custom_conf dict provided, write a temp conf file
+    # If a run is already in progress, reject
+    if not _run["done"]:
+        await websocket.send_text("[Error] A run is already in progress\n")
+        return
+
+    # Generate temp conf if custom parameters provided
     tmp_conf_path = None
     if custom_conf:
         tmp_fd, tmp_conf_path = tempfile.mkstemp(suffix=".conf", prefix="drich_custom_")
@@ -128,26 +220,18 @@ async def ws_run(websocket: WebSocket):
         conf_path = str(CONF_DIR / f"{conf}.conf") if conf else ""
 
     # Build command
-    try:
-        if use_variants:
-            script    = str(TRACK_DIR / "run_all.sh")
-            base_conf = conf_path if conf_path else str(CONF_DIR / "1track.conf")
-            cmd = [script, "--data", data_folder, "--run", run_id, "--variants", base_conf] + macros
-        else:
-            script = str(TRACK_DIR / "run.sh")
-            cmd = [script, "--data", data_folder, "--run", run_id]
-            if conf_path:
-                cmd += ["--conf", conf_path]
-            cmd += macros
-    except Exception as e:
-        if tmp_conf_path and os.path.exists(tmp_conf_path):
-            os.unlink(tmp_conf_path)
-        raise e
+    if use_variants:
+        script    = str(TRACK_DIR / "run_all.sh")
+        base_conf = conf_path if conf_path else str(CONF_DIR / "1track.conf")
+        cmd = [script, "--data", data_folder, "--run", run_id, "--variants", base_conf] + macros
+    else:
+        script = str(TRACK_DIR / "run.sh")
+        cmd = [script, "--data", data_folder, "--run", run_id]
+        if conf_path:
+            cmd += ["--conf", conf_path]
+        cmd += macros
 
-    header = f"$ {' '.join(cmd)}\n\n"
-    await websocket.send_text(header)
-
-    # Ensure ROOT libs are in LD_LIBRARY_PATH
+    # ROOT library path
     env = os.environ.copy()
     root_exec = shutil.which("root")
     if root_exec:
@@ -155,52 +239,50 @@ async def ws_run(websocket: WebSocket):
         if os.path.isdir(root_lib):
             env["LD_LIBRARY_PATH"] = root_lib + ":" + env.get("LD_LIBRARY_PATH", "")
 
-    # Reset global run state
-    _run["log"] = [header]
-    _run["done"] = False
-    _run["exit_code"] = None
-    _run["proc"] = None
+    # Open log file (persists across WS disconnects)
+    if _run.get("log_path") and os.path.exists(_run["log_path"]):
+        os.unlink(_run["log_path"])
+    log_fd, log_path = tempfile.mkstemp(suffix=".log", prefix="drich_run_")
 
-    proc = None
+    header = f"$ {' '.join(cmd)}\n\n"
+    os.write(log_fd, header.encode())
+
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        await websocket.send_text(header)
+    except Exception:
+        pass
+
+    # Launch fully detached subprocess — survives WS/uvicorn issues
+    log_file = os.fdopen(log_fd, "w")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
             cwd=str(TRACK_DIR),
             env=env,
+            start_new_session=True,   # detach from parent process group
         )
-        _run["proc"] = proc
+    finally:
+        log_file.close()
 
-        ws_alive = True
-        async for raw in proc.stdout:
-            text = raw.decode("utf-8", errors="replace")
-            _run["log"].append(text)
-            if ws_alive:
-                try:
-                    await websocket.send_text(text)
-                except Exception:
-                    ws_alive = False   # WS gone — keep draining to log
+    _run.update({"proc": proc, "log_path": log_path, "done": False, "exit_code": None})
 
-        await proc.wait()
-        _run["done"] = True
-        _run["exit_code"] = proc.returncode
-        done_msg = f"\n[Done — exit code {proc.returncode}]\n"
-        _run["log"].append(done_msg)
-        if ws_alive:
-            try:
-                await websocket.send_text(done_msg)
-            except Exception:
-                pass
+    # Clean up custom conf now (process already started, conf file read)
+    if tmp_conf_path and os.path.exists(tmp_conf_path):
+        # Give the shell a moment to fork before deleting
+        await asyncio.sleep(0.5)
+        os.unlink(tmp_conf_path)
 
-    except Exception as e:
-        err = f"\n[Error] {e}\n"
-        _run["log"].append(err)
-        _run["done"] = True
+    # Background task: wait for process to finish
+    asyncio.create_task(_monitor_proc(proc))
+
+    # Stream log to WS (non-blocking — WS drop doesn't affect process)
+    await _tail_to_ws(websocket, log_path)
+
+    if _run["done"]:
+        done_msg = f"\n[Done — exit code {_run['exit_code']}]\n"
         try:
-            await websocket.send_text(err)
+            await websocket.send_text(done_msg)
         except Exception:
             pass
-    finally:
-        if tmp_conf_path and os.path.exists(tmp_conf_path):
-            os.unlink(tmp_conf_path)
