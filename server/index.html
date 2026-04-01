@@ -402,8 +402,19 @@ select option { background: var(--bg3); }
     <label class="macro-cb"><input type="checkbox" value="--display" onchange="onMacroCbChange(this)"><span>display</span></label>
     <label class="macro-cb"><input type="checkbox" value="--timing" onchange="onMacroCbChange(this)"><span>timing</span></label>
     <label class="macro-cb"><input type="checkbox" value="--mult-windows" onchange="onMacroCbChange(this)"><span>mult-windows</span></label>
+    <label class="macro-cb"><input type="checkbox" value="--noring" id="cb-noring" onchange="onMacroCbChange(this)"><span>noring</span></label>
     <label class="macro-cb"><input type="checkbox" value="--all" id="cb-all" onchange="onMacroCbChange(this)"><span>all</span></label>
-    <!-- draw-optional removed: macro does not exist -->
+  </div>
+
+  <div id="noring-options" style="display:none;margin-bottom:14px">
+    <div class="field">
+      <label>No-ring detection method</label>
+      <select id="noring-method">
+        <option value="nhits">nhits — n hits in window &lt; threshold</option>
+        <option value="dbscan">dbscan — DBSCAN clustering in (R,t)</option>
+        <option value="hough">hough — Hough transform</option>
+      </select>
+    </div>
   </div>
 
   <button class="btn btn-run" id="run-btn" onclick="startRun()">▶ Run Analysis</button>
@@ -507,6 +518,12 @@ function getCustomConf() {
     n_display_events: val('c-n_display_events'),
     timing_bin_width: val('c-timing_bin_width'),
     display_nhits_cut_mode: 'none', display_nhits_min: '0', display_nhits_max: '3',
+    // noring method
+    noring_method: document.getElementById('noring-method').value,
+    noring_nhits_threshold: '3',
+    noring_dbscan_dr: '5.0', noring_dbscan_dt: '5.0',
+    noring_hough_threshold: '0.3', noring_hough_min_hits: '3',
+    noring_hough_r_min: '10.0', noring_hough_r_max: '60.0', noring_hough_r_step: '2.0',
     // time windows for ringtrack_mult_windows (defaults from 1track.conf)
     time_window_0: '-7.44   3.66',   time_window_0_label: 'sig_12ns',
     time_window_1: '-200.0  -188.0', time_window_1_label: 'bkg_12ns',
@@ -556,16 +573,18 @@ function toggleVariantMode() {
 }
 
 function onMacroCbChange(el) {
-  const allCb = document.getElementById('cb-all');
+  const allCb   = document.getElementById('cb-all');
+  const noringCb = document.getElementById('cb-noring');
   if (el === allCb && allCb.checked) {
-    // "all" selected — deselect everything else
     document.querySelectorAll('.macro-cb input[type="checkbox"]').forEach(cb => {
       if (cb !== allCb) cb.checked = false;
     });
   } else if (el !== allCb && el.checked) {
-    // any specific macro selected — deselect "all"
     allCb.checked = false;
   }
+  // show noring method selector when --noring or --all is checked
+  const showNoring = (noringCb && noringCb.checked) || (allCb && allCb.checked);
+  document.getElementById('noring-options').style.display = showNoring ? '' : 'none';
 }
 
 // ---------------------------------------------------------------------------
