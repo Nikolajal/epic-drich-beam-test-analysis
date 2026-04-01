@@ -175,7 +175,10 @@ def run_log(offset: int = 0):
 
 @app.get("/")
 def index():
-    return FileResponse(str(SERVER_DIR / "index.html"))
+    return FileResponse(
+        str(SERVER_DIR / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 # ---------------------------------------------------------------------------

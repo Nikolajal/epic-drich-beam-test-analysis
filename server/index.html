@@ -528,9 +528,7 @@ async function loadRuns() {
 // Variant mode toggle
 // ---------------------------------------------------------------------------
 function toggleVariantMode() {
-  const on = document.getElementById('use-variants').checked;
-  document.getElementById('conf-field').querySelector('label').textContent =
-    on ? 'Base conf for variants' : 'Config file';
+  // no-op: label is static now
 }
 
 // ---------------------------------------------------------------------------
@@ -543,6 +541,7 @@ let pollByteOffset  = 0;   // byte offset into server log file
 let runActive       = false;
 
 function startRun() {
+  try {
   const dataFolder = document.getElementById('data-folder').value.trim();
   const runId      = document.getElementById('run-id').value.trim();
   const conf       = document.getElementById('conf-select').value;
@@ -589,6 +588,7 @@ function startRun() {
     if (runActive) startPolling();
   };
   ws.onerror = () => { /* onclose will fire too */ };
+  } catch(e) { alert('JS error in startRun: ' + e.message); }
 }
 
 function setRunBtn(running) {
