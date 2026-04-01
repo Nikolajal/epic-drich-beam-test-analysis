@@ -9,9 +9,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 # ---------------------------------------------------------------------------
@@ -27,6 +27,21 @@ PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="Beam Test Analysis")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/plots", StaticFiles(directory=str(PLOTS_DIR)), name="plots")
+
+# ---------------------------------------------------------------------------
+# Global run state — survives WebSocket disconnects
+# ---------------------------------------------------------------------------
+_run: dict = {"proc": None, "log": [], "done": True, "exit_code": None}
+
+
+@app.get("/api/run-status")
+def run_status():
+    return {"running": not _run["done"], "exit_code": _run["exit_code"]}
+
+
+@app.get("/api/run-log")
+def run_log(offset: int = 0):
+    return {"lines": _run["log"][offset:], "done": _run["done"], "exit_code": _run["exit_code"]}
 
 # ---------------------------------------------------------------------------
 # API
@@ -129,7 +144,8 @@ async def ws_run(websocket: WebSocket):
             os.unlink(tmp_conf_path)
         raise e
 
-    await websocket.send_text(f"$ {' '.join(cmd)}\n\n")
+    header = f"$ {' '.join(cmd)}\n\n"
+    await websocket.send_text(header)
 
     # Ensure ROOT libs are in LD_LIBRARY_PATH
     env = os.environ.copy()
@@ -139,6 +155,13 @@ async def ws_run(websocket: WebSocket):
         if os.path.isdir(root_lib):
             env["LD_LIBRARY_PATH"] = root_lib + ":" + env.get("LD_LIBRARY_PATH", "")
 
+    # Reset global run state
+    _run["log"] = [header]
+    _run["done"] = False
+    _run["exit_code"] = None
+    _run["proc"] = None
+
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -147,15 +170,37 @@ async def ws_run(websocket: WebSocket):
             cwd=str(TRACK_DIR),
             env=env,
         )
-        async for line in proc.stdout:
-            await websocket.send_text(line.decode("utf-8", errors="replace"))
+        _run["proc"] = proc
+
+        ws_alive = True
+        async for raw in proc.stdout:
+            text = raw.decode("utf-8", errors="replace")
+            _run["log"].append(text)
+            if ws_alive:
+                try:
+                    await websocket.send_text(text)
+                except Exception:
+                    ws_alive = False   # WS gone — keep draining to log
+
         await proc.wait()
-        await websocket.send_text(f"\n[Done — exit code {proc.returncode}]\n")
-    except WebSocketDisconnect:
-        if proc:
-            proc.terminate()
+        _run["done"] = True
+        _run["exit_code"] = proc.returncode
+        done_msg = f"\n[Done — exit code {proc.returncode}]\n"
+        _run["log"].append(done_msg)
+        if ws_alive:
+            try:
+                await websocket.send_text(done_msg)
+            except Exception:
+                pass
+
     except Exception as e:
-        await websocket.send_text(f"\n[Error] {e}\n")
+        err = f"\n[Error] {e}\n"
+        _run["log"].append(err)
+        _run["done"] = True
+        try:
+            await websocket.send_text(err)
+        except Exception:
+            pass
     finally:
         if tmp_conf_path and os.path.exists(tmp_conf_path):
             os.unlink(tmp_conf_path)

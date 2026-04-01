@@ -400,6 +400,11 @@ select option { background: var(--bg3); }
     <button class="btn-sm" onclick="clearLog()">Clear</button>
   </div>
   <div id="log"></div>
+  <div id="goto-plots-wrap" style="display:none;margin-top:14px">
+    <button class="btn btn-run" onclick="switchTab('plots');loadSessions()" style="background:var(--green)">
+      📊 Visualize Plots
+    </button>
+  </div>
 </div>
 
 <!-- ===================== PLOTS PANEL ===================== -->
@@ -534,9 +539,14 @@ function toggleVariantMode() {
 }
 
 // ---------------------------------------------------------------------------
-// Run analysis via WebSocket
+// Run analysis via WebSocket + background polling fallback
 // ---------------------------------------------------------------------------
 let ws = null;
+let wsPingInterval = null;
+let pollInterval   = null;
+let pollOffset     = 0;
+let runActive      = false;
+
 function startRun() {
   const dataFolder = document.getElementById('data-folder').value.trim();
   const runId      = document.getElementById('run-id').value.trim();
@@ -548,14 +558,18 @@ function startRun() {
   if (macros.length === 0)   { alert('Select at least one macro.'); return; }
 
   if (ws) { ws.close(); }
+  stopPolling();
 
   const custom_conf = confMode === 'custom' ? getCustomConf() : null;
   const confLabel   = confMode === 'custom' ? '(custom)' : (conf || '(default)');
 
+  runActive = true;
+  document.getElementById('goto-plots-wrap').style.display = 'none';
   setStatus('running');
   switchTab('log');
   clearLog();
   appendLog(`Starting analysis...\nRun: ${runId}\nConf: ${confLabel}\nMacros: ${macros.join(' ')}\n\n`);
+  pollOffset = 1; // skip header line already shown
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws/run`);
@@ -563,22 +577,74 @@ function startRun() {
   ws.onopen = () => {
     ws.send(JSON.stringify({ data_folder: dataFolder, run_id: runId,
                              conf, macros, use_variants: variants, custom_conf }));
-    document.getElementById('run-btn').disabled = true;
-    document.getElementById('run-btn').textContent = '⏳ Running...';
+    setRunBtn(true);
+    // Ping every 25s to keep the connection alive
+    wsPingInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send('__ping__');
+    }, 25000);
   };
   ws.onmessage = e => {
+    if (e.data === '__pong__') return;
     appendLog(e.data);
+    pollOffset++;
+    if (e.data.includes('[Done') || e.data.includes('[Error]')) onRunDone();
   };
   ws.onclose = () => {
-    document.getElementById('run-btn').disabled = false;
-    document.getElementById('run-btn').textContent = '▶ Run Analysis';
-    setStatus('done');
+    clearInterval(wsPingInterval);
+    // If run still active, fall back to polling
+    if (runActive) startPolling();
   };
-  ws.onerror = e => {
-    appendLog('\n[WebSocket error]\n');
-    setStatus('error');
-  };
+  ws.onerror = () => { /* onclose will fire too */ };
 }
+
+function setRunBtn(running) {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = running;
+  btn.textContent = running ? '⏳ Running...' : '▶ Run Analysis';
+}
+
+function onRunDone() {
+  runActive = false;
+  stopPolling();
+  setRunBtn(false);
+  setStatus('done');
+  document.getElementById('goto-plots-wrap').style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+// Polling fallback (when WS is lost — phone screen off, app backgrounded)
+// ---------------------------------------------------------------------------
+function startPolling() {
+  if (pollInterval) return;
+  appendLog('\n[Connection lost — continuing in background, polling for updates...]\n');
+  pollInterval = setInterval(async () => {
+    const res = await fetch(`/api/run-log?offset=${pollOffset}`).catch(() => null);
+    if (!res) return;
+    const data = await res.json();
+    if (data.lines.length) {
+      data.lines.forEach(l => appendLog(l));
+      pollOffset += data.lines.length;
+    }
+    if (data.done) {
+      onRunDone();
+      appendLog(`\n[Run finished — exit code ${data.exit_code}]\n`);
+    }
+  }, 2000);
+}
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+}
+
+// Resume polling when tab comes back to foreground
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && runActive) {
+    // Try to reconnect WS first; if not possible, polling is already active
+    if (!pollInterval && (!ws || ws.readyState !== WebSocket.OPEN)) {
+      startPolling();
+    }
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Log helpers
