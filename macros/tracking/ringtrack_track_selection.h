@@ -181,9 +181,9 @@ struct TrackSelectionConfig
     float    z_drich = -4250.f;
     float    z_scint = -1150.f;
 
-    // --- molteplicità ---
-    // I parametri legacy require_single_track / require_multi_track sono
-    // mantenuti per compatibilità con i conf esistenti.
+    // --- multiplicity ---
+    // Legacy params require_single_track / require_multi_track are
+    // kept for backward compatibility with existing conf files.
     // I nuovi parametri require_exact/min/max_ntracks hanno precedenza se > 0.
     bool     require_single_track  = false;
     bool     require_multi_track   = false;
@@ -215,7 +215,7 @@ struct TrackSelectionConfig
         use_best_track_only   = cfg.get_bool ("use_best_track_only",   true);
     }
 
-    // Controlla solo i vincoli di molteplicità (senza tagli geometrici).
+    // Check multiplicity constraints only (no geometric cuts).
     bool passes_multiplicity(int n_tracks) const
     {
         if (n_tracks == 0) return false;
@@ -234,8 +234,8 @@ struct TrackSelectionConfig
         return true;
     }
 
-    // Restituisce true se l'evento passa molteplicità e almeno una traccia
-    // supera i tagli geometrici. track_idx_out è la traccia scelta.
+    // Returns true if the event passes multiplicity and at least one track
+    // passes the geometric cuts. track_idx_out is the selected track index.
     bool select_event(alcor_recotrackdata *reco, int &track_idx_out) const
     {
         const int n_tracks = reco->n_recotrackdata();

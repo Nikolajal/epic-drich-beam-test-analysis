@@ -1,0 +1,16 @@
+[Unit]
+Description=dRICH Beam Test Analysis Web Server
+After=network.target
+
+[Service]
+Type=simple
+User=riccardo
+WorkingDirectory=/home/riccardo/eic/epic-drich-beam-test-analysis/server
+ExecStart=/home/riccardo/eic/epic-drich-beam-test-analysis/server/start.sh
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/riccardo
+Environment=PATH=/home/riccardo/corry/root6.30/root_install/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

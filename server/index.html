@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dRICH Analysis</title>
+<style>
+:root {
+  --bg: #0f1117; --bg2: #1a1d27; --bg3: #252836;
+  --accent: #4f8ef7; --accent2: #7c3aed;
+  --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
+  --text: #e2e8f0; --text2: #94a3b8; --border: #2d3148;
+  --radius: 10px; --font: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+
+/* Header */
+header { background: var(--bg2); border-bottom: 1px solid var(--border);
+         padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+         position: sticky; top: 0; z-index: 100; }
+header h1 { font-size: 1.1rem; font-weight: 600; }
+header .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green);
+              box-shadow: 0 0 8px var(--green); }
+header .dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+/* Tabs */
+.tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); }
+.tab  { flex: 1; padding: 12px; text-align: center; cursor: pointer; font-size: 0.85rem;
+        color: var(--text2); border-bottom: 2px solid transparent; transition: all .2s; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Panels */
+.panel { display: none; padding: 16px; max-width: 800px; margin: 0 auto; }
+.panel.active { display: block; }
+
+/* Form elements */
+.field { margin-bottom: 14px; }
+label  { display: block; font-size: 0.78rem; color: var(--text2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .05em; }
+input, select { width: 100%; background: var(--bg3); border: 1px solid var(--border);
+                color: var(--text); padding: 10px 12px; border-radius: var(--radius);
+                font-size: 0.95rem; outline: none; -webkit-appearance: none; }
+input:focus, select:focus { border-color: var(--accent); }
+select option { background: var(--bg3); }
+
+/* Toggle */
+.toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; inset: 0; background: var(--bg3); border-radius: 24px;
+          border: 1px solid var(--border); cursor: pointer; transition: .2s; }
+.slider:before { content:''; position: absolute; height: 18px; width: 18px;
+                 left: 2px; bottom: 2px; background: var(--text2);
+                 border-radius: 50%; transition: .2s; }
+.toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+.toggle input:checked + .slider:before { transform: translateX(20px); background: white; }
+.toggle-label { font-size: 0.9rem; color: var(--text2); }
+
+/* Macro checkboxes */
+.macros-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.macro-cb { display: flex; align-items: center; gap: 8px; background: var(--bg3);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 8px 12px; cursor: pointer; }
+.macro-cb input { width: auto; }
+.macro-cb span { font-size: 0.85rem; }
+
+/* Buttons */
+.btn { width: 100%; padding: 13px; border: none; border-radius: var(--radius);
+       font-size: 1rem; font-weight: 600; cursor: pointer; transition: .15s; }
+.btn-run  { background: var(--accent); color: white; }
+.btn-run:hover  { filter: brightness(1.15); }
+.btn-run:active { transform: scale(.98); }
+.btn-run:disabled { background: var(--bg3); color: var(--text2); cursor: not-allowed; }
+.btn-sm { width: auto; padding: 6px 14px; font-size: 0.8rem; background: var(--bg3);
+          color: var(--text2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+
+/* Log */
+#log { background: #0a0d14; border: 1px solid var(--border); border-radius: var(--radius);
+       padding: 14px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem;
+       line-height: 1.6; height: 55vh; overflow-y: auto; white-space: pre-wrap;
+       word-break: break-all; color: #a8e6cf; }
+.log-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.log-bar span { font-size: 0.78rem; color: var(--text2); }
+
+/* Status badge */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px;
+         font-size: 0.72rem; font-weight: 600; }
+.badge.running { background: rgba(79,142,247,.2); color: var(--accent); }
+.badge.done    { background: rgba(34,197,94,.2);  color: var(--green); }
+.badge.error   { background: rgba(239,68,68,.2);  color: var(--red); }
+.badge.idle    { background: var(--bg3); color: var(--text2); }
+
+/* Plot browser */
+.session-card { background: var(--bg2); border: 1px solid var(--border);
+                border-radius: var(--radius); padding: 14px; margin-bottom: 12px; cursor: pointer; }
+.session-card:hover { border-color: var(--accent); }
+.session-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.session-run { font-weight: 600; font-size: 0.95rem; }
+.session-dt  { font-size: 0.78rem; color: var(--text2); margin-top: 2px; }
+.session-confs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.conf-chip { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px;
+             padding: 3px 10px; font-size: 0.72rem; color: var(--text2); cursor: pointer; }
+.conf-chip:hover { border-color: var(--accent); color: var(--accent); }
+.conf-chip.active { border-color: var(--accent); color: var(--accent); background: rgba(79,142,247,.1); }
+
+/* Image grid */
+.img-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
+@media (min-width: 600px) { .img-grid { grid-template-columns: repeat(3, 1fr); } }
+.img-card { background: var(--bg3); border-radius: 8px; overflow: hidden; cursor: pointer; }
+.img-card img { width: 100%; display: block; }
+.img-card p   { font-size: 0.7rem; color: var(--text2); padding: 4px 6px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Lightbox */
+#lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.92);
+            z-index: 999; align-items: center; justify-content: center; padding: 20px; }
+#lightbox.open { display: flex; }
+#lightbox img { max-width: 100%; max-height: 90vh; border-radius: 8px; }
+#lightbox-close { position: absolute; top: 16px; right: 20px; font-size: 1.8rem;
+                  color: white; cursor: pointer; line-height: 1; }
+#lightbox-name { position: absolute; bottom: 16px; left: 0; right: 0; text-align: center;
+                 font-size: 0.8rem; color: var(--text2); }
+
+/* Refresh btn */
+.refresh-row { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+
+/* Section title */
+.section-title { font-size: 0.78rem; color: var(--text2); text-transform: uppercase;
+                 letter-spacing: .08em; margin: 18px 0 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="dot" id="status-dot"></div>
+  <h1>dRICH Beam Test Analysis</h1>
+  <span class="badge idle" id="status-badge">idle</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('run')">Run</div>
+  <div class="tab" onclick="switchTab('log')">Log</div>
+  <div class="tab" onclick="switchTab('plots')">Plots</div>
+</div>
+
+<!-- ===================== RUN PANEL ===================== -->
+<div id="panel-run" class="panel active">
+
+  <div class="field">
+    <label>Data folder</label>
+    <input id="data-folder" type="text" value="/home/riccardo/eic/data" placeholder="/path/to/data">
+  </div>
+
+  <div class="field">
+    <label>Run ID</label>
+    <div style="display:flex;gap:8px;">
+      <input id="run-id" type="text" placeholder="20251117-173828" style="flex:1">
+      <button class="btn-sm" onclick="loadRuns()">↻ List</button>
+    </div>
+    <select id="run-select" style="margin-top:6px;display:none" onchange="document.getElementById('run-id').value=this.value">
+      <option value="">— select run —</option>
+    </select>
+  </div>
+
+  <div class="toggle-row">
+    <label class="toggle">
+      <input type="checkbox" id="use-variants" onchange="toggleVariantMode()">
+      <span class="slider"></span>
+    </label>
+    <span class="toggle-label">All variants mode (run_all.sh --variants)</span>
+  </div>
+
+  <div class="field" id="conf-field">
+    <label>Config file</label>
+    <select id="conf-select">
+      <option value="">— loading... —</option>
+    </select>
+  </div>
+
+  <div id="single-conf-label" class="section-title" style="display:none">Base conf for variants</div>
+
+  <div class="section-title">Macros to run</div>
+  <div class="macros-grid">
+    <label class="macro-cb"><input type="checkbox" value="--analysis" checked><span>analysis</span></label>
+    <label class="macro-cb"><input type="checkbox" value="--draw"><span>draw</span></label>
+    <label class="macro-cb"><input type="checkbox" value="--display"><span>display</span></label>
+    <label class="macro-cb"><input type="checkbox" value="--timing"><span>timing</span></label>
+    <label class="macro-cb"><input type="checkbox" value="--mult-windows"><span>mult-windows</span></label>
+    <label class="macro-cb"><input type="checkbox" value="--all"><span>all</span></label>
+  </div>
+
+  <button class="btn btn-run" id="run-btn" onclick="startRun()">▶ Run Analysis</button>
+</div>
+
+<!-- ===================== LOG PANEL ===================== -->
+<div id="panel-log" class="panel">
+  <div class="log-bar">
+    <span id="log-status">No run started yet.</span>
+    <button class="btn-sm" onclick="clearLog()">Clear</button>
+  </div>
+  <div id="log"></div>
+</div>
+
+<!-- ===================== PLOTS PANEL ===================== -->
+<div id="panel-plots" class="panel">
+  <div class="refresh-row">
+    <button class="btn-sm" onclick="loadSessions()">↻ Refresh</button>
+  </div>
+  <div id="sessions-list"></div>
+  <div id="img-grid-container"></div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" onclick="closeLightbox()">
+  <span id="lightbox-close">✕</span>
+  <img id="lightbox-img" src="">
+  <div id="lightbox-name"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Tab switching
+// ---------------------------------------------------------------------------
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const names = ['run','log','plots'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'panel-' + name);
+  });
+  if (name === 'plots') loadSessions();
+}
+
+// ---------------------------------------------------------------------------
+// Load confs
+// ---------------------------------------------------------------------------
+async function loadConfs() {
+  const res = await fetch('/api/confs').catch(() => null);
+  if (!res) return;
+  const confs = await res.json();
+  const sel = document.getElementById('conf-select');
+  sel.innerHTML = confs.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Load runs from data folder
+// ---------------------------------------------------------------------------
+async function loadRuns() {
+  const folder = document.getElementById('data-folder').value;
+  const res = await fetch(`/api/runs?data_folder=${encodeURIComponent(folder)}`).catch(() => null);
+  if (!res) return;
+  const runs = await res.json();
+  const sel = document.getElementById('run-select');
+  if (runs.length === 0) { sel.style.display = 'none'; return; }
+  sel.innerHTML = '<option value="">— select run —</option>' +
+    runs.map(r => `<option value="${r}">${r}</option>`).join('');
+  sel.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+// Variant mode toggle
+// ---------------------------------------------------------------------------
+function toggleVariantMode() {
+  const on = document.getElementById('use-variants').checked;
+  document.getElementById('conf-field').querySelector('label').textContent =
+    on ? 'Base conf for variants' : 'Config file';
+}
+
+// ---------------------------------------------------------------------------
+// Run analysis via WebSocket
+// ---------------------------------------------------------------------------
+let ws = null;
+function startRun() {
+  const dataFolder = document.getElementById('data-folder').value.trim();
+  const runId      = document.getElementById('run-id').value.trim();
+  const conf       = document.getElementById('conf-select').value;
+  const variants   = document.getElementById('use-variants').checked;
+  const macros     = [...document.querySelectorAll('.macro-cb input:checked')].map(i => i.value);
+
+  if (!dataFolder || !runId) { alert('Data folder and Run ID are required.'); return; }
+  if (macros.length === 0)   { alert('Select at least one macro.'); return; }
+
+  if (ws) { ws.close(); }
+
+  setStatus('running');
+  switchTab('log');
+  clearLog();
+  appendLog(`Starting analysis...\nRun: ${runId}\nConf: ${conf || '(default)'}\nMacros: ${macros.join(' ')}\n\n`);
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/run`);
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ data_folder: dataFolder, run_id: runId,
+                             conf, macros, use_variants: variants }));
+    document.getElementById('run-btn').disabled = true;
+    document.getElementById('run-btn').textContent = '⏳ Running...';
+  };
+  ws.onmessage = e => {
+    appendLog(e.data);
+  };
+  ws.onclose = () => {
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-btn').textContent = '▶ Run Analysis';
+    setStatus('done');
+  };
+  ws.onerror = e => {
+    appendLog('\n[WebSocket error]\n');
+    setStatus('error');
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Log helpers
+// ---------------------------------------------------------------------------
+function appendLog(text) {
+  const el = document.getElementById('log');
+  el.textContent += text;
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('log-status').textContent =
+    'Last line: ' + text.trim().split('\n').pop().slice(0, 60);
+}
+function clearLog() {
+  document.getElementById('log').textContent = '';
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+function setStatus(s) {
+  const dot   = document.getElementById('status-dot');
+  const badge = document.getElementById('status-badge');
+  dot.className   = 'dot' + (s === 'running' ? '' : s === 'error' ? ' red' : '');
+  badge.className = 'badge ' + s;
+  badge.textContent = s;
+}
+
+// ---------------------------------------------------------------------------
+// Plot browser
+// ---------------------------------------------------------------------------
+async function loadSessions() {
+  const res = await fetch('/api/plot-sessions').catch(() => null);
+  if (!res) return;
+  const sessions = await res.json();
+  const container = document.getElementById('sessions-list');
+  if (sessions.length === 0) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:.9rem;">No plots yet.</p>';
+    document.getElementById('img-grid-container').innerHTML = '';
+    return;
+  }
+  container.innerHTML = sessions.map(s => `
+    <div class="session-card">
+      <div class="session-header">
+        <div>
+          <div class="session-run">${s.run}</div>
+          <div class="session-dt">${s.datetime} &middot; ${s.total_plots} plots</div>
+        </div>
+      </div>
+      ${s.confs.length ? `
+      <div class="session-confs">
+        <span class="conf-chip" onclick="loadPlots('${s.run}','${s.datetime}','')">all</span>
+        ${s.confs.map(c => `
+          <span class="conf-chip" onclick="loadPlots('${s.run}','${s.datetime}','${c}')">${c}</span>
+        `).join('')}
+      </div>` : `
+      <div style="margin-top:8px">
+        <span class="conf-chip" onclick="loadPlots('${s.run}','${s.datetime}','')">view plots</span>
+      </div>`}
+    </div>
+  `).join('');
+}
+
+async function loadPlots(run, datetime, conf) {
+  // highlight active chip
+  document.querySelectorAll('.conf-chip').forEach(c => c.classList.remove('active'));
+  event.target.classList.add('active');
+
+  const url = `/api/plot-files?run=${encodeURIComponent(run)}&datetime=${encodeURIComponent(datetime)}&conf=${encodeURIComponent(conf)}`;
+  const res = await fetch(url).catch(() => null);
+  if (!res) return;
+  const files = await res.json();
+
+  const container = document.getElementById('img-grid-container');
+  if (files.length === 0) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:.9rem;margin-top:8px">No PNG plots found.</p>';
+    return;
+  }
+  container.innerHTML = `
+    <div class="section-title">${run} / ${datetime}${conf ? ' / ' + conf : ''} — ${files.length} plots</div>
+    <div class="img-grid">
+      ${files.map(f => {
+        const name = f.split('/').pop().replace('.png','');
+        return `<div class="img-card" onclick="openLightbox('${f}','${name}')">
+          <img src="${f}" loading="lazy" alt="${name}">
+          <p>${name}</p>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Lightbox
+// ---------------------------------------------------------------------------
+function openLightbox(src, name) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox-name').textContent = name;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+loadConfs();
+</script>
+</body>
+</html>

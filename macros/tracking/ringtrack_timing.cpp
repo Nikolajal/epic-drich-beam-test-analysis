@@ -7,9 +7,9 @@
 
 // ===========================================================================
 //  ringtrack_timing
-//  Per ogni frame: trova il bin di 25 ns dominante nella distribuzione
-//  temporale degli hit. Per ogni traccia del frame: scrive la carta
-//  d'identità su file txt e riempie istogrammi 2D di controllo.
+//  For each frame: find the dominant 25ns bin in the time distribution
+//  of hits. For each track in the frame: write an identity card
+//  to a txt file and fill 2D control histograms.
 // ===========================================================================
 
 void ringtrack_timing(std::string data_repository, std::string run_name,
@@ -70,7 +70,7 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
     // distribuzione temporale globale
     TH1F *h_t_all = new TH1F("h_t_all", "Hit time wrt trigger (all frames);t (ns);counts", n_bins, t_min, t_max);
 
-    // per ogni bin temporale: mappa 2D delle intercette
+    // per time bin: 2D map of track intercepts
     std::vector<TH1F*> h_ix_per_bin(n_bins);
     std::vector<TH1F*> h_iy_per_bin(n_bins);
     for (int b = 0; b < n_bins; b++)
@@ -234,7 +234,7 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
     TCanvas *c_mult = new TCanvas("c_mult", "multiplicity vs window", 800, 600);
     h_mult_vs_window->Draw("COLZ"); c_mult->Write(); c_mult->SaveAs((output_dir + "/track_timing_mult.png").c_str());
 
-    // canvas confronto: sovrappone solo i bin con >= min_entries intercette
+    // comparison canvas: overlay only bins with >= min_entries intercepts
     const int min_entries = 50;
     std::vector<int> palette = {kBlack, kRed, kBlue, kGreen+2, kMagenta, kOrange+1, kCyan+1, kViolet};
 

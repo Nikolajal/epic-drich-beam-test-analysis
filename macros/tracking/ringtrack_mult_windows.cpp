@@ -45,7 +45,7 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
                   << "  plane2=" << cut_plane_to_string(tsel.plane2) << std::endl;
     }
 
-    // Stampa riepilogo molteplicità (uguale a ringtrack_analysis)
+    // Print multiplicity summary (same as ringtrack_analysis)
     if (tsel.require_exact_ntracks > 0)
         std::cout << "[INFO] Track multiplicity: exact = " << tsel.require_exact_ntracks << std::endl;
     else if (tsel.require_min_ntracks > 0 || tsel.require_max_ntracks > 0)
@@ -116,9 +116,9 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
 
         const int n_tracks = recotrackdata->n_recotrackdata();
 
-        // Determina se l'evento ha una traccia "selezionata":
-        //   - senza geometric selection: controlla solo molteplicità
-        //   - con geometric selection:  almeno una traccia passa i tagli geometrici
+        // Determine whether the event has a "selected" track:
+        //   - without geometric selection: check multiplicity only
+        //   - with geometric selection:  at least one track passes the geometric cuts
         bool has_selected_track = false;
         if (apply_geometric)
         {
@@ -208,7 +208,7 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         leg->Draw();
     };
 
-    // ---- cartella con tutti gli istogrammi singoli ----
+    // ---- folder with all individual histograms ----
     {
         TDirectory *hdir = fout->mkdir("histograms");
         hdir->cd();
@@ -226,7 +226,7 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         }
     }
 
-    // ---- canvas per ogni window ----
+    // ---- canvas per time window ----
     for (int w = 0; w < nw; w++)
     {
         float tmin = windows[w].first, tmax = windows[w].second;
@@ -291,7 +291,7 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         c_norm->SaveAs(Form("%s/mult_w%d_norm.png", output_dir.c_str(), w));
     }
 
-    // ---- canvas comparativi sig vs bkg per gruppo ----
+    // ---- comparative canvases: sig vs bkg per group ----
     std::map<std::string, int> sig_by_group, bkg_by_group;
     for (int w = 0; w < nw; w++)
     {
