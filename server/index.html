@@ -385,6 +385,7 @@ select option { background: var(--bg3); }
     <label class="macro-cb"><input type="checkbox" value="--timing" onchange="onMacroCbChange(this)"><span>timing</span></label>
     <label class="macro-cb"><input type="checkbox" value="--mult-windows" onchange="onMacroCbChange(this)"><span>mult-windows</span></label>
     <label class="macro-cb"><input type="checkbox" value="--all" id="cb-all" onchange="onMacroCbChange(this)"><span>all</span></label>
+    <!-- draw-optional removed: macro does not exist -->
   </div>
 
   <button class="btn btn-run" id="run-btn" onclick="startRun()">▶ Run Analysis</button>
@@ -488,6 +489,11 @@ function getCustomConf() {
     n_display_events: val('c-n_display_events'),
     timing_bin_width: val('c-timing_bin_width'),
     display_nhits_cut_mode: 'none', display_nhits_min: '0', display_nhits_max: '3',
+    // time windows for ringtrack_mult_windows (defaults from 1track.conf)
+    time_window_0: '-7.44   3.66',   time_window_0_label: 'sig_12ns',
+    time_window_1: '-200.0  -188.0', time_window_1_label: 'bkg_12ns',
+    time_window_2: '-50.0   20.0',   time_window_2_label: 'sig_70ns',
+    time_window_3: '-200.0  -130.0', time_window_3_label: 'bkg_70ns',
   };
 }
 

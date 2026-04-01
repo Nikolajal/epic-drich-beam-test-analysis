@@ -60,7 +60,8 @@ while [ "$#" -gt 0 ]; do
         --output)         OUTPUT_DIR="$2";  shift 2 ;;
         --analysis)       RUN_ANALYSIS=true;      shift ;;
         --draw)           RUN_DRAW=true;           shift ;;
-        --draw-optional)  RUN_DRAW_OPTIONAL=true;  shift ;;
+        # --draw-optional: macro does not exist, kept for compatibility but no-op
+        --draw-optional)  shift ;;
         --display)        RUN_DISPLAY=true;        shift ;;
         --timing)         RUN_TIMING=true;         shift ;;
         --mult-windows)   RUN_MULT_WINDOWS=true;   shift ;;
@@ -84,7 +85,7 @@ if [ -z "$DATA_FOLDER" ] || [ -z "$RUN_ID" ]; then
 fi
 
 # default: run analysis only if no macro flag is given
-if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DRAW_OPTIONAL && ! $RUN_DISPLAY && ! $RUN_TIMING && ! $RUN_MULT_WINDOWS; then
+if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DISPLAY && ! $RUN_TIMING && ! $RUN_MULT_WINDOWS; then
     RUN_ANALYSIS=true
 fi
 
@@ -121,10 +122,6 @@ if $RUN_DRAW; then
     root -l -b -q "ringtrack_draw.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
 fi
 
-if $RUN_DRAW_OPTIONAL; then
-    echo "-> Running ringtrack_draw_optional"
-    root -l -b -q "ringtrack_draw_optional.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
-fi
 
 if $RUN_DISPLAY; then
     echo "-> Running ringtrack_draw_display"
