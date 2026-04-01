@@ -128,6 +128,36 @@ select option { background: var(--bg3); }
 /* Section title */
 .section-title { font-size: 0.78rem; color: var(--text2); text-transform: uppercase;
                  letter-spacing: .08em; margin: 18px 0 10px; }
+
+/* Conf mode tabs */
+.conf-mode { display: flex; gap: 0; margin-bottom: 14px; border: 1px solid var(--border);
+             border-radius: var(--radius); overflow: hidden; }
+.conf-mode-btn { flex: 1; padding: 8px; text-align: center; font-size: 0.82rem;
+                 cursor: pointer; background: var(--bg3); color: var(--text2);
+                 border: none; transition: .15s; }
+.conf-mode-btn.active { background: var(--accent); color: white; font-weight: 600; }
+
+/* Conf editor sections */
+.conf-section { background: var(--bg2); border: 1px solid var(--border);
+                border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+.conf-section-header { display: flex; justify-content: space-between; align-items: center;
+                       padding: 10px 14px; cursor: pointer; user-select: none; }
+.conf-section-header span { font-size: 0.82rem; font-weight: 600; color: var(--text); }
+.conf-section-header .arrow { color: var(--text2); font-size: 0.75rem; transition: .2s; }
+.conf-section-header.open .arrow { transform: rotate(180deg); }
+.conf-section-body { display: none; padding: 10px 14px 14px; border-top: 1px solid var(--border); }
+.conf-section-body.open { display: block; }
+.conf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.conf-row.full { grid-template-columns: 1fr; }
+.conf-field label { font-size: 0.72rem; color: var(--text2); display: block; margin-bottom: 3px; }
+.conf-field input:not([type="checkbox"]), .conf-field select {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text); padding: 7px 10px; border-radius: 6px;
+  font-size: 0.85rem; outline: none; -webkit-appearance: none; }
+.conf-field input:not([type="checkbox"]):focus, .conf-field select:focus { border-color: var(--accent); }
+.conf-field select option { background: var(--bg3); }
+.conf-check { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
+.conf-check label { font-size: 0.85rem; color: var(--text); margin: 0; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -171,14 +201,191 @@ select option { background: var(--bg3); }
     <span class="toggle-label">All variants mode (run_all.sh --variants)</span>
   </div>
 
-  <div class="field" id="conf-field">
-    <label>Config file</label>
-    <select id="conf-select">
-      <option value="">— loading... —</option>
-    </select>
+  <div class="section-title">Configuration</div>
+  <div class="conf-mode">
+    <button class="conf-mode-btn active" onclick="setConfMode('preset')">Preset file</button>
+    <button class="conf-mode-btn" onclick="setConfMode('custom')">Custom</button>
   </div>
 
-  <div id="single-conf-label" class="section-title" style="display:none">Base conf for variants</div>
+  <!-- PRESET mode -->
+  <div id="conf-preset">
+    <div class="field">
+      <label>Config file</label>
+      <select id="conf-select">
+        <option value="">— loading... —</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- CUSTOM mode -->
+  <div id="conf-custom" style="display:none">
+
+    <!-- Track selection -->
+    <div class="conf-section">
+      <div class="conf-section-header open" onclick="toggleSection(this)">
+        <span>Track selection</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body open">
+        <div class="conf-row">
+          <div class="conf-field"><label>exact n tracks (0=off)</label><input type="number" id="c-require_exact_ntracks" value="1" min="0"></div>
+          <div class="conf-field"><label>min n tracks (0=off)</label><input type="number" id="c-require_min_ntracks" value="1" min="0"></div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-field"><label>max n tracks (0=off)</label><input type="number" id="c-require_max_ntracks" value="0" min="0"></div>
+          <div class="conf-field"><label>chi2 max</label><input type="number" id="c-chi2_max" value="5.0" step="0.5"></div>
+        </div>
+        <div class="conf-check">
+          <input type="checkbox" id="c-apply_chi2_cut" checked>
+          <label for="c-apply_chi2_cut">apply chi2 cut</label>
+        </div>
+        <div class="conf-check">
+          <input type="checkbox" id="c-use_best_track_only">
+          <label for="c-use_best_track_only">use best track only</label>
+        </div>
+        <div class="conf-check">
+          <input type="checkbox" id="c-require_all_tracks_pass_geometric_cuts" checked>
+          <label for="c-require_all_tracks_pass_geometric_cuts">all tracks pass geometric cuts</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Geometric cuts -->
+    <div class="conf-section">
+      <div class="conf-section-header open" onclick="toggleSection(this)">
+        <span>Geometric cuts</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body open">
+        <div class="conf-check">
+          <input type="checkbox" id="c-apply_geometric_track_selection" checked>
+          <label for="c-apply_geometric_track_selection">apply geometric track selection</label>
+        </div>
+        <div style="margin-top:10px;font-size:0.75rem;color:var(--text2);margin-bottom:6px">PLANE 1 (scintillator)</div>
+        <div class="conf-row">
+          <div class="conf-field"><label>plane1</label>
+            <select id="c-plane1"><option>SCINT</option><option>DRICH</option></select>
+          </div>
+          <div class="conf-field"><label>side1</label>
+            <select id="c-side1"><option>INSIDE</option><option>OUTSIDE</option></select>
+          </div>
+        </div>
+        <div class="conf-row full">
+          <div class="conf-field"><label>cutg1</label><input type="text" id="c-cutg1" value="scint_largo"></div>
+        </div>
+        <div style="margin-top:10px;font-size:0.75rem;color:var(--text2);margin-bottom:6px">PLANE 2 (dRICH)</div>
+        <div class="conf-row">
+          <div class="conf-field"><label>plane2</label>
+            <select id="c-plane2"><option>DRICH</option><option>SCINT</option></select>
+          </div>
+          <div class="conf-field"><label>side2</label>
+            <select id="c-side2"><option>INSIDE</option><option>OUTSIDE</option></select>
+          </div>
+        </div>
+        <div class="conf-row full">
+          <div class="conf-field"><label>cutg2</label><input type="text" id="c-cutg2" value="rect -25 25 -25 25"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Time cut -->
+    <div class="conf-section">
+      <div class="conf-section-header open" onclick="toggleSection(this)">
+        <span>Time cut (ns)</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body open">
+        <div class="conf-row">
+          <div class="conf-field"><label>time_cut_min</label><input type="number" id="c-time_cut_min" value="-2" step="1"></div>
+          <div class="conf-field"><label>time_cut_max</label><input type="number" id="c-time_cut_max" value="0" step="1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hit cuts -->
+    <div class="conf-section">
+      <div class="conf-section-header" onclick="toggleSection(this)">
+        <span>Hit cuts</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body">
+        <div class="conf-row">
+          <div class="conf-field"><label>ring band sigma</label><input type="number" id="c-ring_band_sigma" value="2.0" step="0.5"></div>
+          <div class="conf-field"><label>signal frame threshold</label><input type="number" id="c-signal_frame_threshold" value="3" min="0"></div>
+        </div>
+        <div class="conf-check">
+          <input type="checkbox" id="c-apply_afterpulse_cut" checked>
+          <label for="c-apply_afterpulse_cut">apply afterpulse cut</label>
+        </div>
+        <div class="conf-check">
+          <input type="checkbox" id="c-apply_radial_cut">
+          <label for="c-apply_radial_cut">apply radial cut</label>
+        </div>
+        <div class="conf-check">
+          <input type="checkbox" id="c-apply_multiplicity_cut">
+          <label for="c-apply_multiplicity_cut">apply multiplicity cut</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Window selection -->
+    <div class="conf-section">
+      <div class="conf-section-header" onclick="toggleSection(this)">
+        <span>Window selection</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body">
+        <div class="conf-check">
+          <input type="checkbox" id="c-apply_window_selection">
+          <label for="c-apply_window_selection">apply window selection</label>
+        </div>
+        <div class="conf-row">
+          <div class="conf-field"><label>win sel min</label><input type="number" id="c-window_sel_min" value="-7.44" step="0.1"></div>
+          <div class="conf-field"><label>win sel max</label><input type="number" id="c-window_sel_max" value="3.66" step="0.1"></div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-field"><label>win sel threshold</label><input type="number" id="c-window_sel_threshold" value="1" min="0"></div>
+        </div>
+        <div style="margin-top:8px" class="conf-check">
+          <input type="checkbox" id="c-apply_window_veto">
+          <label for="c-apply_window_veto">apply window veto</label>
+        </div>
+        <div class="conf-row">
+          <div class="conf-field"><label>veto min</label><input type="number" id="c-window_veto_min" value="-300.0" step="1"></div>
+          <div class="conf-field"><label>veto max</label><input type="number" id="c-window_veto_max" value="-8.0" step="1"></div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-field"><label>veto threshold</label><input type="number" id="c-window_veto_threshold" value="1" min="0"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detector geometry -->
+    <div class="conf-section">
+      <div class="conf-section-header" onclick="toggleSection(this)">
+        <span>Detector geometry (mm)</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body">
+        <div class="conf-row">
+          <div class="conf-field"><label>z_drich</label><input type="number" id="c-z_drich" value="-4250"></div>
+          <div class="conf-field"><label>z_scint</label><input type="number" id="c-z_scint" value="-1150"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loop / Display -->
+    <div class="conf-section">
+      <div class="conf-section-header" onclick="toggleSection(this)">
+        <span>Loop &amp; display</span><span class="arrow">▼</span>
+      </div>
+      <div class="conf-section-body">
+        <div class="conf-row">
+          <div class="conf-field"><label>first event</label><input type="number" id="c-first_event" value="0" min="0"></div>
+          <div class="conf-field"><label>max frames (0=all)</label><input type="number" id="c-max_frames" value="1000000" min="0"></div>
+        </div>
+        <div class="conf-row">
+          <div class="conf-field"><label>n display events</label><input type="number" id="c-n_display_events" value="100000" min="0"></div>
+          <div class="conf-field"><label>timing bin width</label><input type="number" id="c-timing_bin_width" value="10.0" step="1"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end #conf-custom -->
 
   <div class="section-title">Macros to run</div>
   <div class="macros-grid">
@@ -219,6 +426,68 @@ select option { background: var(--bg3); }
 </div>
 
 <script>
+// ---------------------------------------------------------------------------
+// Conf mode (preset vs custom)
+// ---------------------------------------------------------------------------
+let confMode = 'preset';
+function setConfMode(mode) {
+  confMode = mode;
+  document.querySelectorAll('.conf-mode-btn').forEach((b, i) => {
+    b.classList.toggle('active', (i === 0 && mode === 'preset') || (i === 1 && mode === 'custom'));
+  });
+  document.getElementById('conf-preset').style.display = mode === 'preset' ? '' : 'none';
+  document.getElementById('conf-custom').style.display = mode === 'custom' ? '' : 'none';
+}
+
+function toggleSection(header) {
+  header.classList.toggle('open');
+  header.nextElementSibling.classList.toggle('open');
+}
+
+function getCustomConf() {
+  const bool = id => document.getElementById(id).checked ? 'true' : 'false';
+  const val  = id => document.getElementById(id).value;
+  const sel  = id => document.getElementById(id).value;
+  return {
+    require_exact_ntracks: val('c-require_exact_ntracks'),
+    require_min_ntracks:   val('c-require_min_ntracks'),
+    require_max_ntracks:   val('c-require_max_ntracks'),
+    require_single_track:  'false',
+    require_multi_track:   'false',
+    apply_chi2_cut:        bool('c-apply_chi2_cut'),
+    chi2_max:              val('c-chi2_max'),
+    use_best_track_only:   bool('c-use_best_track_only'),
+    require_all_tracks_pass_geometric_cuts: bool('c-require_all_tracks_pass_geometric_cuts'),
+    apply_geometric_track_selection: bool('c-apply_geometric_track_selection'),
+    plane1: sel('c-plane1'), side1: sel('c-side1'), cutg1: val('c-cutg1'),
+    plane2: sel('c-plane2'), side2: sel('c-side2'), cutg2: val('c-cutg2'),
+    time_cut_min: val('c-time_cut_min'),
+    time_cut_max: val('c-time_cut_max'),
+    ring_band_sigma:        val('c-ring_band_sigma'),
+    signal_frame_threshold: val('c-signal_frame_threshold'),
+    apply_afterpulse_cut:   bool('c-apply_afterpulse_cut'),
+    apply_radial_cut:       bool('c-apply_radial_cut'),
+    apply_multiplicity_cut: bool('c-apply_multiplicity_cut'),
+    apply_window_selection: bool('c-apply_window_selection'),
+    window_sel_min:         val('c-window_sel_min'),
+    window_sel_max:         val('c-window_sel_max'),
+    window_sel_threshold:   val('c-window_sel_threshold'),
+    apply_window_veto:      bool('c-apply_window_veto'),
+    window_veto_min:        val('c-window_veto_min'),
+    window_veto_max:        val('c-window_veto_max'),
+    window_veto_threshold:  val('c-window_veto_threshold'),
+    apply_window_veto_2: 'false',
+    window_veto_2_min: '-300.0', window_veto_2_max: '300.0', window_veto_2_threshold: '1',
+    z_drich: val('c-z_drich'),
+    z_scint: val('c-z_scint'),
+    first_event: val('c-first_event'),
+    max_frames:  val('c-max_frames'),
+    n_display_events: val('c-n_display_events'),
+    timing_bin_width: val('c-timing_bin_width'),
+    display_nhits_cut_mode: 'none', display_nhits_min: '0', display_nhits_max: '3',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tab switching
 // ---------------------------------------------------------------------------
@@ -284,17 +553,20 @@ function startRun() {
 
   if (ws) { ws.close(); }
 
+  const custom_conf = confMode === 'custom' ? getCustomConf() : null;
+  const confLabel   = confMode === 'custom' ? '(custom)' : (conf || '(default)');
+
   setStatus('running');
   switchTab('log');
   clearLog();
-  appendLog(`Starting analysis...\nRun: ${runId}\nConf: ${conf || '(default)'}\nMacros: ${macros.join(' ')}\n\n`);
+  appendLog(`Starting analysis...\nRun: ${runId}\nConf: ${confLabel}\nMacros: ${macros.join(' ')}\n\n`);
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws/run`);
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ data_folder: dataFolder, run_id: runId,
-                             conf, macros, use_variants: variants }));
+                             conf, macros, use_variants: variants, custom_conf }));
     document.getElementById('run-btn').disabled = true;
     document.getElementById('run-btn').textContent = '⏳ Running...';
   };

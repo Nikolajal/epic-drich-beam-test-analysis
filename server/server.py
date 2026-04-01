@@ -6,6 +6,7 @@ Mobile-friendly web UI to trigger ROOT analyses and browse plots.
 import asyncio
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
@@ -93,23 +94,40 @@ async def ws_run(websocket: WebSocket):
     conf         = data.get("conf", "").strip()
     macros       = data.get("macros", ["--analysis"])
     use_variants = data.get("use_variants", False)
+    custom_conf  = data.get("custom_conf", None)  # dict of conf key→value
 
     if not data_folder or not run_id:
         await websocket.send_text("[Error] data_folder and run_id are required\n")
         return
 
-    # Build command
-    if use_variants:
-        script    = str(TRACK_DIR / "run_all.sh")
-        conf_path = str(CONF_DIR / f"{conf}.conf") if conf else str(CONF_DIR / "1track.conf")
-        cmd = [script, "--data", data_folder, "--run", run_id, "--variants", conf_path] + macros
+    # If custom_conf dict provided, write a temp conf file
+    tmp_conf_path = None
+    if custom_conf:
+        tmp_fd, tmp_conf_path = tempfile.mkstemp(suffix=".conf", prefix="drich_custom_")
+        with os.fdopen(tmp_fd, "w") as f:
+            f.write("# Auto-generated conf from web UI\n")
+            for k, v in custom_conf.items():
+                f.write(f"{k} = {v}\n")
+        conf_path = tmp_conf_path
     else:
-        script    = str(TRACK_DIR / "run.sh")
         conf_path = str(CONF_DIR / f"{conf}.conf") if conf else ""
-        cmd = [script, "--data", data_folder, "--run", run_id]
-        if conf_path:
-            cmd += ["--conf", conf_path]
-        cmd += macros
+
+    # Build command
+    try:
+        if use_variants:
+            script    = str(TRACK_DIR / "run_all.sh")
+            base_conf = conf_path if conf_path else str(CONF_DIR / "1track.conf")
+            cmd = [script, "--data", data_folder, "--run", run_id, "--variants", base_conf] + macros
+        else:
+            script = str(TRACK_DIR / "run.sh")
+            cmd = [script, "--data", data_folder, "--run", run_id]
+            if conf_path:
+                cmd += ["--conf", conf_path]
+            cmd += macros
+    except Exception as e:
+        if tmp_conf_path and os.path.exists(tmp_conf_path):
+            os.unlink(tmp_conf_path)
+        raise e
 
     await websocket.send_text(f"$ {' '.join(cmd)}\n\n")
 
@@ -138,3 +156,6 @@ async def ws_run(websocket: WebSocket):
             proc.terminate()
     except Exception as e:
         await websocket.send_text(f"\n[Error] {e}\n")
+    finally:
+        if tmp_conf_path and os.path.exists(tmp_conf_path):
+            os.unlink(tmp_conf_path)
