@@ -3,6 +3,15 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Assicura che le librerie ROOT reali siano nel path
+# (override necessario quando l'ambiente sandbox sovrascrive ROOTSYS)
+_ROOT_EXEC="$(which root 2>/dev/null)"
+if [ -n "$_ROOT_EXEC" ]; then
+    _ROOT_LIB="$(dirname "$(dirname "$(realpath "$_ROOT_EXEC")")")/lib"
+    [ -d "$_ROOT_LIB" ] && export LD_LIBRARY_PATH="$_ROOT_LIB:${LD_LIBRARY_PATH:-}"
+fi
+unset _ROOT_EXEC _ROOT_LIB
+
 usage() {
     echo "Usage: $0 --data <folder> --run <run_id> [options]"
     echo ""
