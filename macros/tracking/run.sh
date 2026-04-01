@@ -3,8 +3,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Assicura che le librerie ROOT reali siano nel path
-# (override necessario quando l'ambiente sandbox sovrascrive ROOTSYS)
+# Ensure the real ROOT libraries are in LD_LIBRARY_PATH
+# (needed when the sandbox environment overrides ROOTSYS)
 _ROOT_EXEC="$(which root 2>/dev/null)"
 if [ -n "$_ROOT_EXEC" ]; then
     _ROOT_LIB="$(dirname "$(dirname "$(realpath "$_ROOT_EXEC")")")/lib"
@@ -83,22 +83,22 @@ if [ -z "$DATA_FOLDER" ] || [ -z "$RUN_ID" ]; then
     usage
 fi
 
-# default: solo analysis se nessuna macro specificata
+# default: run analysis only if no macro flag is given
 if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DRAW_OPTIONAL && ! $RUN_DISPLAY && ! $RUN_TIMING && ! $RUN_MULT_WINDOWS; then
     RUN_ANALYSIS=true
 fi
 
-# output dir: repo/plots/run_id/datetime se non specificato
+# output dir: repo/plots/run_id/datetime if not specified
 if [ -z "$OUTPUT_DIR" ]; then
     DATETIME="$(date +%Y%m%d_%H%M%S)"
     OUTPUT_DIR="$REPO_ROOT/plots/$RUN_ID/$DATETIME"
 fi
 mkdir -p "$OUTPUT_DIR"
 
-# copia del conf usato
+# copy the conf used for this run
 cp "$CONF" "$OUTPUT_DIR/run.conf"
 
-# log con datetime nella cartella dei plot
+# log file with datetime in the output directory
 LOG_FILE="$OUTPUT_DIR/run_${DATETIME}.log"
 exec > >(tee "$LOG_FILE") 2>&1
 

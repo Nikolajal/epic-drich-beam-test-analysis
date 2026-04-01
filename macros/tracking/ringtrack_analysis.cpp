@@ -67,7 +67,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     TrackSelectionConfig tsel;
     tsel.load(cfg);
 
-    // Stampa riepilogo selezione molteplicità
+    // Print multiplicity selection summary
     if (tsel.require_exact_ntracks > 0)
         std::cout << "[INFO] Track multiplicity: exact = " << tsel.require_exact_ntracks << std::endl;
     else if (tsel.require_min_ntracks > 0 || tsel.require_max_ntracks > 0)
@@ -237,7 +237,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         }
         h_event_multiplicity->Fill(n_trk);
 
-        // t_distribution e n_hits per tutti gli eventi
+        // t_distribution and n_hits for all events
         int n_hits_all = 0;
         for (int i_hit = 0; i_hit < (int)recotrackdata->get_recodata().size(); i_hit++)
         {
@@ -265,7 +265,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             if (apply_window_veto_2    && n_veto2 >= window_veto_2_threshold) continue;
         }
 
-        // ---- molteplicità ----
+        // ---- multiplicity ----
         if (!tsel.passes_multiplicity(n_trk)) continue;
 
         // ---- require_all_tracks_pass ----
@@ -285,7 +285,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             if (!all_pass) { n_rejected++; continue; }
         }
 
-        // ---- selezione traccia (best o loop) ----
+        // ---- track selection (best or loop) ----
         std::vector<int> tracks_to_process;
         if (tsel.use_best_track_only)
         {
@@ -322,7 +322,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             if (tracks_to_process.empty()) { n_rejected++; continue; }
         }
 
-        // intercette di tutte le tracce per display multi
+        // intercepts of all tracks for multi-track display
         std::vector<std::pair<float,float>> all_track_intercepts;
         if (display_all_tracks)
         {
@@ -349,7 +349,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         }
         h_n_selected_hits->Fill(n_hits);
 
-        // ---- loop tracce ----
+        // ---- track loop ----
         bool first_track = true;
         for (int idx : tracks_to_process)
         {
@@ -388,7 +388,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
                            << sx << "\t" << sy << "\t"
                            << ix_drich << "\t" << iy_drich << "\n";
 
-            // hit time distribution per eventi con traccia selezionata
+            // hit time distribution for events with a selected track
             if (first_track)
             {
                 for (int i_hit = 0; i_hit < (int)recotrackdata->get_recodata().size(); i_hit++)

@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-#  run_all.sh — esegue run.sh per ogni conf (da cartella/lista o generati)
+#  run_all.sh — runs run.sh for each conf (from folder, list, or generated variants)
 #
-#  Modalità:
-#    --conf-dir <dir>     itera su tutti i .conf in quella cartella
-#    --confs f1 f2 ...    lista esplicita di conf
-#    --variants <base>    genera varianti di track cut da <base>, le usa e le cancella
+#  Modes:
+#    --conf-dir <dir>     iterate over all .conf files in that folder
+#    --confs f1 f2 ...    explicit list of conf files
+#    --variants <base>    generate track-cut variants from <base>, run them, then delete
 #
-#  Esempio:
+#  Examples:
 #    ./run_all.sh --data /data --run run123 --variants conf/1track.conf --analysis
 #    ./run_all.sh --data /data --run run123 --conf-dir conf/ --all
 # =============================================================================
@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # ---------------------------------------------------------------------------
-#  Helper: imposta/sovrascrive una chiave in un conf
+#  Helper: set/override a key in a conf file
 # ---------------------------------------------------------------------------
 set_conf() {
     local file="$1" key="$2" val="$3"
@@ -34,25 +34,25 @@ usage() {
     echo "  --data <folder>     Cartella dati"
     echo "  --run  <run_id>     Run ID"
     echo ""
-    echo "Modalità conf (scegliere una):"
+    echo "Conf mode (choose one):"
     echo "  --conf-dir <dir>    Itera su tutti i .conf nella cartella (default: ./conf)"
     echo "  --confs f1 [f2...]  Lista esplicita di conf"
     echo "  --variants <base>   Genera varianti track-cut da <base>, poi le cancella"
     echo ""
-    echo "Opzioni:"
+    echo "Options:"
     echo "  --output <dir>      Base output dir (default: <repo>/plots/<run>/<datetime>)"
     echo ""
-    echo "Macro flags (passati a run.sh, default: --analysis):"
+    echo "Macro flags (passed to run.sh, default: --analysis):"
     echo "  --analysis  --draw  --display  --timing  --mult-windows  --all"
     echo ""
-    echo "Esempi:"
+    echo "Examples:"
     echo "  $0 --data /data --run 042 --variants conf/1track.conf --analysis"
     echo "  $0 --data /data --run 042 --conf-dir conf/ --all"
     exit 1
 }
 
 # ---------------------------------------------------------------------------
-#  Parse args
+#  Argument parsing
 # ---------------------------------------------------------------------------
 DATA_FOLDER=""
 RUN_ID=""
@@ -82,7 +82,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$DATA_FOLDER" ] || [ -z "$RUN_ID" ]; then
-    echo "Errore: --data e --run sono obbligatori"; usage
+    echo "Error: --data and --run are required"; usage
 fi
 
 [ ${#MACRO_FLAGS[@]} -eq 0 ] && MACRO_FLAGS=(--analysis)
@@ -90,18 +90,18 @@ fi
 DATETIME="$(date +%Y%m%d_%H%M%S)"
 [ -z "$BASE_OUTPUT" ] && BASE_OUTPUT="$REPO_ROOT/plots/$RUN_ID/$DATETIME"
 
-CONF_FILES=()   # percorsi
-CONF_NAMES=()   # nomi leggibili (= nome cartella output)
-TEMP_FILES=()   # conf temporanei da cancellare alla fine
+CONF_FILES=()   # file paths
+CONF_NAMES=()   # human-readable names (= output subfolder)
+TEMP_FILES=()   # temporary conf files, deleted after run
 
 # ---------------------------------------------------------------------------
-#  Modalità --variants: genera conf temporanei da base
+#  Mode --variants: generate temporary conf files from a base conf
 # ---------------------------------------------------------------------------
 if [ -n "$VARIANTS_BASE" ]; then
-    [ ! -f "$VARIANTS_BASE" ] && { echo "Errore: base conf '$VARIANTS_BASE' non trovata"; exit 1; }
+    [ ! -f "$VARIANTS_BASE" ] && { echo "Error: base conf '$VARIANTS_BASE' not found"; exit 1; }
 
     # ---- track variants ----
-    # formato: "nome|key1 val1|key2 val2|..."
+    # format: "name|key1 val1|key2 val2|..."|key1 val1|key2 val2|..."|key1 val1|key2 val2|..."
     TRACK_VARS=(
         "1track_chi2_5|require_exact_ntracks 1|require_min_ntracks 1|require_max_ntracks 0|apply_chi2_cut true|chi2_max 5.0|use_best_track_only true"
         "1track_nochi2|require_exact_ntracks 1|require_min_ntracks 1|require_max_ntracks 0|apply_chi2_cut false|use_best_track_only true"
@@ -129,7 +129,7 @@ if [ -n "$VARIANTS_BASE" ]; then
 
             cp "$VARIANTS_BASE" "$TMPFILE"
 
-            # common overrides
+            # common overrides (applied to all variants)
             set_conf "$TMPFILE" time_cut_min       -50
             set_conf "$TMPFILE" time_cut_max       -20
             set_conf "$TMPFILE" apply_geometric_track_selection true
@@ -137,14 +137,14 @@ if [ -n "$VARIANTS_BASE" ]; then
             set_conf "$TMPFILE" side1              INSIDE
             set_conf "$TMPFILE" cutg1              scint_largo
 
-            # track variant keys (pipe-separated "key val" pairs)
+            # apply track-variant keys (pipe-separated "key val" pairs)
             IFS='|' read -ra KV_TRACK <<< "$TKEYS"
             for KV in "${KV_TRACK[@]}"; do
                 K="${KV%% *}"; V="${KV#* }"
                 set_conf "$TMPFILE" "$K" "$V"
             done
 
-            # drich variant keys
+            # apply dRICH-variant keys
             IFS='|' read -ra KV_DRICH <<< "$DKEYS"
             for KV in "${KV_DRICH[@]}"; do
                 K="${KV%% *}"; V="${KV#* }"
@@ -158,7 +158,7 @@ if [ -n "$VARIANTS_BASE" ]; then
     done
 
 # ---------------------------------------------------------------------------
-#  Modalità --confs: lista esplicita
+#  Mode --confs: explicit file list
 # ---------------------------------------------------------------------------
 elif [ ${#CONF_LIST[@]} -gt 0 ]; then
     for F in "${CONF_LIST[@]}"; do
@@ -167,7 +167,7 @@ elif [ ${#CONF_LIST[@]} -gt 0 ]; then
     done
 
 # ---------------------------------------------------------------------------
-#  Modalità --conf-dir (default: ./conf)
+#  Mode --conf-dir (default: ./conf)
 # ---------------------------------------------------------------------------
 else
     [ -z "$CONF_DIR" ] && CONF_DIR="$SCRIPT_DIR/conf"
@@ -179,11 +179,11 @@ else
 fi
 
 if [ ${#CONF_FILES[@]} -eq 0 ]; then
-    echo "Errore: nessun conf trovato"; exit 1
+    echo "Error: no conf files found"; exit 1
 fi
 
 # ---------------------------------------------------------------------------
-#  Stampa riepilogo
+#  Print batch summary
 # ---------------------------------------------------------------------------
 echo "========================================"
 echo "Batch run:  $DATETIME"
@@ -198,7 +198,7 @@ done
 echo "========================================"
 
 # ---------------------------------------------------------------------------
-#  Esecuzione
+#  Run
 # ---------------------------------------------------------------------------
 OK=0; FAIL=0
 
@@ -220,7 +220,7 @@ for i in "${!CONF_FILES[@]}"; do
     if [ $? -eq 0 ]; then ((OK++)); else ((FAIL++)); fi
 done
 
-# cleanup conf temporanei
+# clean up temporary conf files
 for TMP in "${TEMP_FILES[@]}"; do
     rm -f "$TMP"
 done

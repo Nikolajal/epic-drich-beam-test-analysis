@@ -46,7 +46,7 @@ struct RingtrackConfig
         }
     }
 
-    // --- accessor con default ---
+    // --- accessors with default values ---
     std::string get_string(const std::string &key, const std::string &def = "") const
     {
         auto it = _data.find(key);

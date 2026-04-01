@@ -172,7 +172,7 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
     c_tracking_angles->cd(3); draw_with_range(h_tracking_angle_x, apply_angle_xy_cut,  angle_x_min, angle_x_max);
     c_tracking_angles->cd(4); draw_with_range(h_tracking_angle_y, apply_angle_xy_cut,  angle_y_min, angle_y_max);
 
-    // --- intercette 2x2 (colz + scat per dRICH e scint) ---
+    // --- intercept maps 2x2 (colz + scat for dRICH and scint) ---
     TCanvas *c_intercepts = new TCanvas("c_intercepts", "Track intercept maps", 1600, 1600);
     c_intercepts->Divide(2, 2);
     c_intercepts->cd(1); h_intercept_drich->Draw("COLZ");
@@ -193,7 +193,7 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
         h3d->Draw("SURF2Z");
     }
 
-    // --- hit multiplicity: tutti vs con traccia ---
+    // --- hit multiplicity: all events vs with track ---
     TCanvas *c_hit_mult = new TCanvas("c_hit_mult", "Hit multiplicity comparison", 900, 600);
     {
         TH1F *h1 = (TH1F *)h_all_n_hits->Clone("h_all_clone");
@@ -213,7 +213,7 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
         leg->Draw();
     }
 
-    // --- photon yield: n_hits + molteplicità ---
+    // --- photon yield: n_hits + multiplicity ---
     TCanvas *c_photon_yield = new TCanvas("c_photon_yield", "Photon yield", 1200, 600);
     c_photon_yield->Divide(2, 1);
     c_photon_yield->cd(1); h_n_selected_hits->Draw();
