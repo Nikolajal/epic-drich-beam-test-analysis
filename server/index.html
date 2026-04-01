@@ -490,20 +490,6 @@ function getCustomConf() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab switching
-// ---------------------------------------------------------------------------
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => {
-    const names = ['run','log','plots'];
-    t.classList.toggle('active', names[i] === name);
-  });
-  document.querySelectorAll('.panel').forEach(p => {
-    p.classList.toggle('active', p.id === 'panel-' + name);
-  });
-  if (name === 'plots') loadSessions();
-}
-
-// ---------------------------------------------------------------------------
 // Load confs
 // ---------------------------------------------------------------------------
 async function loadConfs() {
@@ -758,9 +744,69 @@ function closeLightbox() {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 // ---------------------------------------------------------------------------
-// Init
+// Tab persistence
 // ---------------------------------------------------------------------------
-loadConfs();
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const names = ['run', 'log', 'plots'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'panel-' + name);
+  });
+  if (name === 'plots') loadSessions();
+  localStorage.setItem('activeTab', name);
+}
+
+// ---------------------------------------------------------------------------
+// Init — restore state on page load
+// ---------------------------------------------------------------------------
+async function init() {
+  loadConfs();
+
+  // Restore previous tab
+  const savedTab = localStorage.getItem('activeTab') || 'run';
+  // We'll switch tab after restoring run state (might force to 'log')
+
+  // Check if a run is in progress or was recently completed
+  const statusRes = await fetch('/api/run-status').catch(() => null);
+  if (!statusRes) { switchTab(savedTab); return; }
+  const status = await statusRes.json();
+
+  if (!status.running && status.exit_code === null) {
+    // Server idle, no previous run — just restore tab normally
+    switchTab(savedTab);
+    return;
+  }
+
+  // There's a run in progress or just finished — restore log
+  const logRes = await fetch('/api/run-log?offset=0').catch(() => null);
+  if (!logRes) { switchTab(savedTab); return; }
+  const logData = await logRes.json();
+
+  if (logData.lines.length > 0) {
+    logData.lines.forEach(l => appendLog(l));
+    pollOffset = logData.lines.length;
+    document.getElementById('log-status').textContent = 'Restored from server log.';
+    switchTab('log');  // always go to log if there's something to show
+
+    if (!logData.done) {
+      // Still running — start polling
+      runActive = true;
+      setRunBtn(true);
+      setStatus('running');
+      startPolling();
+    } else {
+      // Finished — show button
+      setStatus('done');
+      document.getElementById('goto-plots-wrap').style.display = 'block';
+    }
+  } else {
+    switchTab(savedTab);
+  }
+}
+
+init();
 </script>
 </body>
 </html>
