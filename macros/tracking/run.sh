@@ -95,8 +95,9 @@ if [ -z "$OUTPUT_DIR" ]; then
 fi
 mkdir -p "$OUTPUT_DIR"
 
-# copy the conf used for this run
+# copy the conf used for this run, then use the stable copy for all macros
 cp "$CONF" "$OUTPUT_DIR/run.conf"
+CONF="$OUTPUT_DIR/run.conf"
 
 # log file with datetime in the output directory
 LOG_FILE="$OUTPUT_DIR/run_${DATETIME}.log"
