@@ -42,12 +42,14 @@ _run: dict = {
 }
 
 
-async def _monitor_proc(proc: subprocess.Popen) -> None:
-    """Wait for the process to exit in a thread pool, then update state."""
+async def _monitor_proc(proc: subprocess.Popen, tmp_conf_path: str = None) -> None:
+    """Wait for the process to exit, update state, delete temp conf if any."""
     loop = asyncio.get_event_loop()
     exit_code = await loop.run_in_executor(None, proc.wait)
     _run["done"]      = True
     _run["exit_code"] = exit_code
+    if tmp_conf_path and os.path.exists(tmp_conf_path):
+        os.unlink(tmp_conf_path)
 
 
 async def _tail_to_ws(websocket: WebSocket, log_path: str) -> None:
@@ -271,14 +273,8 @@ async def ws_run(websocket: WebSocket):
 
     _run.update({"proc": proc, "log_path": log_path, "done": False, "exit_code": None})
 
-    # Clean up custom conf now (process already started, conf file read)
-    if tmp_conf_path and os.path.exists(tmp_conf_path):
-        # Give the shell a moment to fork before deleting
-        await asyncio.sleep(0.5)
-        os.unlink(tmp_conf_path)
-
-    # Background task: wait for process to finish
-    asyncio.create_task(_monitor_proc(proc))
+    # Background task: wait for process to finish, then clean up temp conf
+    asyncio.create_task(_monitor_proc(proc, tmp_conf_path))
 
     # Stream log to WS (non-blocking — WS drop doesn't affect process)
     await _tail_to_ws(websocket, log_path)
