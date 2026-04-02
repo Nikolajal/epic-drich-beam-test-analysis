@@ -33,6 +33,8 @@
 //    notrack_event_table.tsv         — complete per-event table (one row per
 //                                      triggered event): i_frame, beam_coarse,
 //                                      n_trk, n_hits_window, n_raw_hits, category
+//    notrack_categories.png          — bar chart of 7 event categories with %
+//    notrack_timeline.png            — 2D: category vs i_frame over the full run
 // =============================================================================
 void ringtrack_notrack(std::string data_repository, std::string run_name,
                        std::string conf_path = "ringtrack.conf",
@@ -55,6 +57,17 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         output_dir = std::string(_repo.Data()) + "/plots/" + run_name + "/" + std::string(_dt.Data());
     }
     gSystem->mkdir(output_dir.c_str(), true);
+
+    // Category index → name mapping (shared between histograms, loop, plots)
+    // 0 no_track_truly_empty  1 no_track_0win  2 no_track_hits
+    // 3 1track_0win           4 1track_hits
+    // 5 multi_0win            6 multi_hits
+    static const int   n_cat = 7;
+    static const char *cat_names[n_cat] = {
+        "no_trk_0raw", "no_trk_0win", "no_trk_hits",
+        "1trk_0win",   "1trk_hits",
+        "multi_0win",  "multi_hits"
+    };
 
     const bool apply_afterpulse_cut = cfg.get_bool ("apply_afterpulse_cut", true);
     const std::array<float,2> time_cut = {
@@ -159,6 +172,26 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         "Number of trigger entries per TTree entry;n triggers;counts", 10, -0.5, 9.5);
 
     // =========================================================================
+    //  Histograms — category overview + run timeline
+    // =========================================================================
+
+    // bar chart: one bin per category
+    TH1F *h_cat = new TH1F("h_cat",
+        "Event categories (all triggered events);category;counts",
+        n_cat, -0.5, n_cat - 0.5);
+    for (int i = 0; i < n_cat; i++)
+        h_cat->GetXaxis()->SetBinLabel(i + 1, cat_names[i]);
+
+    // 2D timeline: x = i_frame, y = category index
+    // shows whether empty/problematic events cluster in time or are spread uniformly
+    TH2F *h2_cat_timeline = new TH2F("h2_cat_timeline",
+        "Run timeline: event category vs ALTAI trigger #;"
+        "i_frame (ALTAI trigger #);category",
+        500, 0, all_frames, n_cat, -0.5, n_cat - 0.5);
+    for (int i = 0; i < n_cat; i++)
+        h2_cat_timeline->GetYaxis()->SetBinLabel(i + 1, cat_names[i]);
+
+    // =========================================================================
     //  Event loop
     // =========================================================================
     int n_no_trigger  = 0;
@@ -170,6 +203,7 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     int n_zerohits     = 0;  // 0 dRICH hits in time window (any multiplicity)
     int n_doubly_empty = 0;  // 0 tracks AND 0 dRICH hits in time window
     int n_truly_empty  = 0;  // 0 tracks AND 0 raw hits (nothing at all)
+    int n_cat_counts[7] = {};  // per-category counters (same order as cat_names)
 
     int prev_coarse = -1;
 
@@ -237,19 +271,23 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         if (n_trk == 0 && n_raw == 0)
             ++n_truly_empty;
 
-        // per-event category
-        const char *category = "";
-        if      (n_trk == 0 && n_raw  == 0) category = "no_track_truly_empty";
-        else if (n_trk == 0 && n_hits == 0) category = "no_track_0win";
-        else if (n_trk == 0)                category = "no_track_hits";
-        else if (n_trk == 1 && n_hits == 0) category = "1track_0win";
-        else if (n_trk == 1)                category = "1track_hits";
-        else if (n_hits == 0)               category = "multi_0win";
-        else                                category = "multi_hits";
+        // per-event category (integer index + name for TSV and histograms)
+        int cat_idx = 0;
+        if      (n_trk == 0 && n_raw  == 0) cat_idx = 0;
+        else if (n_trk == 0 && n_hits == 0) cat_idx = 1;
+        else if (n_trk == 0)                cat_idx = 2;
+        else if (n_trk == 1 && n_hits == 0) cat_idx = 3;
+        else if (n_trk == 1)                cat_idx = 4;
+        else if (n_hits == 0)               cat_idx = 5;
+        else                                cat_idx = 6;
+
+        n_cat_counts[cat_idx]++;
+        h_cat->Fill(cat_idx);
+        h2_cat_timeline->Fill((float)i_frame, (float)cat_idx);
 
         f_table << i_frame << "\t" << coarse << "\t"
                 << n_trk   << "\t" << n_hits  << "\t"
-                << n_raw   << "\t" << category << "\n";
+                << n_raw   << "\t" << cat_names[cat_idx] << "\n";
 
         // fill per-category histograms
         TH1F *h_nhits    = nullptr;
@@ -482,6 +520,43 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         delete c;
     }
 
+    // --- category bar chart with % labels ---
+    {
+        TCanvas *c = new TCanvas("c_cat", "Event categories (all triggered)", 1100, 620);
+        c->SetBottomMargin(0.20);
+        c->SetLeftMargin(0.12);
+        h_cat->SetFillColor(kAzure+7);
+        h_cat->SetLineColor(kBlue+2);
+        h_cat->SetLineWidth(2);
+        h_cat->GetXaxis()->SetLabelSize(0.048);
+        h_cat->GetXaxis()->LabelsOption("v");
+        h_cat->Draw("BAR2");
+        TLatex lat;
+        lat.SetTextSize(0.032);
+        lat.SetTextAlign(21);
+        for (int i = 0; i < n_cat; i++)
+        {
+            float ypos = n_cat_counts[i] + h_cat->GetMaximum() * 0.03f;
+            lat.DrawLatex(i, ypos, Form("%.1f%%", pct(n_cat_counts[i], n_total)));
+        }
+        c->SaveAs(Form("%s/notrack_categories.png", output_dir.c_str()));
+        delete c;
+    }
+
+    // --- run timeline: category vs i_frame ---
+    {
+        TCanvas *c = new TCanvas("c_timeline",
+            "Run timeline: event category vs ALTAI trigger #", 1400, 620);
+        c->SetLeftMargin(0.16);
+        c->SetRightMargin(0.13);
+        c->SetBottomMargin(0.12);
+        h2_cat_timeline->GetYaxis()->SetLabelSize(0.048);
+        h2_cat_timeline->Draw("COLZ");
+        if (h2_cat_timeline->GetEntries() > 0) gPad->SetLogz(1);
+        c->SaveAs(Form("%s/notrack_timeline.png", output_dir.c_str()));
+        delete c;
+    }
+
     // =========================================================================
     //  Save ROOT file
     // =========================================================================
@@ -499,6 +574,8 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     h2_iframe_coarse->Write();
     h_coarse_diff->Write();
     h_n_triggers->Write();
+    h_cat->Write();
+    h2_cat_timeline->Write();
     fout->Close();
 
     std::cout << "Output: " << output_root << std::endl;
