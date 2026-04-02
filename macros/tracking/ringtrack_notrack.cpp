@@ -30,6 +30,9 @@
 //    notrack_iframe_coarse.png       — i_frame vs coarse (trigger count check)
 //    notrack_coarse_diff.png         — Δcoarse between consecutive frames
 //    notrack_doubly_empty_frames.txt — i_frame list of doubly-empty events
+//    notrack_event_table.tsv         — complete per-event table (one row per
+//                                      triggered event): i_frame, beam_coarse,
+//                                      n_trk, n_hits_window, n_raw_hits, category
 // =============================================================================
 void ringtrack_notrack(std::string data_repository, std::string run_name,
                        std::string conf_path = "ringtrack.conf",
@@ -173,6 +176,10 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     std::ofstream f_doubly(output_dir + "/notrack_doubly_empty_frames.txt");
     f_doubly << "i_frame\tbeam_coarse\tn_triggers_in_entry\n";
 
+    // complete per-event table: one row per triggered event
+    std::ofstream f_table(output_dir + "/notrack_event_table.tsv");
+    f_table << "i_frame\tbeam_coarse\tn_trk\tn_hits_window\tn_raw_hits\tcategory\n";
+
     mist::logger::progress_bar bar(mist::logger::bar_style::BLOCK);
     for (int i_frame = first_event; i_frame < all_frames; ++i_frame)
     {
@@ -230,6 +237,20 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         if (n_trk == 0 && n_raw == 0)
             ++n_truly_empty;
 
+        // per-event category
+        const char *category = "";
+        if      (n_trk == 0 && n_raw  == 0) category = "no_track_truly_empty";
+        else if (n_trk == 0 && n_hits == 0) category = "no_track_0win";
+        else if (n_trk == 0)                category = "no_track_hits";
+        else if (n_trk == 1 && n_hits == 0) category = "1track_0win";
+        else if (n_trk == 1)                category = "1track_hits";
+        else if (n_hits == 0)               category = "multi_0win";
+        else                                category = "multi_hits";
+
+        f_table << i_frame << "\t" << coarse << "\t"
+                << n_trk   << "\t" << n_hits  << "\t"
+                << n_raw   << "\t" << category << "\n";
+
         // fill per-category histograms
         TH1F *h_nhits    = nullptr;
         TH1F *h_t        = nullptr;
@@ -282,6 +303,7 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     bar.update(all_frames, all_frames);
     bar.finish();
     f_doubly.close();
+    f_table.close();
 
     // =========================================================================
     //  Statistics
