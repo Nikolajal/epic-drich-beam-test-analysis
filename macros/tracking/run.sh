@@ -28,7 +28,9 @@ usage() {
     echo "  --display         Run ringtrack_draw_display"
     echo "  --timing          Run ringtrack_timing"
     echo "  --mult-windows    Run ringtrack_mult_windows"
-    echo "  --all             Run all six"
+    echo "  --noring          Run ringtrack_noring"
+    echo "  --notrack         Run ringtrack_notrack (no-track event study)"
+    echo "  --all             Run all macros"
     echo ""
     echo "Examples:"
     echo "  $0 --data /data --run run123"
@@ -52,6 +54,7 @@ RUN_DISPLAY=false
 RUN_TIMING=false
 RUN_MULT_WINDOWS=false
 RUN_NORING=false
+RUN_NOTRACK=false
 
 while [ "$#" -gt 0 ]; do
     case $1 in
@@ -67,6 +70,7 @@ while [ "$#" -gt 0 ]; do
         --timing)         RUN_TIMING=true;         shift ;;
         --mult-windows)   RUN_MULT_WINDOWS=true;   shift ;;
         --noring)         RUN_NORING=true;         shift ;;
+        --notrack)        RUN_NOTRACK=true;        shift ;;
         --all)
             RUN_ANALYSIS=true
             RUN_DRAW=true
@@ -74,6 +78,7 @@ while [ "$#" -gt 0 ]; do
             RUN_TIMING=true
             RUN_MULT_WINDOWS=true
             RUN_NORING=true
+            RUN_NOTRACK=true
             shift ;;
         *)
             echo "Unknown option: $1"
@@ -87,7 +92,7 @@ if [ -z "$DATA_FOLDER" ] || [ -z "$RUN_ID" ]; then
 fi
 
 # default: run analysis only if no macro flag is given
-if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DISPLAY && ! $RUN_TIMING && ! $RUN_MULT_WINDOWS && ! $RUN_NORING; then
+if ! $RUN_ANALYSIS && ! $RUN_DRAW && ! $RUN_DISPLAY && ! $RUN_TIMING && ! $RUN_MULT_WINDOWS && ! $RUN_NORING && ! $RUN_NOTRACK; then
     RUN_ANALYSIS=true
 fi
 
@@ -143,6 +148,11 @@ fi
 if $RUN_NORING; then
     echo "-> Running ringtrack_noring"
     root -l -b -q "ringtrack_noring.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
+fi
+
+if $RUN_NOTRACK; then
+    echo "-> Running ringtrack_notrack"
+    root -l -b -q "ringtrack_notrack.cpp(\"$DATA_FOLDER\", \"$RUN_ID\", \"$CONF\", \"$OUTPUT_DIR\")"
 fi
 
 echo "========================================"
