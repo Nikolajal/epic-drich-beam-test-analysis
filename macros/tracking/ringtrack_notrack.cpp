@@ -252,11 +252,11 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     int prev_coarse = -1;
 
     std::ofstream f_doubly(output_dir + "/notrack_doubly_empty_frames.txt");
-    f_doubly << "i_frame\tbeam_coarse\tn_triggers_in_entry\n";
+    f_doubly << "i_frame\tbeam_coarse\ttrigger_indices\n";
 
     // complete per-event table: one row per triggered event
     std::ofstream f_table(output_dir + "/notrack_event_table.tsv");
-    f_table << "i_frame\tbeam_coarse\tn_trk\tn_hits_window\tn_raw_hits\tcategory\n";
+    f_table << "i_frame\tbeam_coarse\tn_trk\tn_hits_window\tn_raw_hits\tcategory\ttrigger_indices\n";
 
     mist::logger::progress_bar bar(mist::logger::bar_style::BLOCK);
     for (int i_frame = first_event; i_frame < all_frames; ++i_frame)
@@ -314,7 +314,14 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         if (n_trk == 0 && n_hits == 0)
         {
             ++n_doubly_empty;
-            f_doubly << i_frame << "\t" << coarse << "\t" << n_trigs << "\n";
+            // list all trigger indices present in this entry (e.g. "0,1,101,102")
+            std::string trig_list;
+            for (const auto &tr : recotrackdata->get_triggers())
+            {
+                if (!trig_list.empty()) trig_list += ",";
+                trig_list += std::to_string((int)tr.index);
+            }
+            f_doubly << i_frame << "\t" << coarse << "\t" << trig_list << "\n";
         }
         // truly empty: 0 tracks AND 0 raw hits
         if (n_trk == 0 && n_raw == 0)
@@ -334,9 +341,16 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         h_cat->Fill(cat_idx);
         h2_cat_timeline->Fill((float)i_frame, (float)cat_idx);
 
+        std::string trig_list_ev;
+        for (const auto &tr : recotrackdata->get_triggers())
+        {
+            if (!trig_list_ev.empty()) trig_list_ev += ",";
+            trig_list_ev += std::to_string((int)tr.index);
+        }
         f_table << i_frame << "\t" << coarse << "\t"
                 << n_trk   << "\t" << n_hits  << "\t"
-                << n_raw   << "\t" << cat_names[cat_idx] << "\n";
+                << n_raw   << "\t" << cat_names[cat_idx] << "\t"
+                << trig_list_ev << "\n";
 
         // fill per-category histograms
         TH1F *h_nhits    = nullptr;
