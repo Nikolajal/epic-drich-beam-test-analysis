@@ -81,6 +81,15 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     const int first_event = cfg.get_int("first_event", 0);
     const int max_frames_ = cfg.get_int("max_frames",  1000000);
 
+    // Wide timing range: derived from time_cut + safety margin.
+    // The "full" histograms and ring-finding plot always cover this range.
+    // Standard timing histograms stay fixed at [-300, +300] ns.
+    const float wide_margin  = cfg.get_float("wide_timing_margin_ns", 300.f);
+    const float wide_bin_ns  = cfg.get_float("wide_timing_bin_ns",     10.f);
+    const float wide_t_min   = std::min(time_cut[0], 0.f) - wide_margin;
+    const float wide_t_max   = std::max(time_cut[1], 0.f) + wide_margin;
+    const int   wide_n_bins  = std::max(1, (int)((wide_t_max - wide_t_min) / wide_bin_ns));
+
     // -------------------------------------------------------------------------
     //  Open input
     // -------------------------------------------------------------------------
@@ -145,15 +154,25 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         "Raw hit count (no cuts) — 1 track;n raw hits;counts",  80, -0.5, 79.5);
 
     // Full timing (no time cut, no afterpulse cut) for no-track events only.
-    // Shows where the hits are if the time window misses them.
+    // Range scales with time_cut_min/max + wide_timing_margin_ns in the conf.
     TH1F *h_t_notrack_full = new TH1F("h_t_notrack_full",
-        "Full hit timing — no-track (no time cut, no AP cut);"
-        "t_{hit} - t_{beam} (ns);counts", 200, -312.5, 312.5);
+        Form("Full hit timing — no-track (no cuts)  [%.0f, %.0f] ns;"
+             "t_{hit} - t_{beam} (ns);counts", wide_t_min, wide_t_max),
+        wide_n_bins, wide_t_min, wide_t_max);
 
     // Same for 1-track events as reference.
     TH1F *h_t_1track_full  = new TH1F("h_t_1track_full",
-        "Full hit timing — 1 track (no time cut, no AP cut);"
-        "t_{hit} - t_{beam} (ns);counts", 200, -312.5, 312.5);
+        Form("Full hit timing — 1 track (no cuts)  [%.0f, %.0f] ns;"
+             "t_{hit} - t_{beam} (ns);counts", wide_t_min, wide_t_max),
+        wide_n_bins, wide_t_min, wide_t_max);
+
+    // Ring-finding trigger timing: Δt = ring_trigger.fine_time - beam.fine_time
+    // for all events that carry a RING_FOUND (103) or STREAMING_RING_FOUND (104)
+    // trigger. Shows when the ring-finding algorithm fired relative to the beam.
+    TH1F *h_t_ringfound = new TH1F("h_t_ringfound",
+        Form("Ring-finding trigger #Deltat vs beam  [%.0f, %.0f] ns;"
+             "t_{ring} - t_{beam} (ns);counts", wide_t_min, wide_t_max),
+        wide_n_bins, wide_t_min, wide_t_max);
 
     // =========================================================================
     //  Histograms — trigger count / alignment check
@@ -286,6 +305,13 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
             h_coarse_diff->Fill((float)diff);
         }
         prev_coarse = coarse;
+
+        // ring-finding trigger timing relative to beam
+        for (const auto &tr : recotrackdata->get_triggers())
+        {
+            if (tr.index == 103 || tr.index == 104) // RING_FOUND, STREAMING_RING_FOUND
+                h_t_ringfound->Fill(tr.fine_time - beam_trig->fine_time);
+        }
 
         // track multiplicity
         const int n_trk = recotrackdata->n_recotrackdata();
@@ -571,23 +597,39 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         delete c;
     }
 
-    // full timing (no cuts): no-track vs 1-track
+    // full timing (no cuts): no-track vs 1-track + ring-finding trigger overlay
     {
-        TCanvas *c = new TCanvas("c_t_full", "Full timing (no cuts): no-track vs 1-track", 900, 600);
-        h_t_notrack_full->SetLineColor(kRed+1);  h_t_notrack_full->SetLineWidth(2);
-        h_t_1track_full ->SetLineColor(kBlue+1); h_t_1track_full ->SetLineWidth(2);
-        double ymax = std::max(h_t_notrack_full->GetMaximum(), h_t_1track_full->GetMaximum());
+        TCanvas *c = new TCanvas("c_t_full",
+            Form("Full timing (no cuts) [%.0f, %.0f] ns", wide_t_min, wide_t_max),
+            1200, 600);
+        h_t_notrack_full->SetLineColor(kRed+1);   h_t_notrack_full->SetLineWidth(2);
+        h_t_1track_full ->SetLineColor(kBlue+1);  h_t_1track_full ->SetLineWidth(2);
+        h_t_ringfound   ->SetLineColor(kGreen+2); h_t_ringfound   ->SetLineWidth(2);
+        h_t_ringfound   ->SetLineStyle(2);
+        double ymax = std::max({h_t_notrack_full->GetMaximum(),
+                                h_t_1track_full ->GetMaximum(),
+                                h_t_ringfound   ->GetMaximum()});
         h_t_notrack_full->SetMaximum(ymax * 1.25);
         h_t_notrack_full->Draw("HIST");
         h_t_1track_full ->Draw("HIST SAME");
-        TLegend *leg = new TLegend(0.55, 0.72, 0.88, 0.88);
-        leg->AddEntry(h_t_notrack_full, "no-track", "l");
-        leg->AddEntry(h_t_1track_full,  "1 track",  "l");
-        leg->Draw();
+        if (h_t_ringfound->GetEntries() > 0)
+            h_t_ringfound->Draw("HIST SAME");
+        // mark the active time window
         TLine *l1 = new TLine(time_cut[0], 0, time_cut[0], ymax * 1.1);
         TLine *l2 = new TLine(time_cut[1], 0, time_cut[1], ymax * 1.1);
-        l1->SetLineStyle(2); l1->SetLineColor(kGray+1); l1->Draw();
-        l2->SetLineStyle(2); l2->SetLineColor(kGray+1); l2->Draw();
+        l1->SetLineStyle(2); l1->SetLineColor(kGray+1); l1->SetLineWidth(2); l1->Draw();
+        l2->SetLineStyle(2); l2->SetLineColor(kGray+1); l2->SetLineWidth(2); l2->Draw();
+        TLatex tl; tl.SetTextSize(0.030); tl.SetTextColor(kGray+1);
+        tl.DrawLatex(time_cut[0], ymax * 1.15,
+            Form("%.0f ns", time_cut[0]));
+        tl.DrawLatex(time_cut[1], ymax * 1.15,
+            Form("+%.0f ns", time_cut[1]));
+        TLegend *leg = new TLegend(0.55, 0.72, 0.90, 0.90);
+        leg->AddEntry(h_t_notrack_full, "no-track (no cuts)", "l");
+        leg->AddEntry(h_t_1track_full,  "1 track (no cuts)",  "l");
+        if (h_t_ringfound->GetEntries() > 0)
+            leg->AddEntry(h_t_ringfound, "ring-found trigger #Deltat", "l");
+        leg->Draw();
         c->SaveAs(Form("%s/notrack_timing_full.png", output_dir.c_str()));
         delete c;
     }
@@ -702,6 +744,7 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     h_hitmap_notrack->Write();h_hitmap_1track->Write();h_hitmap_ntrack->Write();
     h_raw_nhits_notrack->Write(); h_raw_nhits_1track->Write();
     h_t_notrack_full->Write();    h_t_1track_full->Write();
+    h_t_ringfound->Write();
     h2_iframe_coarse->Write();
     h_coarse_diff->Write();
     h_n_triggers->Write();
