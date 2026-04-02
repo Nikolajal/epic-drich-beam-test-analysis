@@ -113,6 +113,29 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         "Hit map (time window) — multi-track;x (mm);y (mm)", 198, -99, 99, 198, -99, 99);
 
     // =========================================================================
+    //  Histograms — empty trigger characterisation
+    // =========================================================================
+
+    // Raw hit count (absolutely no cuts) per category.
+    // Distinguishes "truly empty trigger" (raw_hits==0) from
+    // "hits exist but outside the time window".
+    TH1F *h_raw_nhits_notrack = new TH1F("h_raw_nhits_notrack",
+        "Raw hit count (no cuts) — no-track;n raw hits;counts", 80, -0.5, 79.5);
+    TH1F *h_raw_nhits_1track  = new TH1F("h_raw_nhits_1track",
+        "Raw hit count (no cuts) — 1 track;n raw hits;counts",  80, -0.5, 79.5);
+
+    // Full timing (no time cut, no afterpulse cut) for no-track events only.
+    // Shows where the hits are if the time window misses them.
+    TH1F *h_t_notrack_full = new TH1F("h_t_notrack_full",
+        "Full hit timing — no-track (no time cut, no AP cut);"
+        "t_{hit} - t_{beam} (ns);counts", 200, -312.5, 312.5);
+
+    // Same for 1-track events as reference.
+    TH1F *h_t_1track_full  = new TH1F("h_t_1track_full",
+        "Full hit timing — 1 track (no time cut, no AP cut);"
+        "t_{hit} - t_{beam} (ns);counts", 200, -312.5, 312.5);
+
+    // =========================================================================
     //  Histograms — trigger count / alignment check
     // =========================================================================
 
@@ -141,8 +164,9 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     int n_notrack     = 0;
     int n_1track      = 0;
     int n_ntrack      = 0;
-    int n_zerohits    = 0;  // 0 dRICH hits in time window (any multiplicity)
-    int n_doubly_empty = 0; // 0 tracks AND 0 dRICH hits
+    int n_zerohits     = 0;  // 0 dRICH hits in time window (any multiplicity)
+    int n_doubly_empty = 0;  // 0 tracks AND 0 dRICH hits in time window
+    int n_truly_empty  = 0;  // 0 tracks AND 0 raw hits (nothing at all)
 
     int prev_coarse = -1;
 
@@ -193,28 +217,62 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         }
         if (n_hits == 0) ++n_zerohits;
 
-        // doubly-empty
+        // raw hit count: no afterpulse cut, no time cut
+        const int n_raw = (int)hits.size();
+
+        // doubly-empty (windowed)
         if (n_trk == 0 && n_hits == 0)
         {
             ++n_doubly_empty;
             f_doubly << i_frame << "\t" << coarse << "\t" << n_trigs << "\n";
         }
+        // truly empty: 0 tracks AND 0 raw hits
+        if (n_trk == 0 && n_raw == 0)
+            ++n_truly_empty;
 
         // fill per-category histograms
-        TH1F *h_nhits  = nullptr;
-        TH1F *h_t      = nullptr;
-        TH2F *h_hitmap = nullptr;
+        TH1F *h_nhits    = nullptr;
+        TH1F *h_t        = nullptr;
+        TH2F *h_hitmap   = nullptr;
+        TH1F *h_raw_nhits = nullptr;
+        TH1F *h_t_full   = nullptr;
 
-        if      (n_trk == 0) { ++n_notrack; h_nhits = h_nhits_notrack; h_t = h_t_notrack; h_hitmap = h_hitmap_notrack; }
-        else if (n_trk == 1) { ++n_1track;  h_nhits = h_nhits_1track;  h_t = h_t_1track;  h_hitmap = h_hitmap_1track;  }
-        else                 { ++n_ntrack;  h_nhits = h_nhits_ntrack;  h_t = h_t_ntrack;  h_hitmap = h_hitmap_ntrack;  }
+        if (n_trk == 0)
+        {
+            ++n_notrack;
+            h_nhits     = h_nhits_notrack;
+            h_t         = h_t_notrack;
+            h_hitmap    = h_hitmap_notrack;
+            h_raw_nhits = h_raw_nhits_notrack;
+            h_t_full    = h_t_notrack_full;
+        }
+        else if (n_trk == 1)
+        {
+            ++n_1track;
+            h_nhits     = h_nhits_1track;
+            h_t         = h_t_1track;
+            h_hitmap    = h_hitmap_1track;
+            h_raw_nhits = h_raw_nhits_1track;
+            h_t_full    = h_t_1track_full;
+        }
+        else
+        {
+            ++n_ntrack;
+            h_nhits  = h_nhits_ntrack;
+            h_t      = h_t_ntrack;
+            h_hitmap = h_hitmap_ntrack;
+        }
 
         h_nhits->Fill(n_hits);
+        if (h_raw_nhits) h_raw_nhits->Fill(n_raw);
 
-        for (int i_hit = 0; i_hit < (int)hits.size(); i_hit++)
+        for (int i_hit = 0; i_hit < n_raw; i_hit++)
         {
+            float dt_full = recotrackdata->get_hit_t(i_hit) - beam_trig->fine_time;
+            if (h_t_full) h_t_full->Fill(dt_full);
+
             if (apply_afterpulse_cut && recotrackdata->is_afterpulse(i_hit)) continue;
-            float dt = recotrackdata->get_hit_t(i_hit) - beam_trig->fine_time;
+            float dt = dt_full;
             h_t->Fill(dt);
             if (dt < time_cut[0] || dt > time_cut[1]) continue;
             h_hitmap->Fill(recotrackdata->get_hit_x_rnd(i_hit),
@@ -248,10 +306,13 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     std::cout << std::endl;
     std::cout << "  0 dRICH hits (time window): " << n_zerohits
               << Form("  (%.1f%% of triggered)", pct(n_zerohits, n_total)) << std::endl;
-    std::cout << "  Doubly-empty (0 trk + 0 hits): " << n_doubly_empty
+    std::cout << "  Doubly-empty (0 trk + 0 hits in window): " << n_doubly_empty
               << Form("  (%.1f%% of triggered)", pct(n_doubly_empty, n_total))
               << Form("  (%.1f%% of no-track)", pct(n_doubly_empty, n_notrack))
               << Form("  (%.1f%% of 0-hit)",    pct(n_doubly_empty, n_zerohits)) << std::endl;
+    std::cout << "  Truly empty (0 trk + 0 raw hits): " << n_truly_empty
+              << Form("  (%.1f%% of no-track)", pct(n_truly_empty, n_notrack))
+              << Form("  (%.1f%% of doubly-empty)", pct(n_truly_empty, n_doubly_empty)) << std::endl;
     std::cout << "========================================" << std::endl;
 
     std::ofstream stats(output_dir + "/notrack_stats.txt");
@@ -266,10 +327,12 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     stats << "pct_1track\t"             << pct(n_1track,  n_total)           << "\n";
     stats << "pct_ntrack\t"             << pct(n_ntrack,  n_total)           << "\n";
     stats << "n_zerohits\t"             << n_zerohits     << "\n";
-    stats << "n_doubly_empty\t"         << n_doubly_empty << "\n";
-    stats << "pct_doubly_empty\t"       << pct(n_doubly_empty, n_total)      << "\n";
-    stats << "pct_doubly_of_notrack\t"  << pct(n_doubly_empty, n_notrack)    << "\n";
-    stats << "pct_doubly_of_zerohits\t" << pct(n_doubly_empty, n_zerohits)   << "\n";
+    stats << "n_doubly_empty\t"          << n_doubly_empty << "\n";
+    stats << "pct_doubly_empty\t"        << pct(n_doubly_empty, n_total)      << "\n";
+    stats << "pct_doubly_of_notrack\t"   << pct(n_doubly_empty, n_notrack)    << "\n";
+    stats << "pct_doubly_of_zerohits\t"  << pct(n_doubly_empty, n_zerohits)   << "\n";
+    stats << "n_truly_empty\t"           << n_truly_empty  << "\n";
+    stats << "pct_truly_empty_of_notrack\t" << pct(n_truly_empty, n_notrack)  << "\n";
     stats.close();
 
     // =========================================================================
@@ -336,6 +399,47 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         delete c;
     }
 
+    // raw hit count: no-track vs 1-track
+    {
+        TCanvas *c = new TCanvas("c_raw_nhits", "Raw hit count (no cuts): no-track vs 1-track", 900, 600);
+        h_raw_nhits_notrack->SetLineColor(kRed+1);  h_raw_nhits_notrack->SetLineWidth(2);
+        h_raw_nhits_1track ->SetLineColor(kBlue+1); h_raw_nhits_1track ->SetLineWidth(2);
+        double ymax = std::max(h_raw_nhits_notrack->GetMaximum(), h_raw_nhits_1track->GetMaximum());
+        h_raw_nhits_notrack->SetMaximum(ymax * 1.25);
+        h_raw_nhits_notrack->Draw("HIST");
+        h_raw_nhits_1track ->Draw("HIST SAME");
+        TLegend *leg = new TLegend(0.55, 0.72, 0.88, 0.88);
+        leg->AddEntry(h_raw_nhits_notrack, Form("no-track (%d)",  n_notrack), "l");
+        leg->AddEntry(h_raw_nhits_1track,  Form("1 track (%d)",   n_1track),  "l");
+        leg->Draw();
+        // mark bin 0 (truly empty triggers)
+        TLine *lz = new TLine(0, 0, 0, ymax * 1.1);
+        lz->SetLineStyle(2); lz->SetLineColor(kRed+2); lz->Draw();
+        c->SaveAs(Form("%s/notrack_raw_nhits.png", output_dir.c_str()));
+        delete c;
+    }
+
+    // full timing (no cuts): no-track vs 1-track
+    {
+        TCanvas *c = new TCanvas("c_t_full", "Full timing (no cuts): no-track vs 1-track", 900, 600);
+        h_t_notrack_full->SetLineColor(kRed+1);  h_t_notrack_full->SetLineWidth(2);
+        h_t_1track_full ->SetLineColor(kBlue+1); h_t_1track_full ->SetLineWidth(2);
+        double ymax = std::max(h_t_notrack_full->GetMaximum(), h_t_1track_full->GetMaximum());
+        h_t_notrack_full->SetMaximum(ymax * 1.25);
+        h_t_notrack_full->Draw("HIST");
+        h_t_1track_full ->Draw("HIST SAME");
+        TLegend *leg = new TLegend(0.55, 0.72, 0.88, 0.88);
+        leg->AddEntry(h_t_notrack_full, "no-track", "l");
+        leg->AddEntry(h_t_1track_full,  "1 track",  "l");
+        leg->Draw();
+        TLine *l1 = new TLine(time_cut[0], 0, time_cut[0], ymax * 1.1);
+        TLine *l2 = new TLine(time_cut[1], 0, time_cut[1], ymax * 1.1);
+        l1->SetLineStyle(2); l1->SetLineColor(kGray+1); l1->Draw();
+        l2->SetLineStyle(2); l2->SetLineColor(kGray+1); l2->Draw();
+        c->SaveAs(Form("%s/notrack_timing_full.png", output_dir.c_str()));
+        delete c;
+    }
+
     // i_frame vs coarse (trigger count check)
     {
         TCanvas *c = new TCanvas("c_iframe_coarse",
@@ -368,6 +472,8 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     h_nhits_notrack->Write(); h_nhits_1track->Write(); h_nhits_ntrack->Write();
     h_t_notrack->Write();     h_t_1track->Write();     h_t_ntrack->Write();
     h_hitmap_notrack->Write();h_hitmap_1track->Write();h_hitmap_ntrack->Write();
+    h_raw_nhits_notrack->Write(); h_raw_nhits_1track->Write();
+    h_t_notrack_full->Write();    h_t_1track_full->Write();
     h2_iframe_coarse->Write();
     h_coarse_diff->Write();
     h_n_triggers->Write();
