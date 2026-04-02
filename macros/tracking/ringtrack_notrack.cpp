@@ -35,6 +35,10 @@
 //                                      n_trk, n_hits_window, n_raw_hits, category
 //    notrack_categories.png          — bar chart of 7 event categories with %
 //    notrack_timeline.png            — 2D: category vs i_frame over the full run
+//    notrack_alignment_matrix.png    — 2D: n_trk vs n_hits (windowed | raw), log-z
+//                                      sensitive to time_cut_min/max in conf
+//    notrack_alignment_prob.png      — P(dRICH empty | n_trk=k): windowed vs raw
+//                                      quantifies tracker↔dRICH correlation
 // =============================================================================
 void ringtrack_notrack(std::string data_repository, std::string run_name,
                        std::string conf_path = "ringtrack.conf",
@@ -172,6 +176,46 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         "Number of trigger entries per TTree entry;n triggers;counts", 10, -0.5, 9.5);
 
     // =========================================================================
+    //  Histograms — alignment verification
+    // =========================================================================
+
+    // Joint 2D distribution: n_trk vs n_hits_window.
+    // This is the main alignment matrix — sensitive to the time window cut.
+    // If the two systems are aligned, (0,0) events are genuine "nothing happened".
+    TH2F *h2_ntrk_nhits = new TH2F("h2_ntrk_nhits",
+        Form("Alignment matrix: n_{trk} vs n_{hits} in time window [%.0f,%.0f] ns;"
+             "n tracks (ALTAI);n dRICH hits in window",
+             time_cut[0], time_cut[1]),
+        7, -0.5, 6.5, 81, -0.5, 80.5);
+
+    // Same with raw hits (no time cut, no afterpulse cut) — baseline reference.
+    // Comparing h2_ntrk_nhits vs h2_ntrk_nraw shows the effect of the time cut.
+    TH2F *h2_ntrk_nraw = new TH2F("h2_ntrk_nraw",
+        "Alignment matrix: n_{trk} vs n_{raw hits} (no cuts);"
+        "n tracks (ALTAI);n dRICH raw hits",
+        7, -0.5, 6.5, 81, -0.5, 80.5);
+
+    // Conditional probability P(n_hits=0 | n_trk=k): per-multiplicity counters.
+    // Filled after the loop from the 2D histograms.
+    // [0]=0trk [1]=1trk [2]=2trk [3]=3trk [4]=4+trk
+    static const int n_mult = 5;
+    static const char *mult_labels[n_mult] = {"0 trk","1 trk","2 trk","3 trk","4+ trk"};
+
+    TH1F *h_p0hits_given_ntrk = new TH1F("h_p0hits_given_ntrk",
+        Form("P(n_{hits}=0 | n_{trk}=k)  —  time window [%.0f,%.0f] ns;"
+             "n tracks (ALTAI);P(0 dRICH hits in window)", time_cut[0], time_cut[1]),
+        n_mult, -0.5, n_mult - 0.5);
+    for (int i = 0; i < n_mult; i++)
+        h_p0hits_given_ntrk->GetXaxis()->SetBinLabel(i + 1, mult_labels[i]);
+
+    TH1F *h_p0raw_given_ntrk = new TH1F("h_p0raw_given_ntrk",
+        "P(n_{raw hits}=0 | n_{trk}=k)  —  no cuts;"
+        "n tracks (ALTAI);P(0 dRICH raw hits)",
+        n_mult, -0.5, n_mult - 0.5);
+    for (int i = 0; i < n_mult; i++)
+        h_p0raw_given_ntrk->GetXaxis()->SetBinLabel(i + 1, mult_labels[i]);
+
+    // =========================================================================
     //  Histograms — category overview + run timeline
     // =========================================================================
 
@@ -261,6 +305,11 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         // raw hit count: no afterpulse cut, no time cut
         const int n_raw = (int)hits.size();
 
+        // alignment matrices (filled for every triggered event)
+        const int trk_bin = std::min(n_trk, 6);
+        h2_ntrk_nhits->Fill(trk_bin, std::min(n_hits, 80));
+        h2_ntrk_nraw ->Fill(trk_bin, std::min(n_raw,  80));
+
         // doubly-empty (windowed)
         if (n_trk == 0 && n_hits == 0)
         {
@@ -342,6 +391,35 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     bar.finish();
     f_doubly.close();
     f_table.close();
+
+    // =========================================================================
+    //  Derive conditional probabilities from the 2D alignment matrices
+    // =========================================================================
+    // For each multiplicity bin k, P(0 hits | k trk) = N(k trk, 0 hits) / N(k trk)
+    // Bin 1 of y axis = n_hits=0 (since axis starts at -0.5 with bin width 1)
+    for (int k = 0; k < n_mult; k++)
+    {
+        // x bin k+1 = n_trk=k (for k<4), or n_trk>=4 (for k=4, covers bins 5..7)
+        // For k<4: single x bin; for k=4: sum bins 5,6,7 (n_trk=4,5,6)
+        double n_total_k = 0., n_0hits_k = 0., n_0raw_k = 0.;
+        int xbin_lo = (k < 4) ? (k + 1) : 5;
+        int xbin_hi = (k < 4) ? (k + 1) : 7;
+        for (int xb = xbin_lo; xb <= xbin_hi; xb++)
+        {
+            n_total_k += h2_ntrk_nhits->Integral(xb, xb, 1, 81);
+            n_0hits_k += h2_ntrk_nhits->GetBinContent(xb, 1); // y bin 1 = n_hits=0
+            n_0raw_k  += h2_ntrk_nraw ->GetBinContent(xb, 1);
+        }
+        if (n_total_k > 0)
+        {
+            h_p0hits_given_ntrk->SetBinContent(k + 1, n_0hits_k / n_total_k);
+            h_p0hits_given_ntrk->SetBinError  (k + 1,
+                std::sqrt(n_0hits_k * (1. - n_0hits_k / n_total_k)) / n_total_k);
+            h_p0raw_given_ntrk ->SetBinContent(k + 1, n_0raw_k / n_total_k);
+            h_p0raw_given_ntrk ->SetBinError  (k + 1,
+                std::sqrt(n_0raw_k  * (1. - n_0raw_k  / n_total_k)) / n_total_k);
+        }
+    }
 
     // =========================================================================
     //  Statistics
@@ -520,6 +598,45 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
         delete c;
     }
 
+    // --- alignment matrix: n_trk vs n_hits_window ---
+    {
+        TCanvas *c = new TCanvas("c_align", "Alignment matrix", 1600, 700);
+        c->Divide(2, 1);
+        c->cd(1);
+        gPad->SetLeftMargin(0.14); gPad->SetRightMargin(0.14);
+        h2_ntrk_nhits->Draw("COLZ");
+        if (h2_ntrk_nhits->GetEntries() > 0) gPad->SetLogz(1);
+        c->cd(2);
+        gPad->SetLeftMargin(0.14); gPad->SetRightMargin(0.14);
+        h2_ntrk_nraw->Draw("COLZ");
+        if (h2_ntrk_nraw->GetEntries() > 0) gPad->SetLogz(1);
+        c->SaveAs(Form("%s/notrack_alignment_matrix.png", output_dir.c_str()));
+        delete c;
+    }
+
+    // --- conditional probability P(0 hits | n_trk) with vs without time cut ---
+    {
+        TCanvas *c = new TCanvas("c_p0hits",
+            "P(dRICH empty | n tracks): time cut vs raw", 900, 620);
+        c->SetBottomMargin(0.14);
+        h_p0hits_given_ntrk->SetLineColor(kBlue+1);  h_p0hits_given_ntrk->SetLineWidth(2);
+        h_p0hits_given_ntrk->SetMarkerColor(kBlue+1); h_p0hits_given_ntrk->SetMarkerStyle(20);
+        h_p0raw_given_ntrk ->SetLineColor(kRed+1);   h_p0raw_given_ntrk ->SetLineWidth(2);
+        h_p0raw_given_ntrk ->SetMarkerColor(kRed+1);  h_p0raw_given_ntrk ->SetMarkerStyle(21);
+        h_p0hits_given_ntrk->SetMaximum(1.15);
+        h_p0hits_given_ntrk->SetMinimum(0.);
+        h_p0hits_given_ntrk->GetXaxis()->SetLabelSize(0.052);
+        h_p0hits_given_ntrk->Draw("E1");
+        h_p0raw_given_ntrk ->Draw("E1 SAME");
+        TLegend *leg = new TLegend(0.45, 0.72, 0.88, 0.88);
+        leg->AddEntry(h_p0hits_given_ntrk,
+            Form("time window [%.0f,%.0f] ns", time_cut[0], time_cut[1]), "lp");
+        leg->AddEntry(h_p0raw_given_ntrk,  "raw (no cuts)", "lp");
+        leg->Draw();
+        c->SaveAs(Form("%s/notrack_alignment_prob.png", output_dir.c_str()));
+        delete c;
+    }
+
     // --- category bar chart with % labels ---
     {
         TCanvas *c = new TCanvas("c_cat", "Event categories (all triggered)", 1100, 620);
@@ -576,6 +693,10 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     h_n_triggers->Write();
     h_cat->Write();
     h2_cat_timeline->Write();
+    h2_ntrk_nhits->Write();
+    h2_ntrk_nraw->Write();
+    h_p0hits_given_ntrk->Write();
+    h_p0raw_given_ntrk->Write();
     fout->Close();
 
     std::cout << "Output: " << output_root << std::endl;
