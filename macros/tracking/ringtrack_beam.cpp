@@ -46,6 +46,9 @@
 //    beam_vertex_xy.png          — vertex (x,y) at reconstructed z_v
 //    beam_backproj_xz.png        — 2D back-projection x–z (all multi-track)
 //    beam_backproj_yz.png        — 2D back-projection y–z
+//    beam_backproj_from_vertex.png — back-projection x–z and y–z with tracks
+//                                    drawn only from the reconstructed vertex
+//                                    (DCA cut applied; geometric selection from conf)
 // =============================================================================
 void ringtrack_beam(std::string data_repository, std::string run_name,
                     std::string conf_path = "ringtrack.conf",
@@ -170,6 +173,17 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
         "z (mm);y(z) (mm)",
         bp_bins_z, vz_min, vz_max, bp_bins_xy, -200, 200);
 
+    // back-projection from the reconstructed vertex to the tracker
+    // (secondary tracks drawn only from z_vertex onward)
+    TH2F *h2_bp_xz_fv = new TH2F("h2_bp_xz_fv",
+        "Back-projection x–z from vertex (DCA cut applied);"
+        "z (mm);x(z) (mm)",
+        bp_bins_z, vz_min, vz_max, bp_bins_xy, -200, 200);
+    TH2F *h2_bp_yz_fv = new TH2F("h2_bp_yz_fv",
+        "Back-projection y–z from vertex (DCA cut applied);"
+        "z (mm);y(z) (mm)",
+        bp_bins_z, vz_min, vz_max, bp_bins_xy, -200, 200);
+
     // =========================================================================
     //  Counters
     // =========================================================================
@@ -229,11 +243,20 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
         // --- Part 2: vertex finding (multi-track only) ---
         if (n_trk < 2) continue;
 
-        // collect valid tracks (optional chi2 cut)
+        // collect valid tracks (optional chi2 cut + geometric selection from conf)
         std::vector<int> valid;
         for (int i = 0; i < n_trk; i++)
         {
             if (apply_chi2 && recotrackdata->get_chi2ndof(i) > chi2_max) continue;
+            const float px = recotrackdata->get_det_plane_x(i);
+            const float py = recotrackdata->get_det_plane_y(i);
+            const float sx = recotrackdata->get_traj_angcoeff_x(i);
+            const float sy = recotrackdata->get_traj_angcoeff_y(i);
+            if (!is_track_selected(px, py, sx, sy,
+                                   tsel.cutg1, tsel.plane1, tsel.side1,
+                                   tsel.cutg2, tsel.plane2, tsel.side2,
+                                   tsel.z_drich, tsel.z_scint))
+                continue;
             valid.push_back(i);
         }
         if ((int)valid.size() < 2) continue;
@@ -307,7 +330,24 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
             h_vertex_dca->Fill(best_dca);
             h2_vertex_z_dca->Fill(best_zv, best_dca);
             if (best_dca < dca_max)
+            {
                 h2_vertex_xy->Fill(best_xv, best_yv);
+                // back-projection from vertex: each track drawn only for z >= best_zv
+                const float zfv_step = (vz_max - best_zv) / n_z_steps;
+                for (int idx : valid)
+                {
+                    const float px = recotrackdata->get_det_plane_x(idx);
+                    const float py = recotrackdata->get_det_plane_y(idx);
+                    const float sx = recotrackdata->get_traj_angcoeff_x(idx);
+                    const float sy = recotrackdata->get_traj_angcoeff_y(idx);
+                    for (int iz = 0; iz <= n_z_steps; ++iz)
+                    {
+                        const float z = best_zv + iz * zfv_step;
+                        h2_bp_xz_fv->Fill(z, px + sx * z);
+                        h2_bp_yz_fv->Fill(z, py + sy * z);
+                    }
+                }
+            }
         }
     }
     bar.update(all_frames, all_frames);
@@ -507,6 +547,26 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
         delete c;
     }
 
+    // --- back-projection from vertex (DCA cut applied) ---
+    {
+        TCanvas *c = new TCanvas("c_bp_fv", "Back-projection from vertex (DCA cut)", 1600, 700);
+        c->Divide(2, 1);
+        c->cd(1); h2_bp_xz_fv->Draw("COLZ"); if (h2_bp_xz_fv->GetEntries() > 0) gPad->SetLogz(1);
+        auto hline_z_fv = [&](TH2F *h, float z, int color) {
+            TLine *l = new TLine(z, h->GetYaxis()->GetXmin(), z, h->GetYaxis()->GetXmax());
+            l->SetLineStyle(2); l->SetLineColor(color); l->SetLineWidth(2); l->Draw();
+        };
+        hline_z_fv(h2_bp_xz_fv, z_drich, kRed+1);
+        hline_z_fv(h2_bp_xz_fv, z_scint, kGreen+2);
+        hline_z_fv(h2_bp_xz_fv, 0,       kGray+1);
+        c->cd(2); h2_bp_yz_fv->Draw("COLZ"); if (h2_bp_yz_fv->GetEntries() > 0) gPad->SetLogz(1);
+        hline_z_fv(h2_bp_yz_fv, z_drich, kRed+1);
+        hline_z_fv(h2_bp_yz_fv, z_scint, kGreen+2);
+        hline_z_fv(h2_bp_yz_fv, 0,       kGray+1);
+        c->SaveAs(Form("%s/beam_backproj_from_vertex.png", output_dir.c_str()));
+        delete c;
+    }
+
     // =========================================================================
     //  Save ROOT file
     // =========================================================================
@@ -525,6 +585,7 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
     h2_vertex_xy->Write();
     h2_vertex_z_dca->Write();
     h2_bp_xz->Write();     h2_bp_yz->Write();
+    h2_bp_xz_fv->Write(); h2_bp_yz_fv->Write();
     fout->Close();
 
     std::cout << "Output: " << output_root << std::endl;
