@@ -707,7 +707,7 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
         }
 
         // rotate to a sensible viewing angle: slightly above and to the side
-        Double_t irep = 0;
+        Int_t irep = 0;
         view->SetView(200, 75, 0, irep);  // longitude, latitude, psi
         view->ShowAxis();
         c3d->SaveAs(Form("%s/beam_3d.png", output_dir.c_str()));
