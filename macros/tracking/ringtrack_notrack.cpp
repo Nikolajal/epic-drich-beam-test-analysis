@@ -29,6 +29,10 @@
 //    notrack_timing.png              — timing distributions overlaid
 //    notrack_iframe_coarse.png       — i_frame vs coarse (trigger count check)
 //    notrack_coarse_diff.png         — Δcoarse between consecutive frames
+//    notrack_notrack_frames.txt      — i_frame list of ALL no-track events
+//                                      (n_trk==0, any hit count): i_frame,
+//                                      beam_coarse, n_hits_window, n_raw_hits,
+//                                      category, trigger_indices
 //    notrack_doubly_empty_frames.txt — i_frame list of doubly-empty events
 //    notrack_event_table.tsv         — complete per-event table (one row per
 //                                      triggered event): i_frame, beam_coarse,
@@ -272,6 +276,10 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     std::ofstream f_doubly(output_dir + "/notrack_doubly_empty_frames.txt");
     f_doubly << "i_frame\tbeam_coarse\ttrigger_indices\n";
 
+    // dedicated list of ALL no-track events (n_trk == 0, any hit count)
+    std::ofstream f_notrack_list(output_dir + "/notrack_notrack_frames.txt");
+    f_notrack_list << "i_frame\tbeam_coarse\tn_hits_window\tn_raw_hits\tcategory\ttrigger_indices\n";
+
     // complete per-event table: one row per triggered event
     std::ofstream f_table(output_dir + "/notrack_event_table.tsv");
     f_table << "i_frame\tbeam_coarse\tn_trk\tn_hits_window\tn_raw_hits\tcategory\ttrigger_indices\n";
@@ -377,6 +385,11 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
                 << n_raw   << "\t" << cat_names[cat_idx] << "\t"
                 << trig_list_ev << "\n";
 
+        if (n_trk == 0)
+            f_notrack_list << i_frame << "\t" << coarse << "\t"
+                           << n_hits  << "\t" << n_raw  << "\t"
+                           << cat_names[cat_idx] << "\t" << trig_list_ev << "\n";
+
         // fill per-category histograms
         TH1F *h_nhits    = nullptr;
         TH1F *h_t        = nullptr;
@@ -429,6 +442,7 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     bar.update(all_frames, all_frames);
     bar.finish();
     f_doubly.close();
+    f_notrack_list.close();
     f_table.close();
 
     // =========================================================================
@@ -490,6 +504,12 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     std::cout << "  Truly empty (0 trk + 0 raw hits): " << n_truly_empty
               << Form("  (%.1f%% of no-track)", pct(n_truly_empty, n_notrack))
               << Form("  (%.1f%% of doubly-empty)", pct(n_truly_empty, n_doubly_empty)) << std::endl;
+    std::cout << std::endl;
+    std::cout << "  Event categories (of " << n_total << " triggered):" << std::endl;
+    for (int i = 0; i < n_cat; i++)
+        std::cout << Form("    %-20s  %6d  (%.1f%%)",
+                          cat_names[i], n_cat_counts[i],
+                          pct(n_cat_counts[i], n_total)) << std::endl;
     std::cout << "========================================" << std::endl;
 
     std::ofstream stats(output_dir + "/notrack_stats.txt");
@@ -510,6 +530,13 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     stats << "pct_doubly_of_zerohits\t"  << pct(n_doubly_empty, n_zerohits)   << "\n";
     stats << "n_truly_empty\t"           << n_truly_empty  << "\n";
     stats << "pct_truly_empty_of_notrack\t" << pct(n_truly_empty, n_notrack)  << "\n";
+    stats << "\n# per-category counts and percentages (of n_triggered)\n";
+    for (int i = 0; i < n_cat; i++)
+    {
+        stats << "n_cat_" << cat_names[i] << "\t" << n_cat_counts[i] << "\n";
+        stats << "pct_cat_" << cat_names[i] << "\t"
+              << pct(n_cat_counts[i], n_total) << "\n";
+    }
     stats.close();
 
     // =========================================================================
