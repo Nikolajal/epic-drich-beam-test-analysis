@@ -658,6 +658,58 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
             Form("%s/beam_lines_yz.png", output_dir.c_str()), false);
     }
 
+    // --- 3D track lines ---
+    {
+        const int n_3d_max = cfg.get_int("n_display_3d", 300);
+        const int n_3d_beam = std::min((int)beam_lines.size(), n_3d_max);
+
+        TCanvas *c3d = new TCanvas("c3d", "3D back-projection", 900, 900);
+        TView *view = TView::CreateView(1);
+        view->SetRange(-200, -200, vz_min, 200, 200, vz_max);
+
+        // reference plane outlines at detector z positions
+        auto draw_plane_rect = [&](float z, int col)
+        {
+            const float hw = 180.f;
+            Double_t rx[5] = {-hw,  hw,  hw, -hw, -hw};
+            Double_t ry[5] = {-hw, -hw,  hw,  hw, -hw};
+            Double_t rz[5] = {z, z, z, z, z};
+            TPolyLine3D *pl = new TPolyLine3D(5, rx, ry, rz);
+            pl->SetLineColor(col); pl->SetLineWidth(2); pl->SetLineStyle(2);
+            pl->Draw();
+        };
+        draw_plane_rect(z_drich, kRed+1);
+        draw_plane_rect(z_scint, kGreen+2);
+        draw_plane_rect(0,       kGray+2);
+
+        // beam tracks (1-track, blue)
+        for (int i = 0; i < n_3d_beam; ++i)
+        {
+            const auto &t = beam_lines[i];
+            Double_t tx[2] = {t.px + t.sx * vz_min, t.px + t.sx * vz_max};
+            Double_t ty[2] = {t.py + t.sy * vz_min, t.py + t.sy * vz_max};
+            Double_t tz[2] = {vz_min, vz_max};
+            TPolyLine3D *pl = new TPolyLine3D(2, tx, ty, tz);
+            pl->SetLineColor(kAzure+7); pl->SetLineWidth(1); pl->Draw();
+        }
+        // secondary tracks from vertex (red, all of them — typically few)
+        for (const auto &t : sec_lines)
+        {
+            Double_t tx[2] = {t.px + t.sx * t.z0, t.px + t.sx * vz_max};
+            Double_t ty[2] = {t.py + t.sy * t.z0, t.py + t.sy * vz_max};
+            Double_t tz[2] = {t.z0, vz_max};
+            TPolyLine3D *pl = new TPolyLine3D(2, tx, ty, tz);
+            pl->SetLineColor(kRed+1); pl->SetLineWidth(2); pl->Draw();
+        }
+
+        // rotate to a sensible viewing angle: slightly above and to the side
+        Double_t irep = 0;
+        view->SetView(200, 75, 0, irep);  // longitude, latitude, psi
+        view->ShowAxis();
+        c3d->SaveAs(Form("%s/beam_3d.png", output_dir.c_str()));
+        delete c3d;
+    }
+
     // =========================================================================
     //  Save ROOT file
     // =========================================================================
