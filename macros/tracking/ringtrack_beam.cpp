@@ -46,9 +46,10 @@
 //    beam_vertex_xy.png          — vertex (x,y) at reconstructed z_v
 //    beam_backproj_xz.png        — 2D back-projection x–z (all multi-track)
 //    beam_backproj_yz.png        — 2D back-projection y–z
-//    beam_backproj_from_vertex.png — back-projection x–z and y–z with tracks
-//                                    drawn only from the reconstructed vertex
-//                                    (DCA cut applied; geometric selection from conf)
+//    beam_backproj_from_vertex.png — back-projection x–z and y–z:
+//                                    1-track events drawn over full z range;
+//                                    multi-track events drawn from reconstructed
+//                                    vertex (DCA cut applied; geometric selection)
 // =============================================================================
 void ringtrack_beam(std::string data_repository, std::string run_name,
                     std::string conf_path = "ringtrack.conf",
@@ -176,11 +177,11 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
     // back-projection from the reconstructed vertex to the tracker
     // (secondary tracks drawn only from z_vertex onward)
     TH2F *h2_bp_xz_fv = new TH2F("h2_bp_xz_fv",
-        "Back-projection x–z from vertex (DCA cut applied);"
+        "Back-projection x–z: 1-track full range + multi-track from vertex;"
         "z (mm);x(z) (mm)",
         bp_bins_z, vz_min, vz_max, bp_bins_xy, -200, 200);
     TH2F *h2_bp_yz_fv = new TH2F("h2_bp_yz_fv",
-        "Back-projection y–z from vertex (DCA cut applied);"
+        "Back-projection y–z: 1-track full range + multi-track from vertex;"
         "z (mm);y(z) (mm)",
         bp_bins_z, vz_min, vz_max, bp_bins_xy, -200, 200);
 
@@ -241,6 +242,30 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
         }
 
         // --- Part 2: vertex finding (multi-track only) ---
+
+        // single-track events: draw over full z range for from-vertex plot
+        // (these are the primary beam tracks, ~70% of data)
+        if (n_trk == 1)
+        {
+            const float px = recotrackdata->get_det_plane_x(0);
+            const float py = recotrackdata->get_det_plane_y(0);
+            const float sx = recotrackdata->get_traj_angcoeff_x(0);
+            const float sy = recotrackdata->get_traj_angcoeff_y(0);
+            if (is_track_selected(px, py, sx, sy,
+                                  tsel.cutg1, tsel.plane1, tsel.side1,
+                                  tsel.cutg2, tsel.plane2, tsel.side2,
+                                  tsel.z_drich, tsel.z_scint))
+            {
+                for (int iz = 0; iz <= n_z_steps; ++iz)
+                {
+                    const float z = vz_min + iz * z_step;
+                    h2_bp_xz_fv->Fill(z, px + sx * z);
+                    h2_bp_yz_fv->Fill(z, py + sy * z);
+                }
+            }
+            continue;
+        }
+
         if (n_trk < 2) continue;
 
         // collect valid tracks (optional chi2 cut + geometric selection from conf)
@@ -549,7 +574,7 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
 
     // --- back-projection from vertex (DCA cut applied) ---
     {
-        TCanvas *c = new TCanvas("c_bp_fv", "Back-projection from vertex (DCA cut)", 1600, 700);
+        TCanvas *c = new TCanvas("c_bp_fv", "Back-projection: 1-track full range + multi-track from vertex", 1600, 700);
         c->Divide(2, 1);
         c->cd(1); h2_bp_xz_fv->Draw("COLZ"); if (h2_bp_xz_fv->GetEntries() > 0) gPad->SetLogz(1);
         auto hline_z_fv = [&](TH2F *h, float z, int color) {
