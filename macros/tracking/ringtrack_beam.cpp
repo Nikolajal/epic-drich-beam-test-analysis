@@ -192,6 +192,11 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
     int n_0trk = 0, n_1trk = 0, n_2trk = 0, n_3trk = 0, n_4plus = 0;
     int n_vertex_found = 0;  // events where a valid vertex was found
 
+    // storage for line display (collected during loop, drawn after)
+    const int n_display_tracks = cfg.get_int("n_display_events", 10000);
+    struct TrackLine { float px, py, sx, sy, z0; bool secondary; };
+    std::vector<TrackLine> beam_lines, sec_lines;
+
     // =========================================================================
     //  Event loop
     // =========================================================================
@@ -262,6 +267,8 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
                     h2_bp_xz_fv->Fill(z, px + sx * z);
                     h2_bp_yz_fv->Fill(z, py + sy * z);
                 }
+                if ((int)beam_lines.size() < n_display_tracks)
+                    beam_lines.push_back({px, py, sx, sy, vz_min, false});
             }
             continue;
         }
@@ -371,6 +378,8 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
                         h2_bp_xz_fv->Fill(z, px + sx * z);
                         h2_bp_yz_fv->Fill(z, py + sy * z);
                     }
+                    if ((int)sec_lines.size() < n_display_tracks)
+                        sec_lines.push_back({px, py, sx, sy, best_zv, true});
                 }
             }
         }
@@ -590,6 +599,63 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
         hline_z_fv(h2_bp_yz_fv, 0,       kGray+1);
         c->SaveAs(Form("%s/beam_backproj_from_vertex.png", output_dir.c_str()));
         delete c;
+    }
+
+    // --- track lines: xz and yz ---
+    {
+        auto draw_lines = [&](const char *cname, const char *fname, bool use_x)
+        {
+            TCanvas *c = new TCanvas(cname, cname, 1600, 700);
+            c->Divide(1, 1);
+            // invisible frame to set axes
+            TH2F *fr = new TH2F(Form("fr_%s", cname), "",
+                                1, vz_min, vz_max, 1, -200, 200);
+            const char *ylab = use_x ? "x(z) (mm)" : "y(z) (mm)";
+            fr->GetXaxis()->SetTitle("z (mm)");
+            fr->GetYaxis()->SetTitle(ylab);
+            fr->SetStats(0); fr->Draw("AXIS");
+
+            // detector position lines
+            auto vl = [&](float z, int col) {
+                TLine *l = new TLine(z, -200, z, 200);
+                l->SetLineStyle(2); l->SetLineColor(col); l->SetLineWidth(2); l->Draw();
+            };
+            vl(z_drich, kRed+1); vl(z_scint, kGreen+2); vl(0, kGray+1);
+
+            // beam tracks (1-track events): blue, semi-transparent
+            for (const auto &t : beam_lines)
+            {
+                float x0 = use_x ? (t.px + t.sx * vz_min) : (t.py + t.sy * vz_min);
+                float x1 = use_x ? (t.px + t.sx * vz_max) : (t.py + t.sy * vz_max);
+                TLine *l = new TLine(vz_min, x0, vz_max, x1);
+                l->SetLineColor(kAzure+7); l->SetLineWidth(1);
+                l->SetLineColorAlpha(kAzure+7, 0.15); l->Draw();
+            }
+            // secondary tracks (multi-track from vertex): red
+            for (const auto &t : sec_lines)
+            {
+                float x0 = use_x ? (t.px + t.sx * t.z0) : (t.py + t.sy * t.z0);
+                float x1 = use_x ? (t.px + t.sx * vz_max) : (t.py + t.sy * vz_max);
+                TLine *l = new TLine(t.z0, x0, vz_max, x1);
+                l->SetLineColor(kRed+1); l->SetLineWidth(1);
+                l->SetLineColorAlpha(kRed+1, 0.4); l->Draw();
+            }
+            // legend
+            TLegend *leg = new TLegend(0.12, 0.80, 0.55, 0.92);
+            TLine *lb = new TLine(); lb->SetLineColor(kAzure+7); lb->SetLineWidth(2);
+            TLine *ls2 = new TLine(); ls2->SetLineColor(kRed+1); ls2->SetLineWidth(2);
+            leg->AddEntry(lb,  Form("beam (1-track), n=%d", (int)beam_lines.size()), "l");
+            leg->AddEntry(ls2, Form("secondary (from vertex), n=%d", (int)sec_lines.size()), "l");
+            leg->SetBorderSize(1); leg->Draw();
+
+            c->SaveAs(fname);
+            delete fr; delete c;
+        };
+
+        draw_lines("c_lines_xz",
+            Form("%s/beam_lines_xz.png", output_dir.c_str()), true);
+        draw_lines("c_lines_yz",
+            Form("%s/beam_lines_yz.png", output_dir.c_str()), false);
     }
 
     // =========================================================================
