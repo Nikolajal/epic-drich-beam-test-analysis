@@ -81,14 +81,13 @@ void ringtrack_notrack(std::string data_repository, std::string run_name,
     const int first_event = cfg.get_int("first_event", 0);
     const int max_frames_ = cfg.get_int("max_frames",  1000000);
 
-    // Wide timing range: derived from time_cut + safety margin.
-    // The "full" histograms and ring-finding plot always cover this range.
-    // Standard timing histograms stay fixed at [-300, +300] ns.
-    const float wide_margin  = cfg.get_float("wide_timing_margin_ns", 300.f);
-    const float wide_bin_ns  = cfg.get_float("wide_timing_bin_ns",     10.f);
-    const float wide_t_min   = std::min(time_cut[0], 0.f) - wide_margin;
-    const float wide_t_max   = std::max(time_cut[1], 0.f) + wide_margin;
-    const int   wide_n_bins  = std::max(1, (int)((wide_t_max - wide_t_min) / wide_bin_ns));
+    // Wide timing range: independent of time_cut, controls the "full" timing
+    // histograms and ring-finding plot. Standard timing histograms stay at
+    // [-300, +300] ns. Default ±5 µs to capture delayed hits.
+    const float wide_t_min  = cfg.get_float("display_t_min",    -5000.f);
+    const float wide_t_max  = cfg.get_float("display_t_max",    +5000.f);
+    const float wide_bin_ns = cfg.get_float("wide_timing_bin_ns",  10.f);
+    const int   wide_n_bins = std::max(1, (int)((wide_t_max - wide_t_min) / wide_bin_ns));
 
     // -------------------------------------------------------------------------
     //  Open input

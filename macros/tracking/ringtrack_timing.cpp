@@ -27,10 +27,12 @@ void ringtrack_timing(std::string data_repository, std::string run_name,
     const bool  apply_afterpulse   = cfg.get_bool("apply_afterpulse_cut", true);
 
     // finestra temporale totale e bin width
-    const float t_min     = -312.5f;
-    const float t_max     =  312.5f;
-    const float bin_width = cfg.get_float("timing_bin_width", 25.0f);
-    const int   n_bins    = (int)((t_max - t_min) / bin_width);
+    // display_t_min/max: range dei plot di timing (default ±5 µs)
+    // timing_bin_width: larghezza bin in ns
+    const float t_min     = cfg.get_float("display_t_min",   -5000.f);
+    const float t_max     = cfg.get_float("display_t_max",   +5000.f);
+    const float bin_width = cfg.get_float("timing_bin_width",   25.0f);
+    const int   n_bins    = std::max(1, (int)((t_max - t_min) / bin_width));
 
     // -------------------------------------------------------------------------
     //  Open input
