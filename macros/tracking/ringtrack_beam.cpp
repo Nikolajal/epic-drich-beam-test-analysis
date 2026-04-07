@@ -3,6 +3,9 @@
 #include "ringtrack_track_selection.h"
 #include <fstream>
 
+// file-scope: Cling has issues with local types used in std::vector
+struct BeamTrackLine { float px, py, sx, sy, z0; bool secondary; };
+
 // =============================================================================
 //  ringtrack_beam  —  beam composition analysis + multi-track vertex finding
 //
@@ -194,8 +197,7 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
 
     // storage for line display (collected during loop, drawn after)
     const int n_display_tracks = cfg.get_int("n_display_events", 10000);
-    struct TrackLine { float px, py, sx, sy, z0; bool secondary; };
-    std::vector<TrackLine> beam_lines, sec_lines;
+    std::vector<BeamTrackLine> beam_lines, sec_lines;
 
     // =========================================================================
     //  Event loop
@@ -660,8 +662,9 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
 
     // --- 3D track lines ---
     {
-        const int n_3d_max = cfg.get_int("n_display_3d", 300);
+        const int n_3d_max  = cfg.get_int("n_display_3d", 300);
         const int n_3d_beam = std::min((int)beam_lines.size(), n_3d_max);
+        const int n_3d_sec  = std::min((int)sec_lines.size(),  n_3d_max);
 
         TCanvas *c3d = new TCanvas("c3d", "3D back-projection", 900, 900);
         TView *view = TView::CreateView(1);
@@ -692,9 +695,10 @@ void ringtrack_beam(std::string data_repository, std::string run_name,
             TPolyLine3D *pl = new TPolyLine3D(2, tx, ty, tz);
             pl->SetLineColor(kAzure+7); pl->SetLineWidth(1); pl->Draw();
         }
-        // secondary tracks from vertex (red, all of them — typically few)
-        for (const auto &t : sec_lines)
+        // secondary tracks from vertex (red), limited to n_3d_sec
+        for (int i = 0; i < n_3d_sec; ++i)
         {
+            const auto &t = sec_lines[i];
             Double_t tx[2] = {t.px + t.sx * t.z0, t.px + t.sx * vz_max};
             Double_t ty[2] = {t.py + t.sy * t.z0, t.py + t.sy * vz_max};
             Double_t tz[2] = {t.z0, vz_max};
