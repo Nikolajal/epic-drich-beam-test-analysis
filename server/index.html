@@ -241,6 +241,7 @@ select option { background: var(--bg3); }
             </select>
           </div>
           <div class="conf-field"><label>chi2 max</label><input type="number" id="c-chi2_max" value="5.0" step="0.5"></div>
+          <div class="conf-field"><label>theta ms max (rad, 0=off)</label><input type="number" id="c-theta_ms_max" value="0" step="0.0005" min="0"></div>
         </div>
         <div class="conf-check">
           <input type="checkbox" id="c-apply_chi2_cut" checked>
@@ -491,6 +492,7 @@ function getCustomConf() {
     require_multi_track:   'false',
     apply_chi2_cut:        bool('c-apply_chi2_cut'),
     chi2_max:              val('c-chi2_max'),
+    theta_ms_max:          val('c-theta_ms_max'),
     use_best_track_only:   bool('c-use_best_track_only'),
     require_all_tracks_pass_geometric_cuts: bool('c-require_all_tracks_pass_geometric_cuts'),
     apply_geometric_track_selection: bool('c-apply_geometric_track_selection'),
