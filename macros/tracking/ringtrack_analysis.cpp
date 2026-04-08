@@ -174,6 +174,10 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
         "N hits vs track multiplicity;n tracks;n hits", 10, -0.5, 9.5, 100, -0.5, 99.5);
     TH2F *h_n_selected_hits_vs_theta = new TH2F("h_n_selected_hits_vs_theta",
         "N hits vs track #theta;#theta (rad);n hits", 2000, 0, 0.1, 100, -0.5, 99.5);
+    TH2F *h_n_selected_hits_vs_chi2 = new TH2F("h_n_selected_hits_vs_chi2",
+        "N dRICH hits in window vs track #chi^{2}/NDF;"
+        "#chi^{2}/NDF;n dRICH hits in window",
+        200, 0, 20, 100, -0.5, 99.5);
     TH2F *h_n_selected_hits_vs_ix_drich = new TH2F("h_n_selected_hits_vs_ix_drich",
         "N hits vs intercept X at dRICH;x_{dRICH} (mm);n hits", 120, -200., 200., 100, -0.5, 99.5);
     TH2F *h_n_selected_hits_vs_iy_drich = new TH2F("h_n_selected_hits_vs_iy_drich",
@@ -380,6 +384,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
             h_intercept_scint->Fill(ix_scint, iy_scint);
             h_n_selected_hits_vs_multiplicity->Fill(n_trk, n_hits);
             h_n_selected_hits_vs_theta->Fill(theta, n_hits);
+            h_n_selected_hits_vs_chi2->Fill(recotrackdata->get_chi2ndof(idx), n_hits);
             h_n_selected_hits_vs_ix_drich->Fill(ix_drich, n_hits);
             h_n_selected_hits_vs_iy_drich->Fill(iy_drich, n_hits);
 
@@ -465,6 +470,7 @@ void ringtrack_analysis(std::string data_repository, std::string run_name,
     h_track_multiplicity->Write();
     h_n_selected_hits_vs_multiplicity->Write();
     h_n_selected_hits_vs_theta->Write();
+    h_n_selected_hits_vs_chi2->Write();
     h_n_selected_hits_vs_ix_drich->Write();
     h_n_selected_hits_vs_iy_drich->Write();
     h_hit_xy_map->Write();

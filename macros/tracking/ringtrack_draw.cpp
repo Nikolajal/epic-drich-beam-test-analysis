@@ -231,6 +231,14 @@ void ringtrack_draw(std::string data_repository, std::string run_name,
         else h_n_selected_hits_vs_theta->Draw("SCAT");
     }
 
+    // --- selected hits vs chi2/NDF (key diagnostic: fake tracks have high chi2 + 0 hits) ---
+    TCanvas *c_nhits_chi2 = new TCanvas("c_nhits_chi2",
+        "N dRICH hits vs track #chi^{2}/NDF", 900, 700);
+    {
+        TH2F *hc = (TH2F *)input_file->Get("h_n_selected_hits_vs_chi2");
+        if (hc) { hc->Draw("COLZ"); if (hc->GetEntries() > 0) gPad->SetLogz(1); }
+    }
+
     // --- selected hits vs intercepts ix e iy ---
     TCanvas *c_nhits_intercepts = new TCanvas("c_nhits_intercepts",
         "Selected hits vs intercepts", 1200, 600);
