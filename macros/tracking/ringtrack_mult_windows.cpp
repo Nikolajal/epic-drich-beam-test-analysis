@@ -114,7 +114,7 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
             Form("h2_chi2_nhits_disc_w%d", w),
             Form("Discarded tracks: #chi^{2}/NDF vs n_{hits} [%s];#chi^{2}/NDF;n hits in window",
                  lbl.c_str()),
-            100, 0, 20, 51, -0.5, 50.5);
+            200, 0, 200, 51, -0.5, 50.5);
     }
 
     // -------------------------------------------------------------------------
