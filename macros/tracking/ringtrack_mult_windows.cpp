@@ -105,7 +105,7 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
     // chi2/NDF vs n_hits per window for discarded-track events
     // (tracks exist but fail selection: multiplicity, chi2, or geometric cuts)
     // x = chi2/NDF of best track in event, y = n_hits in that window
-    std::vector<TH2F*> h2_chi2_nhits_discarded(nw);
+    std::vector<TH2F*> h2_chi2_nhits_discarded(nw), h2_chi2_nhits_selected(nw);
     for (int w = 0; w < nw; w++)
     {
         const std::string lbl = (w < (int)labels.size() && !labels[w].empty())
@@ -113,6 +113,11 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         h2_chi2_nhits_discarded[w] = new TH2F(
             Form("h2_chi2_nhits_disc_w%d", w),
             Form("Discarded tracks: #chi^{2}/NDF vs n_{hits} [%s];#chi^{2}/NDF;n hits in window",
+                 lbl.c_str()),
+            200, 0, 200, 51, -0.5, 50.5);
+        h2_chi2_nhits_selected[w] = new TH2F(
+            Form("h2_chi2_nhits_sel_w%d", w),
+            Form("Selected tracks: #chi^{2}/NDF vs n_{hits} [%s];#chi^{2}/NDF;n hits in window",
                  lbl.c_str()),
             200, 0, 200, 51, -0.5, 50.5);
     }
@@ -154,9 +159,9 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
                 if (dt >= windows[w].first && dt <= windows[w].second)
                     ++n_hits[w];
         }
-        // best chi2 among all tracks in event (for discarded diagnostic)
+        // best chi2 among all tracks in event
         float best_chi2 = 1e9f;
-        if (n_tracks > 0 && !has_selected_track)
+        if (n_tracks > 0)
         {
             best_chi2 = recotrackdata->get_chi2ndof(0);
             for (int i = 1; i < n_tracks; i++)
@@ -167,7 +172,11 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         {
             h_all[w]->Fill(n_hits[w]);
             if (n_tracks == 0)             h_notrack[w]->Fill(n_hits[w]);
-            else if (has_selected_track)   h_track[w]->Fill(n_hits[w]);
+            else if (has_selected_track)
+            {
+                h_track[w]->Fill(n_hits[w]);
+                h2_chi2_nhits_selected[w]->Fill(best_chi2, n_hits[w]);
+            }
             else
             {
                 h_discarded[w]->Fill(n_hits[w]);
@@ -382,23 +391,29 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
     if (!any_pair)
         std::cout << "[INFO] No matching sig_*/bkg_* pairs found — skipping comparison canvases." << std::endl;
 
-    // --- chi2 vs nhits for discarded tracks (one canvas per window) ---
+    // --- chi2 vs nhits: discarded and selected tracks ---
     {
-        TDirectory *ddir = fout->mkdir("discarded_chi2");
+        auto save_chi2_canvas = [&](TH2F *h, const char *prefix, const std::string &lbl, int w)
+        {
+            if (h->GetEntries() == 0) return;
+            TCanvas *c = new TCanvas(Form("c_%s_w%d", prefix, w),
+                Form("%s [%s]", h->GetTitle(), lbl.c_str()), 900, 700);
+            h->Draw("COLZ");
+            gPad->SetLogz(1);
+            h->Write();
+            c->Write();
+            c->SaveAs(Form("%s/%s_%s.png", output_dir.c_str(), prefix, lbl.c_str()));
+            delete c;
+        };
+
+        TDirectory *ddir = fout->mkdir("chi2_nhits");
         ddir->cd();
         for (int w = 0; w < nw; w++)
         {
-            if (h2_chi2_nhits_discarded[w]->GetEntries() == 0) continue;
             const std::string lbl = (w < (int)labels.size() && !labels[w].empty())
                                     ? labels[w] : Form("w%d", w);
-            TCanvas *c = new TCanvas(Form("c_chi2_disc_w%d", w),
-                Form("Discarded tracks: chi2 vs nhits [%s]", lbl.c_str()), 900, 700);
-            h2_chi2_nhits_discarded[w]->Draw("COLZ");
-            gPad->SetLogz(1);
-            h2_chi2_nhits_discarded[w]->Write();
-            c->Write();
-            c->SaveAs(Form("%s/disc_chi2_nhits_%s.png", output_dir.c_str(), lbl.c_str()));
-            delete c;
+            save_chi2_canvas(h2_chi2_nhits_discarded[w], "disc_chi2_nhits", lbl, w);
+            save_chi2_canvas(h2_chi2_nhits_selected[w],  "sel_chi2_nhits",  lbl, w);
         }
         fout->cd();
     }
