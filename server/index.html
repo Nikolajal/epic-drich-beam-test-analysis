@@ -183,6 +183,11 @@ select option { background: var(--bg3); }
     <input id="run-id" type="text" placeholder="or type manually" style="margin-top:6px">
   </div>
 
+  <div class="field">
+    <label>Output label (optional)</label>
+    <input id="output-label" type="text" placeholder="e.g. nocuts, 1track-tight, test42">
+  </div>
+
   <div class="toggle-row">
     <label class="toggle">
       <input type="checkbox" id="use-variants" onchange="toggleVariantMode()">
@@ -629,8 +634,10 @@ function startRun() {
   ws = new WebSocket(`${proto}://${location.host}/ws/run`);
 
   ws.onopen = () => {
+    const outputLabel = document.getElementById('output-label').value.trim();
     ws.send(JSON.stringify({ data_folder: dataFolder, run_id: runId,
-                             conf, macros, use_variants: variants, custom_conf }));
+                             conf, macros, use_variants: variants, custom_conf,
+                             output_label: outputLabel }));
     setRunBtn(true);
     // Ping every 25s to keep the connection alive
     wsPingInterval = setInterval(() => {

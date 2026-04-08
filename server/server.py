@@ -202,6 +202,7 @@ async def ws_run(websocket: WebSocket):
     macros       = data.get("macros", ["--analysis"])
     use_variants = data.get("use_variants", False)
     custom_conf  = data.get("custom_conf", None)
+    output_label = data.get("output_label", "").strip()
 
     if not data_folder or not run_id:
         await websocket.send_text("[Error] data_folder and run_id are required\n")
@@ -234,6 +235,11 @@ async def ws_run(websocket: WebSocket):
         cmd = [script, "--data", data_folder, "--run", run_id]
         if conf_path:
             cmd += ["--conf", conf_path]
+        if output_label:
+            import datetime as _dt
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir = str(PLOTS_DIR / run_id / f"{ts}-{output_label}")
+            cmd += ["--output", out_dir]
         cmd += macros
 
     # ROOT library path
