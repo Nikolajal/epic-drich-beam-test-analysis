@@ -102,6 +102,21 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         h_discarded[w] = new TH1F(Form("h_discarded_w%d", w), "", 100, 0, 100);
     }
 
+    // chi2/NDF vs n_hits per window for discarded-track events
+    // (tracks exist but fail selection: multiplicity, chi2, or geometric cuts)
+    // x = chi2/NDF of best track in event, y = n_hits in that window
+    std::vector<TH2F*> h2_chi2_nhits_discarded(nw);
+    for (int w = 0; w < nw; w++)
+    {
+        const std::string lbl = (w < (int)labels.size() && !labels[w].empty())
+                                ? labels[w] : Form("w%d", w);
+        h2_chi2_nhits_discarded[w] = new TH2F(
+            Form("h2_chi2_nhits_disc_w%d", w),
+            Form("Discarded tracks: #chi^{2}/NDF vs n_{hits} [%s];#chi^{2}/NDF;n hits in window",
+                 lbl.c_str()),
+            100, 0, 20, 51, -0.5, 50.5);
+    }
+
     // -------------------------------------------------------------------------
     //  Loop
     // -------------------------------------------------------------------------
@@ -139,12 +154,25 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
                 if (dt >= windows[w].first && dt <= windows[w].second)
                     ++n_hits[w];
         }
+        // best chi2 among all tracks in event (for discarded diagnostic)
+        float best_chi2 = 1e9f;
+        if (n_tracks > 0 && !has_selected_track)
+        {
+            best_chi2 = recotrackdata->get_chi2ndof(0);
+            for (int i = 1; i < n_tracks; i++)
+                best_chi2 = std::min(best_chi2, recotrackdata->get_chi2ndof(i));
+        }
+
         for (int w = 0; w < nw; w++)
         {
             h_all[w]->Fill(n_hits[w]);
             if (n_tracks == 0)             h_notrack[w]->Fill(n_hits[w]);
             else if (has_selected_track)   h_track[w]->Fill(n_hits[w]);
-            else                           h_discarded[w]->Fill(n_hits[w]);
+            else
+            {
+                h_discarded[w]->Fill(n_hits[w]);
+                h2_chi2_nhits_discarded[w]->Fill(best_chi2, n_hits[w]);
+            }
         }
     }
     bar.update(all_frames, all_frames);
@@ -353,6 +381,27 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
 
     if (!any_pair)
         std::cout << "[INFO] No matching sig_*/bkg_* pairs found — skipping comparison canvases." << std::endl;
+
+    // --- chi2 vs nhits for discarded tracks (one canvas per window) ---
+    {
+        TDirectory *ddir = fout->mkdir("discarded_chi2");
+        ddir->cd();
+        for (int w = 0; w < nw; w++)
+        {
+            if (h2_chi2_nhits_discarded[w]->GetEntries() == 0) continue;
+            const std::string lbl = (w < (int)labels.size() && !labels[w].empty())
+                                    ? labels[w] : Form("w%d", w);
+            TCanvas *c = new TCanvas(Form("c_chi2_disc_w%d", w),
+                Form("Discarded tracks: chi2 vs nhits [%s]", lbl.c_str()), 900, 700);
+            h2_chi2_nhits_discarded[w]->Draw("COLZ");
+            gPad->SetLogz(1);
+            h2_chi2_nhits_discarded[w]->Write();
+            c->Write();
+            c->SaveAs(Form("%s/disc_chi2_nhits_%s.png", output_dir.c_str(), lbl.c_str()));
+            delete c;
+        }
+        fout->cd();
+    }
 
     fout->Close();
     std::cout << "Output: " << output_root << std::endl;
