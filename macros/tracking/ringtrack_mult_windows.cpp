@@ -102,10 +102,9 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         h_discarded[w] = new TH1F(Form("h_discarded_w%d", w), "", 100, 0, 100);
     }
 
-    // chi2/NDF vs n_hits for events that did NOT produce a selected track:
-    //   n_tracks == 0  → chi2 = -1  (sentinel: "no track at all")
-    //   n_tracks >  0, failed selection → chi2 = best chi2 in event
-    // x axis starts at -1.5 so the no-track bin is visible and labelled.
+    // chi2/NDF vs n_hits per window for discarded-track events
+    // (tracks exist but fail selection: multiplicity, chi2, or geometric cuts)
+    // x = chi2/NDF of best track in event, y = n_hits in that window
     std::vector<TH2F*> h2_chi2_nhits_discarded(nw);
     for (int w = 0; w < nw; w++)
     {
@@ -113,10 +112,9 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
                                 ? labels[w] : Form("w%d", w);
         h2_chi2_nhits_discarded[w] = new TH2F(
             Form("h2_chi2_nhits_disc_w%d", w),
-            Form("No selected track: #chi^{2}/NDF vs n_{hits} [%s];"
-                 "#chi^{2}/NDF  (-1 = no track);n hits in window",
+            Form("Discarded tracks: #chi^{2}/NDF vs n_{hits} [%s];#chi^{2}/NDF;n hits in window",
                  lbl.c_str()),
-            155, -1.5, 50.5, 51, -0.5, 50.5);
+            100, 0, 20, 51, -0.5, 50.5);
     }
 
     // -------------------------------------------------------------------------
@@ -156,9 +154,8 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
                 if (dt >= windows[w].first && dt <= windows[w].second)
                     ++n_hits[w];
         }
-        // best chi2 among all tracks (for chi2 diagnostic plot)
-        // n_tracks==0: sentinel -1 ("no track at all")
-        float best_chi2 = -1.f;
+        // best chi2 among all tracks in event (for discarded diagnostic)
+        float best_chi2 = 1e9f;
         if (n_tracks > 0 && !has_selected_track)
         {
             best_chi2 = recotrackdata->get_chi2ndof(0);
@@ -169,13 +166,8 @@ void ringtrack_mult_windows(std::string data_repository, std::string run_name,
         for (int w = 0; w < nw; w++)
         {
             h_all[w]->Fill(n_hits[w]);
-            if (n_tracks == 0)
-            {
-                h_notrack[w]->Fill(n_hits[w]);
-                h2_chi2_nhits_discarded[w]->Fill(-1.f, n_hits[w]); // sentinel
-            }
-            else if (has_selected_track)
-                h_track[w]->Fill(n_hits[w]);
+            if (n_tracks == 0)             h_notrack[w]->Fill(n_hits[w]);
+            else if (has_selected_track)   h_track[w]->Fill(n_hits[w]);
             else
             {
                 h_discarded[w]->Fill(n_hits[w]);
