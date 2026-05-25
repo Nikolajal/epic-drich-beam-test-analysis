@@ -1,138 +1,157 @@
 #pragma once
 
+/**
+ * @file AlcorLightdata.h
+ * @brief Per-spill container of categorised ALCOR hits.
+ *
+ * Holds four parallel Hit vectors — Cherenkov, timing, tracking, and trigger
+ * — corresponding to the categories assigned by the readout configuration
+ * file.  Output of @c lightdata_writer; consumed by @c recodata_writer.
+ */
+
 #include <vector>
 #include <cstdint>
 #include <algorithm>
 #include "alcor_finedata.h"
 #include "triggers.h"
-#include "config_reader.h"
+#include "util/config_reader.h"
 
 /**
  * @brief Structure holding all types of light detector hits for a spill.
  *
- * This struct stores trigger hits, timing hits, tracking hits, and Cherenkov hits.
- * It is a simple container with a clear() method to reset all vectors.
+ * Stores trigger hits, timing hits, tracking hits, and Cherenkov hits.
+ * Simple container with a @c clear() method to reset all vectors.
  */
-struct alcor_lightdata_struct
+struct AlcorLightdataStruct
 {
-    std::vector<trigger_event> trigger_hits;
-    std::vector<alcor_finedata_struct> timing_hits;
-    std::vector<alcor_finedata_struct> tracking_hits;
-    std::vector<alcor_finedata_struct> cherenkov_hits;
+    std::vector<TriggerEvent> trigger_hits;
+    std::vector<AlcorFinedataStruct> timing_hits;
+    std::vector<AlcorFinedataStruct> tracking_hits;
+    std::vector<AlcorFinedataStruct> cherenkov_hits;
 
     /**
      * @brief Clear all vectors and release memory.
      *
-     * This sets all vectors empty and calls shrink_to_fit() to free memory.
+     * Empties all Hit vectors and calls @c shrink_to_fit() on each to return
+     * heap storage to the allocator.
      */
     void clear();
 };
 
 /**
- * @brief Class wrapping lightdata hits with convenient accessors and utilities.
+ * @brief Accessor class for light-detector Hit collections.
  *
- * Inherits from alcor_finedata and provides getters, setters, and utilities
- * to work with trigger, timing, tracking, and Cherenkov hits.
+ * Inherits from @ref AlcorFinedata and provides value-copy and reference
+ * getters/setters for trigger, timing, tracking, and Cherenkov Hit vectors,
+ * as well as a utility method to look up a trigger by index.
  */
-class alcor_lightdata : public alcor_finedata
+class AlcorLightdata : public AlcorFinedata
 {
 private:
-    alcor_lightdata_struct lightdata;
+    AlcorLightdataStruct lightdata;
 
 public:
-    alcor_lightdata() = default;
-    alcor_lightdata(const alcor_lightdata_struct &data_struct);
+    /// @brief Default constructor — all Hit vectors empty.
+    AlcorLightdata() = default;
 
-    /** @name Getters */
+    /// @brief Construct from an existing lightdata struct (copied).
+    AlcorLightdata(const AlcorLightdataStruct &data_struct) : lightdata(data_struct) {}
+
+    /** @name Getters — by value */
     ///@{
-    /**
-     * @brief Get a copy of the internal lightdata struct.
-     * @return Copy of alcor_lightdata_struct
-     */
-    alcor_lightdata_struct get_lightdata() const;
 
     /**
-     * @brief Get a copy of the timing hits.
-     * @return Vector of timing hit structs
+     * @brief Return a copy of the internal lightdata struct.
+     * @return Copy of @ref AlcorLightdataStruct.
      */
-    std::vector<alcor_finedata_struct> get_timing_hits() const;
+    AlcorLightdataStruct get_lightdata() const { return lightdata; }
 
-    /**
-     * @brief Get a copy of the tracking hits.
-     * @return Vector of tracking hit structs
-     */
-    std::vector<alcor_finedata_struct> get_tracking_hits() const;
+    /// @brief Return a copy of the timing Hit vector.
+    std::vector<AlcorFinedataStruct> get_timing_hits() const { return lightdata.timing_hits; }
 
-    /**
-     * @brief Get a copy of the Cherenkov hits.
-     * @return Vector of Cherenkov hit structs
-     */
-    std::vector<alcor_finedata_struct> get_cherenkov_hits() const;
+    /// @brief Return a copy of the tracking Hit vector.
+    std::vector<AlcorFinedataStruct> get_tracking_hits() const { return lightdata.tracking_hits; }
 
-    /**
-     * @brief Get a copy of trigger hits.
-     * @return Vector of trigger_event
-     */
-    std::vector<trigger_event> get_triggers() const;
+    /// @brief Return a copy of the Cherenkov Hit vector.
+    std::vector<AlcorFinedataStruct> get_cherenkov_hits() const { return lightdata.cherenkov_hits; }
 
-    /**
-     * @brief Get a reference to the internal lightdata struct.
-     * @return Reference to alcor_lightdata_struct
-     */
-    alcor_lightdata_struct &get_lightdata_link();
+    /// @brief Return a copy of the trigger Hit vector.
+    std::vector<TriggerEvent> get_triggers() const { return lightdata.trigger_hits; }
 
-    /**
-     * @brief Get a reference to the internal timing hits.
-     * @return Reference to vector of timing hit structs
-     */
-    std::vector<alcor_finedata_struct> &get_timing_hits_link();
-
-    /**
-     * @brief Get a reference to the internal tracking hits.
-     * @return Reference to vector of tracking hit structs
-     */
-    std::vector<alcor_finedata_struct> &get_tracking_hits_link();
-
-    /**
-     * @brief Get a reference to the internal Cherenkov hits.
-     * @return Reference to vector of Cherenkov hit structs
-     */
-    std::vector<alcor_finedata_struct> &get_cherenkov_hits_link();
-
-    /**
-     * @brief Get a reference to the internal trigger hits.
-     * @return Reference to vector of trigger_event
-     */
-    std::vector<trigger_event> &get_triggers_link();
     ///@}
 
-    /** @name Setters */
+    /** @name Getters — by reference */
     ///@{
-    /**
-     * @brief Set the internal lightdata struct.
-     * @param v Copy of lightdata struct
-     */
-    void set_lightdata(alcor_lightdata_struct v);
 
-    void set_timing_hits(std::vector<alcor_finedata_struct> v);
-    void set_tracking_hits(std::vector<alcor_finedata_struct> v);
-    void set_cherenkov_hits(std::vector<alcor_finedata_struct> v);
-    void set_trigger(std::vector<trigger_event> v);
+    /// @brief Return a mutable reference to the internal lightdata struct.
+    AlcorLightdataStruct &get_lightdata_link() { return lightdata; }
 
-    void set_lightdata_link(alcor_lightdata_struct &v);
-    void set_timing_hits_link(std::vector<alcor_finedata_struct> &v);
-    void set_tracking_hits_link(std::vector<alcor_finedata_struct> &v);
-    void set_cherenkov_hits_link(std::vector<alcor_finedata_struct> &v);
-    void set_trigger_link(std::vector<trigger_event> &v);
+    /// @brief Return a mutable reference to the timing Hit vector.
+    std::vector<AlcorFinedataStruct> &get_timing_hits_link() { return lightdata.timing_hits; }
+
+    /// @brief Return a mutable reference to the tracking Hit vector.
+    std::vector<AlcorFinedataStruct> &get_tracking_hits_link() { return lightdata.tracking_hits; }
+
+    /// @brief Return a mutable reference to the Cherenkov Hit vector.
+    std::vector<AlcorFinedataStruct> &get_cherenkov_hits_link() { return lightdata.cherenkov_hits; }
+
+    /// @brief Return a mutable reference to the trigger Hit vector.
+    std::vector<TriggerEvent> &get_triggers_link() { return lightdata.trigger_hits; }
+
     ///@}
 
-    /** @name Utility Methods */
+    /** @name Setters — by value */
     ///@{
+
     /**
-     * @brief Get the trigger time for a given trigger index.
-     * @param trigger_index Index of the trigger in the vector
-     * @return Time value of the trigger in ns
+     * @brief Replace the internal lightdata struct (copied).
+     * @param v New @ref AlcorLightdataStruct to assign.
+     */
+    void set_lightdata(AlcorLightdataStruct v) { lightdata = v; }
+
+    /// @brief Replace the timing Hit vector.
+    void set_timing_hits(std::vector<AlcorFinedataStruct> v) { lightdata.timing_hits = v; }
+
+    /// @brief Replace the tracking Hit vector.
+    void set_tracking_hits(std::vector<AlcorFinedataStruct> v) { lightdata.tracking_hits = v; }
+
+    /// @brief Replace the Cherenkov Hit vector.
+    void set_cherenkov_hits(std::vector<AlcorFinedataStruct> v) { lightdata.cherenkov_hits = v; }
+
+    /// @brief Replace the trigger Hit vector.
+    void set_trigger(std::vector<TriggerEvent> v) { lightdata.trigger_hits = v; }
+
+    ///@}
+
+    /** @name Setters — by reference */
+    ///@{
+
+    /// @brief Replace the internal lightdata struct (assigned from reference).
+    void set_lightdata_link(AlcorLightdataStruct &v) { lightdata = v; }
+
+    /// @brief Replace the timing Hit vector (assigned from reference).
+    void set_timing_hits_link(std::vector<AlcorFinedataStruct> &v) { lightdata.timing_hits = v; }
+
+    /// @brief Replace the tracking Hit vector (assigned from reference).
+    void set_tracking_hits_link(std::vector<AlcorFinedataStruct> &v) { lightdata.tracking_hits = v; }
+
+    /// @brief Replace the Cherenkov Hit vector (assigned from reference).
+    void set_cherenkov_hits_link(std::vector<AlcorFinedataStruct> &v) { lightdata.cherenkov_hits = v; }
+
+    /// @brief Replace the trigger Hit vector (assigned from reference).
+    void set_trigger_link(std::vector<TriggerEvent> &v) { lightdata.trigger_hits = v; }
+
+    ///@}
+
+    /** @name Utility */
+    ///@{
+
+    /**
+     * @brief Return the fine time of the first trigger matching @p trigger_index.
+     * @param trigger_index Hardware trigger index to search for.
+     * @return Fine time [ns], or @c std::nullopt if no matching trigger is present.
      */
     std::optional<float> get_trigger_time(uint8_t trigger_index);
+
     ///@}
 };

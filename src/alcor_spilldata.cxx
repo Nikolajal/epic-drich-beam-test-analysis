@@ -1,10 +1,10 @@
 #include "alcor_spilldata.h"
 
 // ============================================================================
-//  alcor_spilldata_struct
+//  AlcorSpilldataStruct
 // ============================================================================
 
-void alcor_spilldata_struct::clear()
+void AlcorSpilldataStruct::clear()
 {
     dead_mask.clear();
     participants_mask.clear();
@@ -35,10 +35,10 @@ void alcor_spilldata_struct::clear()
 }
 
 // ============================================================================
-//  alcor_spilldata — non-trivial utility methods
+//  AlcorSpilldata — non-trivial utility methods
 // ============================================================================
 
-std::map<uint32_t, std::vector<uint8_t>> alcor_spilldata::get_not_dead_participants()
+std::map<uint32_t, std::vector<uint8_t>> AlcorSpilldata::get_not_dead_participants()
 {
     std::map<uint32_t, std::vector<uint8_t>> result;
 
@@ -73,10 +73,10 @@ std::map<uint32_t, std::vector<uint8_t>> alcor_spilldata::get_not_dead_participa
 }
 
 // ============================================================================
-//  alcor_spilldata — ROOT TTree I/O
+//  AlcorSpilldata — ROOT TTree I/O
 // ============================================================================
 
-void alcor_spilldata::link_to_tree(TTree *input_tree)
+void AlcorSpilldata::link_to_tree(TTree *input_tree)
 {
     if (!input_tree)
         return;
@@ -87,7 +87,7 @@ void alcor_spilldata::link_to_tree(TTree *input_tree)
     input_tree->SetBranchAddress("lightdata", &spilldata.lightdata_list_in_frame_ptr);
 }
 
-void alcor_spilldata::write_to_tree(TTree *output_tree)
+void AlcorSpilldata::write_to_tree(TTree *output_tree)
 {
     if (!output_tree)
         return;
@@ -98,7 +98,7 @@ void alcor_spilldata::write_to_tree(TTree *output_tree)
     output_tree->Branch("lightdata", &spilldata.lightdata_list_in_frame);
 }
 
-void alcor_spilldata::prepare_tree_fill()
+void AlcorSpilldata::prepare_tree_fill()
 {
     //  1. Reset flat vectors and re-synchronise branch-address pointers.
     spilldata.dead_mask_list.clear();
@@ -146,7 +146,7 @@ void alcor_spilldata::prepare_tree_fill()
 //  Free-function merge / reduce utilities
 // ============================================================================
 
-void merge_lightdata(alcor_lightdata_struct &lhs, alcor_lightdata_struct &&rhs)
+void merge_lightdata(AlcorLightdataStruct &lhs, AlcorLightdataStruct &&rhs)
 {
     lhs.trigger_hits.insert(lhs.trigger_hits.end(),
                             std::make_move_iterator(rhs.trigger_hits.begin()),
@@ -162,7 +162,7 @@ void merge_lightdata(alcor_lightdata_struct &lhs, alcor_lightdata_struct &&rhs)
                               std::make_move_iterator(rhs.cherenkov_hits.end()));
 }
 
-void merge(alcor_spilldata_struct &lhs, alcor_spilldata_struct &&rhs)
+void merge(AlcorSpilldataStruct &lhs, AlcorSpilldataStruct &&rhs)
 {
     for (const auto &[key, mask] : rhs.dead_mask)
         lhs.dead_mask[key] |= mask;
@@ -178,14 +178,14 @@ void merge(alcor_spilldata_struct &lhs, alcor_spilldata_struct &&rhs)
     }
 }
 
-void merge(alcor_spilldata &lhs, alcor_spilldata &&rhs)
+void merge(AlcorSpilldata &lhs, AlcorSpilldata &&rhs)
 {
     merge(lhs.get_spilldata_link(), std::move(rhs.get_spilldata()));
 }
 
-alcor_spilldata_struct operator+(alcor_spilldata_struct lhs, alcor_spilldata_struct rhs)
+AlcorSpilldataStruct operator+(AlcorSpilldataStruct lhs, AlcorSpilldataStruct rhs)
 {
-    std::cerr << "[WARNING] (alcor_spilldata_struct operator+) "
+    std::cerr << "[WARNING] (AlcorSpilldataStruct operator+) "
                  "This function is under revision — results are unreliable!\n";
 
     lhs.dead_mask.merge(std::move(rhs.dead_mask));
@@ -194,9 +194,9 @@ alcor_spilldata_struct operator+(alcor_spilldata_struct lhs, alcor_spilldata_str
     return lhs;
 }
 
-alcor_spilldata operator+(alcor_spilldata lhs, const alcor_spilldata &rhs)
+AlcorSpilldata operator+(AlcorSpilldata lhs, const AlcorSpilldata &rhs)
 {
-    std::cerr << "[WARNING] (alcor_spilldata operator+) "
+    std::cerr << "[WARNING] (AlcorSpilldata operator+) "
                  "This function is under revision — results are unreliable!\n";
 
     lhs.get_spilldata_link() = std::move(lhs.get_spilldata_link()) + rhs.get_spilldata();

@@ -1,6 +1,6 @@
 #include "alcor_data.h"
 
-void alcor_data::link_to_tree(TTree *input_tree)
+void AlcorData::link_to_tree(TTree *input_tree)
 {
     if (!input_tree)
         return;
@@ -14,11 +14,11 @@ void alcor_data::link_to_tree(TTree *input_tree)
     input_tree->SetBranchAddress("rollover", &data.rollover);
     input_tree->SetBranchAddress("coarse", &data.coarse);
     input_tree->SetBranchAddress("fine", &data.fine);
-    if (input_tree->GetBranch("hit_mask"))
-        input_tree->SetBranchAddress("hit_mask", &data.hit_mask);
+    if (input_tree->GetBranch("HitMask"))
+        input_tree->SetBranchAddress("HitMask", &data.HitMask);
 }
 
-void alcor_data::write_to_tree(TTree *output_tree)
+void AlcorData::write_to_tree(TTree *output_tree)
 {
     if (!output_tree)
         return;
@@ -32,5 +32,5 @@ void alcor_data::write_to_tree(TTree *output_tree)
     output_tree->Branch("rollover", &data.rollover, "rollover/I");
     output_tree->Branch("coarse", &data.coarse, "coarse/I");
     output_tree->Branch("fine", &data.fine, "fine/I");
-    output_tree->Branch("hit_mask", &data.hit_mask, "hit_mask/i"); // fix: was &data.fine
+    output_tree->Branch("HitMask", &data.HitMask, "HitMask/i"); // fix: was &data.fine
 }

@@ -5,36 +5,63 @@
 //  TODO: understand what is the issue with generate calibration
 
 // =============================================================================
-// alcor_finedata_struct
+// AlcorFinedataStruct
 // =============================================================================
 
-alcor_finedata_struct::alcor_finedata_struct(const alcor_data_struct &d)
+AlcorFinedataStruct::AlcorFinedataStruct(const AlcorDataStruct &d)
 {
-    global_index = get_global_index(d.device, d.fifo / 4, d.pixel + 4 * d.column, d.tdc);
+    // Phase 5: store the new-layout @ref GlobalIndex raw — TDC-level form
+    // with the validity bit set.  Split-in-two trick is applied here at the
+    // conversion boundary: legacy hardware (chip_raw 0–7, channel_raw 0–31)
+    // ↦ logical (chip 0–3, channel 0–63) for the current detector;
+    // identity transform for the final 64-ch chip (gated by
+    // ::gidx::kUsesSplitInTwo).
+    const int chip_raw     = d.fifo / 4;
+    const int channel_raw  = d.pixel + 4 * d.column;
+    const int chip_logical = ::gidx::kUsesSplitInTwo ? chip_raw / 2
+                                                    : chip_raw;
+    const int channel_log  = ::gidx::kUsesSplitInTwo
+                                 ? channel_raw + 32 * (chip_raw % 2)
+                                 : channel_raw;
+    GlobalIndex = ::GlobalIndex::from_components(
+        d.device, d.fifo, chip_logical, channel_log, d.tdc).raw();
+
     rollover = static_cast<uint32_t>(d.rollover);
-    coarse = static_cast<uint16_t>(d.coarse);
-    fine = static_cast<uint8_t>(d.fine);
-    hit_mask = d.hit_mask;
+    coarse   = static_cast<uint16_t>(d.coarse);
+    fine     = static_cast<uint8_t>(d.fine);
+    HitMask = d.HitMask;
 }
 
 // =============================================================================
-// alcor_finedata — Derived timing getters
+// AlcorFinedata — Derived timing getters
 // =============================================================================
 
-float alcor_finedata::get_phase() const
+float AlcorFinedata::get_phase() const
 {
+    //  Acquire a single shared lock for the entire method body.
+    //  We access calibration_parameters and channel_calibration_method DIRECTLY
+    //  (not through get_param* / get_calibration_method) to avoid recursive
+    //  locking on the non-reentrant std::shared_mutex.
+    std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+
     auto calib_it = calibration_parameters.find(get_global_index());
     if (calib_it == calibration_parameters.end())
         return 0.f;
 
     const auto &calibration_parameter = calib_it->second;
 
-    switch (get_calibration_method(get_global_index()))
+    //  Inline of get_calibration_method() — must NOT call the public API here.
+    auto method_it = channel_calibration_method.find(get_global_index());
+    const auto method = (method_it != channel_calibration_method.end())
+                            ? method_it->second
+                            : default_calibration_method;
+
+    switch (method)
     {
-    case calibration_method_t::_ALCOR_v2_BASE_CALIB_:
+    case CalibrationMethod::AlcorV2BaseCalib:
     {
         auto current_fine_value = static_cast<float>(get_fine());
-        if ((calibration_parameter[1] == 0) && (calibration_parameter[0] == 0))
+        if (calibration_parameter[1] == calibration_parameter[0])
             return 0.f;
         if ((calibration_parameter[1] < current_fine_value) && (calibration_parameter[0] > current_fine_value))
             return -9999.f;
@@ -43,7 +70,7 @@ float alcor_finedata::get_phase() const
         return phase;
     }
 
-    case calibration_method_t::_ALCOR_v2_FIT_CALIB_:
+    case CalibrationMethod::AlcorV2FitCalib:
     {
         auto current_fine_value = static_cast<float>(get_fine());
         return (current_fine_value * calibration_parameter[0] - calibration_parameter[1]);
@@ -55,17 +82,17 @@ float alcor_finedata::get_phase() const
 }
 
 // =============================================================================
-// alcor_finedata — Spatial getters (randomised)
+// AlcorFinedata — Spatial getters (randomised)
 // =============================================================================
 
-float alcor_finedata::get_hit_r_rnd(std::array<float, 2> v) const
+float AlcorFinedata::get_hit_r_rnd(std::array<float, 2> v) const
 {
     const float x = get_hit_x_rnd();
     const float y = get_hit_y_rnd();
     return std::hypot(x - v[0], y - v[1]);
 }
 
-float alcor_finedata::get_hit_phi_rnd(std::array<float, 2> v) const
+float AlcorFinedata::get_hit_phi_rnd(std::array<float, 2> v) const
 {
     const float x = get_hit_x_rnd();
     const float y = get_hit_y_rnd();
@@ -73,15 +100,16 @@ float alcor_finedata::get_hit_phi_rnd(std::array<float, 2> v) const
 }
 
 // =============================================================================
-// alcor_finedata — Calibration I/O
+// AlcorFinedata — Calibration I/O
 // =============================================================================
 
-void alcor_finedata::write_calib_to_file(const std::string &filename)
+void AlcorFinedata::write_calib_to_file(const std::string &filename)
 {
-    mist::logger::info("(alcor_finedata::write_calib_to_file) Requested to write calibration to file");
+    mist::logger::info("(AlcorFinedata::write_calib_to_file) Requested to write calibration to file");
     std::ofstream calib_file(filename);
     if (!calib_file)
         throw std::runtime_error("Cannot open file");
+    std::shared_lock<std::shared_mutex> lock(calibration_mutex);
     for (auto [tdc_index, calib_params] : calibration_parameters)
     {
         auto method_it = channel_calibration_method.find(tdc_index);
@@ -96,8 +124,9 @@ void alcor_finedata::write_calib_to_file(const std::string &filename)
     }
 }
 
-void alcor_finedata::read_calib_from_file(const std::string &filename, bool clear_first, bool overwrites)
+void AlcorFinedata::read_calib_from_file(const std::string &filename, bool clear_first, bool overwrites)
 {
+    std::unique_lock<std::shared_mutex> lock(calibration_mutex);
     if (clear_first)
     {
         calibration_parameters.clear();
@@ -106,7 +135,7 @@ void alcor_finedata::read_calib_from_file(const std::string &filename, bool clea
     std::ifstream calib_file(filename);
     if (!calib_file)
     {
-        mist::logger::warning("(alcor_finedata::read_calib_from_file) Cannot open " + filename + ", skipping load calibration");
+        mist::logger::warning("(AlcorFinedata::read_calib_from_file) Cannot open " + filename + ", skipping load calibration");
         return;
     }
     std::string line;
@@ -119,21 +148,21 @@ void alcor_finedata::read_calib_from_file(const std::string &filename, bool clea
         if (calibration_parameters.count(key) && !overwrites)
             continue;
         calibration_parameters[key] = {a, b, c};
-        channel_calibration_method[key] = static_cast<calibration_method_t>(method_int);
+        channel_calibration_method[key] = static_cast<CalibrationMethod>(method_int);
     }
 }
 
-void alcor_finedata::switch_to_fit_v2(int global_index, calibration_method_t calibration_type, float angular_coeff, float offset, float sigma)
+void AlcorFinedata::switch_to_fit_v2(int GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma)
 {
-    set_calibration_method(global_index, calibration_method_t::_ALCOR_v2_FIT_CALIB_);
-    auto prev_min = get_param0(global_index) < 1 ? 30 : get_param0(global_index);
-    auto prev_max = get_param1(global_index) < 1 ? 100 : get_param1(global_index);
-    set_param0(global_index, angular_coeff);
-    set_param1(global_index, -(angular_coeff * (prev_max + prev_min) * 0.5 + offset));
-    set_param2(global_index, sigma);
+    set_calibration_method(GlobalIndex, CalibrationMethod::AlcorV2FitCalib);
+    auto prev_min = get_param0(GlobalIndex) < 1 ? 30 : get_param0(GlobalIndex);
+    auto prev_max = get_param1(GlobalIndex) < 1 ? 100 : get_param1(GlobalIndex);
+    set_param0(GlobalIndex, angular_coeff);
+    set_param1(GlobalIndex, -(angular_coeff * (prev_max + prev_min) * 0.5 + offset));
+    set_param2(GlobalIndex, sigma);
 }
 
-void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool overwrite_calibration)
+void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overwrite_calibration)
 {
     //  Check the batch status
     auto current_batch_ROOT = gROOT->IsBatch();
@@ -142,17 +171,18 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool over
     //  Check the histogram is valid
     if (!calibration_histogram)
     {
-        mist::logger::warning("(alcor_finedata::generate_calibration) Invalid histogram given, aborting calibration");
+        mist::logger::warning("(AlcorFinedata::generate_calibration) Invalid histogram given, aborting calibration");
         return;
     }
 
     //  Start calibration
-    mist::logger::info("(alcor_finedata::generate_calibration) Starting fine data calibration from: " + std::string(calibration_histogram->GetName()));
+    mist::logger::info("(AlcorFinedata::generate_calibration) Starting fine data calibration from: " + std::string(calibration_histogram->GetName()));
 
     //  Overwrite protection
+    std::unique_lock<std::shared_mutex> lock(calibration_mutex);
     if (overwrite_calibration)
     {
-        mist::logger::info("(alcor_finedata::generate_calibration) Requested clear of previous calibration");
+        mist::logger::info("(AlcorFinedata::generate_calibration) Requested clear of previous calibration");
         calibration_parameters.clear();
     }
 
@@ -222,7 +252,7 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool over
     }
 
     //  Debug
-    std::string msg = "(alcor_finedata::generate_calibration) channels: ";
+    std::string msg = "(AlcorFinedata::generate_calibration) channels: ";
     for (auto channel : skipped_channels)
         msg += std::to_string(channel) + " ";
     msg += "skipped, projection too sparsely";
@@ -230,31 +260,32 @@ void alcor_finedata::generate_calibration(TH2F *calibration_histogram, bool over
 
     //  Reporting
     auto calibrated_channels_after_calibration = calibration_parameters.size();
-    mist::logger::info("(alcor_finedata::generate_calibration) Finished calibration! updated " +
+    mist::logger::info("(AlcorFinedata::generate_calibration) Finished calibration! updated " +
                        std::to_string(calibrated_channels_after_calibration - calibrated_channels_before_calibration) +
                        " was: " + std::to_string(calibrated_channels_before_calibration) +
                        " is now: " + std::to_string(calibrated_channels_after_calibration));
 
+    delete fine_dist_fit_function;
     gROOT->SetBatch(current_batch_ROOT);
 }
 
 // =============================================================================
-// alcor_finedata — Finding rings algorithms
+// AlcorFinedata — Finding rings algorithms
 // =============================================================================
 
-std::vector<mist::ring_finding::ring_result> alcor_finedata::alcor_find_rings_hough(
-    mist::ring_finding::hough_transform &ht,
-    std::vector<alcor_finedata> &alcor_hits,
+std::vector<mist::ring_finding::RingResult> AlcorFinedata::alcor_find_rings_hough(
+    mist::ring_finding::HoughTransform &ht,
+    std::vector<AlcorFinedata> &alcor_hits,
     float threshold_fraction,
     int min_hits,
     int min_active,
     int max_rings,
     float collection_radius)
 {
-    // --- Build generic hit vector, keeping a parallel index map -------------
+    // --- Build generic Hit vector, keeping a parallel index map -------------
     // generic_to_alcor[i] gives the index into alcor_hits that corresponds to
     // generic_hits[i].  This lets us write mask bits back after ring finding.
-    std::vector<mist::ring_finding::hit> generic_hits;
+    std::vector<mist::ring_finding::Hit> generic_hits;
     std::vector<int> generic_to_alcor;
     generic_hits.reserve(alcor_hits.size());
     generic_to_alcor.reserve(alcor_hits.size());
@@ -263,7 +294,7 @@ std::vector<mist::ring_finding::ring_result> alcor_finedata::alcor_find_rings_ho
     {
         const auto &h = alcor_hits[i];
 
-        // ALCOR-specific filters — do not belong in hough_transform
+        // ALCOR-specific filters — do not belong in HoughTransform
         if (h.is_afterpulse())
             continue;
         if (h.get_device() >= 200)
@@ -277,15 +308,15 @@ std::vector<mist::ring_finding::ring_result> alcor_finedata::alcor_find_rings_ho
     }
 
     // --- Run the generic ring finder ----------------------------------------
-    std::vector<mist::ring_finding::ring_result> rings =
+    std::vector<mist::ring_finding::RingResult> rings =
         ht.find_rings(generic_hits, threshold_fraction, min_hits,
                       max_rings, collection_radius);
 
-    // --- Write mask bits back onto the original alcor_finedata hits ---------
+    // --- Write mask bits back onto the original AlcorFinedata hits ---------
     // Ring mask bits in declaration order; extend the array for more rings.
-    const std::array<hit_mask, 2> ring_masks = {
-        _HITMASK_hough_ring_tag_first,
-        _HITMASK_hough_ring_tag_second};
+    const std::array<HitMask, 2> ring_masks = {
+        HitmaskHoughRingTagFirst,
+        HitmaskHoughRingTagSecond};
 
     for (int ring_idx = 0; ring_idx < static_cast<int>(rings.size()); ++ring_idx)
     {

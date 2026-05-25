@@ -3,15 +3,16 @@
 // ─── Global analysis parameters ──────────────────────────────────────────────
 
 static constexpr int kCoverageGranularity = 10;
-static constexpr std::array<float, 2> kTimeCutNs = {-40.f, 50.f};
+static constexpr std::array<float, 2> kTimeCutNs = {-40.f, 40.f};
 static const std::vector<std::array<float, 2>> kPhiGapRanges = {
-    {-2.6f, -1.9f}, {2.4f, 2.95f}, {-1.65f, -1.1f}, {-0.1f, 0.15f}};
+    {-2.6f, -1.9f}, {2.4f, 2.95f}, {-1.65f, -1.1f}};
 
 // ── Radial histogram binning ──────────────────────────────────────────────────
 static constexpr int kRBins = 40;
 static constexpr float kRLo = 25.f;
 static constexpr float kRHi = 125.f;
-static constexpr float kFitLo = 40.f; // fit start — avoids low-R structure
+static constexpr float kFitLo = 30.f; // fit start — avoids low-R structure
+static constexpr float kFitHi = 80.f; // fit high limit — truncates high-R tail
 
 enum class SensorType
 {
@@ -140,7 +141,7 @@ void photon_number(std::string data_repository, std::string run_name,
         return;
     }
     TTree *tree = (TTree *)f_in->Get("recodata");
-    alcor_recodata *reco = new alcor_recodata();
+    AlcorRecodata *reco = new AlcorRecodata();
     reco->link_to_tree(tree);
     int all_frames = (int)std::min((Long64_t)max_frames, tree->GetEntries());
 
@@ -163,7 +164,7 @@ void photon_number(std::string data_repository, std::string run_name,
         if (current_spill < 0)
             continue;
         spill_of_frame[iframe] = current_spill;
-        if (reco->get_trigger_by_index(0))
+        if (reco->get_trigger_by_index(104))
         {
             ++spill_trigger_count[current_spill];
             ++total_used_frames_prescan;
@@ -185,7 +186,7 @@ void photon_number(std::string data_repository, std::string run_name,
     TH1F *h_fit_x = new TH1F("h_fit_x", ";circle center x (mm)", 240, -30, 30);
     TH1F *h_fit_y = new TH1F("h_fit_y", ";circle center y (mm)", 240, -30, 30);
     TH1F *h_fit_r = new TH1F("h_fit_r", ";circle radius (mm)", 400, 30, 130);
-    TH1F *h_dt = new TH1F("h_dt", ";t_{hit}-t_{trig} (ns)", 200, -312.5, 312.5);
+    TH1F *h_dt = new TH1F("h_dt", ";t_{Hit}-t_{trig} (ns)", 200, -312.5, 312.5);
 
     TH2F *h_xy_hits = new TH2F("h_xy_hits", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH2F *h_rphi_hits = new TH2F("h_rphi_hits", ";#phi (rad);R (mm)",
@@ -223,7 +224,7 @@ void photon_number(std::string data_repository, std::string run_name,
         tree->GetEntry(iframe);
         if (reco->is_start_of_spill())
             continue;
-        auto trig = reco->get_trigger_by_index(0);
+        auto trig = reco->get_trigger_by_index(104);
         if (!trig)
             continue;
         std::vector<std::array<float, 2>> pts;
@@ -249,18 +250,16 @@ void photon_number(std::string data_repository, std::string run_name,
         }
     }
 
-    TF1 *f_dg = new TF1("f_dg", "[0]*TMath::Gaus(x,[1],[2],true)+[3]*TMath::Gaus(x,[1],[4],true)", -30, 130);
     std::array<float, 3> G = {};
-    auto fit_peak = [&](TH1F *h, float xlo, float xhi) -> float
+    auto find_peak = [&](TH1F *h) -> float
     {
-        f_dg->SetRange(xlo, xhi);
-        f_dg->SetParameters(h->GetMaximum(), h->GetMean(), 1., h->GetMaximum() * 0.3, 5.);
-        h->Fit(f_dg, "QNR");
-        return f_dg->GetParameter(1);
+        // Find the bin with the maximum content and return its center
+        int max_bin = h->GetMaximumBin();
+        return h->GetBinCenter(max_bin);
     };
-    G[0] = fit_peak(h_fit_x, -30, 30);
-    G[1] = fit_peak(h_fit_y, -30, 30);
-    G[2] = fit_peak(h_fit_r, 30, 130);
+    G[0] = find_peak(h_fit_x);
+    G[1] = find_peak(h_fit_y);
+    G[2] = find_peak(h_fit_r);
 
     // ── Pass 2: coverage + hits ───────────────────────────────────────────────
     std::map<int, std::array<std::vector<std::array<int, 2>>, 2>> ch_bins_cache;
@@ -337,7 +336,7 @@ void photon_number(std::string data_repository, std::string run_name,
             continue;
         }
 
-        auto trig = reco->get_trigger_by_index(0);
+        auto trig = reco->get_trigger_by_index(104);
         if (trig)
         {
             ++used_frames;
@@ -456,43 +455,47 @@ void photon_number(std::string data_repository, std::string run_name,
     // ── Fit model ─────────────────────────────────────────────────────────────
     //
     // Gaussian + broad Gaussian (right shoulder) + pol2 background.
-    // Fit range starts at kFitLo=40 mm to exclude the low-R structure
-    // (whatever it is — air Cherenkov, reflected photons, beam halo)
-    // which is not part of the aerogel ring signal and would bias sigma.
+    // Fit range [kFitLo, kFitHi] excludes low-R structure (air Cherenkov, reflections)
+    // and truncates the high-R tail. The range is designed to isolate the core aerogel
+    // ring signal and avoid biasing sigma with non-signal contributions.
     //
-    // The fit integrates from kFitLo to kRHi for N_gamma. Bins between
-    // kRLo and kFitLo are drawn but excluded from the fit.
+    // The fit integrates from kFitLo to kFitHi for N_gamma. Bins outside this range
+    // are drawn but excluded from the fit.
     //
     // Parameters:
-    //   p[0]  gaus_amp  — Gaussian amplitude (hits/trigger/mm at peak)
-    //   p[1]  mu        — peak position (mm)
-    //   p[2]  sigma     — single-photon spatial resolution (mm)
-    //   p[3]  gs_amp    — broad Gaussian amplitude (right shoulder)
-    //   p[4]  gs_sig    — broad Gaussian sigma (mm)
-    //   p[5]  pol2_c0   — background constant
-    //   p[6]  pol2_c1   — background slope
-    //   p[7]  pol2_c2   — background curvature
+    //   p[0]  gaus_amp   — Gaussian amplitude (hits/trigger/mm at peak), forced positive via fabs()
+    //   p[1]  mu         — peak position (mm)
+    //   p[2]  sigma      — single-photon spatial resolution (mm)
+    //   p[3]  gs_amp     — broad Gaussian amplitude (right shoulder), forced positive via fabs()
+    //   p[4]  gs_sig     — broad Gaussian sigma (mm)
+    //   p[5]  pol2_c0    — background constant
+    //   p[6]  pol2_c1    — background slope
+    //   p[7]  pol2_c2    — background curvature
+    //
+    // Both signal amplitudes wrapped in fabs() to guarantee physical (non-negative)
+    // components, preventing fitter from exploring unphysical parameter space.
 
     auto full_model = [](double *x, double *p) -> double
     {
         double xx = x[0];
-        double gaus = p[0] * std::exp(-0.5 * std::pow((xx - p[1]) / p[2], 2));
-        double gs = p[3] * std::exp(-0.5 * std::pow((xx - p[1]) / p[4], 2));
+        // All amplitudes forced positive via fabs() to prevent unphysical solutions
+        double gaus = std::fabs(p[0]) * std::exp(-0.5 * std::pow((xx - p[1]) / p[2], 2));
+        double gs = std::fabs(p[3]) * std::exp(-0.5 * std::pow((xx - p[1]) / p[4], 2));
         double bkg = p[5] + p[6] * xx + p[7] * xx * xx;
         return gaus + gs + bkg;
     };
 
     int fit_line_color = kRed;
 
-    auto fit_r_dist = [&](TH1F *h) // captures fit_results
+    auto fit_r_dist = [&](TH1F *h, float fit_hi = kFitHi) // captures fit_results
     {
         float mu0 = G[2];
         float rms = h->GetRMS();
         float sig_seed = std::clamp(rms * 0.5f, 0.5f, 5.0f);
         float pk = h->GetMaximum();
 
-        // Sideband background fit over [kFitLo, kRHi] with signal masked
-        TF1 f_bkg(Form("f_bkg_%s", h->GetName()), "pol2", kFitLo, kRHi);
+        // Sideband background fit over [kFitLo, fit_hi] with signal masked
+        TF1 f_bkg(Form("f_bkg_%s", h->GetName()), "pol2", kFitLo, fit_hi);
         {
             TH1F *h_sb = (TH1F *)h->Clone(Form("h_sb_%s", h->GetName()));
             float mask = 3.5f * sig_seed;
@@ -513,16 +516,18 @@ void photon_number(std::string data_repository, std::string run_name,
         double bkg_c1 = f_bkg.GetParameter(1);
         double bkg_c2 = f_bkg.GetParameter(2);
 
-        TF1 f_model(Form("f_model_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
+        TF1 f_model(Form("f_model_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
         {
             const char *pnames[8] = {"gaus_amp", "mu", "sigma", "gs_amp", "gs_sig",
                                      "pol2_c0", "pol2_c1", "pol2_c2"};
             for (int i = 0; i < 8; ++i)
                 f_model.SetParName(i, pnames[i]);
         }
-        f_model.SetParLimits(2, 0.3, 5.0);  // sigma
-        f_model.SetParLimits(3, 0.0, 1e9);  // gs_amp >= 0
-        f_model.SetParLimits(4, 4.0, 40.0); // gs_sig > core sigma
+        // Both amplitudes forced positive via fabs() in model
+        f_model.SetParLimits(0, 1e-6, 50.); // gaus_amp (fabs applied in model)
+        f_model.SetParLimits(2, 0.3, 3.0);  // sigma
+        f_model.SetParLimits(3, 0.0, 1e9);  // gs_amp (fabs applied in model)
+        f_model.SetParLimits(4, 4.0, 10.0); // gs_sig > core sigma
 
         // Pass 1: background fixed, no broad Gaussian
         {
@@ -552,7 +557,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_model.DrawCopy("SAME");
 
         // Core Gaussian (dashed)
-        TF1 f_core(Form("f_core_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
+        TF1 f_core(Form("f_core_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_core.SetParameter(i, f_model.GetParameter(i));
         f_core.SetParameter(3, 0.);
@@ -565,7 +570,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_core.DrawCopy("SAME");
 
         // Broad Gaussian / right shoulder (dotted, orange)
-        TF1 f_gs(Form("f_gs_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
+        TF1 f_gs(Form("f_gs_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_gs.SetParameter(i, f_model.GetParameter(i));
         f_gs.SetParameter(0, 0.);
@@ -578,7 +583,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_gs.DrawCopy("SAME");
 
         // Background (dash-dot, gray)
-        TF1 f_bkg_draw(Form("f_bkgd_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
+        TF1 f_bkg_draw(Form("f_bkgd_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_bkg_draw.SetParameter(i, f_model.GetParameter(i));
         f_bkg_draw.SetParameter(0, 0.);
@@ -588,8 +593,8 @@ void photon_number(std::string data_repository, std::string run_name,
         f_bkg_draw.SetLineStyle(9);
         f_bkg_draw.DrawCopy("SAME");
 
-        // N_gamma: integrate signal only (zero background) over [kFitLo, kRHi]
-        TF1 f_sig(Form("f_sig_%s", h->GetName()), full_model, kFitLo, kRHi, 8);
+        // N_gamma: integrate signal only (zero background) over [kFitLo, fit_hi]
+        TF1 f_sig(Form("f_sig_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_sig.SetParameter(i, f_model.GetParameter(i));
         f_sig.SetParameter(5, 0.);
@@ -599,12 +604,13 @@ void photon_number(std::string data_repository, std::string run_name,
         const int kNGL = 500;
         double glX[500], glW[500];
         TF1::CalcGaussLegendreSamplingPoints(kNGL, glX, glW, 1e-10);
-        double N_gamma = f_sig.IntegralFast(kNGL, glX, glW, kFitLo, kRHi);
+        double N_gamma = f_sig.IntegralFast(kNGL, glX, glW, kFitLo, fit_hi);
+        // Error on N_gamma: simple propagation from amplitude error
         double frac_err = (f_model.GetParameter(0) > 0)
                               ? f_model.GetParError(0) / f_model.GetParameter(0)
                               : 0.;
         double N_gamma_err = N_gamma * frac_err;
-        double chi2_ndf = (res->Ndf() > 0) ? res->Chi2() / res->Ndf() : -1.;
+        double chi2_ndf = (res.Get() && res->Ndf() > 0) ? res->Chi2() / res->Ndf() : -1.;
 
         double gs_frac = f_model.GetParameter(3) / (f_model.GetParameter(0) + 1e-9);
         std::cout << "[" << h->GetName() << "]"

@@ -1,0 +1,24 @@
+[framer]
+frame_size               = 1024   # clock cycles per frame (320 MHz clock → 3.125 ns/cc)
+first_frames_trigger     = 5000   # start-of-spill frames reserved for noise measurement
+afterpulse_deadtime      = 64     # cc (~200 ns) — masks same-channel hits within this window
+trigger_secondary_window = 200    # cc (~625 ns)
+
+# QA-only timing windows. The framer reads the afterpulse_* values to tag
+# _HITMASK_afterpulse_near / _HITMASK_afterpulse_far on every hit; lightdata_writer
+# reads the ct_* values for the per-spill cross-talk scan loop.
+#
+# Sideband subtraction: near (afterpulse signal + DCR) − far (DCR only) → true afterpulse.
+# Both windows MUST be the same width — the framer derives the far window as
+#   [afterpulse_sideband_offset, afterpulse_sideband_offset + (near_hi - near_lo)]
+[qa]
+afterpulse_near_lo            =   1   # near window lower edge (cc, inclusive)
+afterpulse_near_hi            =  64   # near window upper edge (cc, inclusive); mirror of afterpulse_deadtime
+afterpulse_sideband_offset    = 256   # far window start (cc) — 4× near_hi, well past the afterpulse tail
+
+ct_scan_dt_min                =  -5   # CT scan: lower Δt cutoff (cc, inclusive)
+ct_scan_dt_max                = 200   # CT scan: upper Δt cutoff (cc, exclusive)
+ct_phys_signal_lo             =   0   # physical CT signal window lower edge (cc, inclusive)
+ct_phys_signal_hi             =  10   # physical CT signal window upper edge (cc, inclusive)
+ct_elec_signal_lo             =  -2   # electrical CT signal window lower edge (cc, inclusive)
+ct_elec_signal_hi             =  10   # electrical CT signal window upper edge (cc, inclusive)

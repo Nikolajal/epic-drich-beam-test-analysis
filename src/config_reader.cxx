@@ -1,18 +1,18 @@
-#include "config_reader.h"
+#include "util/config_reader.h"
 
-// --- readout_config_struct -----------------------------------------------
+// --- ReadoutConfigStruct -----------------------------------------------
 
-readout_config_struct::readout_config_struct(std::string _name, std::map<uint16_t, std::vector<uint16_t>> _device_chip)
+ReadoutConfigStruct::ReadoutConfigStruct(std::string _name, std::map<uint16_t, std::vector<uint16_t>> _device_chip)
     : name(_name), device_chip(_device_chip) {}
 
-void readout_config_struct::add_device_chip(uint16_t device, uint16_t chip)
+void ReadoutConfigStruct::add_device_chip(uint16_t device, uint16_t chip)
 {
     if (device_chip.find(device) == device_chip.end())
         device_chip[device] = std::vector<uint16_t>();
     device_chip[device].push_back(chip);
 }
 
-void readout_config_struct::add_device(uint16_t device)
+void ReadoutConfigStruct::add_device(uint16_t device)
 {
     if (device_chip.find(device) == device_chip.end())
         device_chip[device] = std::vector<uint16_t>();
@@ -20,37 +20,37 @@ void readout_config_struct::add_device(uint16_t device)
         device_chip[device].push_back(i_chip);
 }
 
-// --- readout_config_list -------------------------------------------------
+// --- ReadoutConfigList -------------------------------------------------
 
-readout_config_list::readout_config_list(std::vector<readout_config_struct> vec)
+ReadoutConfigList::ReadoutConfigList(std::vector<ReadoutConfigStruct> vec)
     : configs(std::move(vec)) {}
 
-readout_config_struct *readout_config_list::find_by_name(const std::string &name)
+ReadoutConfigStruct *ReadoutConfigList::find_by_name(const std::string &name)
 {
     auto it = std::find_if(configs.begin(), configs.end(),
-                           [&](const readout_config_struct &cfg)
+                           [&](const ReadoutConfigStruct &cfg)
                            { return cfg.name == name; });
     return (it != configs.end()) ? &(*it) : nullptr;
 }
 
-readout_config_struct *readout_config_list::find_by_device(uint16_t device)
+ReadoutConfigStruct *ReadoutConfigList::find_by_device(uint16_t device)
 {
     auto it = std::find_if(configs.begin(), configs.end(),
-                           [&](const readout_config_struct &cfg)
+                           [&](const ReadoutConfigStruct &cfg)
                            { return cfg.device_chip.count(device) > 0; });
     return (it != configs.end()) ? &(*it) : nullptr;
 }
 
-std::vector<readout_config_struct *> readout_config_list::find_all_by_device(uint16_t device)
+std::vector<ReadoutConfigStruct *> ReadoutConfigList::find_all_by_device(uint16_t device)
 {
-    std::vector<readout_config_struct *> out;
+    std::vector<ReadoutConfigStruct *> out;
     for (auto &cfg : configs)
         if (cfg.device_chip.count(device))
             out.push_back(&cfg);
     return out;
 }
 
-std::vector<std::string> readout_config_list::find_by_device_and_chip(uint16_t device, uint16_t chip)
+std::vector<std::string> ReadoutConfigList::find_by_device_and_chip(uint16_t device, uint16_t chip)
 {
     std::vector<std::string> out;
     for (auto &cfg : configs)
@@ -66,21 +66,21 @@ std::vector<std::string> readout_config_list::find_by_device_and_chip(uint16_t d
     return out;
 }
 
-bool readout_config_list::has_name(const std::string &name) const
+bool ReadoutConfigList::has_name(const std::string &name) const
 {
     return std::any_of(configs.begin(), configs.end(),
-                       [&](const readout_config_struct &cfg)
+                       [&](const ReadoutConfigStruct &cfg)
                        { return cfg.name == name; });
 }
 
-bool readout_config_list::has_cherenkov() { return find_by_name("cherenkov"); }
-bool readout_config_list::has_timing() { return find_by_name("timing"); }
-bool readout_config_list::has_tracking() { return find_by_name("tracking"); }
+bool ReadoutConfigList::has_cherenkov() { return find_by_name("cherenkov"); }
+bool ReadoutConfigList::has_timing() { return find_by_name("timing"); }
+bool ReadoutConfigList::has_tracking() { return find_by_name("tracking"); }
 
 // --- free utility --------------------------------------------------------
 
 std::vector<std::string> find_by_device_and_chip(
-    const std::map<std::string, readout_config_struct> &readout_config_utility,
+    const std::map<std::string, ReadoutConfigStruct> &readout_config_utility,
     uint16_t device, uint16_t chip)
 {
     std::vector<std::string> names;
@@ -99,14 +99,14 @@ std::vector<std::string> find_by_device_and_chip(
 
 // --- readout_config_reader -----------------------------------------------
 
-std::vector<readout_config_struct> readout_config_reader(std::string config_file)
+std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
 {
-    std::vector<readout_config_struct> readout_config;
-    std::map<std::string, readout_config_struct> readout_config_utility;
+    std::vector<ReadoutConfigStruct> readout_config;
+    std::map<std::string, ReadoutConfigStruct> readout_config_utility;
 
     try
     {
-        auto tbl = toml::parse_file(config_file);
+        auto tbl = toml_parse_with_cutoff(config_file);
 
         auto readout_table = tbl["readout"].as_table();
         if (!readout_table)
@@ -125,9 +125,15 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
                 continue;
 
             if (!readout_config_utility.count(cfg_name))
-                readout_config_utility[cfg_name] = readout_config_struct(cfg_name, {});
+                readout_config_utility[cfg_name] = ReadoutConfigStruct(cfg_name, {});
 
-            auto *devices_array = entry_tbl->get("devices")->as_array();
+            auto *devices_node = entry_tbl->get("devices");
+            if (!devices_node)
+            {
+                mist::logger::warning(Form("(readout_config_reader) Entry '%s' has no 'devices' key — skipping.", cfg_name.c_str()));
+                continue;
+            }
+            auto *devices_array = devices_node->as_array();
             if (!devices_array)
                 continue;
 
@@ -209,20 +215,119 @@ std::vector<readout_config_struct> readout_config_reader(std::string config_file
     return readout_config;
 }
 
-// --- run_info ------------------------------------------------------------
+// --- FramerConfReader --------------------------------------------------
 
-void run_info::read_database(std::string filename)
+FramerConfigStruct FramerConfReader(std::string config_file)
 {
-    mist::logger::info(Form("(run_info::read_database) Reading run database: %s", filename.c_str()));
+    FramerConfigStruct cfg;
+    try
+    {
+        auto tbl = toml_parse_with_cutoff(config_file);
+        auto *framer_table = tbl["framer"].as_table();
+        if (!framer_table)
+        {
+            mist::logger::warning("(FramerConfReader) No [framer] table found — using defaults.");
+            return cfg;
+        }
+        mist::logger::info(Form("(FramerConfReader) Reading framer config: %s", config_file.c_str()));
+        if (auto v = (*framer_table)["frame_size"].value<int64_t>())
+            cfg.frame_size = static_cast<uint16_t>(*v);
+        if (auto v = (*framer_table)["first_frames_trigger"].value<int64_t>())
+            cfg.first_frames_trigger = static_cast<int>(*v);
+        if (auto v = (*framer_table)["afterpulse_deadtime"].value<int64_t>())
+            cfg.afterpulse_deadtime = static_cast<uint16_t>(*v);
+        if (auto v = (*framer_table)["trigger_secondary_window"].value<int64_t>())
+            cfg.trigger_secondary_window = static_cast<uint16_t>(*v);
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(Form("(FramerConfReader) TOML parse error in '%s': %s — using defaults.",
+                                   config_file.c_str(), std::string(err.description()).c_str()));
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(Form("(FramerConfReader) Error reading '%s': %s — using defaults.",
+                                   config_file.c_str(), err.what()));
+    }
+    return cfg;
+}
+
+// --- qa_conf_reader ------------------------------------------------------
+
+QaConfigStruct qa_conf_reader(std::string config_file)
+{
+    QaConfigStruct cfg;
+    try
+    {
+        auto tbl = toml_parse_with_cutoff(config_file);
+        auto *qa_table = tbl["qa"].as_table();
+        if (!qa_table)
+        {
+            // No [qa] section — silent (defaults reproduce legacy behaviour).
+            return cfg;
+        }
+        mist::logger::info(Form("(qa_conf_reader) Reading QA config: %s", config_file.c_str()));
+
+        if (auto v = (*qa_table)["afterpulse_near_lo"].value<int64_t>())
+            cfg.afterpulse_near_lo = static_cast<int>(*v);
+        if (auto v = (*qa_table)["afterpulse_near_hi"].value<int64_t>())
+            cfg.afterpulse_near_hi = static_cast<int>(*v);
+        if (auto v = (*qa_table)["afterpulse_sideband_offset"].value<int64_t>())
+            cfg.afterpulse_sideband_offset = static_cast<int>(*v);
+
+        if (auto v = (*qa_table)["ct_scan_dt_min"].value<int64_t>())
+            cfg.ct_scan_dt_min = static_cast<int>(*v);
+        if (auto v = (*qa_table)["ct_scan_dt_max"].value<int64_t>())
+            cfg.ct_scan_dt_max = static_cast<int>(*v);
+        if (auto v = (*qa_table)["ct_phys_signal_lo"].value<int64_t>())
+            cfg.ct_phys_signal_lo = static_cast<int>(*v);
+        if (auto v = (*qa_table)["ct_phys_signal_hi"].value<int64_t>())
+            cfg.ct_phys_signal_hi = static_cast<int>(*v);
+        if (auto v = (*qa_table)["ct_elec_signal_lo"].value<int64_t>())
+            cfg.ct_elec_signal_lo = static_cast<int>(*v);
+        if (auto v = (*qa_table)["ct_elec_signal_hi"].value<int64_t>())
+            cfg.ct_elec_signal_hi = static_cast<int>(*v);
+
+        // Sanity warnings — windows must be non-empty and well-ordered.
+        if (cfg.afterpulse_near_hi < cfg.afterpulse_near_lo)
+            mist::logger::warning("(qa_conf_reader) afterpulse_near_hi < afterpulse_near_lo "
+                                  "— window will never match a Hit.");
+        const int near_width = cfg.afterpulse_near_hi - cfg.afterpulse_near_lo + 1;
+        if (cfg.afterpulse_sideband_offset < cfg.afterpulse_near_hi)
+            mist::logger::warning("(qa_conf_reader) afterpulse_sideband_offset overlaps the near "
+                                  "window — sideband subtraction will under-estimate afterpulse.");
+        if (near_width <= 0)
+            mist::logger::warning("(qa_conf_reader) afterpulse near window has non-positive width.");
+        if (cfg.ct_scan_dt_max <= cfg.ct_scan_dt_min)
+            mist::logger::warning("(qa_conf_reader) ct_scan_dt_max <= ct_scan_dt_min — CT scan will be empty.");
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(Form("(qa_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                   config_file.c_str(), std::string(err.description()).c_str()));
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(Form("(qa_conf_reader) Error reading '%s': %s — using defaults.",
+                                   config_file.c_str(), err.what()));
+    }
+    return cfg;
+}
+
+// --- RunInfo ------------------------------------------------------------
+
+void RunInfo::read_database(std::string filename)
+{
+    mist::logger::info(Form("(RunInfo::read_database) Reading run database: %s", filename.c_str()));
 
     try
     {
-        auto tbl = toml::parse_file(filename);
+        auto tbl = toml_parse_with_cutoff(filename);
 
         auto runs_table = tbl["runs"].as_table();
         if (!runs_table)
         {
-            mist::logger::warning("(run_info::read_database) No [runs] table found in TOML file.");
+            mist::logger::warning("(RunInfo::read_database) No [runs] table found in TOML file.");
             return;
         }
 
@@ -236,7 +341,7 @@ void run_info::read_database(std::string filename)
             auto &cur = run_info_database[std::string(run_id)];
 
             //  Helper: inherit field from previous run if absent
-            auto prev = [&]() -> run_info_struct *
+            auto prev = [&]() -> RunInfoStruct *
             {
                 return previous_run_id.empty() ? nullptr : &run_info_database[previous_run_id];
             };
@@ -293,29 +398,29 @@ void run_info::read_database(std::string filename)
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(run_info::read_database) Failed to parse '%s': %s",
+        mist::logger::warning(Form("(RunInfo::read_database) Failed to parse '%s': %s",
                                    filename.c_str(), std::string(err.description()).c_str()));
     }
 }
 
-const std::optional<run_info_struct> run_info::get_run_info(const std::string &run_id)
+const std::optional<RunInfoStruct> RunInfo::get_run_info(const std::string &run_id)
 {
     auto it = run_info_database.find(run_id);
     return (it != run_info_database.end()) ? std::optional{it->second} : std::nullopt;
 }
 
-void run_info::read_runslists(std::string runlist_file)
+void RunInfo::read_runslists(std::string runlist_file)
 {
-    mist::logger::info(Form("(run_info::read_runslists) Reading run list: %s", runlist_file.c_str()));
+    mist::logger::info(Form("(RunInfo::read_runslists) Reading run list: %s", runlist_file.c_str()));
 
     try
     {
-        auto tbl = toml::parse_file(runlist_file);
+        auto tbl = toml_parse_with_cutoff(runlist_file);
 
         auto runlists_table = tbl["runlists"].as_table();
         if (!runlists_table)
         {
-            mist::logger::warning("(run_info::read_runslists) No [runlists] table found in TOML file.");
+            mist::logger::warning("(RunInfo::read_runslists) No [runlists] table found in TOML file.");
             return;
         }
 
@@ -326,20 +431,21 @@ void run_info::read_runslists(std::string runlist_file)
                 continue;
 
             auto &current_runlist = run_list_database[std::string(runlist_name)];
-            if (auto *runs_array = runlist_tbl->get("runs")->as_array())
-                for (auto &r : *runs_array)
-                    if (auto run_str = r.value<std::string>())
-                        current_runlist.push_back(*run_str);
+            if (auto *runs_node = runlist_tbl->get("runs"))
+                if (auto *runs_array = runs_node->as_array())
+                    for (auto &r : *runs_array)
+                        if (auto run_str = r.value<std::string>())
+                            current_runlist.push_back(*run_str);
         }
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(run_info::read_runslists) Failed to parse '%s': %s",
+        mist::logger::warning(Form("(RunInfo::read_runslists) Failed to parse '%s': %s",
                                    runlist_file.c_str(), std::string(err.description()).c_str()));
     }
 }
 
-const std::optional<std::vector<std::string>> run_info::get_run_list(const std::string &runlist_name)
+const std::optional<std::vector<std::string>> RunInfo::get_run_list(const std::string &runlist_name)
 {
     auto it = run_list_database.find(runlist_name);
     return (it != run_list_database.end()) ? std::optional{it->second} : std::nullopt;
@@ -347,5 +453,5 @@ const std::optional<std::vector<std::string>> run_info::get_run_list(const std::
 
 // --- static member definitions -------------------------------------------
 
-std::unordered_map<std::string, run_info_struct> run_info::run_info_database = {};
-std::unordered_map<std::string, std::vector<std::string>> run_info::run_list_database = {};
+std::unordered_map<std::string, RunInfoStruct> RunInfo::run_info_database = {};
+std::unordered_map<std::string, std::vector<std::string>> RunInfo::run_list_database = {};

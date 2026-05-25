@@ -1,5 +1,15 @@
 #pragma once
 
+/**
+ * @file AlcorSpilldata.h
+ * @brief Per-spill metadata: dead-channel masks, active-participant masks,
+ *        and the @ref AlcorLightdataStruct payload for the spill.
+ *
+ * Written once per spill by @c lightdata_writer.  Includes the per-device
+ * bitmasks used downstream to suppress hits from channels that were dead or
+ * never participated during the spill, plus the spill-level trigger info.
+ */
+
 #include <vector>
 #include <iostream>
 #include <cstdint>
@@ -21,7 +31,7 @@
  * Compact, flat representation suitable for ROOT TTree serialisation, as ROOT
  * cannot natively branch a @c std::map.
  */
-struct data_mask_struct
+struct DataMaskStruct
 {
     uint8_t device; ///< Device (ALCOR chip) identifier.
     uint32_t mask;  ///< Bitmask encoding channel states (e.g. alive/dead).
@@ -42,37 +52,37 @@ struct data_mask_struct
  *       vectors are reallocated.  They are always kept in sync with the
  *       corresponding vector via @c clear() and @c prepare_tree_fill().
  */
-struct alcor_spilldata_struct
+struct AlcorSpilldataStruct
 {
     // --- Special members ------------------------------------------------
-    alcor_spilldata_struct() noexcept = default;
+    AlcorSpilldataStruct() noexcept = default;
 
-    alcor_spilldata_struct(alcor_spilldata_struct &&) noexcept = default;
-    alcor_spilldata_struct &operator=(alcor_spilldata_struct &&) noexcept = default;
+    AlcorSpilldataStruct(AlcorSpilldataStruct &&) noexcept = default;
+    AlcorSpilldataStruct &operator=(AlcorSpilldataStruct &&) noexcept = default;
 
-    alcor_spilldata_struct(const alcor_spilldata_struct &) = default;
-    alcor_spilldata_struct &operator=(const alcor_spilldata_struct &) = default;
+    AlcorSpilldataStruct(const AlcorSpilldataStruct &) = default;
+    AlcorSpilldataStruct &operator=(const AlcorSpilldataStruct &) = default;
 
     // --- Working maps (random-access processing) ------------------------
     std::map<uint8_t, uint32_t> dead_mask;                          ///< device → dead-channel bitmask.
     std::map<uint8_t, uint32_t> participants_mask;                  ///< device → participating-channel bitmask.
-    std::map<uint32_t, alcor_lightdata_struct> frame_and_lightdata; ///< frame_id → light-data payload.
+    std::map<uint32_t, AlcorLightdataStruct> frame_and_lightdata; ///< frame_id → light-data payload.
 
     // --- Flat vectors (ROOT TTree serialisation) -------------------------
-    std::vector<data_mask_struct> dead_mask_list;                ///< Flat copy of @c dead_mask for TTree output.
-    std::vector<data_mask_struct> participants_mask_list;        ///< Flat copy of @c participants_mask for TTree output.
+    std::vector<DataMaskStruct> dead_mask_list;                ///< Flat copy of @c dead_mask for TTree output.
+    std::vector<DataMaskStruct> participants_mask_list;        ///< Flat copy of @c participants_mask for TTree output.
     std::vector<uint32_t> frame_reference;                       ///< Ordered list of frame IDs written to the TTree.
-    std::vector<alcor_lightdata_struct> lightdata_list_in_frame; ///< Light-data entries parallel to @c frame_reference.
+    std::vector<AlcorLightdataStruct> lightdata_list_in_frame; ///< Light-data entries parallel to @c frame_reference.
 
     // --- Branch-address pointers (ROOT internal use) --------------------
     //  @warning These are intentionally NOT initialised here. Taking the address
     //           of a sibling member in a default member initialiser is UB, and
     //           after any copy/move the pointers would dangle into the source
     //           object. They are set correctly by clear() and prepare_tree_fill().
-    std::vector<data_mask_struct> *dead_mask_list_ptr;                ///< Stable pointer for ROOT branch address.
-    std::vector<data_mask_struct> *participants_mask_list_ptr;        ///< Stable pointer for ROOT branch address.
+    std::vector<DataMaskStruct> *dead_mask_list_ptr;                ///< Stable pointer for ROOT branch address.
+    std::vector<DataMaskStruct> *participants_mask_list_ptr;        ///< Stable pointer for ROOT branch address.
     std::vector<uint32_t> *frame_reference_ptr;                       ///< Stable pointer for ROOT branch address.
-    std::vector<alcor_lightdata_struct> *lightdata_list_in_frame_ptr; ///< Stable pointer for ROOT branch address.
+    std::vector<AlcorLightdataStruct> *lightdata_list_in_frame_ptr; ///< Stable pointer for ROOT branch address.
 
     /**
      * @brief Resets all members to an empty state and re-synchronises the
@@ -82,20 +92,20 @@ struct alcor_spilldata_struct
 };
 
 // ============================================================================
-//  alcor_spilldata class
+//  AlcorSpilldata class
 // ============================================================================
 
 /**
  * @brief High-level accessor class for one beam-spill worth of ALCOR data.
  *
- * Wraps an @c alcor_spilldata_struct and adds:
+ * Wraps an @c AlcorSpilldataStruct and adds:
  *  - Typed getters/setters (both by value and by reference).
  *  - Frame-level helpers (trigger queries, selective frame suppression).
  *  - ROOT TTree I/O (@c link_to_tree / @c write_to_tree / @c prepare_tree_fill).
  *
- * Inherits from @c alcor_lightdata to reuse common hit-decoding infrastructure.
+ * Inherits from @c AlcorLightdata to reuse common Hit-decoding infrastructure.
  */
-class alcor_spilldata : public alcor_lightdata
+class AlcorSpilldata : public AlcorLightdata
 {
 public:
     // -----------------------------------------------------------------------
@@ -103,23 +113,23 @@ public:
     // -----------------------------------------------------------------------
 
     /// @brief Default constructor — initialises to an empty spill.
-    alcor_spilldata() { spilldata.clear(); }
+    AlcorSpilldata() { spilldata.clear(); }
 
     /**
      * @brief Construct from an existing spill-data struct (copied).
      * @param v  Source struct; copied into internal storage.
      */
-    explicit alcor_spilldata(const alcor_spilldata_struct &v) : spilldata(v) {}
+    explicit AlcorSpilldata(const AlcorSpilldataStruct &v) : spilldata(v) {}
 
     // -----------------------------------------------------------------------
     //  Getters — by value (deep copy)
     // -----------------------------------------------------------------------
 
     /// @brief Returns a full copy of the internal spill-data struct.
-    alcor_spilldata_struct get_spilldata() const { return spilldata; }
+    AlcorSpilldataStruct get_spilldata() const { return spilldata; }
 
     /// @brief Returns a copy of the frame → light-data map.
-    std::map<uint32_t, alcor_lightdata_struct> get_frame() const { return spilldata.frame_and_lightdata; }
+    std::map<uint32_t, AlcorLightdataStruct> get_frame() const { return spilldata.frame_and_lightdata; }
 
     /// @brief Returns a copy of the device → participants-mask map.
     std::map<uint8_t, uint32_t> get_participants_mask() const { return spilldata.participants_mask; }
@@ -128,7 +138,7 @@ public:
     std::map<uint8_t, uint32_t> get_dead_mask() const { return spilldata.dead_mask; }
 
     /// @brief Returns a copy of the flat light-data vector (TTree representation).
-    std::vector<alcor_lightdata_struct> get_frame_list() const { return spilldata.lightdata_list_in_frame; }
+    std::vector<AlcorLightdataStruct> get_frame_list() const { return spilldata.lightdata_list_in_frame; }
 
     /// @brief Returns a copy of the flat frame-reference vector (TTree representation).
     std::vector<uint32_t> get_frame_reference_list() const { return spilldata.frame_reference; }
@@ -138,10 +148,10 @@ public:
     // -----------------------------------------------------------------------
 
     /// @brief Returns a mutable reference to the internal spill-data struct.
-    alcor_spilldata_struct &get_spilldata_link() { return spilldata; }
+    AlcorSpilldataStruct &get_spilldata_link() { return spilldata; }
 
     /// @brief Returns a mutable reference to the frame → light-data map.
-    std::map<uint32_t, alcor_lightdata_struct> &get_frame_link() { return spilldata.frame_and_lightdata; }
+    std::map<uint32_t, AlcorLightdataStruct> &get_frame_link() { return spilldata.frame_and_lightdata; }
 
     /// @brief Returns a mutable reference to the participants-mask map.
     std::map<uint8_t, uint32_t> &get_participants_mask_link() { return spilldata.participants_mask; }
@@ -150,48 +160,48 @@ public:
     std::map<uint8_t, uint32_t> &get_dead_mask_link() { return spilldata.dead_mask; }
 
     /// @brief Returns a mutable reference to the flat light-data vector.
-    std::vector<alcor_lightdata_struct> &get_frame_list_link() { return spilldata.lightdata_list_in_frame; }
+    std::vector<AlcorLightdataStruct> &get_frame_list_link() { return spilldata.lightdata_list_in_frame; }
 
     /// @brief Returns a mutable reference to the flat frame-reference vector.
     std::vector<uint32_t> &get_frame_reference_list_link() { return spilldata.frame_reference; }
 
     // -----------------------------------------------------------------------
-    //  Per-frame hit-vector getters
+    //  Per-frame Hit-vector getters
     // -----------------------------------------------------------------------
 
     /**
-     * @brief Returns a mutable reference to the trigger-hit list for a given frame.
+     * @brief Returns a mutable reference to the trigger-Hit list for a given frame.
      * @param index_of_frame  Frame ID key in the frame map.
      */
-    std::vector<trigger_event> &get_frame_trigger_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].trigger_hits; }
+    std::vector<TriggerEvent> &get_frame_trigger_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].trigger_hits; }
 
     /**
-     * @brief Returns a mutable reference to the timing-hit list for a given frame.
+     * @brief Returns a mutable reference to the timing-Hit list for a given frame.
      * @param index_of_frame  Frame ID key in the frame map.
      */
-    std::vector<alcor_finedata_struct> &get_frame_timing_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].timing_hits; }
+    std::vector<AlcorFinedataStruct> &get_frame_timing_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].timing_hits; }
 
     /**
-     * @brief Returns a mutable reference to the tracking-hit list for a given frame.
+     * @brief Returns a mutable reference to the tracking-Hit list for a given frame.
      * @param index_of_frame  Frame ID key in the frame map.
      */
-    std::vector<alcor_finedata_struct> &get_frame_tracking_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].tracking_hits; }
+    std::vector<AlcorFinedataStruct> &get_frame_tracking_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].tracking_hits; }
 
     /**
-     * @brief Returns a mutable reference to the Cherenkov-hit list for a given frame.
+     * @brief Returns a mutable reference to the Cherenkov-Hit list for a given frame.
      * @param index_of_frame  Frame ID key in the frame map.
      */
-    std::vector<alcor_finedata_struct> &get_frame_cherenkov_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].cherenkov_hits; }
+    std::vector<AlcorFinedataStruct> &get_frame_cherenkov_hits(uint32_t index_of_frame) { return spilldata.frame_and_lightdata[index_of_frame].cherenkov_hits; }
 
     // -----------------------------------------------------------------------
     //  Setters — by value (deep copy)
     // -----------------------------------------------------------------------
 
     /// @brief Replaces the internal spill-data struct (copied).
-    void set_spilldata(alcor_spilldata_struct v) { spilldata = v; }
+    void set_spilldata(AlcorSpilldataStruct v) { spilldata = v; }
 
     /// @brief Replaces the frame → light-data map (copied).
-    void set_frame(std::map<uint32_t, alcor_lightdata_struct> v) { spilldata.frame_and_lightdata = v; }
+    void set_frame(std::map<uint32_t, AlcorLightdataStruct> v) { spilldata.frame_and_lightdata = v; }
 
     /// @brief Replaces the participants-mask map (copied).
     void set_participants_mask(std::map<uint8_t, uint32_t> v) { spilldata.participants_mask = v; }
@@ -204,10 +214,10 @@ public:
     // -----------------------------------------------------------------------
 
     /// @brief Replaces the internal spill-data struct (move-assigned from reference).
-    void set_spilldata_link(alcor_spilldata_struct &v) { spilldata = v; }
+    void set_spilldata_link(AlcorSpilldataStruct &v) { spilldata = v; }
 
     /// @brief Replaces the frame map (move-assigned from reference).
-    void set_frame_link(std::map<uint32_t, alcor_lightdata_struct> &v) { spilldata.frame_and_lightdata = v; }
+    void set_frame_link(std::map<uint32_t, AlcorLightdataStruct> &v) { spilldata.frame_and_lightdata = v; }
 
     /// @brief Replaces the participants-mask map (move-assigned from reference).
     void set_participants_mask_link(std::map<uint8_t, uint32_t> &v) { spilldata.participants_mask = v; }
@@ -229,17 +239,17 @@ public:
     }
 
     /**
-     * @brief Returns @c true if the given frame contains at least one trigger hit.
+     * @brief Returns @c true if the given frame contains at least one trigger Hit.
      * @param index_of_frame  Frame ID to query.
      */
     bool has_trigger(uint32_t index_of_frame) { return !spilldata.frame_and_lightdata[index_of_frame].trigger_hits.empty(); }
 
     /**
-     * @brief Appends a trigger event to the hit list of the specified frame.
+     * @brief Appends a trigger event to the Hit list of the specified frame.
      * @param index_of_frame  Target frame ID.
      * @param trg             Trigger event to append.
      */
-    void add_trigger_to_frame(uint32_t index_of_frame, trigger_event trg) { spilldata.frame_and_lightdata[index_of_frame].trigger_hits.push_back(trg); }
+    void add_trigger_to_frame(uint32_t index_of_frame, TriggerEvent trg) { spilldata.frame_and_lightdata[index_of_frame].trigger_hits.push_back(trg); }
 
     /**
      * @brief Marks a frame to be excluded from the next TTree fill.
@@ -323,7 +333,7 @@ public:
     void get_entry() {}
 
 private:
-    alcor_spilldata_struct spilldata;                                ///< Owned spill-data payload.
+    AlcorSpilldataStruct spilldata;                                ///< Owned spill-data payload.
     std::unordered_map<uint32_t, bool> frame_reference_for_deletion; ///< Frame IDs suppressed from TTree output.
 };
 
@@ -332,13 +342,13 @@ private:
 // ============================================================================
 
 /**
- * @brief Merges @p rhs into @p lhs by moving all hit vectors (trigger, timing,
+ * @brief Merges @p rhs into @p lhs by moving all Hit vectors (trigger, timing,
  *        tracking, Cherenkov) from @p rhs into @p lhs.
  *
  * @param lhs  Destination light-data struct (modified in place).
  * @param rhs  Source light-data struct (consumed; left in a valid but unspecified state).
  */
-void merge_lightdata(alcor_lightdata_struct &lhs, alcor_lightdata_struct &&rhs);
+void merge_lightdata(AlcorLightdataStruct &lhs, AlcorLightdataStruct &&rhs);
 
 /**
  * @brief Merges @p rhs into @p lhs for all three working maps.
@@ -350,25 +360,25 @@ void merge_lightdata(alcor_lightdata_struct &lhs, alcor_lightdata_struct &&rhs);
  * @param lhs  Destination struct (modified in place).
  * @param rhs  Source struct (consumed).
  */
-void merge(alcor_spilldata_struct &lhs, alcor_spilldata_struct &&rhs);
+void merge(AlcorSpilldataStruct &lhs, AlcorSpilldataStruct &&rhs);
 
 /**
  * @brief Convenience overload of @c merge for the wrapper class.
  * @param lhs  Destination (modified in place).
  * @param rhs  Source (consumed).
  */
-void merge(alcor_spilldata &lhs, alcor_spilldata &&rhs);
+void merge(AlcorSpilldata &lhs, AlcorSpilldata &&rhs);
 
 /**
- * @brief Addition operator for @c alcor_spilldata_struct — currently unreliable.
+ * @brief Addition operator for @c AlcorSpilldataStruct — currently unreliable.
  * @warning This operator is under revision; results may be incorrect.
  *          Prefer @c merge() for production code.
  */
-alcor_spilldata_struct operator+(alcor_spilldata_struct lhs, alcor_spilldata_struct rhs);
+AlcorSpilldataStruct operator+(AlcorSpilldataStruct lhs, AlcorSpilldataStruct rhs);
 
 /**
- * @brief Addition operator for @c alcor_spilldata — currently unreliable.
+ * @brief Addition operator for @c AlcorSpilldata — currently unreliable.
  * @warning This operator is under revision; results may be incorrect.
  *          Prefer @c merge() for production code.
  */
-alcor_spilldata operator+(alcor_spilldata lhs, const alcor_spilldata &rhs);
+AlcorSpilldata operator+(AlcorSpilldata lhs, const AlcorSpilldata &rhs);

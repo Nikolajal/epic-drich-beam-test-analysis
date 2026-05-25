@@ -130,7 +130,7 @@ using ResultMap = std::map<ResultKey, ResultEntry>;
  *
  * // Later, in a plotting macro …
  * auto m  = ar.load();
- * auto *g = make_graph(m, run_list, vbias_vals, "1350", "ex_gap.n_gamma");
+ * auto *g = make_graph(m, RunList, vbias_vals, "1350", "ex_gap.n_gamma");
  * @endcode
  */
 class AnalysisResults
@@ -147,7 +147,7 @@ public:
      * @param path  Filesystem path to the ROOT result file,
      *              e.g. @c "extData/standard_results.root".
      */
-    explicit AnalysisResults(const std::string &path);
+    explicit AnalysisResults(const std::string &path) : fPath(path) {}
 
     // ── I/O ──────────────────────────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ public:
      * @param value  Central value to store.
      * @param error  Associated uncertainty (default 0).
      */
-    void update(const ResultKey &key, double value, double error = 0.) const;
+    void update(const ResultKey &key, double value, double error = 0.) const { update(ResultMap{{key, {value, error}}}); }
 
     /**
      * @brief Return the filesystem path this handle points to.
