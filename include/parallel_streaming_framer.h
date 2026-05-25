@@ -148,10 +148,13 @@ public:
 
     /**
      * @brief Returns the number of triggers registered from the configuration file.
-     * @return Number of triggers registered from the configuration file.
-     * @todo Trigger number should be assigned by program, and checked to avoid using reserved numbers > should be [0-100[
+     *        Counts both device-mode and channel-mode entries.
+     * @return Total registered triggers.
      */
-    int get_registered_triggers() { return triggers.size(); }
+    int get_registered_triggers() { return static_cast<int>(trigger_config.size()); }
+
+    /// @return Const reference to the parsed trigger configuration (both maps + ordered list).
+    const TriggerConfigSet &get_trigger_config() const { return trigger_config; }
 
     /**
      * @brief Returns the fine tune distribution per tdc index.
@@ -384,7 +387,7 @@ private:
      *         @c frame_mutexes.  Acquired before the frame mutex itself. */
     std::mutex frame_mutexes_access;
 
-    /** @brief Protects writes to @ref unknown_triggers_seen. */
+    /** @brief Protects writes to @ref unknown_trigger_devices_seen. */
     std::mutex triggers_map_mutex;
 
     /** @brief Protects creation of new spill participants and dead-channel masks. */
@@ -447,11 +450,11 @@ private:
     /// @name Configuration
     /// @{
 
-    /** @brief Ordered list of trigger configurations loaded from file. */
-    std::vector<TriggerConfig> triggers;
+    /** @brief Parsed trigger configuration — device-mode map, channel-mode map, ordered list. */
+    TriggerConfigSet trigger_config;
 
-    /** @brief Tracks (device, fifo, column, pixel) tuples already logged as unknown triggers (deduplication). */
-    std::unordered_set<uint64_t> unknown_triggers_seen;
+    /** @brief Tracks device IDs already logged as "tagged trigger from unknown device" (deduplication). */
+    std::unordered_set<uint16_t> unknown_trigger_devices_seen;
 
     /** @brief Readout configuration (channel masking, thresholds, etc.). */
     ReadoutConfigList readout_config;

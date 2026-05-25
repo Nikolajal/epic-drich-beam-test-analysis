@@ -5,6 +5,22 @@
  * Keeps the toml++ parser and `<mist/logger>` dependencies behind the .cxx
  * boundary so `triggers.h` stays cheap for callers that only need the
  * @ref TriggerNumber / @ref TriggerEvent / @ref TriggerRegistry types.
+ *
+ * ## Design notes
+ *
+ * Two trigger modes, no scoring, no wildcards (see DISCUSSION.md → D-05):
+ *
+ * - **Device-mode**: the hardware tag is the discriminator.  A `[[trigger]]`
+ *   entry with no source-selector keys (no `fifo`, no `column`, no `pixel`)
+ *   becomes a @ref DeviceTrigger indexed by `device`.
+ *
+ * - **Channel-mode**: a normal data channel is forced into the trigger path.
+ *   A `[[trigger]]` entry with `fifo` AND a channel position
+ *   (`column + pixel`, or `eo_channel`) becomes a @ref ChannelTrigger
+ *   indexed by `pack_channel_key(device, fifo, column, pixel)`.
+ *
+ * Anything else (partial channel-mode, lingering `chip` / `use_hit` from the
+ * old schema) is rejected with a clear error pointing at the entry's name.
  */
 
 #include "triggers.h"
@@ -13,10 +29,66 @@
 #include "util/toml_utils.h"
 #include <mist/logger/logger.h>
 
-std::vector<TriggerConfig>
+namespace
+{
+    /// @brief Classification of a `[[trigger]]` TOML entry.
+    enum class TriggerMode
+    {
+        Device,    ///< No source selectors → DeviceTrigger.
+        Channel,   ///< fifo + (column+pixel | eo_channel) → ChannelTrigger.
+        Invalid    ///< Partial / mixed / unrecognised — rejected.
+    };
+
+    /// @brief Snapshot of which selector keys are present on a TOML entry.
+    struct EntryShape
+    {
+        bool has_fifo       = false;
+        bool has_column     = false;
+        bool has_pixel      = false;
+        bool has_eo_channel = false;
+        bool has_chip       = false;   ///< Legacy, rejected.
+        bool has_use_hit    = false;   ///< Legacy, rejected.
+    };
+
+    EntryShape inspect_entry(const toml::table &entry)
+    {
+        EntryShape s;
+        s.has_fifo       = entry.contains("fifo");
+        s.has_column     = entry.contains("column");
+        s.has_pixel      = entry.contains("pixel");
+        s.has_eo_channel = entry.contains("eo_channel");
+        s.has_chip       = entry.contains("chip");
+        s.has_use_hit    = entry.contains("use_hit");
+        return s;
+    }
+
+    /// @brief Decide which mode an entry belongs to (or that it's malformed).
+    ///
+    /// The classification is purely structural — index/device/delay sanity
+    /// is checked by the caller after the mode is known.
+    TriggerMode classify(const EntryShape &s)
+    {
+        const bool any_channel_selector = s.has_fifo || s.has_column
+                                       || s.has_pixel || s.has_eo_channel;
+        if (!any_channel_selector)
+            return TriggerMode::Device;
+
+        // Channel-mode must have fifo + a channel position.
+        if (!s.has_fifo)
+            return TriggerMode::Invalid;
+
+        const bool has_col_pix = s.has_column && s.has_pixel;
+        if (!has_col_pix && !s.has_eo_channel)
+            return TriggerMode::Invalid;
+
+        return TriggerMode::Channel;
+    }
+}
+
+TriggerConfigSet
 trigger_conf_reader(const std::string &config_file)
 {
-    std::vector<TriggerConfig> triggers;
+    TriggerConfigSet out;
 
     toml::table tbl;
     try
@@ -26,10 +98,9 @@ trigger_conf_reader(const std::string &config_file)
     catch (const toml::parse_error &e)
     {
         mist::logger::error("(trigger_conf_reader) Failed to parse trigger config \"" +
-                            config_file +
-                            "\": " +
+                            config_file + "\": " +
                             std::string(e.description()));
-        return triggers;
+        return out;
     }
 
     mist::logger::info("(trigger_conf_reader) Loaded trigger config: " + config_file);
@@ -39,14 +110,12 @@ trigger_conf_reader(const std::string &config_file)
     {
         mist::logger::warning("(trigger_conf_reader) No [[trigger]] entries found in \"" +
                               config_file + "\"");
-        return triggers;
+        return out;
     }
 
-    // Tracks which indices in [0, 99] are already claimed.
-    // Flat bool array: O(1) insert/lookup, trivially sized for 100 slots.
+    // Track claimed slots in [0, 99] to enforce index uniqueness across both modes.
     bool used_indices[100] = {};
 
-    // Returns the earliest free slot in [0, 99], or -1 if all are taken.
     auto earliest_free = [&]() -> int
     {
         for (int i = 0; i < 100; ++i)
@@ -55,91 +124,201 @@ trigger_conf_reader(const std::string &config_file)
         return -1;
     };
 
+    // Reassign or accept the index, returning -1 on hard failure (no free slot).
+    auto resolve_index = [&](const std::string &name, uint16_t raw_index) -> int
+    {
+        const bool out_of_range = raw_index > 99;
+        const bool duplicate    = !out_of_range && used_indices[raw_index];
+
+        if (!out_of_range && !duplicate)
+        {
+            used_indices[raw_index] = true;
+            return static_cast<int>(raw_index);
+        }
+
+        const int free_slot = earliest_free();
+        if (free_slot == -1)
+        {
+            mist::logger::error("(trigger_conf_reader) \"" + name + "\" has " +
+                                (duplicate ? "duplicate" : "out-of-range") +
+                                " index " + std::to_string(raw_index) +
+                                " and no free slot remains in [0, 99] — entry dropped");
+            return -1;
+        }
+        mist::logger::warning("(trigger_conf_reader) \"" + name + "\" has " +
+                              (duplicate ? "duplicate" : "out-of-range") +
+                              " index " + std::to_string(raw_index) +
+                              " (valid range: 0–99, unique) — reassigned to " +
+                              std::to_string(free_slot));
+        used_indices[free_slot] = true;
+        return free_slot;
+    };
+
     for (const auto &node : *arr)
     {
         const auto *entry = node.as_table();
         if (!entry)
             continue;
 
-        // Validate all required keys are present
+        // Required keys common to both modes.
         if (!entry->contains("name") || !entry->contains("index") ||
             !entry->contains("device") || !entry->contains("delay"))
         {
-            mist::logger::warning("(trigger_conf_reader) Skipping incomplete [[trigger]] entry (missing required key)");
+            mist::logger::warning("(trigger_conf_reader) Skipping incomplete [[trigger]] "
+                                  "entry (missing one of: name, index, device, delay)");
             continue;
         }
 
-        TriggerConfig cfg;
-        cfg.name = entry->at("name").value_or(std::string{});
-        uint16_t raw_index = static_cast<uint16_t>(entry->at("index").value_or(0));
-        cfg.device = static_cast<uint16_t>(entry->at("device").value_or(0));
-        cfg.delay = static_cast<uint16_t>(entry->at("delay").value_or(0));
-        auto read_opt_i16 = [&](const char *key) -> int16_t
+        const std::string name = entry->at("name").value_or(std::string{});
+        const auto raw_index   = static_cast<uint16_t>(entry->at("index").value_or(0));
+        const auto device      = static_cast<uint16_t>(entry->at("device").value_or(0));
+        const auto delay       = static_cast<uint16_t>(entry->at("delay").value_or(0));
+
+        const EntryShape shape = inspect_entry(*entry);
+
+        // Legacy fields: warn and ignore.
+        if (shape.has_chip)
+            mist::logger::warning("(trigger_conf_reader) \"" + name +
+                                  "\": `chip` field is deprecated and ignored "
+                                  "(use channel-mode with fifo + column/pixel or eo_channel).");
+        if (shape.has_use_hit)
+            mist::logger::warning("(trigger_conf_reader) \"" + name +
+                                  "\": `use_hit` field is deprecated and ignored "
+                                  "(channel-mode now subsumes that behaviour).");
+
+        const TriggerMode mode = classify(shape);
+        if (mode == TriggerMode::Invalid)
         {
-            return entry->contains(key)
-                       ? static_cast<int16_t>(entry->at(key).value_or(-1))
-                       : int16_t(-1);
-        };
-        cfg.fifo   = read_opt_i16("fifo");
-        cfg.chip   = read_opt_i16("chip");
-        cfg.column = read_opt_i16("column");
-        cfg.pixel  = read_opt_i16("pixel");
-        cfg.use_hit = entry->contains("use_hit") && entry->at("use_hit").value_or(false);
+            mist::logger::error("(trigger_conf_reader) \"" + name +
+                                "\": malformed entry. Must be either:\n"
+                                "  - device-mode: only {name, index, device, delay}, or\n"
+                                "  - channel-mode: {name, index, device, delay, fifo} "
+                                "PLUS {column, pixel} or eo_channel.");
+            continue;
+        }
 
-        // Validate fifo/chip consistency: if both are set they must agree.
-        if (cfg.fifo >= 0 && cfg.chip >= 0 && cfg.fifo / 4 != cfg.chip)
-            mist::logger::warning("(trigger_conf_reader) Trigger \"" + cfg.name +
-                                  "\": fifo=" + std::to_string(cfg.fifo) +
-                                  " is on chip " + std::to_string(cfg.fifo / 4) +
-                                  " but chip=" + std::to_string(cfg.chip) +
-                                  " — these constraints are contradictory and will never match.");
+        const int resolved = resolve_index(name, raw_index);
+        if (resolved < 0)
+            continue;
+        const auto idx = static_cast<uint8_t>(resolved);
 
-        // Enforce [0, 99] index range — [100, 255] is reserved for built-in triggers.
-        // Also catches duplicates: an already-used in-range index is treated the same
-        // as an out-of-range one and gets reassigned to the earliest free slot.
-        bool out_of_range = raw_index > 99;
-        bool duplicate = !out_of_range && used_indices[raw_index];
-
-        if (out_of_range || duplicate)
+        if (mode == TriggerMode::Device)
         {
-            int free_slot = earliest_free();
-            if (free_slot == -1)
+            // Reject duplicate device — same device cannot host two device-mode triggers.
+            if (auto existing_it = out.by_device.find(device); existing_it != out.by_device.end())
             {
-                mist::logger::error("(trigger_conf_reader) \"" +
-                                    cfg.name +
-                                    (duplicate ? "\" has duplicate index " : "\" has out-of-range index ") +
-                                    std::to_string(raw_index) +
-                                    " and no free slot remains in [0, 99] — entry dropped");
+                mist::logger::error("(trigger_conf_reader) \"" + name +
+                                    "\": device " + std::to_string(device) +
+                                    " already has device-mode trigger \"" + existing_it->second.name +
+                                    "\" — entry dropped.");
+                // The slot was claimed — release it so other entries can use it.
+                used_indices[idx] = false;
                 continue;
             }
 
-            mist::logger::warning("(trigger_conf_reader) \"" +
-                                  cfg.name +
-                                  (duplicate ? "\" has duplicate index " : "\" has out-of-range index ") +
-                                  std::to_string(raw_index) +
-                                  " (valid range: 0-99, unique) — reassigned to earliest available index " +
-                                  std::to_string(free_slot));
-            raw_index = static_cast<uint16_t>(free_slot);
+            DeviceTrigger dt;
+            dt.name   = name;
+            dt.index  = idx;
+            dt.delay  = delay;
+            dt.device = device;
+            out.by_device.emplace(device, std::move(dt));
+            out.ordered_index_name.emplace_back(idx, name);
+
+            mist::logger::info("(trigger_conf_reader) device-mode trigger \"" + name +
+                               "\" | index=" + std::to_string(idx) +
+                               " | device=" + std::to_string(device) +
+                               " | delay=" + std::to_string(delay));
+            continue;
         }
 
-        cfg.index = static_cast<uint8_t>(raw_index);
-        used_indices[cfg.index] = true;
-        triggers.push_back(cfg);
+        // Channel-mode: extract fifo + channel position.
+        const auto fifo = static_cast<uint16_t>(entry->at("fifo").value_or(0));
 
-        auto sel_str = [](const char *label, int16_t val) -> std::string
+        uint8_t column = 0;
+        uint8_t pixel  = 0;
+
+        if (shape.has_column && shape.has_pixel)
         {
-            return val >= 0 ? std::string(" | ") + label + "=" + std::to_string(val) : "";
-        };
-        mist::logger::info("(trigger_conf_reader) Loaded trigger \"" + cfg.name +
-                           "\" | index=" + std::to_string(static_cast<int>(cfg.index)) +
-                           " | device=" + std::to_string(cfg.device) +
-                           sel_str("fifo",   cfg.fifo) +
-                           sel_str("chip",   cfg.chip) +
-                           sel_str("column", cfg.column) +
-                           sel_str("pixel",  cfg.pixel) +
-                           " | delay=" + std::to_string(cfg.delay) +
-                           (cfg.use_hit ? " | use_hit=true" : ""));
+            column = static_cast<uint8_t>(entry->at("column").value_or(0));
+            pixel  = static_cast<uint8_t>(entry->at("pixel").value_or(0));
+
+            if (column > 7 || pixel > 3)
+            {
+                mist::logger::error("(trigger_conf_reader) \"" + name +
+                                    "\": column=" + std::to_string(column) +
+                                    ", pixel=" + std::to_string(pixel) +
+                                    " out of range (column ∈ [0,7], pixel ∈ [0,3]) — entry dropped.");
+                used_indices[idx] = false;
+                continue;
+            }
+
+            // Cross-check against eo_channel if both forms were given.
+            if (shape.has_eo_channel)
+            {
+                const int eo = static_cast<int>(entry->at("eo_channel").value_or(-1));
+                const int expected = column * 4 + pixel;
+                if (eo != expected)
+                {
+                    mist::logger::error("(trigger_conf_reader) \"" + name +
+                                        "\": eo_channel=" + std::to_string(eo) +
+                                        " inconsistent with column=" + std::to_string(column) +
+                                        ", pixel=" + std::to_string(pixel) +
+                                        " (expected eo_channel=" + std::to_string(expected) +
+                                        ") — entry dropped.");
+                    used_indices[idx] = false;
+                    continue;
+                }
+            }
+        }
+        else // eo_channel-only path
+        {
+            const int eo = static_cast<int>(entry->at("eo_channel").value_or(-1));
+            if (eo < 0 || eo > 31)
+            {
+                mist::logger::error("(trigger_conf_reader) \"" + name +
+                                    "\": eo_channel=" + std::to_string(eo) +
+                                    " out of range [0, 31] — entry dropped.");
+                used_indices[idx] = false;
+                continue;
+            }
+            column = static_cast<uint8_t>(eo / 4);
+            pixel  = static_cast<uint8_t>(eo % 4);
+        }
+
+        const uint64_t key = pack_channel_key(device, fifo, column, pixel);
+        if (auto existing_it = out.by_channel.find(key); existing_it != out.by_channel.end())
+        {
+            mist::logger::error("(trigger_conf_reader) \"" + name +
+                                "\": (device=" + std::to_string(device) +
+                                ", fifo=" + std::to_string(fifo) +
+                                ", column=" + std::to_string(column) +
+                                ", pixel=" + std::to_string(pixel) +
+                                ") already has channel-mode trigger \"" + existing_it->second.name +
+                                "\" — entry dropped.");
+            used_indices[idx] = false;
+            continue;
+        }
+
+        ChannelTrigger ct;
+        ct.name   = name;
+        ct.index  = idx;
+        ct.delay  = delay;
+        ct.device = device;
+        ct.fifo   = fifo;
+        ct.column = column;
+        ct.pixel  = pixel;
+        out.by_channel.emplace(key, std::move(ct));
+        out.ordered_index_name.emplace_back(idx, name);
+
+        mist::logger::info("(trigger_conf_reader) channel-mode trigger \"" + name +
+                           "\" | index=" + std::to_string(idx) +
+                           " | device=" + std::to_string(device) +
+                           " | fifo=" + std::to_string(fifo) +
+                           " | column=" + std::to_string(column) +
+                           " | pixel=" + std::to_string(pixel) +
+                           " | eo_channel=" + std::to_string(column * 4 + pixel) +
+                           " | delay=" + std::to_string(delay));
     }
 
-    return triggers;
+    return out;
 }
