@@ -190,6 +190,13 @@ void recodata_writer(
 
     std::unordered_map<int, RootHist<TH1F>> h_trigger_time_diff_w_cherenkov;
 
+    //  Enable a 50 MB tree cache before the two GetEntry passes (§4.7 minimum
+    //  mitigation): the second full pass over the spill tree at line :275
+    //  re-reads every basket from disk without it.  Proper single-pass
+    //  restructure remains the open item.
+    lightdata_tree->SetCacheSize(50 * 1024 * 1024);
+    lightdata_tree->AddBranchToCache("*", true);
+
     //  ── Loop over spills ─────────────────────────────────────────────────────
     std::map<int, std::vector<float>> map_of_offsets;
     for (int i_spill = 0; i_spill < all_spills; ++i_spill)
