@@ -1,11 +1,48 @@
-[[trigger]]
-name   = "luca_and_finger"
-index  = 0
-device = 196
-delay  = 117
+# trigger_conf.2025.toml — trigger source definitions for the 2025 test-beam run
+#
+# Each [[trigger]] entry defines one trigger source. The parser stops reading at
+# the first "##" comment line, so entries below that marker are safely ignored
+# and can be used for disabled triggers, notes, or examples.
 
 [[trigger]]
-name   = "broad_scintillator"
-index  = 1
-device = 197
-delay  = 117
+name   = "luca_and_finger"   # human-readable label used in output trees and logs
+index  = 0                   # trigger index (0-based); referenced in hit bitmasks
+device = 196                 # ALCOR device ID that provides the trigger signal
+delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+
+[[trigger]]
+name   = "broad_scintillator"   # human-readable label used in output trees and logs
+index  = 1                      # trigger index (0-based); referenced in hit bitmasks
+device = 197                    # ALCOR device ID that provides the trigger signal
+delay  = 117                    # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+
+##
+# Everything below this line is ignored by the parser.
+# Good for disabled entries, notes, changelogs, etc.
+
+# Matches all hits on chip 1 of device 196 (fifos 4–7)
+[[trigger]]
+name   = "my_chip_trigger"
+index  = 2
+device = 196
+chip   = 1      # optional: restrict to a single chip (0–1 per ALCOR, selects fifos 0–3 or 4–7)
+delay  = 80
+
+# Matches a single pixel precisely
+[[trigger]]
+name   = "my_pixel_trigger"
+index  = 3
+device = 196
+fifo   = 5      # optional: restrict to one FIFO (0–7)
+column = 3      # optional: restrict to one column within the FIFO
+pixel  = 0      # optional: restrict to one pixel within the column
+delay  = 80
+
+# Re-route those hits through the standard ALCOR hit path
+[[trigger]]
+name    = "hit_as_trigger"
+index   = 4
+device  = 197
+chip    = 2
+use_hit = true   # treat matched hits as triggers rather than discarding them
+delay   = 117

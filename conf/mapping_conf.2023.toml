@@ -1,15 +1,20 @@
-# mapping_conf.toml
+# mapping_conf.2023.toml — detector geometry for the 2023 test-beam run
+# Encodes the physical layout of PDUs in the detector plane and the
+# correspondence between ALCOR device/chip addresses and PDU positions.
 
+# Physical XY centre of each PDU [mm], relative to the beam-axis reference point.
+# Key = PDU index (1-based, per assembly drawing); value = [x, y].
 [pdu_xy_position]
-6 = [-82.0, 30.0]
-4 = [-26.0, 35.0]
-7 = [30.0, 30.0]
-1 = [30.0, -26.0]
-5 = [30.0, -82.0]
+6 = [-82.0,  30.0]
+4 = [-26.0,  35.0]
+7 = [ 30.0,  30.0]
+1 = [ 30.0, -26.0]
+5 = [ 30.0, -82.0]
 3 = [-26.0, -87.0]
 8 = [-82.0, -82.0]
 2 = [-82.0, -26.0]
 
+# true → PDU is mounted rotated 180° about its centre (reverses quadrant ordering).
 [pdu_rotation]
 1 = true
 2 = true
@@ -20,6 +25,9 @@
 7 = true
 8 = false
 
+# Maps "deviceID_chipIndex" → [pdu_index, quadrant] (quadrants 1–4, row-major).
+# Consecutive even/odd chip pairs share a quadrant (e.g. _0 and _1 cover the same
+# 2×2 pixel block on the SiPM tile, read by two independent ALCOR input channels).
 [device_chip_to_pdu_matrix]
 "195_0" = [1, 3]
 "195_1" = [1, 3]
