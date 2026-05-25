@@ -3,37 +3,48 @@
  * @brief Trigger definitions and runtime registry for the ALCOR DAQ.
  *
  * Provides:
- * - @ref TriggerNumber   : enum of known hardware trigger types
- * - @ref TriggerEvent    : per-event trigger data (index, coarse time, fine time)
- * - @ref TriggerConfig   : per-trigger configuration loaded from a TOML file
- * - @ref TriggerRegistry : runtime lookup table mapping trigger values to names
+ * - @ref TriggerNumber       : enum of known hardware trigger types
+ * - @ref TriggerEvent        : per-event trigger data (index, coarse time, fine time)
+ * - @ref DeviceTrigger       : hardware-tagged trigger source — one per device
+ * - @ref ChannelTrigger      : data channel forced into the trigger path
+ * - @ref TriggerConfigSet    : both lookup maps + ordered (index,name) list, returned by the reader
+ * - @ref TriggerRegistry     : runtime lookup table mapping trigger values to names
  * - @ref trigger_conf_reader : declared here; implementation lives in `src/triggers.cxx`
  *   (keeps toml++ and `<mist/logger>` out of the public header).
  *
  * ### TOML config format
+ *
+ * Each `[[trigger]]` entry is **either device-mode or channel-mode** — these
+ * are the only two valid shapes.  See @ref DeviceTrigger and
+ * @ref ChannelTrigger for details.
+ *
  * @code{.toml}
+ * # Device-mode: hardware already tags the word as a trigger.
+ * # The config just attaches a name, index, and delay offset.
  * [[trigger]]
  * name   = "luca_and_finger"
  * index  = 0
  * device = 196
- * fifo   = 2        # exact lane — omit to accept any lane
  * delay  = 117
  *
+ * # Channel-mode: a normal data channel is forced into the trigger path.
+ * # (column, pixel) and `eo_channel` are equivalent — pick whichever reads better.
  * [[trigger]]
  * name   = "finger_chip1"
  * index  = 2
  * device = 196
- * chip   = 1        # matches all four lanes on chip 1 (fifos 4-7)
- * column = 3
+ * fifo   = 5
+ * column = 3        # together with pixel pins one channel
  * pixel  = 0
  * delay  = 80
  *
  * [[trigger]]
- * name    = "broad_scintillator"
- * index   = 1
- * device  = 197
- * delay   = 117
- * use_hit = true    # re-route trigger-tagged words as standard ALCOR hits
+ * name       = "finger_chip1_alt"
+ * index      = 3
+ * device     = 196
+ * fifo       = 5
+ * eo_channel = 12   # = column*4 + pixel, range [0, 31]
+ * delay      = 80
  * @endcode
  *
  * ### Dependencies
@@ -47,6 +58,7 @@
 #include <vector>
 #include <cstdint>
 #include <iostream>
+#include <unordered_map>
 #include "TH2.h"
 
 // ============================================================
@@ -160,118 +172,102 @@ struct TriggerEvent
 };
 
 /**
- * @brief Static configuration for a single trigger channel, loaded from TOML.
+ * @brief Device-mode trigger configuration.
  *
- * Each entry corresponds to one `[[trigger]]` block in the config file.
- * Lives in the @ref TriggerRegistry; not created per-event.
+ * Used when the hardware already tags the data word as a trigger
+ * (`AlcorData::is_trigger_tag() == true`).  In that case the device alone
+ * identifies which configured trigger fired — there is at most **one
+ * `DeviceTrigger` per device**.  The config exists purely to attach a
+ * human-readable name, the trigger's logical index, and the delay offset
+ * used for frame-time recalculation.
+ *
+ * If a tagged word arrives from a device without a matching `DeviceTrigger`,
+ * the framer falls back to the @ref _TRIGGER_UNKNOWN_ path.
  */
-struct TriggerConfig
+struct DeviceTrigger
 {
-    std::string name;        ///< Human-readable trigger label (e.g. `"luca_and_finger"`)
-    uint8_t  index  = 0;     ///< Trigger index in [0, 99] used in the data stream
-    uint16_t delay  = 0;     ///< Delay applied to this trigger channel (DAQ units)
-    uint16_t device = 0;     ///< Hardware device ID that produces this trigger
-
-    // Optional sub-device source selectors — -1 means "accept any".
-    // `fifo` and `chip` are hierarchically related (chip = fifo/4): specifying
-    // `fifo` selects one lane precisely; `chip` selects all four lanes on a chip.
-    // Specifying both is valid and both constraints must be satisfied.
-    int16_t fifo   = -1; ///< Exact FIFO/lane index (-1 = any)
-    int16_t chip   = -1; ///< Chip filter: matches fifos chip*4 … chip*4+3 (-1 = any)
-    int16_t column = -1; ///< Column address within the chip (-1 = any)
-    int16_t pixel  = -1; ///< Pixel address within the column (-1 = any)
-
-    bool use_hit = false; ///< If true, route trigger-tagged words through the standard ALCOR Hit path instead of storing a TriggerEvent
-
-    TriggerConfig() = default;
-
-    /**
-     * @brief Construct with all fields.
-     *
-     * All selector fields default to -1 (wildcard).  Only set the fields
-     * needed to identify the desired source channel.
-     */
-    TriggerConfig(const std::string &_name,
-                   uint8_t   _index,
-                   uint16_t  _delay,
-                   uint16_t  _device,
-                   int16_t   _fifo   = -1,
-                   int16_t   _chip   = -1,
-                   int16_t   _column = -1,
-                   int16_t   _pixel  = -1,
-                   bool      _use_hit = false)
-        : name(_name), index(_index), delay(_delay), device(_device),
-          fifo(_fifo), chip(_chip), column(_column), pixel(_pixel),
-          use_hit(_use_hit) {}
+    std::string name;       ///< Human-readable trigger label (e.g. `"luca_and_finger"`).
+    uint8_t  index  = 0;    ///< Trigger index in [0, 99] used in the data stream.
+    uint16_t delay  = 0;    ///< Trigger delay (DAQ clock cycles).
+    uint16_t device = 0;    ///< Hardware device ID that produces this trigger.
 };
 
 /**
- * @brief Encodes a (device, fifo, column, pixel) tuple as a 64-bit key for deduplication.
+ * @brief Channel-mode trigger configuration.
  *
- * Used only to track which source tuples have already been logged as unknown triggers.
- * Field widths: device 16 b | fifo 8 b | column 8 b | pixel 8 b (remaining bits unused).
- * -1 values are stored as 0xFF in their respective byte.
+ * Promotes a single data channel into the trigger path: a word arrives
+ * tagged as a normal ALCOR Hit, the framer checks the
+ * `(device, fifo, column, pixel)` key, and if it matches, emits a
+ * @ref TriggerEvent instead of storing the word as a data hit.
+ *
+ * One `ChannelTrigger` per `(device, fifo, column, pixel)` tuple.
+ *
+ * @note  The target channel must also be present in the readout config —
+ *        otherwise the framer's per-chip readout filter
+ *        ([`parallel_streaming_framer.cxx`](src/parallel_streaming_framer.cxx))
+ *        breaks out of the stream loop before the hit ever reaches the
+ *        channel-mode check.
  */
-inline uint64_t trigger_map_key(uint16_t device, int fifo, int column = -1, int pixel = -1)
+struct ChannelTrigger
 {
-    auto to_byte = [](int v) -> uint64_t { return v < 0 ? 0xFF : static_cast<uint8_t>(v); };
+    std::string name;        ///< Human-readable trigger label.
+    uint8_t  index  = 0;     ///< Trigger index in [0, 99] used in the data stream.
+    uint16_t delay  = 0;     ///< Trigger delay (DAQ clock cycles).
+    uint16_t device = 0;     ///< Hardware device ID.
+    uint16_t fifo   = 0;     ///< FIFO/lane index.
+    uint8_t  column = 0;     ///< Column address within the chip (0–7).
+    uint8_t  pixel  = 0;     ///< Pixel address within the column (0–3).
+
+    /// @brief Linear ALCOR channel index `column * 4 + pixel` (0–31).
+    [[nodiscard]] constexpr uint8_t eo_channel() const noexcept
+    {
+        return static_cast<uint8_t>(column * 4 + pixel);
+    }
+};
+
+/**
+ * @brief Encodes `(device, fifo, column, pixel)` as a 64-bit key.
+ *
+ * Stable packing used both as the lookup key for @ref ChannelTrigger maps
+ * and as a deduplication key for "unknown trigger" logging.  Field widths:
+ * device 16 b | fifo 16 b | column 8 b | pixel 8 b (high 16 b unused).
+ */
+[[nodiscard]] inline constexpr uint64_t
+pack_channel_key(uint16_t device, uint16_t fifo, uint8_t column, uint8_t pixel) noexcept
+{
     return (uint64_t(device) << 32)
-         | (to_byte(fifo)   << 16)
-         | (to_byte(column) <<  8)
-         | (to_byte(pixel));
+         | (uint64_t(fifo)   << 16)
+         | (uint64_t(column) <<  8)
+         |  uint64_t(pixel);
 }
 
 /**
- * @brief Finds the best-matching trigger configuration for a given Hit.
+ * @brief Bundle returned by @ref trigger_conf_reader.
  *
- * Scans @p configs for every entry whose constraints are all satisfied by
- * the supplied Hit fields.  Among the matching entries, the one with the
- * highest *specificity score* wins:
- *
- * | Specified field | Score |
- * |-----------------|-------|
- * | fifo            |   8   |
- * | chip            |   4   |
- * | column          |   2   |
- * | pixel           |   1   |
- *
- * @c device is always required and does not contribute to the score.
- * Returns @c nullptr when no entry matches.
- *
- * @param configs  Trigger configurations to search (usually the framer's @c triggers vector).
- * @param device   Hardware device ID of the incoming Hit.
- * @param fifo     FIFO/lane index of the Hit.
- * @param column   Column address of the Hit.
- * @param pixel    Pixel address of the Hit.
+ * Holds the two O(1) lookup tables used by the framer, plus the ordered
+ * `(index, name)` list that @ref TriggerRegistry needs to preserve TOML
+ * declaration order in histogram bin layouts.
  */
-inline const TriggerConfig *
-find_best_trigger(const std::vector<TriggerConfig> &configs,
-                  int device, int fifo, int column, int pixel)
+struct TriggerConfigSet
 {
-    const TriggerConfig *best = nullptr;
-    int best_score = -1;
+    /// device → DeviceTrigger.  Duplicate device entries are a config error
+    /// (rejected at load time by @ref trigger_conf_reader).
+    std::unordered_map<uint16_t, DeviceTrigger>  by_device;
 
-    for (const auto &cfg : configs)
+    /// packed `(device, fifo, column, pixel)` key → ChannelTrigger.
+    /// Duplicates rejected at load time.
+    std::unordered_map<uint64_t, ChannelTrigger> by_channel;
+
+    /// `(index, name)` pairs in TOML declaration order, both modes interleaved.
+    /// Consumed by @ref TriggerRegistry.
+    std::vector<std::pair<uint8_t, std::string>> ordered_index_name;
+
+    /// @return Total number of successfully loaded entries (device + channel mode).
+    [[nodiscard]] std::size_t size() const noexcept
     {
-        if (cfg.device != static_cast<uint16_t>(device)) continue;
-        if (cfg.fifo   >= 0 && cfg.fifo   != fifo)        continue;
-        if (cfg.chip   >= 0 && cfg.chip   != fifo / 4)    continue;
-        if (cfg.column >= 0 && cfg.column != column)       continue;
-        if (cfg.pixel  >= 0 && cfg.pixel  != pixel)        continue;
-
-        int score = (cfg.fifo   >= 0 ?  8 : 0)
-                  + (cfg.chip   >= 0 ?  4 : 0)
-                  + (cfg.column >= 0 ?  2 : 0)
-                  + (cfg.pixel  >= 0 ?  1 : 0);
-
-        if (score > best_score)
-        {
-            best_score = score;
-            best       = &cfg;
-        }
+        return by_device.size() + by_channel.size();
     }
-    return best;
-}
+};
 
 // ============================================================
 //  Runtime trigger registry
@@ -292,18 +288,18 @@ struct TriggerRegistry
     TriggerRegistry() = default;
 
     /**
-     * @brief Build the registry from a list of config-defined triggers.
+     * @brief Build the registry from a parsed config set.
      *
-     * Config triggers are inserted first (preserving TOML declaration order),
-     * followed by all entries in @ref all_default_triggers. Duplicate values
+     * Config-defined triggers are inserted first in TOML declaration order
+     * (taken from @ref TriggerConfigSet::ordered_index_name), followed by
+     * the built-in defaults in @ref all_default_triggers.  Duplicate values
      * are not filtered — config entries take priority by appearing first.
      *
-     * @param config_triggers  Triggers parsed from the TOML config file.
+     * @param config  Parsed configuration set from @ref trigger_conf_reader.
      */
-    explicit TriggerRegistry(const std::vector<TriggerConfig> &config_triggers)
+    explicit TriggerRegistry(const TriggerConfigSet &config)
     {
-        for (const auto &t : config_triggers)
-            triggers.push_back({t.index, t.name});
+        triggers = config.ordered_index_name;
         for (int i = 0; i < n_default_triggers; ++i)
             triggers.push_back({all_default_triggers[i], default_names[i]});
     }
@@ -375,34 +371,39 @@ struct TriggerRegistry
 /**
  * @brief Reads trigger configuration from a TOML file.
  *
- * Parses an array of `[[trigger]]` tables. Each table must contain:
- * | Key    | Type    | Description                  |
- * |--------|---------|------------------------------|
- * | name    | string  | Human-readable trigger label                                        |
- * | index   | integer | Trigger index in data stream                                        |
- * | device  | integer | Source hardware device ID                                           |
- * | delay   | integer | Trigger delay (DAQ units)                                           |
- * | fifo    | integer | (optional) Exact FIFO/lane index; absent = any                      |
- * | chip    | integer | (optional) Chip filter (matches fifos chip×4 … chip×4+3)           |
- * | column  | integer | (optional) Column address within the chip                           |
- * | pixel   | integer | (optional) Pixel address within the column                          |
- * | use_hit | bool    | (optional) If true, route as standard ALCOR Hit, not TriggerEvent  |
+ * Each `[[trigger]]` entry is classified as exactly one of two modes:
  *
- * Entries missing any required key are skipped with a warning.
- * If the file cannot be opened or parsed, an empty vector is returned.
+ * **Device-mode** — required keys: `name`, `index`, `device`, `delay`.
+ * No other selectors permitted.  Produces a @ref DeviceTrigger.
+ *
+ * **Channel-mode** — required keys: `name`, `index`, `device`, `delay`,
+ * `fifo`, plus the channel position given as either:
+ *   - `column` AND `pixel` (canonical), or
+ *   - `eo_channel` ∈ [0, 31] (equivalent: `column = eo_channel / 4`,
+ *     `pixel = eo_channel % 4`).
+ *
+ * Both forms together are accepted only if consistent.  Produces a @ref ChannelTrigger.
+ *
+ * Entries that fit neither shape are rejected with an error and skipped.
  *
  * ### Index range and uniqueness rules
- * Config-defined triggers must use indices in **[0, 99]** — the range [100, 255]
- * is reserved for the built-in @ref TriggerNumber defaults.
- * - An entry with an out-of-range index is reassigned to the earliest unused
- *   slot in [0, 99] and a warning is emitted.
- * - A duplicate in-range index (two entries claiming the same slot) causes the
- *   second entry to be reassigned the same way.
- * - If no free slot remains in [0, 99], the offending entry is dropped with an error.
+ * Config-defined triggers must use indices in **[0, 99]** — the range
+ * [100, 255] is reserved for the built-in @ref TriggerNumber defaults.
+ * - Out-of-range or duplicate-in-range indices are reassigned to the
+ *   earliest unused slot in [0, 99] and a warning is emitted.
+ * - If no free slot remains, the offending entry is dropped with an error.
+ *
+ * ### Duplicate definitions
+ * - Two device-mode entries with the same `device` → error, second dropped.
+ * - Two channel-mode entries with the same
+ *   `(device, fifo, column, pixel)` → error, second dropped.
+ *
+ * ### Legacy / dropped fields
+ * `chip` and `use_hit` are no longer accepted.  Entries that set them get a
+ * deprecation warning and the field is ignored.
  *
  * @param config_file  Path to the TOML configuration file.
- * @return             List of successfully parsed trigger configurations,
- *                     with out-of-range and duplicate indices corrected.
+ * @return             Parsed @ref TriggerConfigSet; empty on parse failure.
  */
-std::vector<TriggerConfig>
+TriggerConfigSet
 trigger_conf_reader(const std::string &config_file = "Data/triggers.toml");

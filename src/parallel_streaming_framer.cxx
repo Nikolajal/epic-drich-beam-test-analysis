@@ -58,43 +58,28 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
         }
     }
 
-    // Load trigger configurations (read-only during processing; looked up via find_best_trigger).
-    triggers = trigger_conf_reader(trigger_config_file);
+    // Load trigger configurations (read-only during processing; O(1) lookup via
+    // trigger_config.by_device and trigger_config.by_channel — see D-05).
+    trigger_config = trigger_conf_reader(trigger_config_file);
 
     // Readout configuration
     readout_config = ReadoutConfigList(readout_config_reader(readout_config_file));
 
-    // Warn for every use_hit trigger whose source channel is absent from the readout config.
-    // Without a readout entry the Hit path produces no output (current_readout_tag_list is empty).
-    for (const auto &trig : triggers)
+    // Channel-mode triggers must also be registered in the readout config — the
+    // per-chip readout filter further down breaks out of the stream loop before
+    // the channel-mode lookup is even reached if the source chip isn't enrolled.
+    // Warn at startup so silently-disabled triggers don't surprise the user.
+    for (const auto &[key, ct] : trigger_config.by_channel)
     {
-        if (!trig.use_hit)
-            continue;
-
-        bool registered = false;
-        if (trig.fifo >= 0)
-        {
-            // Exact lane known — check the specific chip.
-            registered = !readout_config.find_by_device_and_chip(trig.device, trig.fifo / 4).empty();
-        }
-        else if (trig.chip >= 0)
-        {
-            // Chip-level filter — check that chip.
-            registered = !readout_config.find_by_device_and_chip(trig.device, trig.chip).empty();
-        }
-        else
-        {
-            // Device-only trigger — any chip on the device would do.
-            registered = (readout_config.find_by_device(trig.device) != nullptr);
-        }
-
+        const bool registered =
+            !readout_config.find_by_device_and_chip(ct.device, ct.fifo / 4).empty();
         if (!registered)
             mist::logger::warning(
-                "(ParallelStreamingFramer) Trigger \"" + trig.name +
-                "\" has use_hit=true but device=" + std::to_string(trig.device) +
-                (trig.fifo >= 0 ? " fifo=" + std::to_string(trig.fifo) : "") +
-                (trig.chip >= 0 ? " chip=" + std::to_string(trig.chip) : "") +
-                " is not registered in the readout config — hits will be silently discarded.");
+                "(ParallelStreamingFramer) Channel-mode trigger \"" + ct.name +
+                "\" targets device=" + std::to_string(ct.device) +
+                " fifo=" + std::to_string(ct.fifo) +
+                " (chip=" + std::to_string(ct.fifo / 4) + ")"
+                " which is not registered in the readout config — trigger will never fire.");
     }
 
     // Initialize spill counter
@@ -334,6 +319,41 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         //  ----    ----    ----    ALCOR Hit  ----    ----    ----
         if (current_data.is_alcor_hit())
         {
+            // Channel-mode trigger: a data-tagged word on a configured channel
+            // is forced into the trigger path (see DISCUSSION.md → D-05).
+            // Check this FIRST so the channel never touches the data-hit path
+            // (no afterpulse bookkeeping, no readout-tag categorisation).
+            {
+                const uint64_t ch_key = pack_channel_key(
+                    static_cast<uint16_t>(current_device),
+                    static_cast<uint16_t>(current_data.get_fifo()),
+                    static_cast<uint8_t>(current_data.get_column()),
+                    static_cast<uint8_t>(current_data.get_pixel()));
+                if (auto it = trigger_config.by_channel.find(ch_key);
+                    it != trigger_config.by_channel.end())
+                {
+                    const auto &ct = it->second;
+                    bool sec = false;
+                    if (auto sm = trigger_secondary_map.find(ct.index); sm != trigger_secondary_map.end())
+                        sec = hit_frame_coarse_global < sm->second;
+                    trigger_secondary_map[ct.index] = hit_frame_coarse_global + _trigger_secondary_window;
+
+                    const uint32_t new_frame_index  =
+                        (hit_frame_coarse_global - ct.delay) / (_frame_size * 1.);
+                    const uint64_t new_frame_coarse =
+                        (hit_frame_coarse_global - ct.delay) % static_cast<uint64_t>(_frame_size);
+
+                    std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
+                    if (use_shared_frame_map) map_lock.lock();
+                    auto &ev = frame_map[new_frame_index].trigger_hits.emplace_back(
+                        ct.index,
+                        static_cast<uint16_t>(new_frame_coarse),
+                        static_cast<float>(BTANA_ALCOR_CC_TO_NS * new_frame_coarse));
+                    ev.is_secondary = sec;
+                    continue;
+                }
+            }
+
             // Same-channel Δt analysis: drives both the framer's afterpulse
             // mask (Δt < deadtime, gates downstream CT/recodata logic) AND
             // the QA near/far bits used for sideband-subtracted afterpulse
@@ -399,104 +419,35 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         //  ----    ----    ----    Trigger Hit  ----    ----    ----
         if (current_data.is_trigger_tag())
         {
-            auto current_fifo   = current_data.get_fifo();
-            auto current_column = current_data.get_column();
-            auto current_pixel  = current_data.get_pixel();
-
-            // Find best-matching config (most specific selector wins).
-            // triggers is read-only after construction — no mutex needed for the scan.
-            const TriggerConfig *best = find_best_trigger(
-                triggers, current_device, current_fifo, current_column, current_pixel);
-
-            // Log unrecognised triggers once per (device, fifo, column, pixel) tuple.
-            // Set membership is the only thing that needs the mutex — the
-            // std::to_string chain + mist::logger::warning() are released
-            // outside it so anyone else queuing on triggers_map_mutex isn't
-            // held up by string formatting (CODE_REVIEW §1.6).
-            if (!best)
-            {
-                uint64_t key = trigger_map_key(current_device, current_fifo, current_column, current_pixel);
-                bool first_time = false;
-                {
-                    std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
-                    first_time = unknown_triggers_seen.insert(key).second;
-                }
-                if (first_time)
-                    mist::logger::warning("(ParallelStreamingFramer) Unknown trigger:"
-                                          " device=" + std::to_string(current_device) +
-                                          " fifo="   + std::to_string(current_fifo) +
-                                          " column=" + std::to_string(current_column) +
-                                          " pixel="  + std::to_string(current_pixel));
-            }
-
-            const bool trigger_known = best != nullptr;
-            const TriggerConfig current_setting = best ? *best : TriggerConfig{};
-
-            // use_hit bypass: treat the trigger-tagged word as a standard ALCOR Hit.
-            // The trigger_tag struct carries the same channel and timing fields as a
-            // normal alcor_hit, so the Hit path processes it identically.
-            // Requires the channel to be registered in the readout config so that
-            // current_readout_tag_list is non-empty and the Hit is categorised correctly.
-            if (current_setting.use_hit)
-            {
-                // Same-channel Δt analysis (mirrors the ALCOR-Hit path above);
-                // same_channel_dt is forwarded into the locked block below for
-                // the h_afterpulse_dt diagnostic fill.
-                current_data.set_mask(0);
-                auto current_channel = current_data.get_global_index();
-                int64_t same_channel_dt = -1;
-                if (auto search = prev_hit_time_map.find(current_channel); search != prev_hit_time_map.end())
-                {
-                    same_channel_dt =
-                        static_cast<int64_t>(hit_frame_coarse_global) - static_cast<int64_t>(search->second);
-                    if (same_channel_dt < static_cast<int64_t>(_afterpulse_deadtime))
-                        current_data.add_mask_bit(HitmaskAfterpulse);
-                    if (same_channel_dt >= qa_near_lo && same_channel_dt <= qa_near_hi)
-                        current_data.add_mask_bit(HitmaskAfterpulseNear);
-                    if (same_channel_dt >= qa_far_lo && same_channel_dt <= qa_far_hi)
-                        current_data.add_mask_bit(HitmaskAfterpulseFar);
-                }
-                prev_hit_time_map[current_channel] = hit_frame_coarse_global;
-                current_data.set_rollover(0);
-                current_data.set_coarse(hit_frame_coarse);
-                {
-                    // Per-worker frame_map → no lock; fallback test path
-                    // (qa==nullptr) still serialises via the shared mutex.
-                    std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                    if (use_shared_frame_map) map_lock.lock();
-                    auto &current_lightdata = frame_map[hit_frame_index];
-                    for (auto &tag : current_readout_tag_list)
-                    {
-                        if (tag == "timing")
-                            current_lightdata.timing_hits.emplace_back(current_data.get_data());
-                        else if (tag == "tracking")
-                            current_lightdata.tracking_hits.emplace_back(current_data.get_data());
-                        else if (tag == "cherenkov")
-                            current_lightdata.cherenkov_hits.emplace_back(current_data.get_data());
-                    }
-                }
-                if (qa)
-                {
-                    // h2_fine_tune_distribution is sized [0, 10000] on the X axis
-                // — the legacy compact "global tdc index" range.  Under Phase-5
-                // storage, get_global_tdc_index() returns the packed 32-bit raw
-                // value (millions), which would overflow the axis on every fill.
-                // Use the dense ordinal helper to recover the legacy bin index.
-                qa->h2_fine_tune->Fill(::GlobalIndex(current_data.get_global_tdc_index()).tdc_ordinal(),
-                                       current_data.get_fine());
-                    if (same_channel_dt >= 0)
-                        qa->h_afterpulse->Fill(static_cast<double>(same_channel_dt));
-                }
-                continue;
-            }
+            // Device-mode lookup: the hardware tag is the discriminator —
+            // the device alone identifies which configured trigger fired
+            // (see DISCUSSION.md → D-05).  O(1) hash lookup, no scoring.
+            auto it = trigger_config.by_device.find(static_cast<uint16_t>(current_device));
+            const bool trigger_known = (it != trigger_config.by_device.end());
 
             if (!trigger_known)
             {
-                // Unknown trigger — write to original frame
+                // Log unrecognised tagged-trigger devices once. Set membership
+                // is the only thing under the mutex — string formatting and
+                // mist::logger::warning() are released to keep other workers
+                // off this lock (CODE_REVIEW §1.6).
+                bool first_time = false;
+                {
+                    std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
+                    first_time = unknown_trigger_devices_seen.insert(
+                        static_cast<uint16_t>(current_device)).second;
+                }
+                if (first_time)
+                    mist::logger::warning(
+                        "(ParallelStreamingFramer) Tagged trigger from "
+                        "unconfigured device=" + std::to_string(current_device) +
+                        " — emitting as _TRIGGER_UNKNOWN_.");
+
+                // Unknown trigger — write to original frame at the original timing.
                 const uint8_t unknown_idx = static_cast<uint8_t>(_TRIGGER_UNKNOWN_);
                 bool sec = false;
-                if (auto it = trigger_secondary_map.find(unknown_idx); it != trigger_secondary_map.end())
-                    sec = hit_frame_coarse_global < it->second;
+                if (auto sm = trigger_secondary_map.find(unknown_idx); sm != trigger_secondary_map.end())
+                    sec = hit_frame_coarse_global < sm->second;
                 trigger_secondary_map[unknown_idx] = hit_frame_coarse_global + _trigger_secondary_window;
                 {
                     // Per-worker frame_map → no lock; fallback test path locks.
@@ -511,20 +462,24 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 continue;
             }
 
-            // Known trigger — check for secondary firing, then recalculate frame and write there
-            {
-                bool sec = false;
-                if (auto it = trigger_secondary_map.find(current_setting.index); it != trigger_secondary_map.end())
-                    sec = hit_frame_coarse_global < it->second;
-                trigger_secondary_map[current_setting.index] = hit_frame_coarse_global + _trigger_secondary_window;
+            // Known trigger — apply delay correction and write to the corrected frame.
+            const auto &cfg = it->second;
+            bool sec = false;
+            if (auto sm = trigger_secondary_map.find(cfg.index); sm != trigger_secondary_map.end())
+                sec = hit_frame_coarse_global < sm->second;
+            trigger_secondary_map[cfg.index] = hit_frame_coarse_global + _trigger_secondary_window;
 
-                uint32_t new_frame_index = (hit_frame_coarse_global - current_setting.delay) / (_frame_size * 1.);
-                uint64_t new_frame_coarse = (hit_frame_coarse_global - current_setting.delay) % static_cast<uint64_t>(_frame_size);
+            const uint32_t new_frame_index  =
+                (hit_frame_coarse_global - cfg.delay) / (_frame_size * 1.);
+            const uint64_t new_frame_coarse =
+                (hit_frame_coarse_global - cfg.delay) % static_cast<uint64_t>(_frame_size);
+
+            {
                 // Per-worker frame_map → no lock; fallback test path locks.
                 std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
                 if (use_shared_frame_map) map_lock.lock();
                 auto &ev = frame_map[new_frame_index].trigger_hits.emplace_back(
-                    static_cast<uint8_t>(current_setting.index),
+                    cfg.index,
                     static_cast<uint16_t>(new_frame_coarse),
                     static_cast<float>(BTANA_ALCOR_CC_TO_NS * new_frame_coarse));
                 ev.is_secondary = sec;
