@@ -16,7 +16,7 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
     }
 
     TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
-    alcor_recodata *recodata = new alcor_recodata();
+    AlcorRecodata *recodata = new AlcorRecodata();
     if (!recodata->link_to_tree(recodata_tree))
         return;
 
@@ -62,8 +62,8 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
         {
             active_sensors.clear();
             active_sensors_count.clear();
-            for (auto hit = 0; hit < (int)recodata->get_recodata().size(); hit++)
-                active_sensors.insert(recodata->get_global_channel_index(hit));
+            for (auto Hit = 0; Hit < (int)recodata->get_recodata().size(); Hit++)
+                active_sensors.insert(recodata->get_global_channel_index(Hit));
             continue;
         }
 
@@ -72,17 +72,17 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
             used_frames++;
             for (const auto &global_channel_index : active_sensors)
                 active_sensors_count[global_channel_index] = 0;
-            for (auto hit = 0; hit < (int)recodata->get_recodata().size(); hit++)
-                active_sensors_count[recodata->get_global_channel_index(hit)]++;
+            for (auto Hit = 0; Hit < (int)recodata->get_recodata().size(); Hit++)
+                active_sensors_count[recodata->get_global_channel_index(Hit)]++;
             for (auto &[global_channel_index, count] : active_sensors_count)
                 h_dcr_per_channel->Fill(global_channel_index, count);
 
-            h_dcr->Fill(recodata->get_recodata().size() * 1. / (_FRAME_LENGTH_NS_ * 1.e-6 * active_sensors.size()));
+            h_dcr->Fill(recodata->get_recodata().size() * 1. / (BTANA_FRAME_LENGTH_NS * 1.e-6 * active_sensors.size()));
         }
     }
 
     // ── Normalise ─────────────────────────────────────────────────────────────
-    h_dcr_per_channel->Scale(1. / (_FRAME_LENGTH_NS_ * 1.e-6));
+    h_dcr_per_channel->Scale(1. / (BTANA_FRAME_LENGTH_NS * 1.e-6));
     h_dcr->Scale(1. / used_frames);
 
     // ── Fill log-binned distributions from per-channel profile ───────────────
@@ -92,10 +92,10 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
     for (int x_bin = 1; x_bin <= h_dcr_per_channel->GetNbinsX(); ++x_bin)
     {
         double dcr = h_dcr_per_channel->GetBinContent(x_bin);
-        int global_index = (int)h_dcr_per_channel->GetBinCenter(x_bin);
+        int GlobalIndex = (int)h_dcr_per_channel->GetBinCenter(x_bin);
         if (dcr < 0.001 || dcr <= dcr_threshold)
             continue;
-        if (global_index <= 1024)
+        if (GlobalIndex <= 1024)
         {
             h_average_dcr->Fill(dcr);
             h_dcr_log_1350->Fill(dcr);

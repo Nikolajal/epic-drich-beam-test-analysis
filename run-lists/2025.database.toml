@@ -8,6 +8,7 @@
 #         calibration, dcr_scan, n_spills, quality, notes
 
 [runs."20251109-135431"]
+beam_energy = 180
 beam_status = "on"
 rdo_firmware = "rdo-v1.2.6"
 timing_firmware = "single-ext-std-tb2024-base.02"
@@ -581,7 +582,7 @@ notes = "Vbias=53.50V opmode=1 deltathr=5"
 v_bias = 52.00
 notes = "Vbias=52.00V opmode=1 deltathr=5"
 
-[runs."2025114-152025"]
+[runs."20251114-152025"]
 n_spills = 5
 quality = "good"
 notes = "\\=== Test of system after clean-up Vbias=52.00V opmode=1 deltathr=10 -> Full recovery!"

@@ -1,11 +1,20 @@
 #include "parallel_streaming_framer.h"
-#include "lightdata_writer.h"
+#include "writers/lightdata.h"
 #include "mapping.h"
 #include <mist/ring_finding/hough_transform.h>
+#include "TProfile2D.h"
+#include "TNamed.h"
+#include "TParameter.h"
+#include <algorithm>
+#include <numeric>
 
 // Config (to be sourced from readout_config_file)
 constexpr int kTimingChip0Id = 0, kTimingChip1Id = 2;
 constexpr int kTimingChip0Expected = 32, kTimingChip1Expected = 31;
+// Guard: the mean-of-others formula divides by (kTimingChipXExpected - 1).
+// Both constants must be >= 2.
+static_assert(kTimingChip0Expected >= 2, "kTimingChip0Expected must be >= 2 to avoid divide-by-zero");
+static_assert(kTimingChip1Expected >= 2, "kTimingChip1Expected must be >= 2 to avoid divide-by-zero");
 constexpr float kDeltaTimingCenter = -0.5f;
 constexpr float kDeltaTimingWindow = 0.5f;
 constexpr float kDeltaTimingNSigma = 3.0f;
@@ -19,7 +28,8 @@ void lightdata_writer(
     std::string trigger_setup_file,
     std::string readout_config_file,
     std::string mapping_config_file,
-    std::string fine_calibration_config_file)
+    std::string fine_calibration_config_file,
+    std::string framer_conf_file)
 {
     //  Do not make ownership of histograms to current directory
     TH1::AddDirectory(false);
@@ -115,25 +125,39 @@ void lightdata_writer(
    * @todo Re-structure and re-evaluate needs for the QA
    * @todo Config files from outside
    */
-    //  Create progress tracking —
-    //  Two subtasks: one for the streaming framer, one for per-frame post-processing.
-    //  The framer subtask is wired directly into the framer via assign_bar() so it
-    //  updates automatically during next_spill(). The post-processing subtask is
-    //  driven manually inside the frame loop below.
-    mist::logger::progress_bar progress_framer("framer         ", mist::logger::bar_style::BLOCK);
-    mist::logger::progress_bar progress_postprocessing("post-processing", mist::logger::bar_style::BLOCK);
-    mist::logger::update("spill_counter  ", "Current spill: " +
-                                                std::to_string(0) +
-                                                " - framing raw data");
+    //  Create progress tracking — single multi-bar:
+    //    main bar  : overall spill progress (X / max_spill spills)
+    //    subtask 1 : per-spill framing (driven by ParallelStreamingFramer)
+    //    subtask 2 : per-spill post-processing (driven below in the frame loop)
+    //
+    //  Subtask timers are restarted at the head of every spill iteration so
+    //  the elapsed columns reflect THIS spill's work, not cumulative time —
+    //  using the mist::logger::MultiProgressBar::restart() primitive added
+    //  in plan-(3).
+    //
+    //  When @p max_spill is non-positive we pass it as-is to the main bar's
+    //  update() which switches to "unknown-total" mode (no percentage / ETA,
+    //  just a running spill count and elapsed time).
+    mist::logger::MultiProgressBar progress_bars(mist::logger::BarStyle::Block);
+    progress_bars.set_unit("spills");
+    auto &progress_framer         = progress_bars.add_subtask("framer");
+    auto &progress_postprocessing = progress_bars.add_subtask("post-processing");
+    progress_bars.update(0, max_spill); // arms the main bar in the correct mode
     int streaming_trigger = 0;
 
+    //  Load framer + QA configuration (both live in framer_conf_file)
+    auto framer_cfg = FramerConfReader(framer_conf_file);
+    auto qa_cfg     = qa_conf_reader(framer_conf_file);
+
     //  Create streaming framer
-    parallel_streaming_framer framer(filenames, trigger_setup_file, readout_config_file);
+    ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
+    framer.set_qa_config(qa_cfg);       // enable afterpulse near/far Hit-mask tagging
     framer.set_parallel_cores(requested_n_threads);
-    framer.assign_bar(progress_framer); // framer drives progress_framer automatically
+    //framer.resolve_rollover_offsets();
+    framer.assign_bar(progress_framer); // framer drives the framer subtask automatically
 
     auto config_triggers = trigger_conf_reader(trigger_setup_file);
-    trigger_registry registry(config_triggers);
+    TriggerRegistry registry(config_triggers);
     //  Prepare output file & tree
     std::string outfile_name = data_repository + "/" + run_name + "/lightdata.root";
     if (std::filesystem::exists(outfile_name) && !force_lightdata_rebuild)
@@ -141,10 +165,10 @@ void lightdata_writer(
         mist::logger::info("[INFO] Output file already exists, skipping: " + outfile_name);
         return;
     }
-    //  Generate mapping
-    mapping current_mapping(mapping_config_file);
+    //  Generate Mapping
+    Mapping current_mapping(mapping_config_file);
     //  Load fine_calibration
-    alcor_finedata::read_calib_from_file(fine_calibration_config_file);
+    AlcorFinedata::read_calib_from_file(fine_calibration_config_file);
     //  Link output tree
     TFile *outfile = TFile::Open(outfile_name.c_str(), "RECREATE");
     auto &spilldata = framer.get_spilldata_link();
@@ -152,6 +176,20 @@ void lightdata_writer(
     spilldata.write_to_tree(lightdata_tree);
     //  ---
     //  QA Plots
+    //  ---
+    //  --- Rollover offset QA
+    //  Per-stream, per-spill correction applied during framing, expressed in
+    //  rollover ticks (clock cycles / BTANA_ALCOR_ROLLOVER_TO_CC). Bins sized to
+    //  accommodate the actual table dimensions at fill time.
+    TH2F *h_rollover_correction_ticks_per_stream_and_spill = nullptr;
+    TH1F *h_rollover_correction_ticks_distribution = new TH1F(
+        "h_rollover_correction_ticks_distribution",
+        ";rollover correction (ticks);(stream,spill) entries",
+        10, -0.5, 9.5);
+    TH1F *h_rollover_correction_affected_streams_per_spill = new TH1F(
+        "h_rollover_correction_affected_streams_per_spill",
+        ";spill index;streams requiring correction",
+        1000, -0.5, 999.5);
     //  ---
     //  --- Triggers
     TH2F *h2_trigger_matrix = new TH2F(
@@ -163,6 +201,14 @@ void lightdata_writer(
     std::unordered_map<int, TH1F *> h_trigger_time_diff_w_cherenkov;
     std::unordered_map<int, TH2F *> h_trigger_full_hitmap;
     std::unordered_map<int, std::array<TH1F *, 2>> h_trigger_hit_multiplicity;
+    std::unordered_map<int, TH2F *> h_trigger_dt;
+
+    //  Log-spaced Y-axis edges (Δt in ns) shared across all per-trigger TH2Fs.
+    //  Range: 1 ns → 1e10 ns (≈10 s, comfortably covers a 5 s spill at 320 MHz).
+    constexpr int kTriggerDtNBinsY = 60;
+    std::vector<double> trigger_dt_log_edges(kTriggerDtNBinsY + 1);
+    for (int i = 0; i <= kTriggerDtNBinsY; ++i)
+        trigger_dt_log_edges[i] = std::pow(10.0, 10.0 * static_cast<double>(i) / kTriggerDtNBinsY);
     //  ---
     //  --- Timing
     TH2F *h_timing_hit_map = new TH2F("h_timing_hit_map", ";channels on chip 0; channels on chip 1", 33, 0, 33, 33, 0, 33);
@@ -171,9 +217,71 @@ void lightdata_writer(
     //  ---
     //  --- DCR
     TProfile *h_dcr_per_channel = new TProfile("h_dcr_per_channel", ";channel;DCR [kHz];", 2048, 0, 2048);
+    //  Smeared DCR hitmap — one fill per cherenkov Hit during noise (first-frames)
+    //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Bin
+    //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
+    //  for a rate.  Density ∝ DCR rate, as in the CT / AP smeared maps.
+    TH2F *h_dcr_hitmap = new TH2F("h_dcr_hitmap",
+        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    //  --- Afterpulse
+    //  Per-channel afterpulse profiles.
+    //  Near = afterpulse signal + DCR baseline ; far = DCR sideband only.
+    //  Subtracted (true afterpulse) = signed-weight fill on the same Hit set.
+    TProfile *h_afterpulse_near_per_channel = new TProfile("h_afterpulse_near_per_channel",
+        ";channel;Near-window same-channel probability (%);", 2048, 0, 2048);
+    TProfile *h_afterpulse_far_per_channel  = new TProfile("h_afterpulse_far_per_channel",
+        ";channel;Far-window same-channel probability (%);", 2048, 0, 2048);
+    TProfile *h_afterpulse_per_channel      = new TProfile("h_afterpulse_per_channel",
+        ";channel;Afterpulse probability (DCR-subtracted) (%);", 2048, 0, 2048);
+    //  Smeared 2D hitmaps — per primary Hit we deposit 100 fills at independent
+    //  ±1.5 mm smeared positions when the Hit lies in the relevant window.  Density
+    //  in the resulting TH2F is therefore proportional to the corresponding
+    //  probability, in the same units as the per-channel profiles.
+    //
+    //  The "subtracted" map uses ±1 weights so per-bin contents = (n_near − n_far),
+    //  i.e. density ∝ true afterpulse probability.  May go negative in DCR-only
+    //  bins by Poisson fluctuation — that's the expected zero-bias behaviour.
+    TH2F *h_afterpulse_near_hitmap = new TH2F("h_afterpulse_near_hitmap",
+        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_afterpulse_far_hitmap  = new TH2F("h_afterpulse_far_hitmap",
+        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_afterpulse_hitmap      = new TH2F("h_afterpulse_hitmap",
+        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    h_afterpulse_hitmap->Sumw2();   // signed-weight fills → needs squared-weight tracking
+    //  --- Cross-talk per-channel profiles
+    TProfile *h_phys_ct_per_channel = new TProfile("h_phys_ct_per_channel",
+        ";channel;Physical CT probability (%);", 2048, 0, 2048);
+    TProfile *h_elec_ct_per_channel = new TProfile("h_elec_ct_per_channel",
+        ";channel;Electrical CT probability (%);", 2048, 0, 2048);
+    //  Smeared CT hitmaps — n_ct_neighbours × 100 fills per primary Hit, each at
+    //  an independent ±1.5 mm smeared position.  Density ∝ CT rate per spatial bin.
+    TH2F *h_phys_ct_hitmap = new TH2F("h_phys_ct_hitmap",
+        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_elec_ct_hitmap = new TH2F("h_elec_ct_hitmap",
+        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    //  --- CT neighbour-pair Δt distributions (signal peak + DCR sideband)
+    //  Physical CT signal window: [0, 10] cc.
+    //  Electrical CT signal window: [-2, 10] cc (small negative allowed for readout-timing jitter).
+    //  Sideband for DCR baseline: beyond the signal window.
+    TH1F *h_phys_ct_dt = new TH1F("h_phys_ct_dt", ";#Delta_{t} (cc);physical neighbour pairs / primary Hit", 200, 0, 200);
+    TH1F *h_elec_ct_dt = new TH1F("h_elec_ct_dt", ";#Delta_{t} (cc);electrical neighbour pairs / primary Hit", 210, -10, 200);
+    //  --- CT 2D diagnostic: (Δchannel, Δt) for every in-frame pair — no neighbour
+    //  definition needed; CT clusters near the origin, DCR is flat in Δt.
+    //  Per-neighbour-type (Δchannel, Δt) diagnostics
+    //  Electrical: same device+FIFO → Δchannel naturally constrained to ±7 (8 ch/FIFO).
+    TH2F *h_elec_ct_dchannel_dt = new TH2F("h_elec_ct_dchannel_dt",
+                                           ";#Delta channel (j #minus i, same FIFO);#Delta_{t} (cc)",
+                                           17, -8.5, 8.5,
+                                           26, -5.5, 20.5);
+    //  Physical: distance ≤ 3.2 mm → most pairs within a chip (±32 ch) but cross-chip
+    //  neighbours can land further out; range chosen to comfortably contain in-chip pairs.
+    TH2F *h_phys_ct_dchannel_dt = new TH2F("h_phys_ct_dchannel_dt",
+                                           ";#Delta channel (j #minus i, #leq 3.2 mm);#Delta_{t} (cc)",
+                                           65, -32.5, 32.5,
+                                           26, -5.5, 20.5);
     //  ---
     //  --- Streaming Trigger
-    TH2F *h_streaming_trigger_frames_examples = new TH2F("h_streaming_trigger_frames_examples", ";x (mm);y (mm)", 1000, 0, 1000, _FRAME_SIZE_, 0, _FRAME_SIZE_);
+    TH2F *h_streaming_trigger_frames_examples = new TH2F("h_streaming_trigger_frames_examples", ";x (mm);y (mm)", 1000, 0, 1000, framer_cfg.frame_size, 0, framer_cfg.frame_size);
     TH2F *h_streaming_trigger_full_hitmap = new TH2F("h_streaming_trigger_full_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH2F *h_streaming_trigger_time_cut_hitmap = new TH2F("h_streaming_trigger_time_cut_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     TH2F *h_streaming_trigger_ring_finder_hitmap = new TH2F("h_streaming_trigger_ring_finder_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
@@ -187,14 +295,14 @@ void lightdata_writer(
     TH1F *h_streaming_trigger_center_Y_second = new TH1F("h_streaming_trigger_center_Y_second", ";y (mm)", 100, -25, 25);
     TH1F *h_streaming_trigger_center_R_second = new TH1F("h_streaming_trigger_center_R_second", ";R (mm)", 200, 20, 120);
     const float time_window_ns = 5.f;
-    TH1F *h_streaming_trigger_delta_t_leading_edge = new TH1F("h_streaming_trigger_delta_t_leading_edge", ";#Delta_{t} (t_{hit} - t_{avg}) ns", 1000 * (time_window_ns), 0., time_window_ns);
-    TH1F *h_streaming_trigger_delta_t_half_centroid = new TH1F("h_streaming_trigger_delta_t_half_centroid", ";#Delta_{t} (t_{hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
-    TH1F *h_streaming_trigger_delta_t_first_half = new TH1F("h_streaming_trigger_delta_t_first_half", ";#Delta_{t} (t_{hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
-    TH1F *h_streaming_trigger_delta_t_second_half = new TH1F("h_streaming_trigger_delta_t_second_half", ";#Delta_{t} (t_{hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
+    TH1F *h_streaming_trigger_delta_t_leading_edge = new TH1F("h_streaming_trigger_delta_t_leading_edge", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns), 0., time_window_ns);
+    TH1F *h_streaming_trigger_delta_t_half_centroid = new TH1F("h_streaming_trigger_delta_t_half_centroid", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
+    TH1F *h_streaming_trigger_delta_t_first_half = new TH1F("h_streaming_trigger_delta_t_first_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
+    TH1F *h_streaming_trigger_delta_t_second_half = new TH1F("h_streaming_trigger_delta_t_second_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
     TH2F *h_streaming_trigger_sigma_vs_nhits = new TH2F("h_streaming_trigger_sigma_vs_nhits", ";n_{hits} in peak window;|odd_median - even_median| ns", 50, 0, 50, 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
     TH2F *h_streaming_trigger_median_vs_window = new TH2F("h_delta_median_vs_window", ";t_{last} - t_{first} in peak window ns;|odd_median - even_median| ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns, 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
     TH1F *h_streaming_trigger_tdc_step_sizes = new TH1F("h_streaming_trigger_tdc_step_sizes", ";t_{i+1} - t_{i} ns;entries", 1000, 0., 1.);
-    TH1F *h_streaming_trigger_tdc_zero_times = new TH1F("h_streaming_trigger_tdc_zero_times", ";t_{hit} ns;entries", 10000, 0., _FRAME_LENGTH_NS_);
+    TH1F *h_streaming_trigger_tdc_zero_times = new TH1F("h_streaming_trigger_tdc_zero_times", ";t_{Hit} ns;entries", 10000, 0., framer_cfg.frame_length_ns());
     TH1F *h_streaming_trigger_tdc_zero_cluster_size = new TH1F("h_streaming_trigger_tdc_zero_cluster_size", ";n_{hits} in peak;entries", 50, 0., 50.);
     //  ---
     //  End: Framing data & output definition
@@ -204,39 +312,69 @@ void lightdata_writer(
     //  Loop on data
     //  ---
     //  Cache positions
+    //  Phase 5: iterate (device, chip, channel) directly via the
+    //  GlobalIndex overload.  Both caches keyed by `4 * channel_ordinal`
+    //  (dense int) — same as the MIST HoughTransform `lut_key`.
     std::map<int, std::array<float, 2>> index_to_hit_xy;
     std::map<std::array<float, 2>, int> hit_to_index_xy;
-    for (auto i_index = 0; i_index < 2048 * 4; i_index += 4)
     {
-        auto position = current_mapping.get_position_from_global_index(i_index);
-        if (!position)
-            continue;
-        if (fabs((*position)[0]) < 5 && fabs((*position)[1]) < 5)
-            continue;
-        index_to_hit_xy[i_index] = (*position);
-        hit_to_index_xy[(*position)] = i_index;
+        constexpr int kDeviceLo  = 192;
+        constexpr int kDeviceHi  = 224;
+        const int max_chip       = ::gidx::kUsesSplitInTwo ? 4 : 8;
+        constexpr int kChannelHi = 64;
+        for (int device = kDeviceLo; device < kDeviceHi; ++device)
+            for (int chip = 0; chip < max_chip; ++chip)
+                for (int channel = 0; channel < kChannelHi; ++channel)
+                {
+                    const auto gi = ::GlobalIndex::from_components(
+                        device, /*fifo=*/0, chip, channel, /*tdc=*/0);
+                    auto position = current_mapping.get_position_from_global_index(gi);
+                    if (!position)
+                        continue;
+                    if (fabs((*position)[0]) < 5 && fabs((*position)[1]) < 5)
+                        continue;
+                    const int key = 4 * gi.channel_ordinal();
+                    index_to_hit_xy[key] = *position;
+                    hit_to_index_xy[*position] = key;
+                }
     }
-    mist::ring_finding::hough_transform ring_finder(index_to_hit_xy, 20, 120, 1., 3.);
+    mist::ring_finding::HoughTransform ring_finder(index_to_hit_xy, 20, 120, 1., 3.);
 
     //  ---
     //  Loop over spills
     if (max_spill != 1000)
-        mist::logger::info("(parallel_streaming_framer::next_spill) Requested to stop at spill : " +
+        mist::logger::info("(ParallelStreamingFramer::next_spill) Requested to stop at spill : " +
                            std::to_string(max_spill));
 
-    for (int ispill = 0; ispill < max_spill && framer.next_spill(); ++ispill)
+    // Use a while-loop instead of a for-loop so we can restart the multi-bar
+    // BEFORE the next next_spill() call — which itself updates the framer
+    // subtask, so the restart must precede it to actually reset the clock.
+    for (int ispill = 0; ispill < max_spill; ++ispill)
     {
-        //  Signal current spill
-        mist::logger::update("spill_counter  ", "Current spill: " +
-                                                    std::to_string(ispill) +
-                                                    " - Requested: " +
-                                                    std::to_string(max_spill) +
-                                                    " (may be less)");
+        //  ── Per-spill progress reset ─────────────────────────────────────
+        //  From the second spill onward, restart the multi-bar so the two
+        //  subtask clocks (framer + post-processing) begin at zero for this
+        //  spill.  Without this they would accumulate elapsed time across
+        //  spills (the original bug that motivated plan-(3) in mist).
+        if (ispill > 0)
+            progress_bars.restart(/*flush=*/false);
+        //  Advance the main spill counter.  In unknown-total mode
+        //  (max_spill <= 0) this just shows "N spills  elapsed: …".
+        progress_bars.update(ispill, max_spill);
+
+        //  Now drive the framer for this spill — its internal update() calls
+        //  Hit the framer subtask whose clock was just reset above.
+        if (!framer.next_spill())
+            break;
 
         //  Generate the calibration at each spill if new channels get available
         //spilldata.update_calibration(framer.get_fine_tune_distribution());
 
         //  Calculate participants channel
+        // Phase 4 internal cleanup: the "active sensors" set is keyed by
+        // GlobalIndex::global_channel_raw() instead of the legacy
+        // `legacy_raw / 4` pattern.  The lookup at line ~725 below uses the
+        // same expression, keeping the set ↔ count-map keys in sync.
         std::set<uint32_t> active_sensors;
         std::unordered_map<uint32_t, uint16_t> active_sensors_count;
         auto lanes_participating = spilldata.get_not_dead_participants();
@@ -244,15 +382,29 @@ void lightdata_writer(
         for (auto [device, lanes] : lanes_participating)
             if (device < 200)
                 for (auto current_lane : lanes)
-                    if (current_lane)
-                        for (auto i_channel = 0; i_channel < 8; ++i_channel)
-                            active_sensors.insert(get_global_index(device, current_lane / 4, 8 * (current_lane % 4) + i_channel, 0) / 4); //  Global channel index
+                    for (auto i_channel = 0; i_channel < 8; ++i_channel)
+                    {
+                        // Phase 5: construct the new-layout GlobalIndex
+                        // directly from the hardware identifiers; apply the
+                        // split-in-two trick at the conversion boundary.
+                        const int chip_raw     = current_lane / 4;
+                        const int channel_raw  = 8 * (current_lane % 4) + i_channel;
+                        const int chip_logical = ::gidx::kUsesSplitInTwo
+                                                     ? chip_raw / 2
+                                                     : chip_raw;
+                        const int channel_log  = ::gidx::kUsesSplitInTwo
+                                                     ? channel_raw + 32 * (chip_raw % 2)
+                                                     : channel_raw;
+                        const auto gi = ::GlobalIndex::from_components(
+                            device, current_lane, chip_logical, channel_log, 0);
+                        active_sensors.insert(gi.global_channel_raw());
+                    }
 
         n_active_cherenkov_channels = active_sensors.size();
 
         //  Streaming trigger utilities
         const float cherenkov_fraction = 0.004f;
-        const int threshold = 5; //std::max(1, static_cast<int>(std::ceil(cherenkov_fraction * n_active_cherenkov_channels)));
+        const int threshold = 10000; //5; //std::max(1, static_cast<int>(std::ceil(cherenkov_fraction * n_active_cherenkov_channels)));
         std::vector<std::pair<int, float>> carry_over_hits;
 
         //  Info
@@ -263,7 +415,7 @@ void lightdata_writer(
                            " active channels");
 
         //  Timing calibration at first spill
-        if (ispill == 0 && false)
+        if (ispill == 0)
         {
             std::unordered_map<int, float> tdc_offset_sum_0, tdc_offset_sum_1;
             std::unordered_map<int, int> tdc_offset_count_0, tdc_offset_count_1;
@@ -280,20 +432,23 @@ void lightdata_writer(
 
                 for (const auto &raw_hit : timing_hits)
                 {
-                    alcor_finedata hit(raw_hit);
-                    const int chip = hit.get_chip();
-                    const int global_index = hit.get_global_index();
-                    const int channel = hit.get_global_channel_index();
-                    const float time_cc = hit.get_time();
+                    AlcorFinedata Hit(raw_hit);
+                    const int chip = Hit.get_chip();
+                    // Renamed from `GlobalIndex` to avoid shadowing the new
+                    // GlobalIndex value type defined in <GlobalIndex.h>.
+                    // Stored value remains the legacy TDC-level raw integer.
+                    const int gidx_legacy = Hit.get_global_index();
+                    const int channel = Hit.get_global_channel_index();
+                    const float time_cc = Hit.get_time();
 
-                    if (chip == kTimingChip0Id && !tdc_time_0.count(global_index))
+                    if (chip == kTimingChip0Id && !tdc_time_0.count(gidx_legacy))
                     {
-                        tdc_time_0[global_index] = time_cc;
+                        tdc_time_0[gidx_legacy] = time_cc;
                         seen_channels_0.insert(channel);
                     }
-                    if (chip == kTimingChip1Id && !tdc_time_1.count(global_index))
+                    if (chip == kTimingChip1Id && !tdc_time_1.count(gidx_legacy))
                     {
-                        tdc_time_1[global_index] = time_cc;
+                        tdc_time_1[gidx_legacy] = time_cc;
                         seen_channels_1.insert(channel);
                     }
                 }
@@ -331,15 +486,18 @@ void lightdata_writer(
 
             // Apply — offset is already in clock cycles, sign corrected for get_phase()
             for (auto &[gi, sum] : tdc_offset_sum_0)
-                alcor_finedata::set_param2(gi, -(sum / tdc_offset_count_0[gi]));
+                AlcorFinedata::set_param2(gi, -(sum / tdc_offset_count_0[gi]));
             for (auto &[gi, sum] : tdc_offset_sum_1)
-                alcor_finedata::set_param2(gi, -(sum / tdc_offset_count_1[gi]));
+                AlcorFinedata::set_param2(gi, -(sum / tdc_offset_count_1[gi]));
 
             //  Add the plot to dinamically determine the timing cuts > determine the highest bin excluding zeros, delta times without any further check look for
         }
 
         mist::logger::info("(lightdata_writer) Starting processing data streams in frames");
         const auto total_frames = static_cast<int>(spilldata.get_frame_link().size());
+        // Last global clock cycle seen per trigger index — reset each spill so
+        // the last trigger of one spill never contributes a delta with the next.
+        std::unordered_map<int, uint64_t> trigger_last_global_cc;
         for (auto &[frame_id, current_lightdata_struct] : spilldata.get_frame_link())
         {
             //  Update post-processing subtask bar periodically to avoid render overhead
@@ -364,10 +522,10 @@ void lightdata_writer(
             //  Loop over timing hits
             for (const auto &raw_hit : timing_hits)
             {
-                alcor_finedata hit(raw_hit);
-                const int chip = hit.get_chip();
-                const int channel = hit.get_global_channel_index();
-                const float time_ns = hit.get_time_ns();
+                AlcorFinedata Hit(raw_hit);
+                const int chip = Hit.get_chip();
+                const int channel = Hit.get_global_channel_index();
+                const float time_ns = Hit.get_time_ns();
 
                 if (chip == kTimingChip0Id && seen_channels_0.insert(channel).second)
                 {
@@ -402,8 +560,8 @@ void lightdata_writer(
                 if (timing_available)
                 {
                     h_timing_ref_delta_sel->Fill(delta_timing);
-                    spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(_TRIGGER_TIMING_),
-                                                              static_cast<uint16_t>(_FRAME_SIZE_ / 2),
+                    spilldata.add_trigger_to_frame(frame_id, {static_cast<uint8_t>(TriggerTiming),
+                                                              static_cast<uint16_t>(framer_cfg.frame_size / 2),
                                                               ref_timing});
                 }
             }
@@ -422,7 +580,8 @@ void lightdata_writer(
                                   h_streaming_trigger_median_vs_window,
                                   h_streaming_trigger_tdc_step_sizes,
                                   h_streaming_trigger_tdc_zero_times,
-                                  h_streaming_trigger_tdc_zero_cluster_size);
+                                  h_streaming_trigger_tdc_zero_cluster_size,
+                                  framer_cfg.frame_length_ns());
 
             //  ---
             if (!spilldata.has_trigger(frame_id))
@@ -440,24 +599,24 @@ void lightdata_writer(
                 //  ---
                 //  --- Streaming Trigger
                 //  Loop on all triggers
-                std::vector<trigger_event> hough_triggers;
+                std::vector<TriggerEvent> hough_triggers;
                 for (auto current_trigger : triggers_in_frame)
                     if (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_)
                     {
                         auto index = -1;
                         streaming_trigger++;
-                        std::vector<alcor_finedata> ring_candidates;
+                        std::vector<AlcorFinedata> ring_candidates;
                         std::vector<int> ring_candidates_index;
                         for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
                         {
                             index++;
-                            alcor_finedata current_hit(current_cherenkov_hit_struct);
+                            AlcorFinedata current_hit(current_cherenkov_hit_struct);
                             if (current_hit.is_afterpulse())
                                 continue;
 
                             if (!ispill && streaming_trigger <= 1000)
                                 h_streaming_trigger_frames_examples->Fill(streaming_trigger - 1, current_hit.get_time());
-                            if (current_hit.has_mask_bit(_HITMASK_streaming_ring_trigger_))
+                            if (current_hit.has_mask_bit(HitmaskStreamingRingTrigger))
                                 h_streaming_trigger_full_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                             if (fabs(current_hit.get_time_ns() - current_trigger.fine_time) < 10.)
                             {
@@ -466,7 +625,7 @@ void lightdata_writer(
                                 ring_candidates_index.push_back(index);
                             }
                         }
-                        auto found_rings = alcor_finedata::alcor_find_rings_hough(ring_finder, ring_candidates, 0.33, threshold * 0.75, threshold, 2, 7.5);
+                        auto found_rings = AlcorFinedata::alcor_find_rings_hough(ring_finder, ring_candidates, 0.33, threshold * 0.75, threshold, 2, 7.5);
                         h_streaming_trigger_ring_finder_nrings->Fill(found_rings.size());
                         index = -1;
                         std::array<int, 2> hough_trigger_hits = {0, 0};
@@ -476,23 +635,23 @@ void lightdata_writer(
                         for (auto current_hit : ring_candidates)
                         {
                             index++;
-                            if (current_hit.has_mask_bit(_HITMASK_hough_ring_tag_first) || current_hit.has_mask_bit(_HITMASK_hough_ring_tag_second))
+                            if (current_hit.has_mask_bit(HitmaskHoughRingTagFirst) || current_hit.has_mask_bit(HitmaskHoughRingTagSecond))
                                 h_streaming_trigger_ring_finder_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
-                            if (current_hit.has_mask_bit(_HITMASK_hough_ring_tag_first))
+                            if (current_hit.has_mask_bit(HitmaskHoughRingTagFirst))
                             {
                                 h_streaming_trigger_ring_finder_first_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                                 hough_trigger_hits[0]++;
                                 hough_trigger_time[0] += current_hit.get_time_ns();
                                 hough_triggered_first.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
                             }
-                            if (current_hit.has_mask_bit(_HITMASK_hough_ring_tag_second))
+                            if (current_hit.has_mask_bit(HitmaskHoughRingTagSecond))
                             {
                                 h_streaming_trigger_ring_finder_second_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                                 hough_trigger_hits[1]++;
                                 hough_trigger_time[1] += current_hit.get_time_ns();
                                 hough_triggered_second.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
                             }
-                            cherenkov_hits[ring_candidates_index[index]].hit_mask = current_hit.get_mask();
+                            cherenkov_hits[ring_candidates_index[index]].HitMask = current_hit.get_mask();
                         }
 
                         if (found_rings.size() > 0)
@@ -528,7 +687,7 @@ void lightdata_writer(
                 std::set<int> fired_trigger_types;
                 for (auto &t : triggers_in_frame)
                     fired_trigger_types.insert(
-                        registry.index_of(static_cast<trigger_number>(t.index)));
+                        registry.index_of(static_cast<TriggerNumber>(t.index)));
                 // Fill matrix — each pair filled exactly once
                 for (auto i : fired_trigger_types)
                     for (auto j : fired_trigger_types)
@@ -539,20 +698,34 @@ void lightdata_writer(
                     if (!h_trigger_frame_population.count(current_trigger.index))
                     {
                         h_trigger_frame_population[current_trigger.index] = new TH1F(Form("h_trigger_frame_population_%s", registry.name_of(current_trigger.index).c_str()), Form(";frame number; %s;", registry.name_of(current_trigger.index).c_str()), 5e3, 0, 5e6);
-                        h_trigger_time_diff_w_cherenkov[current_trigger.index] = new TH1F(Form("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()), ";#Delta_{t} (t_{hit} - t_{trigger}) ns;Normalised entries", 5e3, -500, 500);
+                        h_trigger_time_diff_w_cherenkov[current_trigger.index] = new TH1F(Form("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()), ";#Delta_{t} (t_{Hit} - t_{trigger}) ns;Normalised entries", 5e3, -500, 500);
                         h_trigger_full_hitmap[current_trigger.index] = new TH2F(Form("h_trigger_full_hitmap_%s", registry.name_of(current_trigger.index).c_str()), ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-                        h_trigger_hit_multiplicity[current_trigger.index][0] = new TH1F(Form("h_trigger_hit_multiplicity_in_time_%s", registry.name_of(current_trigger.index).c_str()), ";n_{hit}; events;", 100, 0, 100);
-                        h_trigger_hit_multiplicity[current_trigger.index][1] = new TH1F(Form("h_trigger_hit_multiplicity_out_of_time_%s", registry.name_of(current_trigger.index).c_str()), ";n_{hit}; events;", 100, 0, 100);
+                        h_trigger_hit_multiplicity[current_trigger.index][0] = new TH1F(Form("h_trigger_hit_multiplicity_in_time_%s", registry.name_of(current_trigger.index).c_str()), ";n_{Hit}; events;", 100, 0, 100);
+                        h_trigger_hit_multiplicity[current_trigger.index][1] = new TH1F(Form("h_trigger_hit_multiplicity_out_of_time_%s", registry.name_of(current_trigger.index).c_str()), ";n_{Hit}; events;", 100, 0, 100);
+                        h_trigger_dt[current_trigger.index] = new TH2F(
+                            Form("h_trigger_dt_%s", registry.name_of(current_trigger.index).c_str()),
+                            Form(";spill index;#Delta_{t} between consecutive %s triggers (ns);entries",
+                                 registry.name_of(current_trigger.index).c_str()),
+                            max_spill + 1, -0.5, max_spill + 0.5,
+                            kTriggerDtNBinsY, trigger_dt_log_edges.data());
                     }
 
                     //  Frame distribution of the trigger
                     h_trigger_frame_population[current_trigger.index]->Fill(frame_id);
+                    //  Time difference between consecutive same-index triggers
+                    const uint64_t global_cc = static_cast<uint64_t>(frame_id) * framer_cfg.frame_size + current_trigger.coarse;
+                    if (trigger_last_global_cc.count(current_trigger.index))
+                    {
+                        const double dt_ns = static_cast<double>(global_cc - trigger_last_global_cc[current_trigger.index]) * BTANA_ALCOR_CC_TO_NS;
+                        h_trigger_dt[current_trigger.index]->Fill(static_cast<double>(ispill), dt_ns);
+                    }
+                    trigger_last_global_cc[current_trigger.index] = global_cc;
                     //  Time difference of trigger with cherenkov hits
                     std::array<int, 2> hit_counter = {0, 0};
                     auto window_size = (current_trigger.index == _TRIGGER_HOUGH_RING_FOUND_) || (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_) ? time_window_ns : 50.;
                     for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
                     {
-                        alcor_finedata current_hit(current_cherenkov_hit_struct);
+                        AlcorFinedata current_hit(current_cherenkov_hit_struct);
                         if (!current_hit.is_afterpulse())
                         {
                             auto current_delta_time = current_hit.get_time_ns() - current_trigger.fine_time;
@@ -573,36 +746,266 @@ void lightdata_writer(
                 }
                 //  ---
                 //  --- DCR QA
-                if (fired_trigger_types.count(registry.index_of(static_cast<trigger_number>(_TRIGGER_FIRST_FRAMES_))))
+                if (fired_trigger_types.count(registry.index_of(static_cast<TriggerNumber>(TriggerFirstFrames))))
                 {
-                    //  Channel by channel hit counting
-                    for (const auto &global_index : active_sensors)
-                        active_sensors_count[global_index] = 0;
+                    //  Channel by channel Hit counting — start each frame from a clean map
+                    //  so counts cannot accumulate across frames.
+                    //  Phase 5: storage is new-layout raw, so the Hit-side
+                    //  key is constructed via direct GlobalIndex(stored).
+                    //  Loop variable `channel_key` avoids shadowing the
+                    //  ::GlobalIndex type.
+                    active_sensors_count.clear();
+                    for (const auto &channel_key : active_sensors)
+                        active_sensors_count[channel_key] = 0;
                     for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
-                        active_sensors_count[(current_cherenkov_hit_struct.global_index / 4)]++;
+                    {
+                        const uint32_t channel_key = ::GlobalIndex(
+                            current_cherenkov_hit_struct.GlobalIndex).global_channel_raw();
+                        active_sensors_count[channel_key]++;
+                        //  Smeared DCR hitmap: one fill per Hit at the channel's
+                        //  smeared physical position.  Density ∝ accumulated DCR
+                        //  Hit count; divide by exposure for rate.
+                        AlcorFinedata dcr_hit_fd(current_cherenkov_hit_struct);
+                        const float dx = dcr_hit_fd.get_hit_x_rnd();
+                        if (dx > -990.f)
+                            h_dcr_hitmap->Fill(dx, dcr_hit_fd.get_hit_y_rnd());
+                    }
                     //  Fill the DCR histogram
-                    for (auto &[global_index, count] : active_sensors_count)
-                        h_dcr_per_channel->Fill(global_index, count);
+                    for (auto &[GlobalIndex, count] : active_sensors_count)
+                        h_dcr_per_channel->Fill(GlobalIndex, count);
+
+                    //  --- Afterpulse & cross-talk QA
+                    //  Pre-decode per-Hit fields needed for pairwise comparisons.
+                    struct _ct_hit
+                    {
+                        uint64_t global_t; ///< rollover*32768 + coarse
+                        uint32_t channel;  ///< GlobalIndex / 4
+                        int device;        ///< 192 + channel/256
+                        int fifo;          ///< block of 8 channels within device
+                        float x, y;        ///< physical position (-999 if unmapped)
+                    };
+                    std::vector<_ct_hit> ct_hits;
+                    ct_hits.reserve(cherenkov_hits.size());
+                    for (const auto &s : cherenkov_hits)
+                    {
+                        const uint32_t chan = s.GlobalIndex / 4;
+                        ct_hits.push_back({static_cast<uint64_t>(s.rollover) * 32768u + s.coarse,
+                                           chan,
+                                           192 + static_cast<int>(chan / 256),
+                                           static_cast<int>((chan % 256) / 8),
+                                           s.hit_x, s.hit_y});
+                    }
+
+                    //  Build a time-sorted index so the CT inner loop can use
+                    //  binary search to restrict candidates to the [dt_min, dt_max)
+                    //  window — O(N log N + N·k_win) instead of O(N²).
+                    std::vector<std::size_t> sorted_by_time(ct_hits.size());
+                    std::iota(sorted_by_time.begin(), sorted_by_time.end(), 0);
+                    std::sort(sorted_by_time.begin(), sorted_by_time.end(),
+                              [&ct_hits](std::size_t a, std::size_t b)
+                              { return ct_hits[a].global_t < ct_hits[b].global_t; });
+
+                    for (std::size_t i = 0; i < cherenkov_hits.size(); ++i)
+                    {
+                        const auto &s = cherenkov_hits[i];
+                        const auto &h = ct_hits[i];
+
+                        const bool is_ap      = (s.HitMask >> HitmaskAfterpulse)      & 1u;
+                        const bool is_ap_near = (s.HitMask >> HitmaskAfterpulseNear) & 1u;
+                        const bool is_ap_far  = (s.HitMask >> HitmaskAfterpulseFar)  & 1u;
+
+                        //  Single AlcorFinedata view of this Hit — shared by the AP and CT
+                        //  smeared-hitmap fills below.  Constructed once per primary Hit.
+                        AlcorFinedata hit_fd(s);
+
+                        //  Afterpulse QA: sideband subtraction.
+                        //  Per-channel profiles: TProfile means represent P(same-channel Hit
+                        //  in window). The "subtracted" one uses signed weight so its mean
+                        //  yields 100 × (P_near − P_far) = true afterpulse probability in %.
+                        h_afterpulse_near_per_channel->Fill(h.channel, is_ap_near ? 100.0 : 0.0);
+                        h_afterpulse_far_per_channel ->Fill(h.channel, is_ap_far  ? 100.0 : 0.0);
+                        h_afterpulse_per_channel->Fill(h.channel,
+                            100.0 * (static_cast<int>(is_ap_near) - static_cast<int>(is_ap_far)));
+                        //  Smeared 2D maps: density ∝ probability (near, far) and
+                        //  ∝ (P_near − P_far) for the DCR-subtracted true-afterpulse map.
+                        //  100 fills per qualifying Hit, each at an independent ±1.5 mm
+                        //  smeared position, mirroring the CT pattern.
+                        if (h.x > -990.f)
+                        {
+                            if (is_ap_near)
+                                for (int k = 0; k < 100; ++k)
+                                    h_afterpulse_near_hitmap->Fill(
+                                        hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd());
+                            if (is_ap_far)
+                                for (int k = 0; k < 100; ++k)
+                                    h_afterpulse_far_hitmap->Fill(
+                                        hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd());
+                            //  Subtracted: ±1 weighted fills.  Net bin contents =
+                            //  (n_near_fills − n_far_fills) = density ∝ true AP probability.
+                            if (is_ap_near)
+                                for (int k = 0; k < 100; ++k)
+                                    h_afterpulse_hitmap->Fill(
+                                        hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(), +1.);
+                            if (is_ap_far)
+                                for (int k = 0; k < 100; ++k)
+                                    h_afterpulse_hitmap->Fill(
+                                        hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(), -1.);
+                        }
+
+                        //  Cross-talk: skip afterpulse hits as DUI
+                        if (is_ap)
+                            continue;
+
+                        int n_phys_ct = 0, n_elec_ct = 0;
+                        // hit_fd already constructed above (shared with the AP smeared maps).
+                        //  Binary-search pre-filter: only iterate hits whose global_t falls
+                        //  inside [h.global_t + dt_min, h.global_t + dt_max).
+                        //  This reduces the inner loop from O(N) to O(log N + k_window).
+                        const int64_t t_lo = static_cast<int64_t>(h.global_t) + qa_cfg.ct_scan_dt_min;
+                        const int64_t t_hi = static_cast<int64_t>(h.global_t) + qa_cfg.ct_scan_dt_max;
+                        const auto jt_lo = std::lower_bound(
+                            sorted_by_time.begin(), sorted_by_time.end(), t_lo,
+                            [&ct_hits](std::size_t idx, int64_t t)
+                            { return static_cast<int64_t>(ct_hits[idx].global_t) < t; });
+                        const auto jt_hi = std::lower_bound(
+                            jt_lo, sorted_by_time.end(), t_hi,
+                            [&ct_hits](std::size_t idx, int64_t t)
+                            { return static_cast<int64_t>(ct_hits[idx].global_t) < t; });
+                        for (auto jt = jt_lo; jt != jt_hi; ++jt)
+                        {
+                            const std::size_t j = *jt;
+                            if (j == i || ct_hits[j].channel == h.channel)
+                                continue;
+                            //  dt is guaranteed within [ct_scan_dt_min, ct_scan_dt_max)
+                            //  by the binary-search pre-filter above.
+                            const int64_t dt = static_cast<int64_t>(ct_hits[j].global_t) -
+                                               static_cast<int64_t>(h.global_t);
+                            const bool is_elec = ct_hits[j].device == h.device &&
+                                                 ct_hits[j].fifo == h.fifo;
+                            //  Physical CT requires strictly positive Δt (causal optical/charge coupling)
+                            const bool is_phys = dt >= 0 &&
+                                                 h.x > -990.f && ct_hits[j].x > -990.f &&
+                                                 std::hypot(ct_hits[j].x - h.x, ct_hits[j].y - h.y) <= 3.2f;
+                            //  Fill Δt for all neighbour types — used for DCR sideband estimation
+                            if (is_phys)
+                                h_phys_ct_dt->Fill(static_cast<double>(dt));
+                            if (is_elec)
+                                h_elec_ct_dt->Fill(static_cast<double>(dt));
+                            //  2D diagnostic: (Δchannel, Δt) filtered per neighbour type
+                            const double dchannel = static_cast<double>(ct_hits[j].channel) -
+                                                    static_cast<double>(h.channel);
+                            if (is_elec)
+                                h_elec_ct_dchannel_dt->Fill(dchannel, static_cast<double>(dt));
+                            if (is_phys)
+                                h_phys_ct_dchannel_dt->Fill(dchannel, static_cast<double>(dt));
+                            //  CT signal windows from qa_cfg.  Use the wider of the two
+                            //  upper bounds as the loop's early-exit gate to keep the
+                            //  filtering symmetric for both neighbour types.
+                            const int ct_signal_hi_any =
+                                std::max(qa_cfg.ct_elec_signal_hi, qa_cfg.ct_phys_signal_hi);
+                            if (dt > ct_signal_hi_any)
+                                continue;
+                            if (is_elec &&
+                                dt >= qa_cfg.ct_elec_signal_lo && dt <= qa_cfg.ct_elec_signal_hi)
+                                ++n_elec_ct;
+                            if (is_phys &&
+                                dt >= qa_cfg.ct_phys_signal_lo && dt <= qa_cfg.ct_phys_signal_hi)
+                                ++n_phys_ct;
+                        }
+
+                        //  Per-channel probability profiles (boolean: was there any CT?).
+                        h_phys_ct_per_channel->Fill(h.channel, n_phys_ct > 0 ? 100.0 : 0.0);
+                        h_elec_ct_per_channel->Fill(h.channel, n_elec_ct > 0 ? 100.0 : 0.0);
+                        //  Smeared CT hitmaps — n_ct_neighbours × 100 fills per primary Hit
+                        //  at independent ±1.5 mm smeared positions; density ∝ CT rate.
+                        if (h.x > -990.f)
+                        {
+                            for (int _k = 0; _k < n_phys_ct * 100; ++_k)
+                                h_phys_ct_hitmap->Fill(hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd());
+                            for (int _k = 0; _k < n_elec_ct * 100; ++_k)
+                                h_elec_ct_hitmap->Fill(hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd());
+                        }
+                    }
                 }
             }
         }
         progress_postprocessing.update(1, 1);
 
-        //  Signal current spill
-        mist::logger::update("spill_counter  ", "Current spill: " +
-                                                    std::to_string(ispill + 1) +
-                                                    " - framing raw data");
+        //  Reflect the just-completed spill on the main bar (ispill+1 of N).
+        //  The next iteration's restart() will reset the subtask clocks.
+        progress_bars.update(ispill + 1, max_spill);
 
         outfile->cd();
         spilldata.prepare_tree_fill();
         lightdata_tree->Fill();
         outfile->Flush();
     }
-    // All spills done
-    progress_framer.finish();
-    progress_postprocessing.finish();
-    mist::logger::end_update("spill_counter  ");
+    // All spills done — finalise the multi-bar.  finish() emits the last
+    // 100% frame as scrolling output (B1 fix in mist) and removes the bar
+    // block from the anchored region so subsequent log lines flow normally.
+    progress_framer.finish(/*flush=*/false);
+    progress_postprocessing.finish(/*flush=*/false);
+    progress_bars.finish();
     mist::logger::info("(lightdata_writer) Finished spills loop, writing to file");
+
+    //  ---
+    //  --- Rollover offset QA: populate from the framer's correction table
+    const auto &rollover_correction_table = framer.get_rollover_correction_table();
+    const auto stream_filenames = framer.get_stream_filenames();
+
+    //  Find table dimensions for the 2D histogram.
+    size_t n_streams_in_table = rollover_correction_table.size();
+    size_t n_spills_in_table = 0;
+    for (const auto &stream_corrections : rollover_correction_table)
+        n_spills_in_table = std::max(n_spills_in_table, stream_corrections.size());
+
+    if (n_streams_in_table > 0 && n_spills_in_table > 0)
+    {
+        h_rollover_correction_ticks_per_stream_and_spill = new TH2F(
+            "h_rollover_correction_ticks_per_stream_and_spill",
+            ";stream index;spill index;rollover correction (ticks)",
+            n_streams_in_table, -0.5, n_streams_in_table - 0.5,
+            n_spills_in_table, -0.5, n_spills_in_table - 0.5);
+
+        //  Label each stream bin with the basename of its file (e.g. "rdo-192/alcdaq.fifo_14.root")
+        //  so the x-axis is human-readable in the browser.
+        for (size_t i_stream = 0; i_stream < n_streams_in_table; ++i_stream)
+        {
+            std::filesystem::path stream_path(stream_filenames[i_stream]);
+            //  Use parent_dir/filename form to distinguish same-name files across devices.
+            const std::string stream_label =
+                stream_path.parent_path().parent_path().filename().string() + "/" +
+                stream_path.filename().string();
+            h_rollover_correction_ticks_per_stream_and_spill
+                ->GetXaxis()
+                ->SetBinLabel(i_stream + 1, stream_label.c_str());
+        }
+
+        for (size_t i_stream = 0; i_stream < n_streams_in_table; ++i_stream)
+        {
+            const auto &stream_corrections = rollover_correction_table[i_stream];
+            for (size_t i_spill = 0; i_spill < stream_corrections.size(); ++i_spill)
+            {
+                const uint64_t rollover_correction_cc = stream_corrections[i_spill];
+                const double rollover_correction_ticks =
+                    static_cast<double>(rollover_correction_cc) /
+                    static_cast<double>(BTANA_ALCOR_ROLLOVER_TO_CC);
+
+                //  Fill the 2D map with the correction in ticks — zero entries
+                //  are still set so the axis shows full coverage.
+                h_rollover_correction_ticks_per_stream_and_spill->SetBinContent(
+                    i_stream + 1, i_spill + 1, rollover_correction_ticks);
+
+                //  1D distribution: one entry per (stream, spill) pair. Peak at 0
+                //  is healthy; entries at 1 are the actionable ones.
+                h_rollover_correction_ticks_distribution->Fill(rollover_correction_ticks);
+
+                //  How many streams needed correction in each spill.
+                if (rollover_correction_ticks > 0)
+                    h_rollover_correction_affected_streams_per_spill->Fill(i_spill);
+            }
+        }
+    }
 
     //  ---
     //  End: Loop on data streamers
@@ -614,7 +1017,15 @@ void lightdata_writer(
     outfile->cd();
     lightdata_tree->Write();
     framer.get_fine_tune_distribution()->Write("h_fine_calib");
-    alcor_finedata::write_calib_to_file((base_dir / "fine_calib.txt").string());
+    AlcorFinedata::write_calib_to_file((base_dir / "fine_calib.txt").string());
+    //  ---
+    //  --- Rollover QA
+    TDirectory *rollover_dir = outfile->mkdir("Rollover QA");
+    rollover_dir->cd();
+    if (h_rollover_correction_ticks_per_stream_and_spill)
+        h_rollover_correction_ticks_per_stream_and_spill->Write();
+    h_rollover_correction_ticks_distribution->Write();
+    h_rollover_correction_affected_streams_per_spill->Write();
     //  ---
     //  --- Trigger QA
     TDirectory *trigger_dir = outfile->mkdir("Triggers");
@@ -634,6 +1045,11 @@ void lightdata_writer(
     }
     for (auto [key, val] : h_trigger_full_hitmap)
         val->Write();
+    for (auto [key, val] : h_trigger_dt)
+    {
+        val->Scale(1., "width");
+        val->Write();
+    }
     //  ---
     //  --- Timing
     TDirectory *timing_dir = outfile->mkdir("Timing");
@@ -642,7 +1058,7 @@ void lightdata_writer(
     h_timing_ref_delta->Write();
     h_timing_ref_delta_sel->Write();
     //  Repeating info for single source for check
-    auto timing_index = registry.index_of(static_cast<trigger_number>(_TRIGGER_TIMING_));
+    auto timing_index = registry.index_of(static_cast<TriggerNumber>(TriggerTiming));
     if (h_trigger_frame_population.count(timing_index))
     {
         h_trigger_frame_population[timing_index]->Write();
@@ -651,15 +1067,35 @@ void lightdata_writer(
     }
     //  ---
     //  --- DCR
-    TDirectory *DCR_dir = outfile->mkdir("DCR");
+    TDirectory *DCR_dir = outfile->mkdir("Single-Pixel Noise");
     DCR_dir->cd();
-    h_dcr_per_channel->Scale(1. / (_FRAME_LENGTH_NS_ * 1.e-6));
+    h_dcr_per_channel->Scale(1. / (framer_cfg.frame_length_ns() * 1.e-6));
     h_dcr_per_channel->Write();
+    h_dcr_hitmap->Write();
+    h_afterpulse_near_per_channel->Write();
+    h_afterpulse_near_hitmap     ->Write();
+    h_afterpulse_far_per_channel ->Write();
+    h_afterpulse_far_hitmap      ->Write();
+    h_afterpulse_per_channel     ->Write();
+    h_afterpulse_hitmap          ->Write();
+    //  Same-channel Δt diagnostic — use it to validate that the near / far
+    //  windows defined in qa_cfg actually contain the afterpulse peak and a
+    //  flat DCR shelf respectively.
+    if (auto *h_ap_dt = framer.get_afterpulse_dt_distribution())
+        h_ap_dt->Write();
+    h_phys_ct_per_channel->Write();
+    h_phys_ct_hitmap->Write();
+    h_elec_ct_per_channel->Write();
+    h_elec_ct_hitmap->Write();
+    h_phys_ct_dt->Write();
+    h_elec_ct_dt->Write();
+    h_elec_ct_dchannel_dt->Write();
+    h_phys_ct_dchannel_dt->Write();
     //  ---
     //  --- Streaming Trigger
     TDirectory *streaming_trigger_dir = outfile->mkdir("Streaming Trigger");
     streaming_trigger_dir->cd();
-    auto streaming_ring_index = registry.index_of(static_cast<trigger_number>(_TRIGGER_STREAMING_RING_FOUND_));
+    auto streaming_ring_index = registry.index_of(static_cast<TriggerNumber>(_TRIGGER_STREAMING_RING_FOUND_));
     h_streaming_trigger_frames_examples->Write();
     h_streaming_trigger_full_hitmap->Write();
     h_streaming_trigger_time_cut_hitmap->Write();
@@ -689,6 +1125,72 @@ void lightdata_writer(
         h_trigger_full_hitmap[streaming_ring_index]->Write();
     }
     //  ---
+    //  --- Config — write all processing settings for reproducibility
+    {
+        TDirectory *cfg_dir = outfile->mkdir("Config");
+        cfg_dir->cd();
+
+        //  Numeric values as TParameter so they are directly readable downstream
+        TParameter<int> p_frame_size("frame_size", framer_cfg.frame_size);
+        TParameter<int> p_first_frames_trigger("first_frames_trigger", framer_cfg.first_frames_trigger);
+        TParameter<int> p_afterpulse_deadtime("afterpulse_deadtime", framer_cfg.afterpulse_deadtime);
+        TParameter<int> p_trigger_secondary_window("trigger_secondary_window", framer_cfg.trigger_secondary_window);
+        TParameter<double> p_frame_length_ns("frame_length_ns", framer_cfg.frame_length_ns());
+        p_frame_size.Write();
+        p_first_frames_trigger.Write();
+        p_afterpulse_deadtime.Write();
+        p_trigger_secondary_window.Write();
+        p_frame_length_ns.Write();
+
+        //  QA windows used by the afterpulse sideband subtraction and the CT scan.
+        TParameter<int> p_qa_ap_near_lo            ("qa_afterpulse_near_lo",          qa_cfg.afterpulse_near_lo);
+        TParameter<int> p_qa_ap_near_hi            ("qa_afterpulse_near_hi",          qa_cfg.afterpulse_near_hi);
+        TParameter<int> p_qa_ap_sideband_offset    ("qa_afterpulse_sideband_offset",  qa_cfg.afterpulse_sideband_offset);
+        TParameter<int> p_qa_ct_scan_dt_min        ("qa_ct_scan_dt_min",              qa_cfg.ct_scan_dt_min);
+        TParameter<int> p_qa_ct_scan_dt_max        ("qa_ct_scan_dt_max",              qa_cfg.ct_scan_dt_max);
+        TParameter<int> p_qa_ct_phys_signal_lo     ("qa_ct_phys_signal_lo",           qa_cfg.ct_phys_signal_lo);
+        TParameter<int> p_qa_ct_phys_signal_hi     ("qa_ct_phys_signal_hi",           qa_cfg.ct_phys_signal_hi);
+        TParameter<int> p_qa_ct_elec_signal_lo     ("qa_ct_elec_signal_lo",           qa_cfg.ct_elec_signal_lo);
+        TParameter<int> p_qa_ct_elec_signal_hi     ("qa_ct_elec_signal_hi",           qa_cfg.ct_elec_signal_hi);
+        p_qa_ap_near_lo.Write();
+        p_qa_ap_near_hi.Write();
+        p_qa_ap_sideband_offset.Write();
+        p_qa_ct_scan_dt_min.Write();
+        p_qa_ct_scan_dt_max.Write();
+        p_qa_ct_phys_signal_lo.Write();
+        p_qa_ct_phys_signal_hi.Write();
+        p_qa_ct_elec_signal_lo.Write();
+        p_qa_ct_elec_signal_hi.Write();
+
+        //  Config file paths as TNamed
+        TNamed n_trigger_conf("trigger_conf_file", trigger_setup_file.c_str());
+        TNamed n_readout_conf("readout_conf_file", readout_config_file.c_str());
+        TNamed n_mapping_conf("mapping_conf_file", mapping_config_file.c_str());
+        TNamed n_fine_calib_conf("fine_calib_conf_file", fine_calibration_config_file.c_str());
+        TNamed n_framer_conf("framer_conf_file", framer_conf_file.c_str());
+        n_trigger_conf.Write();
+        n_readout_conf.Write();
+        n_mapping_conf.Write();
+        n_fine_calib_conf.Write();
+        n_framer_conf.Write();
+
+        //  Raw TOML content snapshots — read each config file and store verbatim
+        auto write_toml_snapshot = [&](const std::string &key, const std::string &path)
+        {
+            std::ifstream f(path);
+            if (!f.good())
+                return;
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            TNamed named(key.c_str(), ss.str().c_str());
+            named.Write();
+        };
+        write_toml_snapshot("trigger_conf_toml", trigger_setup_file);
+        write_toml_snapshot("readout_conf_toml", readout_config_file);
+        write_toml_snapshot("mapping_conf_toml", mapping_config_file);
+        write_toml_snapshot("framer_conf_toml", framer_conf_file);
+    }
+    //  ---
     //  --- Close file
     outfile->Close();
     //  ---
@@ -696,7 +1198,7 @@ void lightdata_writer(
     //  --- --- --- --- --- ---
 }
 
-bool run_streaming_trigger(alcor_spilldata &current_spill,
+bool run_streaming_trigger(AlcorSpilldata &current_spill,
                            int frame_id,
                            const float time_window_ns,
                            const int threshold,
@@ -709,18 +1211,19 @@ bool run_streaming_trigger(alcor_spilldata &current_spill,
                            TH2F *h_median_vs_window,
                            TH1F *h_tdc_step_sizes,
                            TH1F *h_tdc_zero_times,
-                           TH1F *h_tdc_zero_cluster_size)
+                           TH1F *h_tdc_zero_cluster_size,
+                           float frame_length_ns)
 {
     auto &cherenkov_hits = current_spill.get_frame_cherenkov_hits(frame_id);
 
     //  Build and sort finedata hits
-    std::vector<alcor_finedata> cherenkov_finedata_hits;
+    std::vector<AlcorFinedata> cherenkov_finedata_hits;
     cherenkov_finedata_hits.reserve(cherenkov_hits.size());
     for (const auto &h : cherenkov_hits)
         cherenkov_finedata_hits.emplace_back(h);
     std::sort(cherenkov_finedata_hits.begin(), cherenkov_finedata_hits.end());
 
-    //  Deque window: front = oldest hit, back = newest hit.
+    //  Deque window: front = oldest Hit, back = newest Hit.
     //  Eviction is always from the front (O(1)), insertion always at the back (O(1)).
     //  Each entry is {original_index, time_ns}.
     std::deque<std::pair<int, float>> window;
@@ -781,9 +1284,9 @@ bool run_streaming_trigger(alcor_spilldata &current_spill,
                 const float range_excl_first = result[n - 1] - result[1]; // range excluding first
 
                 if (range_excl_last <= range_excl_first && range_excl_last * kOutlierRatio < range_excl_first)
-                    result.pop_back(); // last hit is a genuine outlier
+                    result.pop_back(); // last Hit is a genuine outlier
                 else if (range_excl_first < range_excl_last && range_excl_first * kOutlierRatio < range_excl_last)
-                    result.erase(result.begin()); // first hit is a genuine outlier
+                    result.erase(result.begin()); // first Hit is a genuine outlier
                 else
                     break; // no outlier found — stop
             }
@@ -801,9 +1304,9 @@ bool run_streaming_trigger(alcor_spilldata &current_spill,
         if (cleaned_times.size() >= 2)
         {
             // Start: all hits assigned to main peak
-            // log-likelihood ratio for hit t:
+            // log-likelihood ratio for Hit t:
             //   LLR = log[ p(t|main) * 19 ] - log[ p(t|early) * 1 ]
-            // If LLR < 0, hit is more likely from early peak.
+            // If LLR < 0, Hit is more likely from early peak.
             // We don't know the peak centers, so we bootstrap:
             // center_main  = mean of all hits (good starting point, 19/20 are main)
             // center_early = center_main - kPeakSeparation_ns
@@ -957,7 +1460,7 @@ bool run_streaming_trigger(alcor_spilldata &current_spill,
             in_cluster = true;
 
             cherenkov_finedata_hits[ihit].set_streaming_ring_trigger_mask();
-            cherenkov_hits[ihit].hit_mask = cherenkov_finedata_hits[ihit].get_mask();
+            cherenkov_hits[ihit].HitMask = cherenkov_finedata_hits[ihit].get_mask();
 
             //  Update peak snapshot when occupancy grows.
             if (count > peak_count)
@@ -982,7 +1485,7 @@ bool run_streaming_trigger(alcor_spilldata &current_spill,
     //  Carry-over: hits still in the deque window at frame boundary.
     carry_over_hits.clear();
     for (const auto &entry : window)
-        carry_over_hits.push_back({-1, entry.second - _FRAME_LENGTH_NS_});
+        carry_over_hits.push_back({-1, entry.second - frame_length_ns});
 
     return has_fired;
 }

@@ -150,7 +150,7 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
 
     //  Link recodata tree locally
     TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
-    alcor_recodata *recodata = new alcor_recodata();
+    AlcorRecodata *recodata = new AlcorRecodata();
     recodata->link_to_tree(recodata_tree);
 
     //  Get number of frames, limited to maximum requested frames
@@ -168,7 +168,7 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
     TH1F *h_r_distribution_excluded = new TH1F("h_r_distribution_excluded", ";R (mm)", 50, 25, 125);
     TH1F *h_r_distribution_included = new TH1F("h_r_distribution_included", ";R (mm)", 50, 25, 125);
     //  Time distribution
-    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
     //  First round X, Y, R
     TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 240, -30, 30);
     TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 240, -30, 30);
@@ -226,11 +226,11 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
                 if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
                     continue;
 
-                //  Check the hit has been labeled as ring-belonging
+                //  Check the Hit has been labeled as ring-belonging
                 //  This is done through a simple DBSCAN implementation
                 //  Density-Based Spatial Clustering of Applications with Noise > https://it.wikipedia.org/wiki/DBSCAN
                 //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
-                //  Clustering is done in alcor_recodata::find_rings(...)
+                //  Clustering is done in AlcorRecodata::find_rings(...)
                 //  TODO: add a flag for sensor type
                 //if (!recodata->is_ring_tagged(current_hit))
                 //    continue;
@@ -280,7 +280,7 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
             //  Loop on hits available for the spill
             for (auto current_hit = 0; current_hit < recodata->get_recodata().size(); current_hit++)
             {
-                //  Get hit position
+                //  Get Hit position
                 std::array<float, 2> current_position = {recodata->get_hit_x(current_hit), recodata->get_hit_y(current_hit)};
 
                 //  --- X-Y Coverage map ---

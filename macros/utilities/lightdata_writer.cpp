@@ -1,5 +1,5 @@
-#include "lightdata_writer.h"
-#include "config_reader.h"
+#include "writers/lightdata.h"
+#include "util/config_reader.h"
 #include "utility.h"
 #include <stdio.h>
 #include <chrono>
@@ -12,7 +12,7 @@ int main(int argc, char **argv)
 
     std::string data_repository;
     std::string run_name;
-    std::string run_list;
+    std::string RunList;
     int max_spill = 1000;
     bool force_lightdata_rebuild = false;
     int n_requested_threads = -1;
@@ -23,12 +23,12 @@ int main(int argc, char **argv)
 
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
-    app.add_option("--run-list", run_list, "Name of run list (required if run_name is a .toml runlist)");
+    app.add_option("--run-list", RunList, "Name of run list (required if run_name is a .toml runlist)");
     app.add_option("--max-spill", max_spill);
     app.add_option("--threads", n_requested_threads);
     app.add_option("--trigger-conf", trigger_config_file);
     app.add_option("--readout-conf", readout_config_file);
-    app.add_option("--mapping-conf", mapping_config_file);
+    app.add_option("--Mapping-conf", mapping_config_file);
     app.add_option("--fine-calib-conf", fine_calibration_config_file);
     app.add_flag("--force-rebuild", force_lightdata_rebuild);
 
@@ -38,20 +38,20 @@ int main(int argc, char **argv)
 
         bool is_runlist = run_name.size() >= 5 && run_name.substr(run_name.size() - 5) == ".toml";
 
-        if (is_runlist && run_list.empty())
+        if (is_runlist && RunList.empty())
             throw CLI::ValidationError("--run-list", "Option --run-list is REQUIRED when providing a runlist");
 
-        if (!is_runlist && !run_list.empty())
+        if (!is_runlist && !RunList.empty())
             throw CLI::ValidationError("--run-list", "Option --run-list is only allowed when providing a runlist");
 
         if (is_runlist)
         {
-            run_info::read_runslists(run_name);
-            auto recovered_run_list = run_info::get_run_list(run_list);
+            RunInfo::read_runslists(run_name);
+            auto recovered_run_list = RunInfo::get_run_list(RunList);
             if (!recovered_run_list)
             {
-                mist::logger::error(Form("Run list '%s' not found in database", run_list.c_str()));
-                throw CLI::ValidationError("--run-list", Form("Run list '%s' not found in database", run_list.c_str()));
+                mist::logger::error(Form("Run list '%s' not found in database", RunList.c_str()));
+                throw CLI::ValidationError("--run-list", Form("Run list '%s' not found in database", RunList.c_str()));
             }
 
             auto list_start = std::chrono::high_resolution_clock::now();

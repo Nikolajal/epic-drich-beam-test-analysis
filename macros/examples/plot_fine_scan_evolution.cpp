@@ -4,7 +4,7 @@
  *
  * @details
  * For each requested channel, reads the per-spill TH3F histograms
- * (X=global_index, Y=δt, Z=fine) and collapses both the global-index
+ * (X=GlobalIndex, Y=δt, Z=fine) and collapses both the global-index
  * and fine axes, filling a single TH2D(spill, δt) that shows how the
  * timing residual distribution evolves across spills.
  *
@@ -14,7 +14,7 @@
  *   .x plot_dt_vs_spill.cpp("path/to/timing_fine_calib.root", {1234}, 0, 9)
  *
  * @param filename   Path to timing_fine_calib.root
- * @param channels   List of global_index values to inspect (default: {0})
+ * @param channels   List of GlobalIndex values to inspect (default: {0})
  * @param spill_min  First spill to include (default: 0)
  * @param spill_max  Last spill inclusive (-1 = all spills found in file)
  */

@@ -4,13 +4,13 @@
 // Reference setters
 // =============================================================================
 
-void alcor_recodata::set_recodata_link(std::vector<alcor_finedata_struct> &v)
+void AlcorRecodata::set_recodata_link(std::vector<AlcorFinedataStruct> &v)
 {
     recodata = v;
     recodata_ptr = &recodata;
 }
 
-void alcor_recodata::set_triggers_link(std::vector<trigger_event> &v)
+void AlcorRecodata::set_triggers_link(std::vector<TriggerEvent> &v)
 {
     triggers = v;
     triggers_ptr = &triggers;
@@ -20,11 +20,11 @@ void alcor_recodata::set_triggers_link(std::vector<trigger_event> &v)
 // Trigger search
 // =============================================================================
 
-std::optional<trigger_event> alcor_recodata::get_trigger_by_index(uint8_t index) const
+std::optional<TriggerEvent> AlcorRecodata::get_trigger_by_index(uint8_t index) const
 {
     auto current_trigger = get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(),
-                           [index](const trigger_event &t)
+                           [index](const TriggerEvent &t)
                            { return t.index == index; });
     if (it != current_trigger.end())
         return *it;
@@ -35,7 +35,7 @@ std::optional<trigger_event> alcor_recodata::get_trigger_by_index(uint8_t index)
 // I/O utilities
 // =============================================================================
 
-void alcor_recodata::clear()
+void AlcorRecodata::clear()
 {
     recodata.clear();
     triggers.clear();
@@ -43,21 +43,21 @@ void alcor_recodata::clear()
     triggers.shrink_to_fit();
 }
 
-bool alcor_recodata::link_to_tree(TTree *input_tree)
+bool AlcorRecodata::link_to_tree(TTree *input_tree)
 {
     if (!input_tree)
     {
-        mist::logger::error("(alcor_recodata::link_to_tree) input_tree is null");
+        mist::logger::error("(AlcorRecodata::link_to_tree) input_tree is null");
         return false;
     }
     if (input_tree->GetEntries() == 0)
     {
-        mist::logger::error("(alcor_recodata::link_to_tree) input_tree is empty");
+        mist::logger::error("(AlcorRecodata::link_to_tree) input_tree is empty");
         return false;
     }
     if (!input_tree->GetBranch("recodata") || !input_tree->GetBranch("triggers"))
     {
-        mist::logger::error("(alcor_recodata::link_to_tree) missing expected branches");
+        mist::logger::error("(AlcorRecodata::link_to_tree) missing expected branches");
         input_tree->Print();
         return false;
     }
@@ -66,7 +66,7 @@ bool alcor_recodata::link_to_tree(TTree *input_tree)
     return true;
 }
 
-void alcor_recodata::write_to_tree(TTree *output_tree)
+void AlcorRecodata::write_to_tree(TTree *output_tree)
 {
     if (!output_tree)
         return;
@@ -78,7 +78,7 @@ void alcor_recodata::write_to_tree(TTree *output_tree)
 // Analysis utilities
 // =============================================================================
 
-void alcor_recodata::find_rings(float distance_length_cut, float distance_time_cut)
+void AlcorRecodata::find_rings(float distance_length_cut, float distance_time_cut)
 {
     auto i_index = -1;
     std::map<int, std::map<int, std::vector<int>>> proximity_hit_list;
@@ -102,18 +102,18 @@ void alcor_recodata::find_rings(float distance_length_cut, float distance_time_c
         int selected_size = -1;
         for (auto &[main_index, current_index_list] : proximity_hit_list_device)
         {
-            if ((int)current_index_list.size() < selected_size)
+            if ((int)current_index_list.size() <= selected_size)
                 continue;
             selected_main_index = main_index;
             selected_size = current_index_list.size();
         }
-        add_hit_mask(selected_main_index, encode_bit(_HITMASK_ring_tag_first));
+        add_hit_mask(selected_main_index, encode_bit(HitmaskRingTagFirst));
         for (auto current_index : proximity_hit_list[current_device][selected_main_index])
-            add_hit_mask(current_index, encode_bit(_HITMASK_ring_tag_first));
+            add_hit_mask(current_index, encode_bit(HitmaskRingTagFirst));
     }
 }
 
-void alcor_recodata::build_hough_lut(const std::map<int, std::array<float, 2>> &index_to_hit_xy,
+void AlcorRecodata::build_hough_lut(const std::map<int, std::array<float, 2>> &index_to_hit_xy,
                                      float r_min, float r_max, float r_step, float cell_size)
 {
     hough_cell_size = cell_size;
@@ -140,9 +140,9 @@ void alcor_recodata::build_hough_lut(const std::map<int, std::array<float, 2>> &
         hough_r_bins.push_back(r);
 
     hough_lut.clear();
-    for (auto &[global_index, pos] : index_to_hit_xy)
+    for (auto &[GlobalIndex, pos] : index_to_hit_xy)
     {
-        auto &lut_entry = hough_lut[global_index];
+        auto &lut_entry = hough_lut[GlobalIndex];
         lut_entry.resize(hough_r_bins.size());
 
         for (int iR = 0; iR < (int)hough_r_bins.size(); ++iR)
@@ -181,11 +181,11 @@ void alcor_recodata::build_hough_lut(const std::map<int, std::array<float, 2>> &
                             hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny));
 }
 
-void alcor_recodata::find_rings_hough(float threshold_fraction, int min_hits)
+void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)
 {
     if (hough_lut.empty() || hough_r_bins.empty())
     {
-        mist::logger::error("(alcor_recodata::find_rings_hough) LUT is empty — call build_hough_lut first.");
+        mist::logger::error("(AlcorRecodata::find_rings_hough) LUT is empty — call build_hough_lut first.");
         return;
     }
 
@@ -198,7 +198,7 @@ void alcor_recodata::find_rings_hough(float threshold_fraction, int min_hits)
             continue;
         if (is_afterpulse(i))
             continue;
-        if (hough_lut.find(recodata[i].global_index) == hough_lut.end())
+        if (hough_lut.find(recodata[i].GlobalIndex) == hough_lut.end())
             continue;
         active_hits.push_back(i);
     }
@@ -212,7 +212,7 @@ void alcor_recodata::find_rings_hough(float threshold_fraction, int min_hits)
 
     for (int i : active_hits)
     {
-        auto &lut_entry = hough_lut.at(recodata[i].global_index);
+        auto &lut_entry = hough_lut.at(recodata[i].GlobalIndex);
         for (int iR = 0; iR < n_r; ++iR)
             for (int cell : lut_entry[iR])
             {
@@ -241,8 +241,8 @@ void alcor_recodata::find_rings_hough(float threshold_fraction, int min_hits)
         float R = hough_r_bins[best_iR];
 
         uint32_t ring_mask = (n_rings_found == 0)
-                                 ? _HITMASK_hough_ring_tag_first
-                                 : _HITMASK_hough_ring_tag_second;
+                                 ? HitmaskHoughRingTagFirst
+                                 : HitmaskHoughRingTagSecond;
 
         float trigger_time_sum = 0.f;
         int trigger_time_count = 0;

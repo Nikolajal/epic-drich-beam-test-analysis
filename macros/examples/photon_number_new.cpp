@@ -1,18 +1,38 @@
 #include "../lib_loader.h"
 
-// ─── Global analysis parameters ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// Global analysis parameters
+// ═══════════════════════════════════════════════════════════════════════════════
 
 static constexpr int kCoverageGranularity = 10;
-static constexpr std::array<float, 2> kTimeCutNs = {-1.f, +1.f};
-static const std::vector<std::array<float, 2>> kPhiGapRanges = {
-    {-2.6f, -1.9f}, {2.4f, 2.95f}, {-1.65f, -1.1f}, {-0.1f, 0.15f}};
 
-// ── Radial histogram binning ──────────────────────────────────────────────────
-static constexpr int kRBins = 40;
-static constexpr float kRLo = 25.f;
-static constexpr float kRHi = 125.f;
-static constexpr float kFitLo = 30.f;  // fit start — avoids low-R structure
-static constexpr float kFitHi = 105.f; // fit end — avoids high-R sparsely populated bins
+// Prompt time window around the trigger [ns]
+static constexpr std::array<float, 2> kPromptTimeCutNs = {-1.f, +1.f};
+
+// Early-particle time window [ns] — satellite population ~1.8 ns before prompt
+static constexpr std::array<float, 2> kEarlyTimeCutNs = {-3.0f, -1.0f};
+
+// φ-gap ranges to exclude (PDU boundaries / dead regions)
+static const std::vector<std::array<float, 2>> kPhiGapRanges = {
+    {-2.6f, -1.9f}, {2.4f, 2.95f}, {-1.65f, -1.1f}, {-0.1f, 0.15f}, {0.50f, 1.25f}};
+
+// ── Radial histogram binning ─────────────────────────────────────────────────
+static constexpr int kRadialBins = 80;
+static constexpr float kRadialLoMm = 25.f;
+static constexpr float kRadialHiMm = 125.f;
+static constexpr float kFitRangeLoMm = 30.f;  // fit start — avoids low-R structure
+static constexpr float kFitRangeHiMm = 105.f; // fit end   — avoids sparse high-R bins
+
+// ── Hit-pair histogram binning ───────────────────────────────────────────────
+static constexpr float kPairTimeCutNs = 5.f;         // |dt_i| pre-selection [ns]
+static constexpr float kPairSeparationMaxMm = 150.f; // maximum pair distance [mm]
+static constexpr int kPairSeparationBins = 50;       // 3 mm/bin
+static constexpr float kPairDeltaTimeMaxNs = 5.f;    // timing axis range [ns]
+static constexpr int kPairDeltaTimeBins = 200;       // 50 ps/bin
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SensorType — maps device index to HPK model
+// ═══════════════════════════════════════════════════════════════════════════════
 
 enum class SensorType
 {
@@ -20,789 +40,1697 @@ enum class SensorType
     k1375,
     kUnknown
 };
-static SensorType sensor_type(int device)
+
+static SensorType sensor_type(int device_index)
 {
-    if (device >= 192 && device <= 195)
+    if (device_index >= 192 && device_index <= 195)
         return SensorType::k1350;
-    if (device >= 196 && device <= 199)
+    if (device_index >= 196 && device_index <= 199)
         return SensorType::k1375;
     return SensorType::kUnknown;
 }
 
-// ─── radial_efficiency ───────────────────────────────────────────────────────
-TH1F *radial_efficiency(TH2F *h_rphi, const TAxis *ref_axis,
-                        const std::vector<std::array<float, 2>> &ranges,
+// ═══════════════════════════════════════════════════════════════════════════════
+// radial_efficiency
+//
+// Computes the mean fractional coverage as a function of R by averaging the
+// rphi_coverage_map over the phi bins that fall inside (inclusive=true) or
+// outside (inclusive=false) the supplied phi ranges.
+// Returns a TH1F with the same R binning as radial_reference_axis.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TH1F *radial_efficiency(TH2F *rphi_coverage_map,
+                        const TAxis *radial_reference_axis,
+                        const std::vector<std::array<float, 2>> &phi_ranges,
                         bool inclusive = true)
 {
-    int n_out = ref_axis->GetNbins();
-    double r_lo = ref_axis->GetXmin();
-    double r_hi = ref_axis->GetXmax();
-    static int eff_counter = 0;
-    auto *h = new TH1F(Form("h_eff_tmp_%d", eff_counter++),
-                       h_rphi->GetName(), n_out, r_lo, r_hi);
+    static int efficiency_histogram_counter = 0;
+    auto *efficiency_histogram = new TH1F(
+        Form("h_efficiency_tmp_%d", efficiency_histogram_counter++),
+        rphi_coverage_map->GetName(),
+        radial_reference_axis->GetNbins(),
+        radial_reference_axis->GetXmin(),
+        radial_reference_axis->GetXmax());
 
-    std::vector<std::array<float, 2>> active_ranges = ranges;
+    std::vector<std::array<float, 2>> active_phi_ranges = phi_ranges;
     if (!inclusive)
     {
-        active_ranges.clear();
-        float prev = -TMath::Pi();
-        for (auto &r : ranges)
+        active_phi_ranges.clear();
+        float range_left_edge = -TMath::Pi();
+        for (auto &gap_range : phi_ranges)
         {
-            active_ranges.push_back({prev, r[0]});
-            prev = r[1];
+            active_phi_ranges.push_back({range_left_edge, gap_range[0]});
+            range_left_edge = gap_range[1];
         }
-        active_ranges.push_back({prev, (float)TMath::Pi()});
+        active_phi_ranges.push_back({range_left_edge, (float)TMath::Pi()});
     }
 
-    int n_phi = h_rphi->GetNbinsX();
-    int n_r = h_rphi->GetNbinsY();
-    int n_phi_selected = 0;
-    for (int iphi = 1; iphi <= n_phi; ++iphi)
+    const int n_phi_bins = rphi_coverage_map->GetNbinsX();
+    const int n_r_bins = rphi_coverage_map->GetNbinsY();
+    int n_selected_phi_bins = 0;
+    for (int iphi = 1; iphi <= n_phi_bins; ++iphi)
     {
-        float phi = h_rphi->GetXaxis()->GetBinCenter(iphi);
-        for (auto &r : active_ranges)
-            if (phi > r[0] && phi < r[1])
+        float bin_phi_center = rphi_coverage_map->GetXaxis()->GetBinCenter(iphi);
+        for (auto &active_range : active_phi_ranges)
+            if (bin_phi_center > active_range[0] && bin_phi_center < active_range[1])
             {
-                ++n_phi_selected;
+                ++n_selected_phi_bins;
                 break;
             }
     }
-    if (n_phi_selected == 0)
-        return h;
+    if (n_selected_phi_bins == 0)
+        return efficiency_histogram;
 
-    std::vector<int> fine_count(n_out + 2, 0);
-    for (int ir = 1; ir <= n_r; ++ir)
+    std::vector<int> fine_bin_count(radial_reference_axis->GetNbins() + 2, 0);
+    for (int ir = 1; ir <= n_r_bins; ++ir)
     {
-        float r_center = h_rphi->GetYaxis()->GetBinCenter(ir);
-        int iout = h->GetXaxis()->FindBin(r_center);
-        if (iout < 1 || iout > n_out)
+        float bin_r_center = rphi_coverage_map->GetYaxis()->GetBinCenter(ir);
+        int output_bin = efficiency_histogram->GetXaxis()->FindBin(bin_r_center);
+        if (output_bin < 1 || output_bin > radial_reference_axis->GetNbins())
             continue;
-        double sum = 0.;
-        for (int iphi = 1; iphi <= n_phi; ++iphi)
+        double coverage_sum = 0.;
+        for (int iphi = 1; iphi <= n_phi_bins; ++iphi)
         {
-            float phi = h_rphi->GetXaxis()->GetBinCenter(iphi);
-            for (auto &r : active_ranges)
-                if (phi > r[0] && phi < r[1])
+            float bin_phi_center = rphi_coverage_map->GetXaxis()->GetBinCenter(iphi);
+            for (auto &active_range : active_phi_ranges)
+                if (bin_phi_center > active_range[0] && bin_phi_center < active_range[1])
                 {
-                    sum += h_rphi->GetBinContent(iphi, ir);
+                    coverage_sum += rphi_coverage_map->GetBinContent(iphi, ir);
                     break;
                 }
         }
-        h->AddBinContent(iout, sum);
-        ++fine_count[iout];
+        efficiency_histogram->AddBinContent(output_bin, coverage_sum);
+        ++fine_bin_count[output_bin];
     }
-    for (int iout = 1; iout <= n_out; ++iout)
-        if (fine_count[iout] > 0)
-            h->SetBinContent(iout, h->GetBinContent(iout) / fine_count[iout]);
-    h->Scale(1. / n_phi_selected);
-    return h;
+    for (int iout = 1; iout <= radial_reference_axis->GetNbins(); ++iout)
+        if (fine_bin_count[iout] > 0)
+            efficiency_histogram->SetBinContent(
+                iout, efficiency_histogram->GetBinContent(iout) / fine_bin_count[iout]);
+    efficiency_histogram->Scale(1. / n_selected_phi_bins);
+    return efficiency_histogram;
 }
 
-float phi_extrapolation_scale(const std::vector<std::array<float, 2>> &ranges,
+float phi_extrapolation_scale(const std::vector<std::array<float, 2>> &phi_ranges,
                               bool inclusive = true)
 {
-    float gap_phi = 0.f;
-    for (auto &r : ranges)
-        gap_phi += r[1] - r[0];
-    float selected_phi = inclusive ? gap_phi : (2.f * (float)TMath::Pi() - gap_phi);
-    return 2.f * (float)TMath::Pi() / selected_phi;
+    float total_gap_phi = 0.f;
+    for (auto &phi_range : phi_ranges)
+        total_gap_phi += phi_range[1] - phi_range[0];
+    float selected_phi_span = inclusive
+                                  ? total_gap_phi
+                                  : (2.f * (float)TMath::Pi() - total_gap_phi);
+    return 2.f * (float)TMath::Pi() / selected_phi_span;
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
-// ─── Fit result struct ───────────────────────────────────────────────────────
-// Filled by photon_number() for each fitted histogram.
-// Key format: "<hist_name>.<quantity>", e.g. "h_r_ex_gap.N_gamma"
-// Quantities: N_gamma, N_gamma_err, mu, sigma, gs_frac, chi2_ndf
+// ═══════════════════════════════════════════════════════════════════════════════
+// FitResultMap — key: "<hist_name>.<quantity>", e.g. "h_radial_prompt_ex_gap.N_gamma"
+// ═══════════════════════════════════════════════════════════════════════════════
+
 using FitResultMap = std::map<std::string, double>;
 FitResultMap dummy_map;
 
-static void store_result(FitResultMap &out, const std::string &hname,
-                         double N_gamma, double N_gamma_err,
-                         double mu, double sigma,
-                         double gs_frac, double chi2_ndf)
+static void store_result(FitResultMap &result_map, const std::string &histogram_name,
+                         double n_gamma, double n_gamma_err,
+                         double peak_mu_mm, double peak_sigma_mm,
+                         double alpha_param, double chi2_per_ndf)
 {
-    out[hname + ".N_gamma"] = N_gamma;
-    out[hname + ".N_gamma_err"] = N_gamma_err;
-    out[hname + ".mu"] = mu;
-    out[hname + ".sigma"] = sigma;
-    out[hname + ".gs_frac"] = gs_frac;
-    out[hname + ".chi2_ndf"] = chi2_ndf;
+    result_map[histogram_name + ".N_gamma"] = n_gamma;
+    result_map[histogram_name + ".N_gamma_err"] = n_gamma_err;
+    result_map[histogram_name + ".mu"] = peak_mu_mm;
+    result_map[histogram_name + ".sigma"] = peak_sigma_mm;
+    result_map[histogram_name + ".gs_frac"] = alpha_param;
+    result_map[histogram_name + ".chi2_ndf"] = chi2_per_ndf;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// photon_number_new
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void photon_number_new(std::string data_repository, std::string run_name,
                        FitResultMap &fit_results = dummy_map,
                        int max_frames = 10000000)
 {
-    std::string fname = data_repository + "/" + run_name + "/recodata.root";
-    TFile *f_in = new TFile(fname.c_str());
-    if (!f_in || f_in->IsZombie())
+    ROOT::Math::MinimizerOptions::SetDefaultPrintLevel(-1);
+
+    // ── Open input file ───────────────────────────────────────────────────────
+    std::string input_filename = data_repository + "/" + run_name + "/recodata.root";
+    TFile *input_file = new TFile(input_filename.c_str());
+    if (!input_file || input_file->IsZombie())
     {
-        std::cerr << "[ERROR] Cannot open " << fname << "\n";
+        std::cerr << "[ERROR] [photon_number] Cannot open " << input_filename << "\n";
         return;
     }
-    TTree *tree = (TTree *)f_in->Get("recodata");
-    alcor_recodata *reco = new alcor_recodata();
-    reco->link_to_tree(tree);
-    int all_frames = (int)std::min((Long64_t)max_frames, tree->GetEntries());
-    alcor_finedata::read_calib_from_file(data_repository + "/" + run_name + "/gold_timing_fine_calib.txt");
+    TTree *recodata_tree = (TTree *)input_file->Get("recodata");
+    AlcorRecodata *recodata = new AlcorRecodata();
+    recodata->link_to_tree(recodata_tree);
+    const int total_frames_to_process = (int)std::min((Long64_t)max_frames,
+                                                      recodata_tree->GetEntries());
+    AlcorFinedata::read_calib_from_file(data_repository + "/" + "20251111-164951" + "/gold_timing_fine_calib.txt");
 
-    // ── Pass 0 ───────────────────────────────────────────────────────────────
-    std::vector<int> spill_of_frame(all_frames, -1);
-    std::vector<int> spill_trigger_count, spill_dcr_count;
-    int current_spill = -1, total_used_frames_prescan = 0, total_dcr_frames_prescan = 0;
+    // ══════════════════════════════════════════════════════════════════════════
+    // Pass 0 — spill accounting
+    // ══════════════════════════════════════════════════════════════════════════
 
-    for (int iframe = 0; iframe < all_frames; ++iframe)
+    std::vector<int> spill_index_of_frame(total_frames_to_process, -1);
+    std::vector<int> physics_trigger_count_per_spill, dcr_frame_count_per_spill;
+    int current_spill_index = -1, total_physics_frames = 0, total_dcr_frames = 0;
+
+    for (int iframe = 0; iframe < total_frames_to_process; ++iframe)
     {
-        tree->GetEntry(iframe);
-        if (reco->is_start_of_spill())
+        recodata_tree->GetEntry(iframe);
+        if (recodata->is_start_of_spill())
         {
-            ++current_spill;
-            spill_trigger_count.push_back(0);
-            spill_dcr_count.push_back(0);
-            spill_of_frame[iframe] = current_spill;
+            ++current_spill_index;
+            physics_trigger_count_per_spill.push_back(0);
+            dcr_frame_count_per_spill.push_back(0);
+            spill_index_of_frame[iframe] = current_spill_index;
             continue;
         }
-        if (current_spill < 0)
+        if (current_spill_index < 0)
             continue;
-        spill_of_frame[iframe] = current_spill;
-        if (reco->get_trigger_by_index(104))
+        spill_index_of_frame[iframe] = current_spill_index;
+        if (recodata->get_trigger_by_index(104))
         {
-            ++spill_trigger_count[current_spill];
-            ++total_used_frames_prescan;
+            ++physics_trigger_count_per_spill[current_spill_index];
+            ++total_physics_frames;
         }
-        else if (reco->get_trigger_by_index(100))
+        else if (recodata->get_trigger_by_index(100))
         {
-            ++spill_dcr_count[current_spill];
-            ++total_dcr_frames_prescan;
-        }
-    }
-    const int n_spills = (int)spill_trigger_count.size();
-    const float total_used_frames_f = (float)total_used_frames_prescan;
-    const float total_dcr_frames_f = (float)total_dcr_frames_prescan;
-    std::cout << "[Pass 0] " << n_spills << " spills, "
-              << total_used_frames_prescan << " physics triggers, "
-              << total_dcr_frames_prescan << " DCR frames\n";
-
-    // ── Histograms ────────────────────────────────────────────────────────────
-    TH1F *h_fit_x = new TH1F("h_fit_x", ";circle center x (mm)", 240, -30, 30);
-    TH1F *h_fit_y = new TH1F("h_fit_y", ";circle center y (mm)", 240, -30, 30);
-    TH1F *h_fit_r = new TH1F("h_fit_r", ";circle radius (mm)", 400, 30, 130);
-    TH1F *h_dt = new TH1F("h_dt", ";t_{hit}-t_{trig} (ns)", 10000, -312.5, 312.5);
-
-    TH2F *h_xy_hits = new TH2F("h_xy_hits", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_rphi_hits = new TH2F("h_rphi_hits", ";#phi (rad);R (mm)",
-                                 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
-
-    TH1F *h_r_full = new TH1F("h_r_full", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_in_gap = new TH1F("h_r_in_gap", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap = new TH1F("h_r_ex_gap", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1350 = new TH1F("h_r_ex_gap_1350", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1375 = new TH1F("h_r_ex_gap_1375", ";R (mm)", kRBins, kRLo, kRHi);
-
-    TH1F *h_r_full_dcr = new TH1F("h_r_full_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_in_gap_dcr = new TH1F("h_r_in_gap_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_dcr = new TH1F("h_r_ex_gap_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1350_dcr = new TH1F("h_r_ex_gap_1350_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1375_dcr = new TH1F("h_r_ex_gap_1375_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-
-    static constexpr int kRFineBins = 100 * kCoverageGranularity;
-    TH2F *h_xy_cov = new TH2F("h_xy_cov", ";x (mm);y (mm)",
-                              396 * kCoverageGranularity, -99, 99,
-                              396 * kCoverageGranularity, -99, 99);
-    TH2F *h_rphi_cov = new TH2F("h_rphi_cov", ";#phi (rad);R (mm)",
-                                400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
-                                kRFineBins, kRLo, kRHi);
-    TH2F *h_rphi_cov_1350 = new TH2F("h_rphi_cov_1350", ";#phi (rad);R (mm)",
-                                     400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
-                                     kRFineBins, kRLo, kRHi);
-    TH2F *h_rphi_cov_1375 = new TH2F("h_rphi_cov_1375", ";#phi (rad);R (mm)",
-                                     400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
-                                     kRFineBins, kRLo, kRHi);
-
-    // ── Pass 1: circle fits ───────────────────────────────────────────────────
-    for (int iframe = 0; iframe < all_frames; ++iframe)
-    {
-        tree->GetEntry(iframe);
-        if (reco->is_start_of_spill())
-            continue;
-        auto trig = reco->get_trigger_by_index(104);
-        if (!trig)
-            continue;
-        std::vector<std::array<float, 2>> pts;
-        float r_sum = 0.f;
-        for (int ih = 0; ih < (int)reco->get_recodata().size(); ++ih)
-        {
-            if (reco->is_afterpulse(ih))
-                continue;
-            float dt = reco->get_hit_t(ih) - trig->fine_time;
-            h_dt->Fill(dt);
-            if (dt < kTimeCutNs[0] || dt > kTimeCutNs[1])
-                continue;
-            pts.push_back({reco->get_hit_x(ih), reco->get_hit_y(ih)});
-            r_sum += reco->get_hit_r(ih);
-        }
-        if ((int)pts.size() > 4)
-        {
-            float r0 = r_sum / pts.size();
-            auto res = fit_circle(pts, {0.f, 0.f, r0}, false, {{}});
-            h_fit_x->Fill(res[0][0]);
-            h_fit_y->Fill(res[1][0]);
-            h_fit_r->Fill(res[2][0]);
+            ++dcr_frame_count_per_spill[current_spill_index];
+            ++total_dcr_frames;
         }
     }
 
-    TF1 *f_dg = new TF1("f_dg", "[0]*TMath::Gaus(x,[1],[2],true)+[3]*TMath::Gaus(x,[1],[4],true)", -30, 130);
-    std::array<float, 3> G = {};
-    auto fit_peak = [&](TH1F *h, float xlo, float xhi) -> float
+    mist::logger::info("[photon_number] Pass 0: " + std::to_string(physics_trigger_count_per_spill.size()) + " spills, " + std::to_string(total_physics_frames) + " physics triggers, " + std::to_string(total_dcr_frames) + " DCR frames");
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Histogram declarations
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // ── Circle-fit parameter distributions ───────────────────────────────────
+    TH1F *h_circle_fit_x_prompt = new TH1F("h_circle_fit_x_prompt", ";circle center x (mm)", 240, -30, 30);
+    TH1F *h_circle_fit_y_prompt = new TH1F("h_circle_fit_y_prompt", ";circle center y (mm)", 240, -30, 30);
+    TH1F *h_circle_fit_r_prompt = new TH1F("h_circle_fit_r_prompt", ";circle radius (mm)", 400, 30, 130);
+    TH1F *h_circle_fit_x_early = new TH1F("h_circle_fit_x_early", ";circle center x (mm)", 240, -30, 30);
+    TH1F *h_circle_fit_y_early = new TH1F("h_circle_fit_y_early", ";circle center y (mm)", 240, -30, 30);
+    TH1F *h_circle_fit_r_early = new TH1F("h_circle_fit_r_early", ";circle radius (mm)", 400, 30, 130);
+
+    // ── Hit timing distribution ───────────────────────────────────────────────
+    TH1F *h_delta_time_all_hits = new TH1F("h_delta_time_all_hits",
+                                           ";t_{Hit}-t_{trig} (ns)", 10000, -312.5, 312.5);
+
+    // ── 2D Hit maps ──────────────────────────────────────────────────────────
+    TH2F *h_hit_map_xy = new TH2F("h_hit_map_xy", ";x (mm);y (mm)",
+                                  396, -99, 99, 396, -99, 99);
+    TH2F *h_hit_map_rphi = new TH2F("h_hit_map_rphi", ";#phi (rad);R (mm)",
+                                    400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
+
+    // ── Persistence maps for early/prompt coincidence frames ─────────────────
+    // Only filled in frames where both prompt AND early hits are present.
+    TH2F *h_persistence_xy_prompt = new TH2F("h_persistence_xy_prompt",
+                                             ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_persistence_xy_early = new TH2F("h_persistence_xy_early",
+                                            ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    TH2F *h_persistence_rphi_prompt = new TH2F("h_persistence_rphi_prompt",
+                                               ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
+    TH2F *h_persistence_rphi_early = new TH2F("h_persistence_rphi_early",
+                                              ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
+
+    // ── Radial distributions — prompt signal ─────────────────────────────────
+    TH1F *h_radial_prompt_full = new TH1F("h_radial_prompt_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_prompt_in_gap = new TH1F("h_radial_prompt_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_prompt_ex_gap = new TH1F("h_radial_prompt_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_prompt_ex_gap_1350 = new TH1F("h_radial_prompt_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_prompt_ex_gap_1375 = new TH1F("h_radial_prompt_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+
+    // ── Radial distributions — DCR background ────────────────────────────────
+    TH1F *h_radial_dcr_full = new TH1F("h_radial_dcr_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_dcr_in_gap = new TH1F("h_radial_dcr_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_dcr_ex_gap = new TH1F("h_radial_dcr_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_dcr_ex_gap_1350 = new TH1F("h_radial_dcr_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_dcr_ex_gap_1375 = new TH1F("h_radial_dcr_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+
+    // ── Radial distributions — early satellite population ────────────────────
+    // Uses early_ring_center as ring centre; DCR-subtracted using window-width scaling.
+    TH1F *h_radial_early_full = new TH1F("h_radial_early_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_early_in_gap = new TH1F("h_radial_early_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_early_ex_gap = new TH1F("h_radial_early_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_early_ex_gap_1350 = new TH1F("h_radial_early_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    TH1F *h_radial_early_ex_gap_1375 = new TH1F("h_radial_early_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+
+    // ── Coverage maps ─────────────────────────────────────────────────────────
+    static constexpr int kRadialFineBins = 100 * kCoverageGranularity;
+    TH2F *h_coverage_map_xy = new TH2F("h_coverage_map_xy", ";x (mm);y (mm)",
+                                       396 * kCoverageGranularity, -99, 99,
+                                       396 * kCoverageGranularity, -99, 99);
+    TH2F *h_coverage_map_rphi = new TH2F("h_coverage_map_rphi", ";#phi (rad);R (mm)",
+                                         400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
+                                         kRadialFineBins, kRadialLoMm, kRadialHiMm);
+    TH2F *h_coverage_map_rphi_1350 = new TH2F("h_coverage_map_rphi_1350", ";#phi (rad);R (mm)",
+                                              400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
+                                              kRadialFineBins, kRadialLoMm, kRadialHiMm);
+    TH2F *h_coverage_map_rphi_1375 = new TH2F("h_coverage_map_rphi_1375", ";#phi (rad);R (mm)",
+                                              400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
+                                              kRadialFineBins, kRadialLoMm, kRadialHiMm);
+
+    // ── Hit-pair timing vs spatial separation ─────────────────────────────────
+    // Hits time-sorted per frame: t_i <= t_j for i < j → dt_ij <= 0 always.
+    TH2F *h_pair_dt_trig_vs_separation = new TH2F(
+        "h_pair_dt_trig_vs_separation", ";#DeltaR_{ij} (mm);t_{i}-t_{trig} (ns)",
+        kPairSeparationBins, 0., kPairSeparationMaxMm,
+        kPairDeltaTimeBins, -kPairDeltaTimeMaxNs, kPairDeltaTimeMaxNs);
+    TH2F *h_pair_dt_hit_vs_separation = new TH2F(
+        "h_pair_dt_hit_vs_separation", ";#DeltaR_{ij} (mm);t_{i}-t_{j} (ns)",
+        kPairSeparationBins, 0., kPairSeparationMaxMm,
+        kPairDeltaTimeBins, -kPairDeltaTimeMaxNs, kPairDeltaTimeMaxNs);
+
+    // ── dt distributions split by sensor type and phi region ─────────────────
+    // Raw t_hit - t_trig with no time window — both prompt peak and early
+    // satellite visible simultaneously. Binning matches h_delta_time_all_hits
+    // but restricted to [-5, +5] ns to zoom in on the relevant structure.
+    static constexpr int kDtSensorBins = 500; // 20 ps/bin over 10 ns
+    static constexpr float kDtSensorLoNs = -5.f;
+    static constexpr float kDtSensorHiNs = +5.f;
+    TH1F *h_dt_1350_full = new TH1F("h_dt_1350_full",
+                                    ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    TH1F *h_dt_1350_in_gap = new TH1F("h_dt_1350_in_gap",
+                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    TH1F *h_dt_1350_ex_gap = new TH1F("h_dt_1350_ex_gap",
+                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    TH1F *h_dt_1375_full = new TH1F("h_dt_1375_full",
+                                    ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    TH1F *h_dt_1375_in_gap = new TH1F("h_dt_1375_in_gap",
+                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    TH1F *h_dt_1375_ex_gap = new TH1F("h_dt_1375_ex_gap",
+                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+
+    // ── Early-to-prompt spatial correlation ───────────────────────────────────
+    // h_early_to_prompt_nearest_dR: for each early Hit, distance to nearest
+    //   prompt Hit in the same frame.
+    //   peak at 0 mm     → same-channel re-fire
+    //   peak at 3.3 mm   → cardinal cross-talk neighbour
+    //   peak at 4.67 mm  → diagonal cross-talk neighbour
+    //   broad/flat       → uncorrelated (ring geometry)
+    // h_same_channel_refire_count: channels firing in both windows per frame.
+    // h_early_hit_multiplicity_per_frame: early hits per frame — tests
+    //   whether the early population is bimodal (second particle) or Poisson
+    //   (constant fractional rate, consistent with time-walk or optical effect).
+    TH1F *h_early_to_prompt_nearest_dR = new TH1F(
+        "h_early_to_prompt_nearest_dR",
+        ";#DeltaR_{early#rightarrownearest prompt} (mm);entries",
+        150, 0., 50.);
+    TH1F *h_same_channel_refire_count = new TH1F(
+        "h_same_channel_refire_count",
+        ";N_{channels firing in both windows} per frame;frames",
+        20, 0., 20.);
+    TH1F *h_early_hit_multiplicity_per_frame = new TH1F(
+        "h_early_hit_multiplicity_per_frame",
+        ";N_{hits} in early window per frame;frames",
+        50, 0, 50);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Pass 1 — circle fitting
+    //
+    // Collect hits in prompt and early windows separately per frame and run
+    // Taubin algebraic circle fits to extract ring centre distributions.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    for (int iframe = 0; iframe < total_frames_to_process; ++iframe)
     {
-        f_dg->SetRange(xlo, xhi);
-        f_dg->SetParameters(h->GetMaximum(), h->GetMean(), 1., h->GetMaximum() * 0.3, 5.);
-        h->Fit(f_dg, "QNR");
-        return f_dg->GetParameter(1);
+        recodata_tree->GetEntry(iframe);
+        if (recodata->is_start_of_spill())
+            continue;
+        auto physics_trigger = recodata->get_trigger_by_index(104);
+        if (!physics_trigger)
+            continue;
+
+        std::vector<std::array<float, 2>> prompt_hit_positions, early_hit_positions;
+        float prompt_radius_sum = 0.f, early_radius_sum = 0.f;
+
+        for (int ihit = 0; ihit < (int)recodata->get_recodata().size(); ++ihit)
+        {
+            const float delta_time_ns = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+            h_delta_time_all_hits->Fill(delta_time_ns);
+            const float hit_x_mm = recodata->get_hit_x(ihit);
+            const float hit_y_mm = recodata->get_hit_y(ihit);
+            const float hit_r_mm = recodata->get_hit_r(ihit);
+
+            if (delta_time_ns >= kPromptTimeCutNs[0] && delta_time_ns <= kPromptTimeCutNs[1])
+            {
+                prompt_hit_positions.push_back({hit_x_mm, hit_y_mm});
+                prompt_radius_sum += hit_r_mm;
+            }
+            else if (delta_time_ns >= kEarlyTimeCutNs[0] && delta_time_ns <= kEarlyTimeCutNs[1])
+            {
+                early_hit_positions.push_back({hit_x_mm, hit_y_mm});
+                early_radius_sum += hit_r_mm;
+            }
+        }
+
+        if ((int)prompt_hit_positions.size() > 4)
+        {
+            auto circle_fit_result = fit_circle(prompt_hit_positions,
+                                                {0.f, 0.f, prompt_radius_sum / prompt_hit_positions.size()}, false, {{}});
+            h_circle_fit_x_prompt->Fill(circle_fit_result[0][0]);
+            h_circle_fit_y_prompt->Fill(circle_fit_result[1][0]);
+            h_circle_fit_r_prompt->Fill(circle_fit_result[2][0]);
+        }
+        if ((int)early_hit_positions.size() > 4)
+        {
+            auto circle_fit_result = fit_circle(early_hit_positions,
+                                                {0.f, 0.f, early_radius_sum / early_hit_positions.size()}, false, {{}});
+            h_circle_fit_x_early->Fill(circle_fit_result[0][0]);
+            h_circle_fit_y_early->Fill(circle_fit_result[1][0]);
+            h_circle_fit_r_early->Fill(circle_fit_result[2][0]);
+        }
+    }
+
+    // ── Extract ring centres from double-Gaussian fits ────────────────────────
+    TF1 *double_gaussian_fit = new TF1("double_gaussian_fit",
+                                       "[0]*TMath::Gaus(x,[1],[2],true)+[3]*TMath::Gaus(x,[1],[4],true)", -30, 130);
+
+    auto extract_peak_position = [&](TH1F *histogram, float fit_lo, float fit_hi) -> float
+    {
+        double_gaussian_fit->SetRange(fit_lo, fit_hi);
+        double_gaussian_fit->SetParameters(histogram->GetMaximum(), histogram->GetMean(),
+                                           1., histogram->GetMaximum() * 0.3, 5.);
+        histogram->Fit(double_gaussian_fit, "QNR");
+        return double_gaussian_fit->GetParameter(1);
     };
-    G[0] = fit_peak(h_fit_x, -30, 30);
-    G[1] = fit_peak(h_fit_y, -30, 30);
-    G[2] = fit_peak(h_fit_r, 30, 130);
 
-    // ── Pass 2: coverage + hits ───────────────────────────────────────────────
-    std::map<int, std::array<std::vector<std::array<int, 2>>, 2>> ch_bins_cache;
-    int used_frames = 0;
+    std::array<float, 3> prompt_ring_center = {};
+    prompt_ring_center[0] = extract_peak_position(h_circle_fit_x_prompt, -30, 30);
+    prompt_ring_center[1] = extract_peak_position(h_circle_fit_y_prompt, -30, 30);
+    prompt_ring_center[2] = extract_peak_position(h_circle_fit_r_prompt, 30, 130);
+    mist::logger::info("[photon_number] prompt_ring_center:" + std::string("  x=") + std::to_string(prompt_ring_center[0]) + "  y=" + std::to_string(prompt_ring_center[1]) + "  R=" + std::to_string(prompt_ring_center[2]));
 
-    for (int iframe = 0; iframe < all_frames; ++iframe)
+    std::array<float, 3> early_ring_center = {};
+    if (h_circle_fit_x_early->GetEntries() > 10)
     {
-        tree->GetEntry(iframe);
-        int ispill = spill_of_frame[iframe];
-        if (ispill < 0)
+        early_ring_center[0] = extract_peak_position(h_circle_fit_x_early, -30, 30);
+        early_ring_center[1] = extract_peak_position(h_circle_fit_y_early, -30, 30);
+        early_ring_center[2] = extract_peak_position(h_circle_fit_r_early, 30, 130);
+        mist::logger::info("[photon_number] early_ring_center:" + std::string("  x=") + std::to_string(early_ring_center[0]) + "  y=" + std::to_string(early_ring_center[1]) + "  R=" + std::to_string(early_ring_center[2]));
+    }
+    else
+    {
+        early_ring_center = prompt_ring_center;
+        mist::logger::warning("[photon_number] Early population too sparse — using prompt centre as fallback");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Pass 2 — coverage maps + Hit filling + pair histograms
+    //
+    // Spill-start frames → coverage maps (weighted by physics trigger fraction).
+    // Physics-trigger frames → radial distributions + pair timing + spatial
+    //   correlation histograms.
+    // DCR-trigger frames → DCR background radial distributions.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    std::map<int, std::array<std::vector<std::array<int, 2>>, 2>> channel_bin_cache;
+    int n_used_physics_frames = 0;
+
+    for (int iframe = 0; iframe < total_frames_to_process; ++iframe)
+    {
+        recodata_tree->GetEntry(iframe);
+        const int frame_spill_index = spill_index_of_frame[iframe];
+        if (frame_spill_index < 0)
             continue;
 
-        if (reco->is_start_of_spill())
+        // ── Spill-start: fill coverage maps ──────────────────────────────────
+        if (recodata->is_start_of_spill())
         {
-            if (spill_trigger_count[ispill] == 0)
+            if (physics_trigger_count_per_spill[frame_spill_index] == 0)
                 continue;
-            const float w = (float)spill_trigger_count[ispill] / total_used_frames_f;
-            for (int ih = 0; ih < (int)reco->get_recodata().size(); ++ih)
-            {
-                int gidx = reco->get_global_index(ih);
-                float cx = reco->get_hit_x(ih);
-                float cy = reco->get_hit_y(ih);
-                SensorType st = sensor_type(reco->get_device(ih));
-                TH2F *h_cov_st = (st == SensorType::k1350)   ? h_rphi_cov_1350
-                                 : (st == SensorType::k1375) ? h_rphi_cov_1375
-                                                             : nullptr;
+            const float spill_weight = (float)physics_trigger_count_per_spill[frame_spill_index] / (float)total_physics_frames;
 
-                auto it = ch_bins_cache.find(gidx);
-                if (it != ch_bins_cache.end())
+            for (int ihit = 0; ihit < (int)recodata->get_recodata().size(); ++ihit)
+            {
+                const int global_channel_index = recodata->get_global_index(ihit);
+                const float channel_center_x_mm = recodata->get_hit_x(ihit);
+                const float channel_center_y_mm = recodata->get_hit_y(ihit);
+                const SensorType sensor_model = sensor_type(recodata->get_device(ihit));
+                TH2F *sensor_coverage_map =
+                    (sensor_model == SensorType::k1350) ? h_coverage_map_rphi_1350 : (sensor_model == SensorType::k1375) ? h_coverage_map_rphi_1375
+                                                                                                                         : nullptr;
+
+                auto cached_channel = channel_bin_cache.find(global_channel_index);
+                if (cached_channel != channel_bin_cache.end())
                 {
-                    for (auto &b : it->second[0])
-                        h_xy_cov->AddBinContent(h_xy_cov->GetBin(b[0], b[1]), w);
-                    for (auto &b : it->second[1])
+                    for (auto &bin_xy : cached_channel->second[0])
+                        h_coverage_map_xy->AddBinContent(
+                            h_coverage_map_xy->GetBin(bin_xy[0], bin_xy[1]), spill_weight);
+                    for (auto &bin_rphi : cached_channel->second[1])
                     {
-                        h_rphi_cov->AddBinContent(h_rphi_cov->GetBin(b[0], b[1]), w);
-                        if (h_cov_st)
-                            h_cov_st->AddBinContent(h_cov_st->GetBin(b[0], b[1]), w);
+                        h_coverage_map_rphi->AddBinContent(
+                            h_coverage_map_rphi->GetBin(bin_rphi[0], bin_rphi[1]), spill_weight);
+                        if (sensor_coverage_map)
+                            sensor_coverage_map->AddBinContent(
+                                sensor_coverage_map->GetBin(bin_rphi[0], bin_rphi[1]), spill_weight);
                     }
                     continue;
                 }
-                auto &bins_xy = ch_bins_cache[gidx][0];
-                auto &bins_rphi = ch_bins_cache[gidx][1];
-                int bxlo = h_xy_cov->GetXaxis()->FindBin(cx - 1.5f), bxhi = h_xy_cov->GetXaxis()->FindBin(cx + 1.5f);
-                int bylo = h_xy_cov->GetYaxis()->FindBin(cy - 1.5f), byhi = h_xy_cov->GetYaxis()->FindBin(cy + 1.5f);
-                for (int bx = bxlo; bx <= bxhi; ++bx)
-                    for (int by = bylo; by <= byhi; ++by)
+
+                auto &cached_bins_xy = channel_bin_cache[global_channel_index][0];
+                auto &cached_bins_rphi = channel_bin_cache[global_channel_index][1];
+
+                int bin_x_lo = h_coverage_map_xy->GetXaxis()->FindBin(channel_center_x_mm - 1.5f);
+                int bin_x_hi = h_coverage_map_xy->GetXaxis()->FindBin(channel_center_x_mm + 1.5f);
+                int bin_y_lo = h_coverage_map_xy->GetYaxis()->FindBin(channel_center_y_mm - 1.5f);
+                int bin_y_hi = h_coverage_map_xy->GetYaxis()->FindBin(channel_center_y_mm + 1.5f);
+                for (int bin_x = bin_x_lo; bin_x <= bin_x_hi; ++bin_x)
+                    for (int bin_y = bin_y_lo; bin_y <= bin_y_hi; ++bin_y)
                     {
-                        h_xy_cov->AddBinContent(h_xy_cov->GetBin(bx, by), w);
-                        bins_xy.push_back({bx, by});
+                        h_coverage_map_xy->AddBinContent(
+                            h_coverage_map_xy->GetBin(bin_x, bin_y), spill_weight);
+                        cached_bins_xy.push_back({bin_x, bin_y});
                     }
 
-                float cr = std::hypot(cx, cy), cphi = std::atan2(cy, cx);
-                float dphi = 1.5f * sqrtf(2.f) / cr, dr = 1.5f * sqrtf(2.f);
-                int brlo = h_rphi_cov->GetYaxis()->FindBin(cr - dr), brhi = h_rphi_cov->GetYaxis()->FindBin(cr + dr);
-                int bplo = h_rphi_cov->GetXaxis()->FindBin(cphi - dphi), bphi_ = h_rphi_cov->GetXaxis()->FindBin(cphi + dphi);
-                for (int bp = bplo; bp <= bphi_; ++bp)
+                const float channel_radius_mm = std::hypot(channel_center_x_mm, channel_center_y_mm);
+                const float channel_phi_rad = std::atan2(channel_center_y_mm, channel_center_x_mm);
+                const float delta_phi_rad = 1.5f * sqrtf(2.f) / channel_radius_mm;
+                const float delta_r_mm = 1.5f * sqrtf(2.f);
+                int bin_r_lo = h_coverage_map_rphi->GetYaxis()->FindBin(channel_radius_mm - delta_r_mm);
+                int bin_r_hi = h_coverage_map_rphi->GetYaxis()->FindBin(channel_radius_mm + delta_r_mm);
+                int bin_phi_lo = h_coverage_map_rphi->GetXaxis()->FindBin(channel_phi_rad - delta_phi_rad);
+                int bin_phi_hi = h_coverage_map_rphi->GetXaxis()->FindBin(channel_phi_rad + delta_phi_rad);
+                for (int bin_phi = bin_phi_lo; bin_phi <= bin_phi_hi; ++bin_phi)
                 {
-                    float phi_c = h_rphi_cov->GetXaxis()->GetBinCenter(bp);
-                    for (int br = brlo; br <= brhi; ++br)
+                    float polar_bin_phi = h_coverage_map_rphi->GetXaxis()->GetBinCenter(bin_phi);
+                    for (int bin_r = bin_r_lo; bin_r <= bin_r_hi; ++bin_r)
                     {
-                        float r_c = h_rphi_cov->GetYaxis()->GetBinCenter(br);
-                        if (std::fabs(r_c * cosf(phi_c) - cx) > 1.5f || std::fabs(r_c * sinf(phi_c) - cy) > 1.5f)
+                        float polar_bin_r = h_coverage_map_rphi->GetYaxis()->GetBinCenter(bin_r);
+                        if (std::fabs(polar_bin_r * cosf(polar_bin_phi) - channel_center_x_mm) > 1.5f ||
+                            std::fabs(polar_bin_r * sinf(polar_bin_phi) - channel_center_y_mm) > 1.5f)
                             continue;
-                        if (std::find(bins_rphi.begin(), bins_rphi.end(), std::array<int, 2>{bp, br}) != bins_rphi.end())
+                        if (std::find(cached_bins_rphi.begin(), cached_bins_rphi.end(),
+                                      std::array<int, 2>{bin_phi, bin_r}) != cached_bins_rphi.end())
                             continue;
-                        h_rphi_cov->AddBinContent(h_rphi_cov->GetBin(bp, br), w);
-                        bins_rphi.push_back({bp, br});
+                        h_coverage_map_rphi->AddBinContent(
+                            h_coverage_map_rphi->GetBin(bin_phi, bin_r), spill_weight);
+                        cached_bins_rphi.push_back({bin_phi, bin_r});
                     }
                 }
-                if (h_cov_st)
-                    for (auto &b : bins_rphi)
-                        h_cov_st->AddBinContent(h_cov_st->GetBin(b[0], b[1]), w);
+                if (sensor_coverage_map)
+                    for (auto &bin_rphi : cached_bins_rphi)
+                        sensor_coverage_map->AddBinContent(
+                            sensor_coverage_map->GetBin(bin_rphi[0], bin_rphi[1]), spill_weight);
             }
             continue;
         }
 
-        auto trig = reco->get_trigger_by_index(104);
-        if (trig)
+        // ── Physics trigger: radial distributions + pair timing + correlations ─
+        auto physics_trigger = recodata->get_trigger_by_index(104);
+        if (physics_trigger)
         {
-            ++used_frames;
-            for (int ih = 0; ih < (int)reco->get_recodata().size(); ++ih)
+            ++n_used_physics_frames;
+            const int nhits = (int)recodata->get_recodata().size();
+
+            // ── Radial distributions ──────────────────────────────────────────
+            for (int ihit = 0; ihit < nhits; ++ihit)
             {
-                if (reco->is_afterpulse(ih))
+                if (recodata->is_afterpulse(ihit))
                     continue;
-                float dt = reco->get_hit_t(ih) - trig->fine_time;
-                if (dt < kTimeCutNs[0] || dt > kTimeCutNs[1])
-                    continue;
-                float phi = reco->get_hit_phi(ih, {G[0], G[1]});
-                float r = reco->get_hit_r(ih, {G[0], G[1]});
-                h_xy_hits->Fill(reco->get_hit_x_rnd(ih), reco->get_hit_y_rnd(ih));
-                h_rphi_hits->Fill(reco->get_hit_phi_rnd(ih, {G[0], G[1]}), reco->get_hit_r_rnd(ih, {G[0], G[1]}));
-                h_r_full->Fill(r);
-                bool in_gap = false;
-                for (auto &range : kPhiGapRanges)
-                    if (phi > range[0] && phi < range[1])
+                const float delta_time_ns = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+
+                // Prompt signal
+                if (delta_time_ns >= kPromptTimeCutNs[0] && delta_time_ns <= kPromptTimeCutNs[1])
+                {
+                    const float hit_phi_rad = recodata->get_hit_phi(ihit,
+                                                                    {prompt_ring_center[0], prompt_ring_center[1]});
+                    const float hit_radius_mm = recodata->get_hit_r(ihit,
+                                                                    {prompt_ring_center[0], prompt_ring_center[1]});
+                    h_hit_map_xy->Fill(recodata->get_hit_x_rnd(ihit), recodata->get_hit_y_rnd(ihit));
+                    h_hit_map_rphi->Fill(
+                        recodata->get_hit_phi_rnd(ihit, {prompt_ring_center[0], prompt_ring_center[1]}),
+                        recodata->get_hit_r_rnd(ihit, {prompt_ring_center[0], prompt_ring_center[1]}));
+                    h_radial_prompt_full->Fill(hit_radius_mm);
+                    bool hit_is_in_phi_gap = false;
+                    for (auto &gap_range : kPhiGapRanges)
+                        if (hit_phi_rad > gap_range[0] && hit_phi_rad < gap_range[1])
+                        {
+                            hit_is_in_phi_gap = true;
+                            break;
+                        }
+                    (hit_is_in_phi_gap ? h_radial_prompt_in_gap : h_radial_prompt_ex_gap)
+                        ->Fill(hit_radius_mm);
+                    if (!hit_is_in_phi_gap)
                     {
-                        in_gap = true;
+                        const SensorType sensor_model = sensor_type(recodata->get_device(ihit));
+                        if (sensor_model == SensorType::k1350)
+                            h_radial_prompt_ex_gap_1350->Fill(hit_radius_mm);
+                        else if (sensor_model == SensorType::k1375)
+                            h_radial_prompt_ex_gap_1375->Fill(hit_radius_mm);
+                    }
+                }
+                // Early satellite — uses early_ring_center for correct R reconstruction
+                else if (delta_time_ns >= kEarlyTimeCutNs[0] && delta_time_ns <= kEarlyTimeCutNs[1])
+                {
+                    const float hit_phi_rad = recodata->get_hit_phi(ihit,
+                                                                    {early_ring_center[0], early_ring_center[1]});
+                    const float hit_radius_mm = recodata->get_hit_r(ihit,
+                                                                    {early_ring_center[0], early_ring_center[1]});
+                    h_radial_early_full->Fill(hit_radius_mm);
+                    bool hit_is_in_phi_gap = false;
+                    for (auto &gap_range : kPhiGapRanges)
+                        if (hit_phi_rad > gap_range[0] && hit_phi_rad < gap_range[1])
+                        {
+                            hit_is_in_phi_gap = true;
+                            break;
+                        }
+                    (hit_is_in_phi_gap ? h_radial_early_in_gap : h_radial_early_ex_gap)
+                        ->Fill(hit_radius_mm);
+                    if (!hit_is_in_phi_gap)
+                    {
+                        const SensorType sensor_model = sensor_type(recodata->get_device(ihit));
+                        if (sensor_model == SensorType::k1350)
+                            h_radial_early_ex_gap_1350->Fill(hit_radius_mm);
+                        else if (sensor_model == SensorType::k1375)
+                            h_radial_early_ex_gap_1375->Fill(hit_radius_mm);
+                    }
+                }
+            }
+
+            // ── Hit-pair timing (no afterpulse veto, time-sorted, i < j) ──────
+            // t_i <= t_j by construction → dt_ij <= 0 always.
+            // Same-channel pairs (separation < 0.5 mm) excluded.
+            {
+                std::vector<float> hit_x_positions(nhits), hit_y_positions(nhits),
+                    hit_delta_times(nhits);
+                for (int ihit = 0; ihit < nhits; ++ihit)
+                {
+                    hit_x_positions[ihit] = recodata->get_hit_x(ihit);
+                    hit_y_positions[ihit] = recodata->get_hit_y(ihit);
+                    hit_delta_times[ihit] = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+                }
+                std::vector<int> time_sorted_indices(nhits);
+                std::iota(time_sorted_indices.begin(), time_sorted_indices.end(), 0);
+                std::sort(time_sorted_indices.begin(), time_sorted_indices.end(),
+                          [&](int index_a, int index_b)
+                          { return hit_delta_times[index_a] < hit_delta_times[index_b]; });
+
+                std::vector<float> sorted_x(nhits), sorted_y(nhits), sorted_dt(nhits);
+                for (int k = 0; k < nhits; ++k)
+                {
+                    sorted_x[k] = hit_x_positions[time_sorted_indices[k]];
+                    sorted_y[k] = hit_y_positions[time_sorted_indices[k]];
+                    sorted_dt[k] = hit_delta_times[time_sorted_indices[k]];
+                }
+
+                for (int ref_hit = 0; ref_hit < nhits; ++ref_hit)
+                {
+                    if (std::fabs(sorted_dt[ref_hit]) >= kPairTimeCutNs)
+                        continue;
+                    for (int partner_hit = ref_hit + 1; partner_hit < nhits; ++partner_hit)
+                    {
+                        const float dx_mm = sorted_x[partner_hit] - sorted_x[ref_hit];
+                        const float dy_mm = sorted_y[partner_hit] - sorted_y[ref_hit];
+                        const float pair_separation_mm = std::sqrt(dx_mm * dx_mm + dy_mm * dy_mm);
+                        if (pair_separation_mm < 0.5f)
+                            continue;
+                        h_pair_dt_trig_vs_separation->Fill(pair_separation_mm, sorted_dt[ref_hit]);
+                        h_pair_dt_hit_vs_separation->Fill(pair_separation_mm,
+                                                          sorted_dt[ref_hit] - sorted_dt[partner_hit]);
+                    }
+                }
+            }
+
+            // ── Persistence maps (coincidence frames only) ────────────────────
+            {
+                bool frame_has_prompt_hit = false, frame_has_early_hit = false;
+                for (int ihit = 0; ihit < nhits; ++ihit)
+                {
+                    if (recodata->is_afterpulse(ihit))
+                        continue;
+                    const float delta_time_ns = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+                    if (delta_time_ns >= kPromptTimeCutNs[0] && delta_time_ns <= kPromptTimeCutNs[1])
+                        frame_has_prompt_hit = true;
+                    else if (delta_time_ns >= kEarlyTimeCutNs[0] && delta_time_ns <= kEarlyTimeCutNs[1])
+                        frame_has_early_hit = true;
+                    if (frame_has_prompt_hit && frame_has_early_hit)
                         break;
-                    }
-                (in_gap ? h_r_in_gap : h_r_ex_gap)->Fill(r);
-                if (!in_gap)
+                }
+
+                if (frame_has_prompt_hit && frame_has_early_hit)
                 {
-                    auto st = sensor_type(reco->get_device(ih));
-                    if (st == SensorType::k1350)
-                        h_r_ex_gap_1350->Fill(r);
-                    else if (st == SensorType::k1375)
-                        h_r_ex_gap_1375->Fill(r);
+                    for (int ihit = 0; ihit < nhits; ++ihit)
+                    {
+                        if (recodata->is_afterpulse(ihit))
+                            continue;
+                        const float delta_time_ns = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+                        if (delta_time_ns >= kPromptTimeCutNs[0] && delta_time_ns <= kPromptTimeCutNs[1])
+                        {
+                            h_persistence_xy_prompt->Fill(
+                                recodata->get_hit_x_rnd(ihit), recodata->get_hit_y_rnd(ihit));
+                            h_persistence_rphi_prompt->Fill(
+                                recodata->get_hit_phi_rnd(ihit,
+                                                          {prompt_ring_center[0], prompt_ring_center[1]}),
+                                recodata->get_hit_r_rnd(ihit,
+                                                        {prompt_ring_center[0], prompt_ring_center[1]}));
+                        }
+                        else if (delta_time_ns >= kEarlyTimeCutNs[0] && delta_time_ns <= kEarlyTimeCutNs[1])
+                        {
+                            h_persistence_xy_early->Fill(
+                                recodata->get_hit_x_rnd(ihit), recodata->get_hit_y_rnd(ihit));
+                            h_persistence_rphi_early->Fill(
+                                recodata->get_hit_phi_rnd(ihit,
+                                                          {early_ring_center[0], early_ring_center[1]}),
+                                recodata->get_hit_r_rnd(ihit,
+                                                        {early_ring_center[0], early_ring_center[1]}));
+                        }
+                    }
                 }
             }
+
+            // ── Early Hit multiplicity per frame ──────────────────────────────
+            {
+                int early_hit_count_this_frame = 0;
+                for (int ihit = 0; ihit < nhits; ++ihit)
+                {
+                    if (recodata->is_afterpulse(ihit))
+                        continue;
+                    const float delta_time_ns = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+                    if (delta_time_ns >= kEarlyTimeCutNs[0] && delta_time_ns <= kEarlyTimeCutNs[1])
+                        ++early_hit_count_this_frame;
+                }
+                h_early_hit_multiplicity_per_frame->Fill(early_hit_count_this_frame);
+            }
+
+            // ── Early-to-prompt spatial correlation ───────────────────────────
+            // For each early Hit, find the nearest prompt Hit in the same frame.
+            // Channel index used to detect same-channel re-fires (dR = 0 exactly).
+            {
+                struct HitRecord
+                {
+                    float x_mm, y_mm;
+                    int global_channel_index;
+                };
+                std::vector<HitRecord> prompt_hit_records, early_hit_records;
+
+                for (int ihit = 0; ihit < nhits; ++ihit)
+                {
+                    if (recodata->is_afterpulse(ihit))
+                        continue;
+                    const float delta_time_ns = recodata->get_hit_t(ihit) - physics_trigger->fine_time;
+                    HitRecord record = {recodata->get_hit_x(ihit), recodata->get_hit_y(ihit),
+                                        static_cast<int>(recodata->get_global_index(ihit))};
+                    if (delta_time_ns >= kPromptTimeCutNs[0] && delta_time_ns <= kPromptTimeCutNs[1])
+                        prompt_hit_records.push_back(record);
+                    else if (delta_time_ns >= kEarlyTimeCutNs[0] && delta_time_ns <= kEarlyTimeCutNs[1])
+                        early_hit_records.push_back(record);
+
+                    // ── dt by sensor and phi region (no time window) ──────────────
+                    // Filled for all hits regardless of timing window so both the
+                    // prompt peak and early satellite are visible simultaneously.
+                    {
+                        const SensorType sensor_model = sensor_type(recodata->get_device(ihit));
+                        const float hit_phi_rad_prompt = recodata->get_hit_phi(ihit,
+                                                                               {prompt_ring_center[0], prompt_ring_center[1]});
+                        bool hit_is_in_phi_gap = false;
+                        for (auto &gap_range : kPhiGapRanges)
+                            if (hit_phi_rad_prompt > gap_range[0] && hit_phi_rad_prompt < gap_range[1])
+                            {
+                                hit_is_in_phi_gap = true;
+                                break;
+                            }
+
+                        if (sensor_model == SensorType::k1350)
+                        {
+                            h_dt_1350_full->Fill(delta_time_ns);
+                            (hit_is_in_phi_gap ? h_dt_1350_in_gap : h_dt_1350_ex_gap)
+                                ->Fill(delta_time_ns);
+                        }
+                        else if (sensor_model == SensorType::k1375)
+                        {
+                            h_dt_1375_full->Fill(delta_time_ns);
+                            (hit_is_in_phi_gap ? h_dt_1375_in_gap : h_dt_1375_ex_gap)
+                                ->Fill(delta_time_ns);
+                        }
+                    }
+                }
+
+                if (!prompt_hit_records.empty() && !early_hit_records.empty())
+                {
+                    int n_same_channel_refires = 0;
+                    for (const auto &early_hit : early_hit_records)
+                        for (const auto &prompt_hit : prompt_hit_records)
+                            if (early_hit.global_channel_index == prompt_hit.global_channel_index)
+                            {
+                                ++n_same_channel_refires;
+                                break;
+                            }
+                    h_same_channel_refire_count->Fill(n_same_channel_refires);
+
+                    for (const auto &early_hit : early_hit_records)
+                    {
+                        float nearest_prompt_separation_mm = std::numeric_limits<float>::max();
+                        for (const auto &prompt_hit : prompt_hit_records)
+                        {
+                            const float dx_mm = prompt_hit.x_mm - early_hit.x_mm;
+                            const float dy_mm = prompt_hit.y_mm - early_hit.y_mm;
+                            const float separation_mm = std::sqrt(dx_mm * dx_mm + dy_mm * dy_mm);
+                            if (separation_mm < nearest_prompt_separation_mm)
+                                nearest_prompt_separation_mm = separation_mm;
+                        }
+                        h_early_to_prompt_nearest_dR->Fill(nearest_prompt_separation_mm);
+                    }
+                }
+            }
+
             continue;
         }
 
-        auto trig_dcr = reco->get_trigger_by_index(100);
-        if (!trig_dcr)
+        // ── DCR trigger: background radial distributions ───────────────────────
+        auto dcr_trigger = recodata->get_trigger_by_index(100);
+        if (!dcr_trigger)
             continue;
-        for (int ih = 0; ih < (int)reco->get_recodata().size(); ++ih)
+
+        for (int ihit = 0; ihit < (int)recodata->get_recodata().size(); ++ihit)
         {
-            if (reco->is_afterpulse(ih))
+            if (recodata->is_afterpulse(ihit))
                 continue;
-            float dt = reco->get_hit_t(ih) - trig_dcr->fine_time;
-            if (dt < kTimeCutNs[0] || dt > kTimeCutNs[1])
+            const float delta_time_ns = recodata->get_hit_t(ihit) - dcr_trigger->fine_time;
+            if (delta_time_ns < kPromptTimeCutNs[0] || delta_time_ns > kPromptTimeCutNs[1])
                 continue;
-            float phi = reco->get_hit_phi(ih, {G[0], G[1]});
-            float r = reco->get_hit_r(ih, {G[0], G[1]});
-            h_r_full_dcr->Fill(r);
-            bool in_gap = false;
-            for (auto &range : kPhiGapRanges)
-                if (phi > range[0] && phi < range[1])
+            const float hit_phi_rad = recodata->get_hit_phi(ihit,
+                                                            {prompt_ring_center[0], prompt_ring_center[1]});
+            const float hit_radius_mm = recodata->get_hit_r(ihit,
+                                                            {prompt_ring_center[0], prompt_ring_center[1]});
+            h_radial_dcr_full->Fill(hit_radius_mm);
+            bool hit_is_in_phi_gap = false;
+            for (auto &gap_range : kPhiGapRanges)
+                if (hit_phi_rad > gap_range[0] && hit_phi_rad < gap_range[1])
                 {
-                    in_gap = true;
+                    hit_is_in_phi_gap = true;
                     break;
                 }
-            (in_gap ? h_r_in_gap_dcr : h_r_ex_gap_dcr)->Fill(r);
-            if (!in_gap)
+            (hit_is_in_phi_gap ? h_radial_dcr_in_gap : h_radial_dcr_ex_gap)->Fill(hit_radius_mm);
+            if (!hit_is_in_phi_gap)
             {
-                auto st = sensor_type(reco->get_device(ih));
-                if (st == SensorType::k1350)
-                    h_r_ex_gap_1350_dcr->Fill(r);
-                else if (st == SensorType::k1375)
-                    h_r_ex_gap_1375_dcr->Fill(r);
+                const SensorType sensor_model = sensor_type(recodata->get_device(ihit));
+                if (sensor_model == SensorType::k1350)
+                    h_radial_dcr_ex_gap_1350->Fill(hit_radius_mm);
+                else if (sensor_model == SensorType::k1375)
+                    h_radial_dcr_ex_gap_1375->Fill(hit_radius_mm);
             }
         }
     }
 
-    if (used_frames != total_used_frames_prescan)
-        std::cerr << "[WARN] used_frames mismatch: prescan=" << total_used_frames_prescan
-                  << " mainloop=" << used_frames << "\n";
+    if (n_used_physics_frames != total_physics_frames)
+        mist::logger::warning("[photon_number] physics frame count mismatch: prescan=" + std::to_string(total_physics_frames) + "  mainloop=" + std::to_string(n_used_physics_frames));
 
-    // ── Acceptance correction ─────────────────────────────────────────────────
-    const TAxis *r_axis = h_r_full->GetXaxis();
-    auto apply_correction = [&](TH1F *h, TH1F *h_eff, float phi_scale)
-    {
-        h->Scale(1. / used_frames);
-        h->Divide(h_eff);
-        h->Scale(1., "width");
-        h->Scale(phi_scale);
-    };
-    TH1F *eff_full = radial_efficiency(h_rphi_cov, r_axis, {{-(float)TMath::Pi(), (float)TMath::Pi()}});
-    TH1F *eff_in_gap = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, true);
-    TH1F *eff_ex_gap = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, false);
-    apply_correction(h_r_full, eff_full, 1.f);
-    apply_correction(h_r_in_gap, eff_in_gap, phi_extrapolation_scale(kPhiGapRanges, true));
-    apply_correction(h_r_ex_gap, eff_ex_gap, phi_extrapolation_scale(kPhiGapRanges, false));
-    TH1F *eff_1350 = radial_efficiency(h_rphi_cov_1350, r_axis, kPhiGapRanges, false);
-    TH1F *eff_1375 = radial_efficiency(h_rphi_cov_1375, r_axis, kPhiGapRanges, false);
-    apply_correction(h_r_ex_gap_1350, eff_1350, phi_extrapolation_scale(kPhiGapRanges, false));
-    apply_correction(h_r_ex_gap_1375, eff_1375, phi_extrapolation_scale(kPhiGapRanges, false));
-
-    int used_dcr = total_dcr_frames_prescan;
-    auto apply_correction_dcr = [&](TH1F *h, TH1F *h_eff, float phi_scale)
-    {
-        h->Scale(1. / used_dcr);
-        h->Divide(h_eff);
-        h->Scale(1., "width");
-        h->Scale(phi_scale);
-    };
-    TH1F *eff_full_d = radial_efficiency(h_rphi_cov, r_axis, {{-(float)TMath::Pi(), (float)TMath::Pi()}});
-    TH1F *eff_in_gap_d = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, true);
-    TH1F *eff_ex_gap_d = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, false);
-    TH1F *eff_1350_d = radial_efficiency(h_rphi_cov_1350, r_axis, kPhiGapRanges, false);
-    TH1F *eff_1375_d = radial_efficiency(h_rphi_cov_1375, r_axis, kPhiGapRanges, false);
-    apply_correction_dcr(h_r_full_dcr, eff_full_d, 1.f);
-    apply_correction_dcr(h_r_in_gap_dcr, eff_in_gap_d, phi_extrapolation_scale(kPhiGapRanges, true));
-    apply_correction_dcr(h_r_ex_gap_dcr, eff_ex_gap_d, phi_extrapolation_scale(kPhiGapRanges, false));
-    apply_correction_dcr(h_r_ex_gap_1350_dcr, eff_1350_d, phi_extrapolation_scale(kPhiGapRanges, false));
-    apply_correction_dcr(h_r_ex_gap_1375_dcr, eff_1375_d, phi_extrapolation_scale(kPhiGapRanges, false));
-    h_r_full->Add(h_r_full_dcr, -1.);
-    h_r_in_gap->Add(h_r_in_gap_dcr, -1.);
-    h_r_ex_gap->Add(h_r_ex_gap_dcr, -1.);
-    h_r_ex_gap_1350->Add(h_r_ex_gap_1350_dcr, -1.);
-    h_r_ex_gap_1375->Add(h_r_ex_gap_1375_dcr, -1.);
-
-    // ── Fit model ─────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Acceptance correction
     //
-    // Crystal Ball (left power-law tail for chromatic dispersion) + pol3 background.
-    // Fit range: [kFitLo, kFitHi] — excludes low-R structure and right-side bump.
-    //
-    // Parameters:
-    //   p[0]  cb_amp   — CB amplitude
-    //   p[1]  mu       — peak position (mm)
-    //   p[2]  sigma    — core Gaussian width (mm)
-    //   p[3]  alpha    — transition point in units of sigma (>0 → left tail)
-    //   p[4]  n        — power-law exponent (n > 1)
-    //   p[5]  pol3_c0  — background constant
-    //   p[6]  pol3_c1  — background slope
-    //   p[7]  pol3_c2  — background curvature
-    //   p[8]  pol3_c3  — background cubic
+    // Each radial histogram: ÷ n_frames → ÷ efficiency → ÷ bin_width → × phi_scale
+    // DCR subtracted from signal.
+    // Early DCR scale = early_window_width / prompt_window_width.
+    // ══════════════════════════════════════════════════════════════════════════
 
-    auto cb_model = [](double *x, double *p) -> double
+    const TAxis *radial_binning_axis = h_radial_prompt_full->GetXaxis();
+
+    auto apply_acceptance_correction = [&](TH1F *radial_histogram,
+                                           TH1F *efficiency_histogram,
+                                           float phi_extrapolation_factor,
+                                           int normalisation_frame_count)
     {
-        double t = (x[0] - p[1]) / p[2];
-        double alpha = p[3];
-        double n = p[4];
-        double cb;
-        if (t > -alpha) // Gaussian core
-        {
-            cb = p[0] * std::exp(-0.5 * t * t);
-        }
-        else // Left power-law tail
-        {
-            double A = std::pow(n / alpha, n) * std::exp(-0.5 * alpha * alpha);
-            double B = n / alpha - alpha;
-            cb = p[0] * A * std::pow(B - t, -n);
-        }
-        double xx = x[0];
-        double bkg = p[5] + p[6] * xx + p[7] * xx * xx + p[8] * xx * xx * xx;
-        return cb + bkg;
+        radial_histogram->Scale(1. / normalisation_frame_count);
+        radial_histogram->Divide(efficiency_histogram);
+        radial_histogram->Scale(1., "width");
+        radial_histogram->Scale(phi_extrapolation_factor);
     };
 
-    int fit_line_color = kRed;
+    TH1F *eff_full = radial_efficiency(h_coverage_map_rphi, radial_binning_axis,
+                                       {{-(float)TMath::Pi(), (float)TMath::Pi()}});
+    TH1F *eff_in_gap = radial_efficiency(h_coverage_map_rphi, radial_binning_axis, kPhiGapRanges, true);
+    TH1F *eff_ex_gap = radial_efficiency(h_coverage_map_rphi, radial_binning_axis, kPhiGapRanges, false);
+    TH1F *eff_1350 = radial_efficiency(h_coverage_map_rphi_1350, radial_binning_axis, kPhiGapRanges, false);
+    TH1F *eff_1375 = radial_efficiency(h_coverage_map_rphi_1375, radial_binning_axis, kPhiGapRanges, false);
 
-    auto fit_r_dist = [&](TH1F *h)
+    const float phi_scale_full = 1.f;
+    const float phi_scale_in_gap = phi_extrapolation_scale(kPhiGapRanges, true);
+    const float phi_scale_ex_gap = phi_extrapolation_scale(kPhiGapRanges, false);
+
+    // Prompt signal
+    apply_acceptance_correction(h_radial_prompt_full, eff_full, phi_scale_full, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_prompt_in_gap, eff_in_gap, phi_scale_in_gap, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_prompt_ex_gap, eff_ex_gap, phi_scale_ex_gap, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_prompt_ex_gap_1350, eff_1350, phi_scale_ex_gap, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_prompt_ex_gap_1375, eff_1375, phi_scale_ex_gap, n_used_physics_frames);
+
+    // DCR background
+    apply_acceptance_correction(h_radial_dcr_full, eff_full, phi_scale_full, total_dcr_frames);
+    apply_acceptance_correction(h_radial_dcr_in_gap, eff_in_gap, phi_scale_in_gap, total_dcr_frames);
+    apply_acceptance_correction(h_radial_dcr_ex_gap, eff_ex_gap, phi_scale_ex_gap, total_dcr_frames);
+    apply_acceptance_correction(h_radial_dcr_ex_gap_1350, eff_1350, phi_scale_ex_gap, total_dcr_frames);
+    apply_acceptance_correction(h_radial_dcr_ex_gap_1375, eff_1375, phi_scale_ex_gap, total_dcr_frames);
+
+    // DCR subtraction from prompt
+    h_radial_prompt_full->Add(h_radial_dcr_full, -1.);
+    h_radial_prompt_in_gap->Add(h_radial_dcr_in_gap, -1.);
+    h_radial_prompt_ex_gap->Add(h_radial_dcr_ex_gap, -1.);
+    h_radial_prompt_ex_gap_1350->Add(h_radial_dcr_ex_gap_1350, -1.);
+    h_radial_prompt_ex_gap_1375->Add(h_radial_dcr_ex_gap_1375, -1.);
+
+    // Early satellite — DCR scale = early_window / prompt_window
+    const float early_window_dcr_scale =
+        (kEarlyTimeCutNs[1] - kEarlyTimeCutNs[0]) / (kPromptTimeCutNs[1] - kPromptTimeCutNs[0]);
+
+    apply_acceptance_correction(h_radial_early_full, eff_full, phi_scale_full, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_early_in_gap, eff_in_gap, phi_scale_in_gap, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_early_ex_gap, eff_ex_gap, phi_scale_ex_gap, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_early_ex_gap_1350, eff_1350, phi_scale_ex_gap, n_used_physics_frames);
+    apply_acceptance_correction(h_radial_early_ex_gap_1375, eff_1375, phi_scale_ex_gap, n_used_physics_frames);
+
+    h_radial_early_full->Add(h_radial_dcr_full, -early_window_dcr_scale);
+    h_radial_early_in_gap->Add(h_radial_dcr_in_gap, -early_window_dcr_scale);
+    h_radial_early_ex_gap->Add(h_radial_dcr_ex_gap, -early_window_dcr_scale);
+    h_radial_early_ex_gap_1350->Add(h_radial_dcr_ex_gap_1350, -early_window_dcr_scale);
+    h_radial_early_ex_gap_1375->Add(h_radial_dcr_ex_gap_1375, -early_window_dcr_scale);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Crystal Ball + pol3 fit model
+    //
+    // CB left power-law tail accounts for chromatic dispersion low-R smearing.
+    // Two-pass strategy: background fixed first, then full joint fit.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    auto crystal_ball_plus_pol3 = [](double *x_val, double *params) -> double
     {
-        float mu0 = G[2];
-        float rms = h->GetRMS();
-        float sig_seed = std::clamp(rms * 0.4f, 0.5f, 4.0f);
-        float pk = h->GetMaximum();
-
-        // ── Sideband pol3 background fit ──────────────────────────────────────
-        // Signal masked asymmetrically: wider on the left (CB tail region),
-        // tighter on the right (Gaussian falloff is fast).
-        TF1 f_bkg(Form("f_bkg_%s", h->GetName()), "pol3", kFitLo, kFitHi);
+        const double reduced_x = (x_val[0] - params[1]) / params[2];
+        const double cb_alpha = params[3], cb_n = params[4];
+        double cb_value;
+        if (reduced_x > -cb_alpha)
+            cb_value = params[0] * std::exp(-0.5 * reduced_x * reduced_x);
+        else
         {
-            TH1F *h_sb = (TH1F *)h->Clone(Form("h_sb_%s", h->GetName()));
-            float mask_l = 4.f * sig_seed;
-            float mask_r = 2.f * sig_seed;
-            for (int i = 1; i <= h_sb->GetNbinsX(); ++i)
+            double cb_normalisation = std::pow(cb_n / cb_alpha, cb_n) * std::exp(-0.5 * cb_alpha * cb_alpha);
+            cb_value = params[0] * cb_normalisation * std::pow(cb_n / cb_alpha - cb_alpha - reduced_x, -cb_n);
+        }
+        return cb_value + params[5] + params[6] * x_val[0] + params[7] * x_val[0] * x_val[0] + params[8] * x_val[0] * x_val[0] * x_val[0];
+    };
+
+    int current_fit_line_color = kRed;
+
+    auto fit_radial_distribution = [&](TH1F *radial_histogram,
+                                       bool draw_fit_annotation = false)
+    {
+        const float peak_position_seed = prompt_ring_center[2];
+        const float sigma_seed = std::clamp((float)radial_histogram->GetRMS() * 0.4f, 0.5f, 4.0f);
+        const float peak_amplitude_seed = radial_histogram->GetMaximum();
+
+        TF1 background_prefit(Form("background_prefit_%s", radial_histogram->GetName()),
+                              "pol3", kFitRangeLoMm, kFitRangeHiMm);
+        {
+            TH1F *sideband_clone = (TH1F *)radial_histogram->Clone(
+                Form("sideband_clone_%s", radial_histogram->GetName()));
+            for (int ibin = 1; ibin <= sideband_clone->GetNbinsX(); ++ibin)
             {
-                double xc = h_sb->GetBinCenter(i);
-                bool in_signal = (xc > mu0 - mask_l && xc < mu0 + mask_r);
-                if (xc < kFitLo || xc > kFitHi || in_signal)
+                double bin_center = sideband_clone->GetBinCenter(ibin);
+                bool bin_is_in_signal_region =
+                    (bin_center > peak_position_seed - 4.f * sigma_seed &&
+                     bin_center < peak_position_seed + 2.f * sigma_seed);
+                if (bin_center < kFitRangeLoMm || bin_center > kFitRangeHiMm || bin_is_in_signal_region)
                 {
-                    h_sb->SetBinContent(i, 0.);
-                    h_sb->SetBinError(i, 1e10);
+                    sideband_clone->SetBinContent(ibin, 0.);
+                    sideband_clone->SetBinError(ibin, 1e10);
                 }
             }
-            f_bkg.SetParameters(0.08, 0., 0., 0.);
-            h_sb->Fit(&f_bkg, "RQ0");
-            delete h_sb;
+            background_prefit.SetParameters(0.08, 0., 0., 0.);
+            sideband_clone->Fit(&background_prefit, "RQ0");
+            delete sideband_clone;
         }
-        double bkg_c0 = f_bkg.GetParameter(0);
-        double bkg_c1 = f_bkg.GetParameter(1);
-        double bkg_c2 = f_bkg.GetParameter(2);
-        double bkg_c3 = f_bkg.GetParameter(3);
 
-        // ── Crystal Ball + pol3 model ─────────────────────────────────────────
-        TF1 f_model(Form("f_cb_%s", h->GetName()), cb_model, kFitLo, kFitHi, 9);
+        TF1 cb_fit_model(Form("cb_fit_%s", radial_histogram->GetName()),
+                         crystal_ball_plus_pol3, kFitRangeLoMm, kFitRangeHiMm, 9);
+        const char *parameter_names[9] = {
+            "cb_amplitude", "peak_mu", "peak_sigma", "cb_alpha", "cb_n",
+            "background_c0", "background_c1", "background_c2", "background_c3"};
+        for (int iparam = 0; iparam < 9; ++iparam)
+            cb_fit_model.SetParName(iparam, parameter_names[iparam]);
+
+        cb_fit_model.SetParameters(peak_amplitude_seed, peak_position_seed, sigma_seed, 1.5, 3.0,
+                                   background_prefit.GetParameter(0), background_prefit.GetParameter(1),
+                                   background_prefit.GetParameter(2), background_prefit.GetParameter(3));
+        cb_fit_model.SetParLimits(0, 0., 1e9);
+        cb_fit_model.SetParLimits(2, 1.5, 5.0);
+        cb_fit_model.SetParLimits(3, 0.5, 5.0);
+        cb_fit_model.SetParLimits(4, 1.1, 20.0);
+
+        for (int iparam = 5; iparam < 9; ++iparam)
+            cb_fit_model.FixParameter(iparam, background_prefit.GetParameter(iparam - 5));
+        radial_histogram->Fit(&cb_fit_model, "RQ");
+        for (int iparam = 5; iparam < 9; ++iparam)
+            cb_fit_model.ReleaseParameter(iparam);
+        TFitResultPtr fit_result = radial_histogram->Fit(&cb_fit_model, "RSQE");
+        fit_result = radial_histogram->Fit(&cb_fit_model, "RSQE");
+        fit_result = radial_histogram->Fit(&cb_fit_model, "RSQE");
+
+        cb_fit_model.SetLineColor(current_fit_line_color);
+        cb_fit_model.SetLineWidth(2);
+        cb_fit_model.SetLineStyle(1);
+        cb_fit_model.DrawCopy("SAME");
+
+        TF1 signal_only_component(Form("signal_only_%s", radial_histogram->GetName()),
+                                  crystal_ball_plus_pol3, kFitRangeLoMm, kFitRangeHiMm, 9);
+        for (int iparam = 0; iparam < 9; ++iparam)
+            signal_only_component.SetParameter(iparam, cb_fit_model.GetParameter(iparam));
+        for (int iparam = 5; iparam < 9; ++iparam)
+            signal_only_component.SetParameter(iparam, 0.);
+        signal_only_component.SetLineColor(current_fit_line_color);
+        signal_only_component.SetLineWidth(1);
+        signal_only_component.SetLineStyle(kDashed);
+        signal_only_component.DrawCopy("SAME");
+
+        TF1 background_only_component(Form("background_only_%s", radial_histogram->GetName()),
+                                      "pol3", kFitRangeLoMm, kFitRangeHiMm);
+        for (int iparam = 0; iparam < 4; ++iparam)
+            background_only_component.SetParameter(iparam, cb_fit_model.GetParameter(5 + iparam));
+        background_only_component.SetLineColor(kGray + 1);
+        background_only_component.SetLineWidth(1);
+        background_only_component.SetLineStyle(9);
+        background_only_component.DrawCopy("SAME");
+
+        const int kNGaussLegendrePoints = 500;
+        double gauss_legendre_x[500], gauss_legendre_w[500];
+        TF1::CalcGaussLegendreSamplingPoints(kNGaussLegendrePoints,
+                                             gauss_legendre_x, gauss_legendre_w, 1e-10);
+        const double n_gamma_integrated = signal_only_component.IntegralFast(
+            kNGaussLegendrePoints, gauss_legendre_x, gauss_legendre_w,
+            kFitRangeLoMm, kFitRangeHiMm);
+        const double amplitude_rel_err = (cb_fit_model.GetParameter(0) > 0)
+                                             ? cb_fit_model.GetParError(0) / cb_fit_model.GetParameter(0)
+                                             : 0.;
+        const double n_gamma_error = n_gamma_integrated * amplitude_rel_err;
+        const double chi2_per_ndf_value = (fit_result->Ndf() > 0)
+                                              ? fit_result->Chi2() / fit_result->Ndf()
+                                              : -1.;
+
+        mist::logger::info("[" + std::string(radial_histogram->GetName()) + "]" + "  N_gamma=" + std::to_string(n_gamma_integrated) + " +/- " + std::to_string(n_gamma_error) + "  peak_mu=" + std::to_string(cb_fit_model.GetParameter(1)) + " mm" + "  peak_sigma=" + std::to_string(cb_fit_model.GetParameter(2)) + " mm" + "  cb_alpha=" + std::to_string(cb_fit_model.GetParameter(3)) + "  cb_n=" + std::to_string(cb_fit_model.GetParameter(4)) + "  chi2/ndf=" + std::to_string(chi2_per_ndf_value));
+
+        store_result(fit_results, radial_histogram->GetName(),
+                     n_gamma_integrated, n_gamma_error,
+                     cb_fit_model.GetParameter(1), cb_fit_model.GetParameter(2),
+                     cb_fit_model.GetParameter(3), chi2_per_ndf_value);
+
+        // ── Draw fit results directly on the plot (opt-in) ───────────────────
+        // TPaveText in NDC coordinates sits at a fixed fraction of the pad,
+        // so it overlays the plot regardless of axis ranges.
+        if (draw_fit_annotation)
         {
-            const char *pnames[9] = {"cb_amp", "mu", "sigma", "alpha", "n",
-                                     "pol3_c0", "pol3_c1", "pol3_c2", "pol3_c3"};
-            for (int i = 0; i < 9; ++i)
-                f_model.SetParName(i, pnames[i]);
+            auto *fit_results_pave = new TPaveText(0.55, 0.65, 0.88, 0.88, "NDC");
+            fit_results_pave->SetFillStyle(0);
+            fit_results_pave->SetBorderSize(0);
+            fit_results_pave->SetTextAlign(12);
+            fit_results_pave->SetTextSize(0.035);
+            fit_results_pave->SetTextColor(current_fit_line_color);
+            fit_results_pave->AddText(Form("N_{#gamma} = %.1f #pm %.1f",
+                                           n_gamma_integrated, n_gamma_error));
+            fit_results_pave->AddText(Form("#mu = %.2f mm",
+                                           cb_fit_model.GetParameter(1)));
+            fit_results_pave->AddText(Form("#sigma = %.2f mm",
+                                           cb_fit_model.GetParameter(2)));
+            //fit_results_pave->AddText(Form("#chi^{2}/ndf = %.2f",
+            //                               chi2_per_ndf_value));
+            fit_results_pave->Draw();
         }
-
-        // Seeds
-        f_model.SetParameter(0, pk);
-        f_model.SetParameter(1, mu0);
-        f_model.SetParameter(2, sig_seed);
-        f_model.SetParameter(3, 1.5); // alpha > 0 → left tail
-        f_model.SetParameter(4, 3.0); // moderate power-law index
-        f_model.SetParameter(5, bkg_c0);
-        f_model.SetParameter(6, bkg_c1);
-        f_model.SetParameter(7, bkg_c2);
-        f_model.SetParameter(8, bkg_c3);
-
-        // Limits
-        f_model.SetParLimits(0, 0., 1e9);
-        f_model.SetParLimits(2, 0.3, 5.0);
-        f_model.SetParLimits(3, 0.5, 5.0);
-        f_model.SetParLimits(4, 1.1, 20.0);
-
-        // Pass 1: background fixed, fit CB shape only
-        f_model.FixParameter(5, bkg_c0);
-        f_model.FixParameter(6, bkg_c1);
-        f_model.FixParameter(7, bkg_c2);
-        f_model.FixParameter(8, bkg_c3);
-        h->Fit(&f_model, "RQ");
-
-        // Pass 2: full joint fit — release background
-        f_model.ReleaseParameter(5);
-        f_model.ReleaseParameter(6);
-        f_model.ReleaseParameter(7);
-        f_model.ReleaseParameter(8);
-        TFitResultPtr res = h->Fit(&f_model, "RSQE");
-
-        // ── Draw components ───────────────────────────────────────────────────
-
-        // Full model
-        f_model.SetLineColor(fit_line_color);
-        f_model.SetLineWidth(2);
-        f_model.SetLineStyle(1);
-        f_model.DrawCopy("SAME");
-
-        // CB signal only (no background)
-        TF1 f_core(Form("f_core_%s", h->GetName()), cb_model, kFitLo, kFitHi, 9);
-        for (int i = 0; i < 9; ++i)
-            f_core.SetParameter(i, f_model.GetParameter(i));
-        f_core.SetParameter(5, 0.);
-        f_core.SetParameter(6, 0.);
-        f_core.SetParameter(7, 0.);
-        f_core.SetParameter(8, 0.);
-        f_core.SetLineColor(fit_line_color);
-        f_core.SetLineWidth(1);
-        f_core.SetLineStyle(kDashed);
-        f_core.DrawCopy("SAME");
-
-        // Background only
-        TF1 f_bkg_draw(Form("f_bkgd_%s", h->GetName()), "pol3", kFitLo, kFitHi);
-        f_bkg_draw.SetParameter(0, f_model.GetParameter(5));
-        f_bkg_draw.SetParameter(1, f_model.GetParameter(6));
-        f_bkg_draw.SetParameter(2, f_model.GetParameter(7));
-        f_bkg_draw.SetParameter(3, f_model.GetParameter(8));
-        f_bkg_draw.SetLineColor(kGray + 1);
-        f_bkg_draw.SetLineWidth(1);
-        f_bkg_draw.SetLineStyle(9);
-        f_bkg_draw.DrawCopy("SAME");
-
-        // ── N_gamma: integrate CB signal over fit range ───────────────────────
-        TF1 f_sig(Form("f_sig_%s", h->GetName()), cb_model, kFitLo, kFitHi, 9);
-        for (int i = 0; i < 9; ++i)
-            f_sig.SetParameter(i, f_model.GetParameter(i));
-        f_sig.SetParameter(5, 0.);
-        f_sig.SetParameter(6, 0.);
-        f_sig.SetParameter(7, 0.);
-        f_sig.SetParameter(8, 0.);
-
-        const int kNGL = 500;
-        double glX[500], glW[500];
-        TF1::CalcGaussLegendreSamplingPoints(kNGL, glX, glW, 1e-10);
-        double N_gamma = f_sig.IntegralFast(kNGL, glX, glW, kFitLo, kFitHi);
-        double frac_err = (f_model.GetParameter(0) > 0)
-                              ? f_model.GetParError(0) / f_model.GetParameter(0)
-                              : 0.;
-        double N_gamma_err = N_gamma * frac_err;
-        double chi2_ndf = (res->Ndf() > 0) ? res->Chi2() / res->Ndf() : -1.;
-
-        std::cout << "[" << h->GetName() << "]"
-                  << "  N_gamma = " << N_gamma << " +/- " << N_gamma_err
-                  << "  mu = " << f_model.GetParameter(1) << " mm"
-                  << "  sigma = " << f_model.GetParameter(2) << " mm"
-                  << "  alpha = " << f_model.GetParameter(3)
-                  << "  n = " << f_model.GetParameter(4)
-                  << "  chi2/ndf = " << chi2_ndf << "\n";
-
-        store_result(fit_results, h->GetName(),
-                     N_gamma, N_gamma_err,
-                     f_model.GetParameter(1), f_model.GetParameter(2),
-                     f_model.GetParameter(3), // alpha stored in gs_frac slot
-                     chi2_ndf);
     };
 
-    // ── Drawing ───────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    // Drawing
+    // ══════════════════════════════════════════════════════════════════════════
+
     gStyle->SetOptStat(0);
     gStyle->SetOptFit(0);
 
-    TLine *vline = new TLine();
-    vline->SetLineWidth(2);
-    vline->SetLineColor(kRed);
-    vline->SetLineStyle(kDashed);
+    TLine *vertical_dashed_line = new TLine();
+    vertical_dashed_line->SetLineWidth(2);
+    vertical_dashed_line->SetLineColor(kRed);
+    vertical_dashed_line->SetLineStyle(kDashed);
 
-    TCanvas *c1 = new TCanvas("c_ring_params", "Ring parameters", 1200, 1200);
-    c1->Divide(2, 2);
-    c1->cd(1);
-    h_fit_x->Draw();
-    vline->DrawLineNDC(0.1 + (G[0] + 30) / 60. * 0.8, 0.1, 0.1 + (G[0] + 30) / 60. * 0.8, 0.9);
-    c1->cd(2);
-    h_fit_y->Draw();
-    vline->DrawLineNDC(0.1 + (G[1] + 30) / 60. * 0.8, 0.1, 0.1 + (G[1] + 30) / 60. * 0.8, 0.9);
-    c1->cd(3);
-    h_fit_r->Draw();
-    vline->DrawLineNDC(0.1 + (G[2] - 30) / 100. * 0.8, 0.1, 0.1 + (G[2] - 30) / 100. * 0.8, 0.9);
-    c1->cd(4);
-    h_dt->Scale(1. / used_frames);
-    h_dt->Draw();
+    TLine *fit_range_start_line = new TLine(kFitRangeLoMm, 0, kFitRangeLoMm, 1e9);
+    fit_range_start_line->SetLineColor(kBlue);
+    fit_range_start_line->SetLineStyle(kDotted);
+    fit_range_start_line->SetLineWidth(2);
+    TLine *fit_range_end_line = new TLine(kFitRangeHiMm, 0, kFitRangeHiMm, 1e9);
+    fit_range_end_line->SetLineColor(kBlue);
+    fit_range_end_line->SetLineStyle(kDotted);
+    fit_range_end_line->SetLineWidth(2);
 
-    TCanvas *c2 = new TCanvas("c_hit_maps", "Hit maps", 1200, 600);
-    c2->Divide(2, 1);
-    c2->cd(1);
-    h_xy_hits->Scale(1. / used_frames);
-    h_xy_hits->Draw("COLZ");
-    c2->cd(2);
-    h_rphi_hits->Scale(1. / used_frames);
-    h_rphi_hits->Draw("COLZ");
-    for (auto &range : kPhiGapRanges)
+    auto normalise_to_peak_height = [](TH1F *histogram_to_scale, TH1F *reference_histogram)
     {
-        vline->DrawLine(range[0], kRLo, range[0], kRHi);
-        vline->DrawLine(range[1], kRLo, range[1], kRHi);
+        if (histogram_to_scale->GetMaximum() > 0.)
+            histogram_to_scale->Scale(reference_histogram->GetMaximum() / histogram_to_scale->GetMaximum());
+    };
+
+    auto make_info_pave = [](double x1, double y1, double x2, double y2) -> TPaveText *
+    {
+        auto *pave = new TPaveText(x1, y1, x2, y2, "NDC");
+        pave->SetFillStyle(0);
+        pave->SetBorderSize(0);
+        pave->SetTextAlign(12);
+        pave->SetTextSize(0.035);
+        return pave;
+    };
+
+    auto set_line_style = [](TH1F *histogram, int line_color)
+    { histogram->SetLineColor(line_color); histogram->SetLineWidth(2); };
+
+    // ── c1: Ring parameters — prompt (red) vs early (blue) ───────────────────
+    set_line_style(h_circle_fit_x_prompt, kRed + 1);
+    set_line_style(h_circle_fit_x_early, kBlue + 1);
+    set_line_style(h_circle_fit_y_prompt, kRed + 1);
+    set_line_style(h_circle_fit_y_early, kBlue + 1);
+    set_line_style(h_circle_fit_r_prompt, kRed + 1);
+    set_line_style(h_circle_fit_r_early, kBlue + 1);
+    normalise_to_peak_height(h_circle_fit_x_early, h_circle_fit_x_prompt);
+    normalise_to_peak_height(h_circle_fit_y_early, h_circle_fit_y_prompt);
+    normalise_to_peak_height(h_circle_fit_r_early, h_circle_fit_r_prompt);
+
+    TCanvas *canvas_ring_parameters = new TCanvas("c_ring_params", "Ring parameters", 1200, 1200);
+    canvas_ring_parameters->Divide(2, 2);
+
+    auto draw_ring_parameter_pad = [&](int pad_index,
+                                       TH1F *prompt_histogram, TH1F *early_histogram,
+                                       float prompt_peak_value, float early_peak_value,
+                                       const char *quantity_label)
+    {
+        canvas_ring_parameters->cd(pad_index);
+        prompt_histogram->Draw("HIST");
+        early_histogram->Draw("HIST SAME");
+        auto *info_pave = make_info_pave(0.12, 0.62, 0.58, 0.88);
+        info_pave->AddText("#color[632]{Prompt}");
+        info_pave->AddText(Form("#color[632]{#mu_{%s} = %.2f mm}", quantity_label, prompt_peak_value));
+        info_pave->AddText("#color[600]{Early}");
+        info_pave->AddText(Form("#color[600]{#mu_{%s} = %.2f mm}", quantity_label, early_peak_value));
+        info_pave->Draw();
+    };
+    draw_ring_parameter_pad(1, h_circle_fit_x_prompt, h_circle_fit_x_early,
+                            prompt_ring_center[0], early_ring_center[0], "x");
+    draw_ring_parameter_pad(2, h_circle_fit_y_prompt, h_circle_fit_y_early,
+                            prompt_ring_center[1], early_ring_center[1], "y");
+    draw_ring_parameter_pad(3, h_circle_fit_r_prompt, h_circle_fit_r_early,
+                            prompt_ring_center[2], early_ring_center[2], "R");
+    canvas_ring_parameters->cd(4);
+    h_delta_time_all_hits->Scale(1. / n_used_physics_frames);
+    h_delta_time_all_hits->Draw();
+
+    // ── c2: Hit maps ──────────────────────────────────────────────────────────
+    TCanvas *canvas_hit_maps = new TCanvas("c_hit_maps", "Hit maps", 1200, 600);
+    canvas_hit_maps->Divide(2, 1);
+    canvas_hit_maps->cd(1);
+    h_hit_map_xy->Scale(1. / n_used_physics_frames);
+    h_hit_map_xy->Draw("COLZ");
+    canvas_hit_maps->cd(2);
+    h_hit_map_rphi->Scale(1. / n_used_physics_frames);
+    h_hit_map_rphi->Draw("COLZ");
+    for (auto &gap_range : kPhiGapRanges)
+    {
+        vertical_dashed_line->DrawLine(gap_range[0], kRadialLoMm, gap_range[0], kRadialHiMm);
+        vertical_dashed_line->DrawLine(gap_range[1], kRadialLoMm, gap_range[1], kRadialHiMm);
     }
 
-    // Draw a vertical line at kFitLo to show where the fit starts
-    TLine *fit_start = new TLine(kFitLo, 0, kFitLo, 1e9);
-    fit_start->SetLineColor(kBlue);
-    fit_start->SetLineStyle(kDotted);
-    fit_start->SetLineWidth(2);
-    TLine *fit_end = new TLine(kFitHi, 0, kFitHi, 1e9);
-    fit_end->SetLineColor(kBlue);
-    fit_end->SetLineStyle(kDotted);
-    fit_end->SetLineWidth(2);
-
-    TCanvas *c3 = new TCanvas("c_r_distributions", "Corrected radial distributions", 1800, 600);
-    c3->Divide(3, 1);
-    c3->cd(1);
-    h_r_full->Draw();
-    fit_start->DrawLine(kFitLo, gPad->GetUymin(), kFitLo, gPad->GetUymax());
-    fit_end->DrawLine(kFitHi, gPad->GetUymin(), kFitHi, gPad->GetUymax());
-    fit_r_dist(h_r_full);
-    c3->cd(2);
-    h_r_in_gap->Draw();
-    fit_start->DrawLine(kFitLo, gPad->GetUymin(), kFitLo, gPad->GetUymax());
-    fit_end->DrawLine(kFitHi, gPad->GetUymin(), kFitHi, gPad->GetUymax());
-    fit_r_dist(h_r_in_gap);
-    c3->cd(3);
-    h_r_ex_gap->Draw();
-    fit_start->DrawLine(kFitLo, gPad->GetUymin(), kFitLo, gPad->GetUymax());
-    fit_end->DrawLine(kFitHi, gPad->GetUymin(), kFitHi, gPad->GetUymax());
-    fit_r_dist(h_r_ex_gap);
-
-    TCanvas *c5 = new TCanvas("c_r_by_sensor", "By sensor type", 1200, 600);
-    c5->Divide(2, 1);
-    c5->cd(1);
-    h_r_ex_gap_1350->SetLineColor(kBlue);
-    h_r_ex_gap_1350->SetLineWidth(2);
-    h_r_ex_gap_1375->SetLineColor(kRed);
-    h_r_ex_gap_1375->SetLineWidth(2);
-    auto *frame_sensor = (TH1F *)h_r_ex_gap_1350->Clone("frame_sensor");
-    frame_sensor->SetMaximum(1.2 * std::max(h_r_ex_gap_1350->GetMaximum(), h_r_ex_gap_1375->GetMaximum()));
-    frame_sensor->Draw("AXIS");
-    h_r_ex_gap_1350->Draw("SAME HIST");
-    h_r_ex_gap_1375->Draw("SAME HIST");
-    fit_start->DrawLine(kFitLo, frame_sensor->GetMinimum(), kFitLo, frame_sensor->GetMaximum());
-    fit_line_color = kBlue;
-    fit_r_dist(h_r_ex_gap_1350);
-    fit_line_color = kRed;
-    fit_r_dist(h_r_ex_gap_1375);
-    auto *leg = new TLegend(0.6, 0.7, 0.88, 0.88);
-    leg->AddEntry(h_r_ex_gap_1350, "S13360-1350 (dev 192-195)", "l");
-    leg->AddEntry(h_r_ex_gap_1375, "S13360-1375 (dev 196-199)", "l");
-    leg->Draw();
-    c5->cd(2);
-    TH1F *h_ratio = (TH1F *)h_r_ex_gap_1375->Clone("h_sensor_ratio");
-    h_ratio->Divide(h_r_ex_gap_1350);
-    h_ratio->SetTitle(";R (mm);yield ratio 1375/1350");
-    h_ratio->SetLineColor(kBlack);
-    h_ratio->SetLineWidth(2);
-    h_ratio->Draw("HIST");
-    TLine *unity = new TLine(kRLo, 1, kRHi, 1);
-    unity->SetLineStyle(kDashed);
-    unity->SetLineColor(kGray + 1);
-    unity->Draw();
-
-    TCanvas *c4 = new TCanvas("c_coverage", "Coverage maps", 1200, 600);
-    c4->Divide(2, 1);
-    c4->cd(1);
-    h_xy_cov->Draw("COLZ");
-    c4->cd(2);
-    h_rphi_cov->Draw("COLZ");
-
-    new TCanvas();
-    h_r_ex_gap_1350->Draw();
-    new TCanvas();
-    h_r_ex_gap_1375->Draw();
-
-    // ── Persist fit results to standard result store ───────────────────────
-    //
-    // Histogram names are mapped to (sensor, scope) key pairs.
-    // "all" sensor covers the full phi-gap-excluded or included distributions;
-    // "1350"/"1375" cover the per-SiPM-model splits.
-    // Only histograms that were actually fitted are persisted.
+    // ── c3: Corrected radial distributions ───────────────────────────────────
+    TCanvas *canvas_radial_distributions = new TCanvas("c_r_distributions",
+                                                       "Corrected radial distributions", 1800, 600);
+    canvas_radial_distributions->Divide(3, 1);
+    auto draw_radial_pad = [&](int pad_index, TH1F *radial_histogram)
     {
-        // Map: histogram name → {sensor tag, quantity scope prefix}
-        // Scope prefix becomes the left side of the dot in "ex_gap.n_gamma" etc.
-        const std::vector<std::tuple<std::string, std::string, std::string>> kHistMap = {
-            {"h_r_full", "all", "full"},
-            {"h_r_in_gap", "all", "in_gap"},
-            {"h_r_ex_gap", "all", "ex_gap"},
-            {"h_r_ex_gap_1350", "1350", "ex_gap"},
-            {"h_r_ex_gap_1375", "1375", "ex_gap"},
+        canvas_radial_distributions->cd(pad_index);
+        radial_histogram->Draw();
+        fit_range_start_line->DrawLine(kFitRangeLoMm, gPad->GetUymin(), kFitRangeLoMm, gPad->GetUymax());
+        fit_range_end_line->DrawLine(kFitRangeHiMm, gPad->GetUymin(), kFitRangeHiMm, gPad->GetUymax());
+        fit_radial_distribution(radial_histogram, true);
+    };
+    draw_radial_pad(1, h_radial_prompt_full);
+    draw_radial_pad(2, h_radial_prompt_in_gap);
+    draw_radial_pad(3, h_radial_prompt_ex_gap);
+
+    // ── c4: Coverage maps ─────────────────────────────────────────────────────
+    TCanvas *canvas_coverage_maps = new TCanvas("c_coverage", "Coverage maps", 1200, 600);
+    canvas_coverage_maps->Divide(2, 1);
+    canvas_coverage_maps->cd(1);
+    h_coverage_map_xy->Draw("COLZ");
+    canvas_coverage_maps->cd(2);
+    h_coverage_map_rphi->Draw("COLZ");
+
+    // ── c5: Per-sensor radial distributions + yield ratio ────────────────────
+    TCanvas *canvas_sensor_comparison = new TCanvas("c_r_by_sensor", "By sensor type", 1200, 600);
+    canvas_sensor_comparison->Divide(2, 1);
+    canvas_sensor_comparison->cd(1);
+    h_radial_prompt_ex_gap_1350->SetLineColor(kBlue);
+    h_radial_prompt_ex_gap_1350->SetLineWidth(2);
+    h_radial_prompt_ex_gap_1375->SetLineColor(kRed);
+    h_radial_prompt_ex_gap_1375->SetLineWidth(2);
+    {
+        auto *axis_frame = (TH1F *)h_radial_prompt_ex_gap_1350->Clone("axis_frame_sensor");
+        axis_frame->SetMaximum(1.2 * std::max(h_radial_prompt_ex_gap_1350->GetMaximum(),
+                                              h_radial_prompt_ex_gap_1375->GetMaximum()));
+        axis_frame->Draw("AXIS");
+        h_radial_prompt_ex_gap_1350->Draw("SAME HIST");
+        h_radial_prompt_ex_gap_1375->Draw("SAME HIST");
+        fit_range_start_line->DrawLine(kFitRangeLoMm, axis_frame->GetMinimum(),
+                                       kFitRangeLoMm, axis_frame->GetMaximum());
+        current_fit_line_color = kBlue;
+        fit_radial_distribution(h_radial_prompt_ex_gap_1350, true);
+        current_fit_line_color = kRed;
+        fit_radial_distribution(h_radial_prompt_ex_gap_1375, true);
+        auto *sensor_legend = new TLegend(0.6, 0.7, 0.88, 0.88);
+        sensor_legend->AddEntry(h_radial_prompt_ex_gap_1350, "HPK S13360-3050VS (dev 192-195)", "l");
+        sensor_legend->AddEntry(h_radial_prompt_ex_gap_1375, "HPK S13360-3075VS (dev 196-199)", "l");
+        sensor_legend->Draw();
+    }
+    canvas_sensor_comparison->cd(2);
+    {
+        TH1F *h_yield_ratio_1375_over_1350 = (TH1F *)h_radial_prompt_ex_gap_1375
+                                                 ->Clone("h_yield_ratio_1375_over_1350");
+        h_yield_ratio_1375_over_1350->Divide(h_radial_prompt_ex_gap_1350);
+        h_yield_ratio_1375_over_1350->SetTitle(";R (mm);yield ratio 1375/1350");
+        h_yield_ratio_1375_over_1350->SetLineColor(kBlack);
+        h_yield_ratio_1375_over_1350->SetLineWidth(2);
+        h_yield_ratio_1375_over_1350->Draw("HIST");
+        TLine *unity_line = new TLine(kRadialLoMm, 1, kRadialHiMm, 1);
+        unity_line->SetLineStyle(kDashed);
+        unity_line->SetLineColor(kGray + 1);
+        unity_line->Draw();
+    }
+
+    // ── c6: Raw pair timing histograms ───────────────────────────────────────
+    TCanvas *canvas_pair_timing_raw = new TCanvas("c_dt_vs_dR",
+                                                  "Pair timing vs spatial separation", 1200, 600);
+    canvas_pair_timing_raw->Divide(2, 1);
+    canvas_pair_timing_raw->cd(1);
+    h_pair_dt_trig_vs_separation->Draw("COLZ");
+    canvas_pair_timing_raw->cd(2);
+    h_pair_dt_hit_vs_separation->Draw("COLZ");
+
+    // ── c7: Column-normalised pair histograms — P(dt | dR) ───────────────────
+    auto column_normalise_2d = [](TH2F *input_histogram) -> TH2F *
+    {
+        TH2F *normalised = (TH2F *)input_histogram->Clone(
+            Form("%s_col_normalised", input_histogram->GetName()));
+        normalised->SetTitle(Form("%s  [col-normalised]", input_histogram->GetTitle()));
+        for (int ix = 1; ix <= normalised->GetNbinsX(); ++ix)
+        {
+            double column_integral = 0.;
+            for (int iy = 1; iy <= normalised->GetNbinsY(); ++iy)
+                column_integral += normalised->GetBinContent(ix, iy);
+            if (column_integral <= 0.)
+                continue;
+            for (int iy = 1; iy <= normalised->GetNbinsY(); ++iy)
+            {
+                normalised->SetBinContent(ix, iy, normalised->GetBinContent(ix, iy) / column_integral);
+                normalised->SetBinError(ix, iy, normalised->GetBinError(ix, iy) / column_integral);
+            }
+        }
+        return normalised;
+    };
+
+    TCanvas *canvas_pair_timing_normalised = new TCanvas("c_dt_vs_dR_norm",
+                                                         "Pair timing vs dR [col-normalised]", 1200, 600);
+    canvas_pair_timing_normalised->Divide(2, 1);
+    canvas_pair_timing_normalised->cd(1);
+    gPad->SetLogz(0);
+    column_normalise_2d(h_pair_dt_trig_vs_separation)->Draw("COLZ");
+    canvas_pair_timing_normalised->cd(2);
+    gPad->SetLogz(0);
+    column_normalise_2d(h_pair_dt_hit_vs_separation)->Draw("COLZ");
+
+    // ── c8: Slice-fit results vs ΔR ──────────────────────────────────────────
+    // Per dR column of h_pair_dt_hit_vs_separation: fit
+    //   A1·G(x,0,σ1) + A2·G(x,μ2,σ2) + pol2 background
+    // Prompt peak mean fixed at 0 (time-ordering construction).
+    {
+        auto make_profile_histogram = [&](const char *name, const char *y_axis_title) -> TH1F *
+        {
+            auto *profile = new TH1F(name, Form(";#DeltaR_{ij} (mm);%s", y_axis_title),
+                                     kPairSeparationBins, 0., kPairSeparationMaxMm);
+            profile->SetMarkerStyle(20);
+            profile->SetLineWidth(2);
+            return profile;
+        };
+        TH1F *h_prompt_sigma_vs_separation = make_profile_histogram("h_prompt_sigma_vs_separation", "#sigma_{1} prompt (ns)");
+        TH1F *h_satellite_mu_vs_separation = make_profile_histogram("h_satellite_mu_vs_separation", "#mu_{2} satellite (ns)");
+        TH1F *h_satellite_sigma_vs_separation = make_profile_histogram("h_satellite_sigma_vs_separation", "#sigma_{2} satellite (ns)");
+        TH1F *h_satellite_yield_ratio = make_profile_histogram("h_satellite_yield_ratio", "A_{2}/A_{1}");
+
+        TF1 double_gaussian_plus_pol2("double_gaussian_plus_pol2",
+                                      "[0]*TMath::Gaus(x,0,[1],true)+[2]*TMath::Gaus(x,[3],[4],true)+[5]+[6]*x+[7]*x*x",
+                                      -5., 0.);
+        double_gaussian_plus_pol2.SetParNames("prompt_amplitude", "prompt_sigma",
+                                              "satellite_amplitude", "satellite_mu", "satellite_sigma",
+                                              "background_c0", "background_c1", "background_c2");
+
+        for (int separation_bin = 1; separation_bin <= kPairSeparationBins; ++separation_bin)
+        {
+            TH1D *slice_projection = h_pair_dt_hit_vs_separation->ProjectionY(
+                Form("slice_projection_%d", separation_bin), separation_bin, separation_bin);
+            if (slice_projection->GetEntries() < 20)
+            {
+                delete slice_projection;
+                continue;
+            }
+
+            const double slice_peak = slice_projection->GetMaximum();
+            const double slice_left_bkg = slice_projection->GetBinContent(1);
+
+            double_gaussian_plus_pol2.SetParameters(slice_peak, 0.25,
+                                                    slice_peak * 0.3, -1.5, 0.5, slice_left_bkg, 0., 0.);
+            double_gaussian_plus_pol2.SetParLimits(0, 0., 1e9);
+            double_gaussian_plus_pol2.SetParLimits(1, 0.02, 1.0);
+            double_gaussian_plus_pol2.SetParLimits(2, 0., 1e9);
+            double_gaussian_plus_pol2.SetParLimits(3, -4.5, -0.3);
+            double_gaussian_plus_pol2.SetParLimits(4, 0.1, 2.0);
+            double_gaussian_plus_pol2.SetParLimits(5, 0., 1e9);
+
+            TFitResultPtr slice_fit = slice_projection->Fit(&double_gaussian_plus_pol2, "RQSE");
+            if (!slice_fit.Get() || !slice_fit->IsValid())
+            {
+                delete slice_projection;
+                continue;
+            }
+
+            const double prompt_amplitude = double_gaussian_plus_pol2.GetParameter(0);
+            const double prompt_amplitude_err = double_gaussian_plus_pol2.GetParError(0);
+            const double prompt_sigma_val = double_gaussian_plus_pol2.GetParameter(1);
+            const double prompt_sigma_err = double_gaussian_plus_pol2.GetParError(1);
+            const double satellite_amplitude = double_gaussian_plus_pol2.GetParameter(2);
+            const double satellite_amp_err = double_gaussian_plus_pol2.GetParError(2);
+            const double satellite_mu_val = double_gaussian_plus_pol2.GetParameter(3);
+            const double satellite_mu_err = double_gaussian_plus_pol2.GetParError(3);
+            const double satellite_sigma_val = double_gaussian_plus_pol2.GetParameter(4);
+            const double satellite_sigma_err = double_gaussian_plus_pol2.GetParError(4);
+            const double amplitude_ratio = (prompt_amplitude > 0.)
+                                               ? satellite_amplitude / prompt_amplitude
+                                               : 0.;
+            const double amplitude_ratio_err = (prompt_amplitude > 0. && satellite_amplitude > 0.)
+                                                   ? amplitude_ratio * std::sqrt(
+                                                                           (satellite_amp_err / satellite_amplitude) * (satellite_amp_err / satellite_amplitude) +
+                                                                           (prompt_amplitude_err / prompt_amplitude) * (prompt_amplitude_err / prompt_amplitude))
+                                                   : 0.;
+
+            auto fill_bin = [&](TH1F *profile, double value, double error)
+            { profile->SetBinContent(separation_bin, value); profile->SetBinError(separation_bin, error); };
+            fill_bin(h_prompt_sigma_vs_separation, std::fabs(prompt_sigma_val), prompt_sigma_err);
+            fill_bin(h_satellite_mu_vs_separation, satellite_mu_val, satellite_mu_err);
+            fill_bin(h_satellite_sigma_vs_separation, std::fabs(satellite_sigma_val), satellite_sigma_err);
+            fill_bin(h_satellite_yield_ratio, amplitude_ratio, amplitude_ratio_err);
+            delete slice_projection;
+        }
+
+        TCanvas *canvas_slice_fit_results = new TCanvas("c_fit_vs_dR",
+                                                        "Slice fit results vs dR", 1600, 400);
+        canvas_slice_fit_results->Divide(4, 1);
+        auto draw_profile_pad = [&](int pad_index, TH1F *profile_histogram, int line_color)
+        {
+            canvas_slice_fit_results->cd(pad_index);
+            profile_histogram->SetLineColor(line_color);
+            profile_histogram->SetMarkerColor(line_color);
+            profile_histogram->Draw("E1");
+        };
+        draw_profile_pad(1, h_prompt_sigma_vs_separation, kBlue + 1);
+        draw_profile_pad(2, h_satellite_mu_vs_separation, kRed + 1);
+        draw_profile_pad(3, h_satellite_sigma_vs_separation, kRed + 1);
+        draw_profile_pad(4, h_satellite_yield_ratio, kGreen + 2);
+    }
+
+    // ── c9: Prompt vs early — 2×3 per-sensor layout ──────────────────────────
+    //  Row 1 (HPK-1350): [ Full phi ]  [ In gap ]  [ Ex gap ]
+    //  Row 2 (HPK-1375): [ Full phi ]  [ In gap ]  [ Ex gap ]
+    // Full phi and In gap are sensor-agnostic; Ex gap uses per-sensor histograms.
+    // Early histograms normalised to prompt peak height for shape comparison.
+    {
+        for (auto *histogram : {h_radial_prompt_full, h_radial_prompt_in_gap,
+                                h_radial_prompt_ex_gap, h_radial_prompt_ex_gap_1350,
+                                h_radial_prompt_ex_gap_1375})
+            set_line_style(histogram, kRed + 1);
+        for (auto *histogram : {h_radial_early_full, h_radial_early_in_gap,
+                                h_radial_early_ex_gap, h_radial_early_ex_gap_1350,
+                                h_radial_early_ex_gap_1375})
+            set_line_style(histogram, kBlue + 1);
+
+        normalise_to_peak_height(h_radial_early_full, h_radial_prompt_full);
+        normalise_to_peak_height(h_radial_early_in_gap, h_radial_prompt_in_gap);
+        normalise_to_peak_height(h_radial_early_ex_gap, h_radial_prompt_ex_gap);
+        normalise_to_peak_height(h_radial_early_ex_gap_1350, h_radial_prompt_ex_gap_1350);
+        normalise_to_peak_height(h_radial_early_ex_gap_1375, h_radial_prompt_ex_gap_1375);
+
+        TCanvas *canvas_early_vs_prompt = new TCanvas("c_early_vs_prompt",
+                                                      "Prompt vs early per sensor", 1800, 800);
+        canvas_early_vs_prompt->Divide(3, 2);
+
+        auto draw_sensor_comparison_pad = [&](int pad_index,
+                                              TH1F *prompt_histogram,
+                                              TH1F *early_histogram,
+                                              const char *pad_title)
+        {
+            canvas_early_vs_prompt->cd(pad_index);
+            gPad->SetLeftMargin(0.12);
+            gPad->SetTopMargin(0.12);
+            const double y_axis_max = 1.2 * std::max(prompt_histogram->GetMaximum(),
+                                                     early_histogram->GetMaximum());
+            prompt_histogram->SetTitle("");
+            prompt_histogram->GetYaxis()->SetRangeUser(0., y_axis_max);
+            prompt_histogram->Draw("HIST");
+            early_histogram->Draw("HIST SAME");
+            fit_range_start_line->DrawLine(kFitRangeLoMm, 0., kFitRangeLoMm, y_axis_max);
+            fit_range_end_line->DrawLine(kFitRangeHiMm, 0., kFitRangeHiMm, y_axis_max);
+            auto *pad_title_pave = new TPaveText(0.12, 0.90, 0.88, 0.98, "NDC");
+            pad_title_pave->SetFillStyle(0);
+            pad_title_pave->SetBorderSize(0);
+            pad_title_pave->SetTextAlign(22);
+            pad_title_pave->SetTextSize(0.05);
+            pad_title_pave->AddText(pad_title);
+            pad_title_pave->Draw();
+            auto *comparison_legend = new TLegend(0.55, 0.72, 0.88, 0.88);
+            comparison_legend->SetBorderSize(0);
+            comparison_legend->AddEntry(prompt_histogram, "Prompt", "l");
+            comparison_legend->AddEntry(early_histogram, "Early (-1.8 ns)", "l");
+            comparison_legend->Draw();
         };
 
-        // Quantities stored per histogram (must match store_result() keys)
-        const std::vector<std::pair<std::string, std::string>> kQtyMap = {
+        draw_sensor_comparison_pad(1, h_radial_prompt_full, h_radial_early_full,
+                                   "HPK-1350  Full #phi");
+        draw_sensor_comparison_pad(2, h_radial_prompt_in_gap, h_radial_early_in_gap,
+                                   "HPK-1350  In gap");
+        draw_sensor_comparison_pad(3, h_radial_prompt_ex_gap_1350, h_radial_early_ex_gap_1350,
+                                   "HPK-1350  Ex gap");
+        draw_sensor_comparison_pad(4, h_radial_prompt_full, h_radial_early_full,
+                                   "HPK-1375  Full #phi");
+        draw_sensor_comparison_pad(5, h_radial_prompt_in_gap, h_radial_early_in_gap,
+                                   "HPK-1375  In gap");
+        draw_sensor_comparison_pad(6, h_radial_prompt_ex_gap_1375, h_radial_early_ex_gap_1375,
+                                   "HPK-1375  Ex gap");
+    }
+
+    // ── c10: Persistence maps for coincidence frames ──────────────────────────
+    // Row 1: prompt hits.  Row 2: early hits.
+    // Left: xy with shaded phi-gap wedges.  Right: (phi, R) with gap lines.
+    {
+        auto draw_phi_gap_wedge_xy = [&](float phi_lo, float phi_hi, float shade_radius_mm)
+        {
+            const int n_arc_points = 30;
+            const int n_total_points = n_arc_points + 2;
+            std::vector<double> wedge_x(n_total_points + 1), wedge_y(n_total_points + 1);
+            wedge_x[0] = prompt_ring_center[0];
+            wedge_y[0] = prompt_ring_center[1];
+            for (int ipoint = 0; ipoint < n_arc_points; ++ipoint)
+            {
+                float arc_phi = phi_lo + (phi_hi - phi_lo) * ipoint / (float)(n_arc_points - 1);
+                wedge_x[ipoint + 1] = prompt_ring_center[0] + shade_radius_mm * cosf(arc_phi);
+                wedge_y[ipoint + 1] = prompt_ring_center[1] + shade_radius_mm * sinf(arc_phi);
+            }
+            wedge_x[n_total_points] = prompt_ring_center[0];
+            wedge_y[n_total_points] = prompt_ring_center[1];
+            TPolyLine *phi_gap_wedge = new TPolyLine(n_total_points + 1,
+                                                     wedge_x.data(), wedge_y.data());
+            phi_gap_wedge->SetFillColorAlpha(kGray + 1, 0.35);
+            phi_gap_wedge->SetFillStyle(1001);
+            phi_gap_wedge->SetLineColor(kGray + 2);
+            phi_gap_wedge->SetLineWidth(1);
+            phi_gap_wedge->DrawPolyLine(n_total_points + 1, wedge_x.data(), wedge_y.data(), "F SAME");
+            phi_gap_wedge->Draw("L SAME");
+        };
+
+        const float kPhiGapShadeRadiusMm = 90.f;
+
+        TCanvas *canvas_coincidence_persistence = new TCanvas("c_coincidence_persistence",
+                                                              "Persistence maps — coincidence frames", 1200, 800);
+        canvas_coincidence_persistence->Divide(2, 2);
+
+        canvas_coincidence_persistence->cd(1);
+        h_persistence_xy_prompt->SetTitle("Prompt hits (coincidence frames);x (mm);y (mm)");
+        h_persistence_xy_prompt->Draw("COLZ");
+        for (auto &gap_range : kPhiGapRanges)
+            draw_phi_gap_wedge_xy(gap_range[0], gap_range[1], kPhiGapShadeRadiusMm);
+
+        canvas_coincidence_persistence->cd(2);
+        h_persistence_rphi_prompt->SetTitle("Prompt hits (coincidence frames);#phi (rad);R (mm)");
+        h_persistence_rphi_prompt->Draw("COLZ");
+        for (auto &gap_range : kPhiGapRanges)
+        {
+            vertical_dashed_line->DrawLine(gap_range[0], 25., gap_range[0], 125.);
+            vertical_dashed_line->DrawLine(gap_range[1], 25., gap_range[1], 125.);
+        }
+
+        canvas_coincidence_persistence->cd(3);
+        h_persistence_xy_early->SetTitle("Early hits (coincidence frames);x (mm);y (mm)");
+        h_persistence_xy_early->Draw("COLZ");
+        for (auto &gap_range : kPhiGapRanges)
+            draw_phi_gap_wedge_xy(gap_range[0], gap_range[1], kPhiGapShadeRadiusMm);
+
+        canvas_coincidence_persistence->cd(4);
+        h_persistence_rphi_early->SetTitle("Early hits (coincidence frames);#phi (rad);R (mm)");
+        h_persistence_rphi_early->Draw("COLZ");
+        for (auto &gap_range : kPhiGapRanges)
+        {
+            vertical_dashed_line->DrawLine(gap_range[0], 25., gap_range[0], 125.);
+            vertical_dashed_line->DrawLine(gap_range[1], 25., gap_range[1], 125.);
+        }
+    }
+
+    // ── c11: Early-to-prompt spatial correlation ──────────────────────────────
+    // Left: nearest prompt Hit distance per early Hit (log scale).
+    //   Vertical markers at known cross-talk length scales.
+    // Right: same-channel re-fire count per frame.
+    {
+        TCanvas *canvas_early_prompt_spatial = new TCanvas("c_early_prompt_spatial",
+                                                           "Early-to-prompt spatial correlation", 1200, 500);
+        canvas_early_prompt_spatial->Divide(2, 1);
+
+        canvas_early_prompt_spatial->cd(1);
+        gPad->SetLogy(1);
+        h_early_to_prompt_nearest_dR->SetLineColor(kBlue + 1);
+        h_early_to_prompt_nearest_dR->SetLineWidth(2);
+        h_early_to_prompt_nearest_dR->Draw("HIST");
+
+        const double nearest_dR_max = h_early_to_prompt_nearest_dR->GetMaximum();
+        auto draw_marker_line = [&](float x_mm, int line_color, const char *label)
+        {
+            TLine *marker = new TLine(x_mm, 0., x_mm, nearest_dR_max);
+            marker->SetLineColor(line_color);
+            marker->SetLineStyle(kDashed);
+            marker->SetLineWidth(2);
+            marker->Draw();
+        };
+        draw_marker_line(0.f, kRed + 1, "Same channel (dR=0)");
+        draw_marker_line(3.3f, kOrange + 1, "Cardinal neighbour (3.3 mm)");
+        draw_marker_line(4.67f, kGreen + 2, "Diagonal neighbour (4.67 mm)");
+
+        auto *neighbour_legend = new TLegend(0.45, 0.70, 0.88, 0.88);
+        neighbour_legend->SetBorderSize(0);
+        neighbour_legend->AddEntry((TObject *)nullptr, "Same channel (dR=0)", "");
+        neighbour_legend->AddEntry((TObject *)nullptr, "Cardinal neighbour (3.3 mm)", "");
+        neighbour_legend->AddEntry((TObject *)nullptr, "Diagonal neighbour (4.67 mm)", "");
+        neighbour_legend->Draw();
+
+        canvas_early_prompt_spatial->cd(2);
+        h_same_channel_refire_count->SetLineColor(kBlue + 1);
+        h_same_channel_refire_count->SetLineWidth(2);
+        h_same_channel_refire_count->Draw("HIST");
+    }
+
+    // ── c12: Early Hit multiplicity per frame ─────────────────────────────────
+    // A monotonically falling Poisson-like distribution rules out the hypothesis
+    // of a discrete second particle (~23% of frames). Instead consistent with a
+    // constant fractional early-Hit rate (time-walk or optical effect).
+    {
+        TCanvas *canvas_early_multiplicity = new TCanvas("c_early_multiplicity",
+                                                         "Early Hit multiplicity per frame", 800, 600);
+        h_early_hit_multiplicity_per_frame->SetLineColor(kBlue + 1);
+        h_early_hit_multiplicity_per_frame->SetLineWidth(2);
+        h_early_hit_multiplicity_per_frame->Draw("HIST");
+    }
+
+    // ── c13: dt distributions by sensor type and phi region ───────────────────
+    // 2×3 grid: rows = HPK-1350 / HPK-1375, cols = Full phi / In gap / Ex gap.
+    // No time window applied — prompt peak (~0 ns) and early satellite (~-1.8 ns)
+    // both visible. Scaled per frame for direct comparison between sensors.
+    // If the early satellite position differs between sensors or phi regions it
+    // would indicate different time-walk, inconsistent with a pure 2 p.e. picture.
+    {
+        for (auto *histogram : {h_dt_1350_full, h_dt_1350_in_gap, h_dt_1350_ex_gap,
+                                h_dt_1375_full, h_dt_1375_in_gap, h_dt_1375_ex_gap})
+            histogram->Scale(1. / n_used_physics_frames);
+
+        // Normalise 1375 to 1350 peak height per column for shape comparison
+        auto norm_col = [](TH1F *h_to_scale, TH1F *h_ref)
+        {
+            if (h_to_scale->GetMaximum() > 0.)
+                h_to_scale->Scale(h_ref->GetMaximum() / h_to_scale->GetMaximum());
+        };
+        norm_col(h_dt_1375_full, h_dt_1350_full);
+        norm_col(h_dt_1375_in_gap, h_dt_1350_in_gap);
+        norm_col(h_dt_1375_ex_gap, h_dt_1350_ex_gap);
+
+        for (auto *histogram : {h_dt_1350_full, h_dt_1350_in_gap, h_dt_1350_ex_gap})
+        {
+            histogram->SetLineColor(kBlue + 1);
+            histogram->SetLineWidth(2);
+        }
+        for (auto *histogram : {h_dt_1375_full, h_dt_1375_in_gap, h_dt_1375_ex_gap})
+        {
+            histogram->SetLineColor(kRed + 1);
+            histogram->SetLineWidth(2);
+        }
+
+        TCanvas *canvas_dt_by_sensor = new TCanvas("c_dt_by_sensor",
+                                                   "dt distributions by sensor and phi region", 1800, 800);
+        canvas_dt_by_sensor->Divide(3, 2);
+
+        auto draw_dt_pad = [&](int pad_index,
+                               TH1F *histogram_1350, TH1F *histogram_1375,
+                               const char *pad_title)
+        {
+            canvas_dt_by_sensor->cd(pad_index);
+            gPad->SetLogy(1);
+            gPad->SetTopMargin(0.12);
+            const double y_axis_max = 1.5 * std::max(histogram_1350->GetMaximum(),
+                                                     histogram_1375->GetMaximum());
+            histogram_1350->SetTitle("");
+            histogram_1350->GetYaxis()->SetRangeUser(1e-5, y_axis_max);
+            histogram_1350->Draw("HIST");
+            histogram_1375->Draw("HIST SAME");
+
+            // Mark the prompt and early windows
+            TLine *prompt_lo = new TLine(kPromptTimeCutNs[0], 0.,
+                                         kPromptTimeCutNs[0], y_axis_max);
+            TLine *prompt_hi = new TLine(kPromptTimeCutNs[1], 0.,
+                                         kPromptTimeCutNs[1], y_axis_max);
+            TLine *early_lo = new TLine(kEarlyTimeCutNs[0], 0.,
+                                        kEarlyTimeCutNs[0], y_axis_max);
+            TLine *early_hi = new TLine(kEarlyTimeCutNs[1], 0.,
+                                        kEarlyTimeCutNs[1], y_axis_max);
+            for (auto *line : {prompt_lo, prompt_hi})
+            {
+                line->SetLineColor(kGray + 1);
+                line->SetLineStyle(kDashed);
+                line->SetLineWidth(1);
+                line->Draw();
+            }
+            for (auto *line : {early_lo, early_hi})
+            {
+                line->SetLineColor(kOrange + 1);
+                line->SetLineStyle(kDashed);
+                line->SetLineWidth(1);
+                line->Draw();
+            }
+
+            auto *pad_title_pave = new TPaveText(0.12, 0.90, 0.88, 0.98, "NDC");
+            pad_title_pave->SetFillStyle(0);
+            pad_title_pave->SetBorderSize(0);
+            pad_title_pave->SetTextAlign(22);
+            pad_title_pave->SetTextSize(0.05);
+            pad_title_pave->AddText(pad_title);
+            pad_title_pave->Draw();
+
+            auto *sensor_legend = new TLegend(0.55, 0.75, 0.88, 0.88);
+            sensor_legend->SetBorderSize(0);
+            sensor_legend->AddEntry(histogram_1350, "HPK-1350", "l");
+            sensor_legend->AddEntry(histogram_1375, "HPK-1375", "l");
+            sensor_legend->Draw();
+        };
+
+        draw_dt_pad(1, h_dt_1350_full, h_dt_1375_full, "Full #phi");
+        draw_dt_pad(2, h_dt_1350_in_gap, h_dt_1375_in_gap, "In gap");
+        draw_dt_pad(3, h_dt_1350_ex_gap, h_dt_1375_ex_gap, "Ex gap");
+        // Row 2: same data, log scale already set, zoom into [-3, +1] ns
+        // to better resolve the satellite structure
+        auto draw_dt_pad_zoom = [&](int pad_index,
+                                    TH1F *histogram_1350, TH1F *histogram_1375,
+                                    const char *pad_title)
+        {
+            canvas_dt_by_sensor->cd(pad_index);
+            gPad->SetLogy(1);
+            gPad->SetTopMargin(0.12);
+            histogram_1350->GetXaxis()->SetRangeUser(-3.f, 1.f);
+            histogram_1375->GetXaxis()->SetRangeUser(-3.f, 1.f);
+            const double y_axis_max = 1.5 * std::max(
+                                                histogram_1350->GetMaximum(),
+                                                histogram_1375->GetMaximum());
+            histogram_1350->SetTitle("");
+            histogram_1350->GetYaxis()->SetRangeUser(1e-5, y_axis_max);
+            histogram_1350->Draw("HIST");
+            histogram_1375->Draw("HIST SAME");
+
+            TLine *early_lo = new TLine(kEarlyTimeCutNs[0], 0.,
+                                        kEarlyTimeCutNs[0], y_axis_max);
+            TLine *early_hi = new TLine(kEarlyTimeCutNs[1], 0.,
+                                        kEarlyTimeCutNs[1], y_axis_max);
+            for (auto *line : {early_lo, early_hi})
+            {
+                line->SetLineColor(kOrange + 1);
+                line->SetLineStyle(kDashed);
+                line->SetLineWidth(1);
+                line->Draw();
+            }
+
+            auto *pad_title_pave = new TPaveText(0.12, 0.90, 0.88, 0.98, "NDC");
+            pad_title_pave->SetFillStyle(0);
+            pad_title_pave->SetBorderSize(0);
+            pad_title_pave->SetTextAlign(22);
+            pad_title_pave->SetTextSize(0.05);
+            pad_title_pave->AddText(Form("%s  [zoom]", pad_title));
+            pad_title_pave->Draw();
+
+            auto *sensor_legend = new TLegend(0.55, 0.75, 0.88, 0.88);
+            sensor_legend->SetBorderSize(0);
+            sensor_legend->AddEntry(histogram_1350, "HPK-1350", "l");
+            sensor_legend->AddEntry(histogram_1375, "HPK-1375", "l");
+            sensor_legend->Draw();
+        };
+
+        draw_dt_pad_zoom(4, h_dt_1350_full, h_dt_1375_full, "Full #phi");
+        draw_dt_pad_zoom(5, h_dt_1350_in_gap, h_dt_1375_in_gap, "In gap");
+        draw_dt_pad_zoom(6, h_dt_1350_ex_gap, h_dt_1375_ex_gap, "Ex gap");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Persist fit results
+    // ══════════════════════════════════════════════════════════════════════════
+    {
+        const std::vector<std::tuple<std::string, std::string, std::string>> kHistogramResultMap = {
+            {"h_radial_prompt_full", "all", "full"},
+            {"h_radial_prompt_in_gap", "all", "in_gap"},
+            {"h_radial_prompt_ex_gap", "all", "ex_gap"},
+            {"h_radial_prompt_ex_gap_1350", "1350", "ex_gap"},
+            {"h_radial_prompt_ex_gap_1375", "1375", "ex_gap"},
+        };
+        const std::vector<std::pair<std::string, std::string>> kQuantityKeyMap = {
             {"N_gamma", "n_gamma"},
-            {"N_gamma_err", "n_gamma_err"}, // stored as value, error=0
+            {"N_gamma_err", "n_gamma_err"},
             {"mu", "mu"},
             {"sigma", "sigma"},
             {"gs_frac", "gs_frac"},
             {"chi2_ndf", "chi2_ndf"},
         };
 
-        AnalysisResults ar(data_repository + "/standard_results.root");
-        ResultMap to_store;
+        AnalysisResults analysis_results_store(data_repository + "/standard_results.root");
+        ResultMap quantities_to_store;
 
-        for (const auto &[hname, sensor, scope] : kHistMap)
+        for (const auto &[histogram_name, sensor_tag, scope_prefix] : kHistogramResultMap)
         {
-            // N_gamma and its error are stored together as value+error on one key
-            const std::string key_ng = hname + ".N_gamma";
-            const std::string key_ng_err = hname + ".N_gamma_err";
-            if (fit_results.count(key_ng))
+            const std::string n_gamma_key = histogram_name + ".N_gamma";
+            const std::string n_gamma_err_key = histogram_name + ".N_gamma_err";
+            if (fit_results.count(n_gamma_key))
             {
-                double ng = fit_results.at(key_ng);
-                double ng_err = fit_results.count(key_ng_err)
-                                    ? fit_results.at(key_ng_err)
-                                    : 0.;
-                to_store[{run_name, sensor, scope + ".n_gamma"}] = {ng, ng_err};
+                double n_gamma_val = fit_results.at(n_gamma_key);
+                double n_gamma_err_val = fit_results.count(n_gamma_err_key)
+                                             ? fit_results.at(n_gamma_err_key)
+                                             : 0.;
+                quantities_to_store[{run_name, sensor_tag, scope_prefix + ".n_gamma"}] = {n_gamma_val, n_gamma_err_val};
             }
-
-            // Remaining scalar quantities (no paired error)
-            for (const auto &[fit_suffix, store_qty] : kQtyMap)
+            for (const auto &[fit_result_suffix, store_quantity_name] : kQuantityKeyMap)
             {
-                if (store_qty == "n_gamma" || store_qty == "n_gamma_err")
-                    continue; // handled above
-                const std::string fkey = hname + "." + fit_suffix;
-                if (fit_results.count(fkey))
-                    to_store[{run_name, sensor, scope + "." + store_qty}] = {fit_results.at(fkey), 0.};
+                if (store_quantity_name == "n_gamma" || store_quantity_name == "n_gamma_err")
+                    continue;
+                const std::string fit_result_key = histogram_name + "." + fit_result_suffix;
+                if (fit_results.count(fit_result_key))
+                    quantities_to_store[{run_name, sensor_tag, scope_prefix + "." + store_quantity_name}] = {fit_results.at(fit_result_key), 0.};
             }
         }
 
-        ar.update(to_store);
-        mist::logger::info("[photon_number] Persisted " +
-                           std::to_string(to_store.size()) +
-                           " results for run " + run_name);
+        analysis_results_store.update(quantities_to_store);
+        mist::logger::info("[photon_number] Persisted " + std::to_string(quantities_to_store.size()) + " results for run " + run_name);
     }
 }

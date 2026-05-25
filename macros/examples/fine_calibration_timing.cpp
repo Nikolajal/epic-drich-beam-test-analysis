@@ -9,7 +9,7 @@
  * Pipeline overview:
  *
  *  Pass 0  — Fine-time calibration scan.
- *            Fills a TH3F (global_index × delta_t × fine_par) used to fit
+ *            Fills a TH3F (GlobalIndex × delta_t × fine_par) used to fit
  *            the linear fine→phase correction (param0, param1) for every
  *            timing TDC channel.  Uses the raw rolling-window timing
  *            coincidence (no sigma weighting).
@@ -33,15 +33,15 @@
  *
  * param conventions:
  *
- *  Timing channels  (global_index 8180-8580):
+ *  Timing channels  (GlobalIndex 8180-8580):
  *    param0  angular coefficient of fine-phase linear fit  [cc/tick]
  *    param1  offset of fine-phase linear fit + iterative timing offset [cc]
  *    param2  per-channel Gaussian sigma from timing calibration [ns]
  *            used for 1/sigma^2 weighting in t_ref reconstruction
  *
- *  Cherenkov channels  (global_index 0-8100):
+ *  Cherenkov channels  (GlobalIndex 0-8100):
  *    param2  per-channel time offset in clock cycles (additive correction)
- *            param2 = -mode(delta_t) / _ALCOR_CC_TO_NS_
+ *            param2 = -mode(delta_t) / BTANA_ALCOR_CC_TO_NS
  *            NOTE: param2 meaning differs from timing channels.
  *            Ranges are disjoint - no runtime collision.
  *
@@ -66,7 +66,7 @@ constexpr float kTRefHalfWidthNs = 0.45f;
 /**
  * @brief Configuration for the generic ALCOR sliding-window coincidence engine.
  *
- * Precondition: the hit vector passed to alcor_sliding_window() must be
+ * Precondition: the Hit vector passed to alcor_sliding_window() must be
  * sorted in ascending time order before the call.
  */
 struct alcor_sliding_window_config
@@ -76,27 +76,27 @@ struct alcor_sliding_window_config
     bool reset_on_fire = true;
     bool fire_at_peak = false;
 
-    std::function<bool(const std::deque<alcor_finedata> &)> condition;
-    std::function<void(const std::deque<alcor_finedata> &)> on_fire;
+    std::function<bool(const std::deque<AlcorFinedata> &)> condition;
+    std::function<void(const std::deque<AlcorFinedata> &)> on_fire;
 };
 
 /**
  * @brief Generic sliding-window coincidence engine over sorted ALCOR hits.
  */
 void alcor_sliding_window(
-    const std::vector<alcor_finedata> &sorted_hits,
+    const std::vector<AlcorFinedata> &sorted_hits,
     const alcor_sliding_window_config &cfg)
 {
     if (!cfg.condition || !cfg.on_fire)
         return;
 
-    std::deque<alcor_finedata> window;
+    std::deque<AlcorFinedata> window;
     int last_fired_size = -1; // track size at last fire for peak detection
 
     for (int i = 0; i < static_cast<int>(sorted_hits.size()); ++i)
     {
-        const auto &hit = sorted_hits[i];
-        const float t = cfg.use_ns ? hit.get_time_ns() : hit.get_time();
+        const auto &Hit = sorted_hits[i];
+        const float t = cfg.use_ns ? Hit.get_time_ns() : Hit.get_time();
 
         while (!window.empty())
         {
@@ -108,18 +108,18 @@ void alcor_sliding_window(
             else
                 break;
         }
-        window.push_back(hit);
+        window.push_back(Hit);
 
         if (!cfg.condition(window))
             continue;
 
         if (cfg.fire_at_peak)
         {
-            // Determine if next hit would cause an eviction — i.e. we're at peak
+            // Determine if next Hit would cause an eviction — i.e. we're at peak
             bool is_peak = false;
             if (i + 1 >= static_cast<int>(sorted_hits.size()))
             {
-                // Last hit in frame — fire unconditionally
+                // Last Hit in frame — fire unconditionally
                 is_peak = true;
             }
             else
@@ -130,7 +130,7 @@ void alcor_sliding_window(
                 const float t_front = cfg.use_ns
                                           ? window.front().get_time_ns()
                                           : window.front().get_time();
-                // Next hit would evict the oldest — window is about to shrink
+                // Next Hit would evict the oldest — window is about to shrink
                 is_peak = (t_next - t_front > cfg.window_width);
             }
 
@@ -161,7 +161,7 @@ void alcor_sliding_window(
  * >= kChip1Target on chip 1 are present in the window.
  */
 alcor_sliding_window_config make_timing_coincidence_config(
-    std::function<void(const std::deque<alcor_finedata> &)> on_fire,
+    std::function<void(const std::deque<AlcorFinedata> &)> on_fire,
     bool reset = true)
 {
     alcor_sliding_window_config cfg;
@@ -169,12 +169,17 @@ alcor_sliding_window_config make_timing_coincidence_config(
     cfg.use_ns = false;
     cfg.reset_on_fire = reset;
 
-    cfg.condition = [](const std::deque<alcor_finedata> &w)
+    cfg.condition = [](const std::deque<AlcorFinedata> &w)
     {
         std::unordered_set<int> ch0, ch1;
         for (const auto &h : w)
         {
-            const int tdc = h.get_global_index() / 4;
+            // Phase 5: `get_global_index() / 4` was the legacy way to get a
+            // dense channel ordinal — confusingly named `tdc` here in the
+            // original.  Replaced by the explicit accessor; same numeric
+            // value (channel_ordinal == legacy_raw / 4 for the current
+            // detector) but clearer intent.
+            const int tdc = h.get_global_channel_index();
             if (h.get_chip() == kTimingChip0Id)
                 ch0.insert(tdc);
             if (h.get_chip() == kTimingChip1Id)
@@ -196,7 +201,7 @@ alcor_sliding_window_config make_timing_coincidence_config(
 alcor_sliding_window_config make_cherenkov_selftrigger_config(
     int min_hits,
     float window_ns,
-    std::function<void(const std::deque<alcor_finedata> &)> on_fire,
+    std::function<void(const std::deque<AlcorFinedata> &)> on_fire,
     bool reset = true,
     bool fire_at_peak = true) // ← default true for self-trigger
 {
@@ -206,7 +211,7 @@ alcor_sliding_window_config make_cherenkov_selftrigger_config(
     cfg.reset_on_fire = reset;
     cfg.fire_at_peak = fire_at_peak;
 
-    cfg.condition = [min_hits](const std::deque<alcor_finedata> &w)
+    cfg.condition = [min_hits](const std::deque<AlcorFinedata> &w)
     {
         return static_cast<int>(w.size()) >= min_hits;
     };
@@ -226,7 +231,7 @@ alcor_sliding_window_config make_cherenkov_selftrigger_config(
  * Falls back to unit weight when param2 <= 0 or sigma_weight is false.
  */
 void compute_chip_means(
-    const std::deque<alcor_finedata> &window,
+    const std::deque<AlcorFinedata> &window,
     bool sigma_weight,
     float &mean0, float &mean1,
     int &n0, int &n1,
@@ -240,7 +245,7 @@ void compute_chip_means(
 
     for (const auto &h : window)
     {
-        const float sigma = alcor_finedata::get_param2(h.get_global_index());
+        const float sigma = AlcorFinedata::get_param2(h.get_global_index());
         const float wi = (sigma_weight && sigma > 0.f)
                              ? 1.f / (sigma * sigma)
                              : 1.f;
@@ -297,10 +302,10 @@ double windowed_mode(TH1D *h, double half_window_ns)
  * For each timing coincidence window fills:
  *  - h_timing_delta_chip_means : (mean0 - mean1) [ns]
  *  - h_timing_delta_channel    : per-channel leave-one-out delta_t [ns]
- *  - h_fine_calib_scan         : TH3F (global_index x coarse_delta x fine_par)
+ *  - h_fine_calib_scan         : TH3F (GlobalIndex x coarse_delta x fine_par)
  */
 void run_pass0_analysis(
-    std::vector<alcor_lightdata_struct> frames_in_spill,
+    std::vector<AlcorLightdataStruct> frames_in_spill,
     TH1F *h_timing_delta_chip_means,
     TH2F *h_timing_delta_channel,
     TH3F *h_fine_calib_scan,
@@ -308,19 +313,19 @@ void run_pass0_analysis(
 {
     for (auto &lds : frames_in_spill)
     {
-        alcor_lightdata frame(lds);
+        AlcorLightdata frame(lds);
         auto &timing_hits = frame.get_timing_hits_link();
         if (timing_hits.empty())
             continue;
 
-        std::vector<alcor_finedata> sorted_timing;
+        std::vector<AlcorFinedata> sorted_timing;
         sorted_timing.reserve(timing_hits.size());
         for (const auto &r : timing_hits)
             sorted_timing.emplace_back(r);
         std::sort(sorted_timing.begin(), sorted_timing.end());
 
         auto cfg = make_timing_coincidence_config(
-            [&](const std::deque<alcor_finedata> &w)
+            [&](const std::deque<AlcorFinedata> &w)
             {
                 float mean0, mean1, sum0_cc, sum1_cc;
                 int n0, n1;
@@ -329,7 +334,7 @@ void run_pass0_analysis(
 
                 if (h_timing_delta_chip_means)
                     h_timing_delta_chip_means->Fill(
-                        (mean0 - mean1) * _ALCOR_CC_TO_NS_);
+                        (mean0 - mean1) * BTANA_ALCOR_CC_TO_NS);
 
                 for (const auto &h : w)
                 {
@@ -348,9 +353,9 @@ void run_pass0_analysis(
                     const float t = h.get_time_ns();
                     float ref;
                     if (h.get_chip() == kTimingChip0Id && n0 > 1)
-                        ref = (sum0_cc * _ALCOR_CC_TO_NS_ - t) / (n0 - 1);
+                        ref = (sum0_cc * BTANA_ALCOR_CC_TO_NS - t) / (n0 - 1);
                     else if (h.get_chip() == kTimingChip1Id && n1 > 1)
-                        ref = (sum1_cc * _ALCOR_CC_TO_NS_ - t) / (n1 - 1);
+                        ref = (sum1_cc * BTANA_ALCOR_CC_TO_NS - t) / (n1 - 1);
                     else
                         continue;
                     if (h_timing_delta_channel)
@@ -367,29 +372,29 @@ void run_pass0_analysis(
  *
  * Reconstructs t_ref from the timing coincidence (gated on inter-chip delta).
  * Then fills h_cherenkov_delta_channel with delta_t = t_hit - t_ref for every
- * Cherenkov hit in frames that have a valid t_ref.
+ * Cherenkov Hit in frames that have a valid t_ref.
  *
  * If h_cherenkov_delta_channel is null, only the timing QA histogram is filled.
- * h_fine_scan_cherenkov may be null; if non-null, fills (global_index, dt, fine).
+ * h_fine_scan_cherenkov may be null; if non-null, fills (GlobalIndex, dt, fine).
  */
 void run_pass1_analysis(
-    std::vector<alcor_lightdata_struct> frames_in_spill,
+    std::vector<AlcorLightdataStruct> frames_in_spill,
     TH1F *h_timing_delta_chip_means,
     TH2F *h_cherenkov_delta_channel,
     TH3F *h_fine_scan_cherenkov,
     bool sigma_weight = false,
-    std::function<float(const alcor_finedata &)> weight_fn = [](const alcor_finedata &)
+    std::function<float(const AlcorFinedata &)> weight_fn = [](const AlcorFinedata &)
     { return 1.f; })
 {
     for (auto &lds : frames_in_spill)
     {
-        alcor_lightdata frame(lds);
+        AlcorLightdata frame(lds);
         auto &timing_hits = frame.get_timing_hits_link();
         auto &cherenkov_hits = frame.get_cherenkov_hits_link();
         if (timing_hits.empty())
             continue;
 
-        std::vector<alcor_finedata> sorted_timing;
+        std::vector<AlcorFinedata> sorted_timing;
         sorted_timing.reserve(timing_hits.size());
         for (const auto &r : timing_hits)
             sorted_timing.emplace_back(r);
@@ -398,19 +403,19 @@ void run_pass1_analysis(
         std::vector<float> t_refs;
 
         auto cfg = make_timing_coincidence_config(
-            [&](const std::deque<alcor_finedata> &w)
+            [&](const std::deque<AlcorFinedata> &w)
             {
                 float mean0, mean1, sum0_cc, sum1_cc;
                 int n0, n1;
                 compute_chip_means(w, sigma_weight,
                                    mean0, mean1, n0, n1, sum0_cc, sum1_cc);
 
-                const float delta_ns = (mean0 - mean1) * _ALCOR_CC_TO_NS_;
+                const float delta_ns = (mean0 - mean1) * BTANA_ALCOR_CC_TO_NS;
                 if (h_timing_delta_chip_means)
                     h_timing_delta_chip_means->Fill(delta_ns);
 
                 if (std::fabs(delta_ns - kTRefCenterNs) < kTRefHalfWidthNs)
-                    t_refs.push_back(0.5f * (mean0 + mean1) * _ALCOR_CC_TO_NS_);
+                    t_refs.push_back(0.5f * (mean0 + mean1) * BTANA_ALCOR_CC_TO_NS);
             });
 
         alcor_sliding_window(sorted_timing, cfg);
@@ -419,7 +424,7 @@ void run_pass1_analysis(
             !h_cherenkov_delta_channel)
             continue;
 
-        std::vector<alcor_finedata> sorted_cher;
+        std::vector<AlcorFinedata> sorted_cher;
         sorted_cher.reserve(cherenkov_hits.size());
         for (const auto &r : cherenkov_hits)
             sorted_cher.emplace_back(r);
@@ -429,26 +434,26 @@ void run_pass1_analysis(
         {
             if (t_ref < 0.1f)
                 continue;
-            for (const auto &hit : sorted_cher)
+            for (const auto &Hit : sorted_cher)
             {
-                const float w = weight_fn(hit);
+                const float w = weight_fn(Hit);
                 if (w < 1e-4f)
                     continue;
-                const float dt = hit.get_time_ns() - t_ref;
+                const float dt = Hit.get_time_ns() - t_ref;
                 if (std::fabs(dt) > 12.f)
                     continue;
                 if (h_cherenkov_delta_channel)
-                    h_cherenkov_delta_channel->Fill(hit.get_global_index(), dt, w);
+                    h_cherenkov_delta_channel->Fill(Hit.get_global_index(), dt, w);
                 // Fill fine scan — same structure as timing pass0:
-                // x = global_index, y = delta_t, z = fine parameter
+                // x = GlobalIndex, y = delta_t, z = fine parameter
                 // This lets you check whether the fine interpolation non-linearity
                 // is correlated with the residual delta_t for Cherenkov channels,
                 // exactly as done for timing channels in pass0.
                 if (h_fine_scan_cherenkov)
                     h_fine_scan_cherenkov->Fill(
-                        hit.get_global_index(),
+                        Hit.get_global_index(),
                         dt,
-                        hit.get_fine());
+                        Hit.get_fine());
             }
         }
     }
@@ -469,7 +474,7 @@ void run_pass1_analysis(
  * All histogram arguments may be null.
  */
 void run_selftrigger_analysis(
-    std::vector<alcor_lightdata_struct> frames_in_spill,
+    std::vector<AlcorLightdataStruct> frames_in_spill,
     TH1F *h_window_multiplicity,
     TH1F *h_window_sigma,
     TH2F *h_sigma_vs_multiplicity,
@@ -479,12 +484,12 @@ void run_selftrigger_analysis(
 {
     for (auto &lds : frames_in_spill)
     {
-        alcor_lightdata frame(lds);
+        AlcorLightdata frame(lds);
         auto &cherenkov_hits = frame.get_cherenkov_hits_link();
         if (cherenkov_hits.empty())
             continue;
 
-        std::vector<alcor_finedata> sorted_cher;
+        std::vector<AlcorFinedata> sorted_cher;
         sorted_cher.reserve(cherenkov_hits.size());
         for (const auto &r : cherenkov_hits)
             sorted_cher.emplace_back(r);
@@ -492,7 +497,7 @@ void run_selftrigger_analysis(
 
         auto cfg = make_cherenkov_selftrigger_config(
             min_hits, window_ns,
-            [&](const std::deque<alcor_finedata> &w)
+            [&](const std::deque<AlcorFinedata> &w)
             {
                 double sum = 0, sum2 = 0;
                 for (const auto &h : w)
@@ -543,15 +548,15 @@ void fine_calibration_timing(
     TFile *input_file = new TFile(input_filename.c_str());
 
     TTree *lightdata_tree = (TTree *)input_file->Get("lightdata");
-    alcor_spilldata *spilldata = new alcor_spilldata();
+    AlcorSpilldata *spilldata = new AlcorSpilldata();
     spilldata->link_to_tree(lightdata_tree);
 
     auto fine_time_calib_th2f = (TH2F *)input_file->Get("h_fine_calib");
-    alcor_finedata::generate_calibration(fine_time_calib_th2f, true);
+    AlcorFinedata::generate_calibration(fine_time_calib_th2f, true);
 
-    mapping current_mapping(mapping_conf);
+    Mapping current_mapping(mapping_conf);
     auto trigger_configs = trigger_conf_reader(trigger_conf);
-    trigger_registry registry(trigger_configs);
+    TriggerRegistry registry(trigger_configs);
 
     const int all_spills = static_cast<int>(
         std::min((long long)lightdata_tree->GetEntries(), (long long)max_spill));
@@ -654,8 +659,8 @@ void fine_calibration_timing(
         g_linpar->SetPoint(pt, global_idx, conv);
         g_linpar->SetPointError(pt, 0., fit_linear_gaus->GetParError(1));
 
-        alcor_finedata::switch_to_fit_v2(
-            global_idx, calibration_method_t::_ALCOR_v2_FIT_CALIB_,
+        AlcorFinedata::switch_to_fit_v2(
+            global_idx, CalibrationMethod::AlcorV2FitCalib,
             conv, offset, sigma);
         delete h_zy;
     }
@@ -699,11 +704,11 @@ void fine_calibration_timing(
 
             const double mean = fit_gaus->GetParameter(1);
             const double sigma = fit_gaus->GetParameter(2);
-            const double prev = alcor_finedata::get_param1(global_idx);
+            const double prev = AlcorFinedata::get_param1(global_idx);
 
-            alcor_finedata::set_param1(global_idx,
-                                       static_cast<float>(prev - mean / _ALCOR_CC_TO_NS_));
-            alcor_finedata::set_param2(global_idx,
+            AlcorFinedata::set_param1(global_idx,
+                                       static_cast<float>(prev - mean / BTANA_ALCOR_CC_TO_NS));
+            AlcorFinedata::set_param2(global_idx,
                                        static_cast<float>(sigma));
             delete h_y;
         }
@@ -821,9 +826,9 @@ void fine_calibration_timing(
                     mean = fit_mean;
             }
 
-            const float prev = alcor_finedata::get_param2(global_idx);
-            alcor_finedata::set_param2(global_idx,
-                                       prev + static_cast<float>(-mean / _ALCOR_CC_TO_NS_));
+            const float prev = AlcorFinedata::get_param2(global_idx);
+            AlcorFinedata::set_param2(global_idx,
+                                       prev + static_cast<float>(-mean / BTANA_ALCOR_CC_TO_NS));
             delete h_y;
         }
     };
@@ -837,7 +842,7 @@ void fine_calibration_timing(
                                         h_cherenkov_delta,
                                         nullptr,
                                         false, // sigma_weight off
-                                        [](const alcor_finedata &)
+                                        [](const AlcorFinedata &)
                                         { return 1.f; } // swap for ring-weight lambda
                      ); });
         extract_cherenkov_offsets();
@@ -902,7 +907,7 @@ void fine_calibration_timing(
     // -------------------------------------------------------------------------
     // Persist calibration and write output
     // -------------------------------------------------------------------------
-    alcor_finedata::write_calib_to_file(
+    AlcorFinedata::write_calib_to_file(
         data_repository + "/" + run_name + "/timing_fine_calib.txt");
 
     auto draw = [](TObject *obj, const char *opt = "")

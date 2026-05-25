@@ -7,10 +7,10 @@ void my_test(
     std::string data_repository = "extData")
 {
     // ── Load run list and metadata ────────────────────────────────────────────
-    run_info::read_database("run-lists/2025.database.toml");
-    run_info::read_runslists("run-lists/2025.runlists.toml");
+    RunInfo::read_database("run-lists/2025.database.toml");
+    RunInfo::read_runslists("run-lists/2025.runlists.toml");
 
-    auto maybe_runs = run_info::get_run_list(runlist_name);
+    auto maybe_runs = RunInfo::get_run_list(runlist_name);
     if (!maybe_runs)
     {
         mist::logger::error("[my_test] Run list '" + runlist_name + "' not found");
@@ -23,7 +23,7 @@ void my_test(
     std::vector<std::string> valid_runs;
     for (const auto &run : run_names)
     {
-        auto info = run_info::get_run_info(run);
+        auto info = RunInfo::get_run_info(run);
         if (!info)
         {
             mist::logger::warning("[my_test] No metadata for run " + run + " — skipped");

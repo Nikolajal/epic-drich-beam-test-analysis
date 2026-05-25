@@ -48,12 +48,6 @@ constexpr const char *kTreeTitle = "Standard dRICH analysis results";
 //  AnalysisResults — construction
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * @brief Stores @p path; no file I/O is performed at construction time.
- */
-AnalysisResults::AnalysisResults(const std::string &path)
-    : fPath(path) {}
-
 // ─────────────────────────────────────────────────────────────────────────────
 //  AnalysisResults::load
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,12 +180,6 @@ void AnalysisResults::update(const ResultMap &entries) const
         current[kv.first] = kv.second;
     write(current);
 }
-
-/**
- * @details
- * Delegates to the batch overload with a single-element ResultMap.
- */
-void AnalysisResults::update(const ResultKey &key, double value, double error) const { update(ResultMap{{key, {value, error}}}); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  query_run

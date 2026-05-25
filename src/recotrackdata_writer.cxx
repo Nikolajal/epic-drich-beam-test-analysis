@@ -1,4 +1,4 @@
-#include "recotrackdata_writer.h"
+#include "writers/recotrackdata.h"
 #include "alcor_recodata.h"
 #include "alcor_recotrackdata.h"
 
@@ -20,19 +20,20 @@ void recotrackdata_writer(
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
         std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
+        delete input_file_recodata;
         return;
     }
 
     //  Link recodata tree locally
     TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
-    alcor_recodata *recodata = new alcor_recodata();
+    AlcorRecodata *recodata = new AlcorRecodata();
     recodata->link_to_tree(recodata_tree);
 
     //  Input recotrackdata
     std::string input_filename_recotrackdata = data_repository + "/" + run_name + "/ALTAI/tracks.txt";
 
     //  Load recotrackdata
-    tracking_altai current_tracking(input_filename_recotrackdata);
+    TrackingAltai current_tracking(input_filename_recotrackdata);
 
     //  Prepare output file
     std::string outname = data_repository + "/" + run_name + "/recotrackdata.root";
@@ -48,7 +49,7 @@ void recotrackdata_writer(
     //  TODO safer implementation: recodata MUST be initialised earlier, may break
     TFile *output_file = TFile::Open(outname.c_str(), "RECREATE");
     TTree *recotrackdata_tree = new TTree("recotrackdata", "Recotrackdata tree");
-    alcor_recotrackdata *recotrackdata = new alcor_recotrackdata(*recodata); // TODO internal linking
+    AlcorRecotrackdata *recotrackdata = new AlcorRecotrackdata(*recodata); // TODO internal linking
     recotrackdata->write_to_tree(recotrackdata_tree);
 
     //  Get number of frames, limited to maximum requested frames
@@ -70,10 +71,10 @@ void recotrackdata_writer(
         //  Load data for current frame
         recodata_tree->GetEntry(i_frame);
 
-        //  _HITMASK_dead_lane signals the event is start of spill, tells which channels are available
+        //  HitmaskDeadLane signals the event is start of spill, tells which channels are available
         auto current_trigger = recodata->get_triggers();
-        auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_event &t)
-                               { return t.index == _TRIGGER_START_OF_SPILL_; });
+        auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const TriggerEvent &t)
+                               { return t.index == TriggerStartOfSpill; });
         if (it != current_trigger.end())
         {
             //  Spill management
@@ -85,7 +86,7 @@ void recotrackdata_writer(
         }
 
         //  Select Luca AND trigger (0) or timing trigger (101)
-        it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const trigger_event &t)
+        it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const TriggerEvent &t)
                           { return t.index == 0; });
         if (it != current_trigger.end())
         {

@@ -5,6 +5,8 @@ A lightweight **C++ analysis framework** for processing and analyzing beam test 
 The framework provides core data structures, I/O utilities, ROOT dictionary support, and example macros to explore and analyze beam-test ROOT files produced with ALCOR front-end electronics.
 
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://nikolajal.github.io/epic-drich-beam-test-analysis/)
+[![Build](https://github.com/Nikolajal/epic-drich-beam-test-analysis/actions/workflows/build.yml/badge.svg)](https://github.com/Nikolajal/epic-drich-beam-test-analysis/actions/workflows/build.yml)
+[![Formatting](https://github.com/Nikolajal/epic-drich-beam-test-analysis/actions/workflows/clang-format.yml/badge.svg)](https://github.com/Nikolajal/epic-drich-beam-test-analysis/actions/workflows/clang-format.yml)
 
 ---
 
@@ -19,6 +21,8 @@ The framework provides core data structures, I/O utilities, ROOT dictionary supp
 - [Data Formats](#data-formats)
 - [Configuration](#configuration)
 - [Documentation](#documentation)
+- [Testing & CI](#testing--ci)
+- [Open design questions](#open-design-questions)
 - [Contributing](#contributing)
 - [Authors](#authors)
 
@@ -45,7 +49,7 @@ This repository aims to:
 │   ├── examples/               # Ready-to-run example macros
 │   └── utilities/              # Pipeline entry-point macros (lightdata, recodata, …)
 ├── scripts/                    # Build and install scripts
-├── conf/                       # Readout, mapping, and trigger configuration files
+├── conf/                       # Readout, Mapping, and trigger configuration files
 ├── run-lists/                  # Run database and run list definitions (.toml)
 ├── dict/                       # ROOT dictionary linkdef header
 ├── docs/                       # Doxygen configuration and generated documentation
@@ -57,10 +61,13 @@ This repository aims to:
 
 ## Prerequisites
 
-- **C++17**-compatible compiler (GCC ≥ 9 or Clang ≥ 10)
+- **C++17**-compatible compiler (GCC ≥ 9, Clang ≥ 10, or MSVC ≥ 19.20)
 - **ROOT ≥ 6.x** with `root-config` accessible in `PATH`
 - **CMake ≥ 3.16**
-- Internet access at first build (CMake fetches [CLI11](https://github.com/CLIUtils/CLI11), [toml++](https://github.com/marzer/tomlplusplus), and [MIST](https://github.com/Nikolajal/mist) automatically via `FetchContent`)
+- Internet access at first build — CMake fetches the following via `FetchContent`:
+  - [CLI11](https://github.com/CLIUtils/CLI11) (pinned to v2.4.2)
+  - [toml++](https://github.com/marzer/tomlplusplus) (pinned to v3.3.0)
+  - [MIST](https://github.com/Nikolajal/mist) (pinned to a specific commit — update the `GIT_TAG` in [CMakeLists.txt](CMakeLists.txt) when the MIST API moves)
 
 ---
 
@@ -140,7 +147,7 @@ Each step is invoked via the corresponding macro in `macros/utilities/` or the m
 ### In development
 
 The `lightdata_writer` step implements a streaming Hough-transform ring finder
-(`mist::ring_finding::hough_transform`) operating directly on Cherenkov hit clusters
+(`mist::ring_finding::HoughTransform`) operating directly on Cherenkov hit clusters
 within each 3.2 µs frame. Active areas of development include:
 
 - **Neural-network ring recognition** — a NN-based alternative to the Hough transform
@@ -152,32 +159,65 @@ within each 3.2 µs frame. Active areas of development include:
 
 ## Data Formats
 
-### ALCOR Raw Data (`alcor_data`, `alcor_finedata`)
+### ALCOR Raw Data (`AlcorData`, `AlcorFinedata`)
 
-Low-level TDC hits decoded from the ALCOR ASIC front-end. `alcor_finedata` adds a per-channel calibration table (3 parameters per TDC) that converts raw fine-time bins into calibrated timestamps in nanoseconds. The detector consists of 8 PDUs of 16×16 SiPM pixels in a square layout (centre PDU absent).
+Low-level TDC hits decoded from the ALCOR ASIC front-end. `AlcorFinedata` adds a per-channel calibration table (3 parameters per TDC) that converts raw fine-time bins into calibrated timestamps in nanoseconds. The detector consists of 8 PDUs of 16×16 SiPM pixels in a square layout (centre PDU absent).
 
-### Lightdata (`alcor_lightdata`, `alcor_spilldata`)
+### Lightdata (`AlcorLightdata`, `AlcorSpilldata`)
 
 Frame-based, filtered view of ALCOR data. Hits are grouped into readout frames and assigned to one of four categories — **Cherenkov**, **timing**, **tracking**, or **trigger** — based on the readout configuration file. Dead-channel and active-participant bitmasks are tracked per device and per spill.
 
-### Recodata (`alcor_recodata`, `alcor_recotrackdata`)
+### Recodata (`AlcorRecodata`, `AlcorRecotrackdata`)
 
 Event-level, analysis-ready data structures. Photon rings are reconstructed using DBSCAN or the Hough transform and optionally associated with particle tracks from the ALTAI tracking telescope. This is the format used for physics studies such as ring spatial resolution and Cherenkov angle reconstruction.
+
+### Channel addressing — `GlobalIndex`
+
+Every hit carries a packed 32-bit address identifying its origin TDC channel:
+`(device, FIFO, chip, channel, TDC)`.  The address is wrapped in a value type
+[`GlobalIndex`](include/GlobalIndex.h) with built-in validation, a validity
+sentinel bit, and explicit accessors for both the **TDC-level** view (full
+address, used by per-TDC calibration tables) and the **global-channel-level**
+view (TDC bits zeroed, used as a key for per-channel Mapping):
+
+```cpp
+auto gi = GlobalIndex::from_components(197, /*fifo=*/5, /*chip=*/3,
+                                         /*channel=*/42, /*tdc=*/1);
+gi.device();              // 197
+gi.real_chip();           // 6  (split-in-two: 2*chip + channel>>5)
+gi.chip_local_channel();  // 10 (channel within the physical 32-ch chip)
+gi.column();              // 2  (ALCOR column-row layout — hardware geometry)
+gi.pixel();               // 2  (row within the column — hardware geometry)
+gi.global_channel();      // GlobalIndex sibling with tdc=0 (TDC-agnostic key)
+gi.is_valid();            // true
+
+// Decode legacy raw values:
+auto gi_from_file = GlobalIndex::from_legacy(tdc_level_raw);          // AlcorData::get_global_tdc_index()
+auto gc_from_file = GlobalIndex::from_legacy_channel(channel_raw);    // AlcorData::get_global_index()
+```
+
+The layout is final-detector native (64-ch chips, up to 2048 devices); the
+current 32-ch split-in-two detector is handled by an adapter at the framer's
+input boundary.  See [`include/GlobalIndex.h`](include/GlobalIndex.h) for
+the full bit layout and the `gidx::kUsesSplitInTwo` compile-time flag.
 
 ---
 
 ## Configuration
 
-Runtime configuration is handled through plain-text and TOML files in `conf/`:
+Runtime configuration is handled through TOML files in `conf/`:
 
 | File                       | Description                                              |
 | -------------------------- | -------------------------------------------------------- |
-| `readout_config.txt`       | Maps (device, chip) pairs to hit categories              |
-| `mapping_conf.<year>.toml` | Pixel-to-physical-position mapping for the SiPM plane    |
+| `readout_config.toml`      | Maps (device, chip) pairs to hit categories              |
+| `framer_conf.toml`         | Streaming-framer parameters (frame size, QA windows, …)  |
+| `mapping_conf.<year>.toml` | Pixel-to-physical-position Mapping for the SiPM plane    |
 | `trigger_conf.<year>.toml` | Trigger logic and channel assignment                     |
-| `sensors_config.txt`       | SiPM sensor parameters (gain, breakdown voltage, …)      |
 
-Run lists and a run metadata database for 2025 are available in `run-lists/` in TOML format, loadable via `run_info::read_database()` and `run_info::read_runslists()`.
+All config files honour the `##` cutoff sentinel (see [include/toml_utils.h](include/toml_utils.h))
+so you can append `## --- disabled ---` and keep scratch entries below without them being parsed.
+
+Run lists and a run metadata database for 2025 are available in `run-lists/` in TOML format, loadable via `RunInfo::read_database()` and `RunInfo::read_runslists()`.
 
 ---
 
@@ -192,6 +232,62 @@ To build documentation locally:
 ```bash
 doxygen docs/Doxyfile
 ```
+
+---
+
+## Testing & CI
+
+The repository runs build + test verification on every push and pull request
+via [`.github/workflows/build.yml`](.github/workflows/build.yml).
+The matrix exercises:
+
+|                | Release                | Debug                  |
+|----------------|------------------------|------------------------|
+| Linux (Ubuntu) | build + ctest, required| build + ctest, required|
+| macOS          | build + ctest, required| build + ctest, required|
+| Windows        | build + ctest, best-effort | —                  |
+
+The Windows leg uses ROOT from `conda-forge` and is currently marked
+`continue-on-error: true` while the configuration stabilises — failures there
+do not block PRs.  Promote it to a required check once it is consistently
+green (remove the `continue-on-error` line).
+
+### Building & running tests locally
+
+Enable the test suite with `-DBTANA_BUILD_TESTS=ON`:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DBTANA_BUILD_TESTS=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+| Binary | Source | Coverage |
+|--------|--------|----------|
+| `test_global_index` | [test/tester_global_index.cxx](test/tester_global_index.cxx) | Component round-trip, legacy round-trip (every legacy raw on devices 192–199), validity-bit semantics, `try_from_components` nullopt cases, detector-aware helpers (`real_chip`, `chip_local_channel`), TDC vs pixel-level views, `from_legacy_pixel` factory, lazy `idx/4` replacement |
+
+Further unit tests (lightdata pipeline round-trip, calibration table read/write,
+ring-finder regression) are on the roadmap.
+
+### Formatting
+
+A second workflow ([`.github/workflows/clang-format.yml`](.github/workflows/clang-format.yml))
+runs `clang-format-22` over every `.h`/`.cxx`/`.cpp` under `include/`, `src/`, and `macros/` on each PR.
+It auto-commits any reformatting back to the PR branch and fails the check so the author
+knows to `git pull` before merging.  Format locally to skip the round-trip:
+
+```bash
+find include src macros -type f \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' \) \
+  | xargs clang-format -i --style=file
+```
+
+---
+
+## Open design questions
+
+Open design questions and refactor proposals live as GitHub issues with the
+`design` label.  Read the relevant issue before landing any change that
+touches one of the open items so the rationale follows the decision.
 
 ---
 

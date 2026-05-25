@@ -1,5 +1,11 @@
+# trigger_conf.2024.toml — trigger source definitions for the 2024 test-beam run
+#
+# Each [[trigger]] entry defines one trigger source. The parser stops reading at
+# the first "##" comment line, so entries below that marker are safely ignored
+# and can be used for disabled triggers, notes, or examples.
+
 [[trigger]]
-name   = "luca_and_finger"
-index  = 0
-device = 196
-delay  = 117
+name   = "luca_and_finger"   # human-readable label used in output trees and logs
+index  = 0                   # trigger index (0-based); referenced in hit bitmasks
+device = 196                 # ALCOR device ID that provides the trigger signal
+delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
