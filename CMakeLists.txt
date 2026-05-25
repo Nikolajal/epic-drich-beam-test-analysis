@@ -48,7 +48,20 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(tomlplusplus)
 
 # MIST — Make It Simple, Toolkit
-# Replace GIT_TAG with a release tag once available (e.g. v0.1.0).
+#
+# Tracking the `dev` branch while MIST and beam-test-analysis are being
+# co-developed.  CMake fetches the branch tip on first configure and then
+# leaves the local clone alone (FETCHCONTENT_UPDATES_DISCONNECTED defaults
+# to OFF, but FetchContent only re-fetches when the build dir is wiped or
+# the cache is invalidated).  To force a refresh:
+#
+#     rm -rf build && ./scripts/install.sh
+#
+# Before any external release, pin to an immutable tag/SHA — e.g.
+#     GIT_TAG v0.1.0     # once MIST cuts a tag
+# or
+#     GIT_TAG <40-char SHA>
+# so the build is reproducible for downstream consumers.
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
@@ -65,7 +78,8 @@ find_package(ROOT REQUIRED COMPONENTS RIO Tree Hist Graf Gui)
 # Dictionary Headers
 # --------------------------------------------------
 set(DICT_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/config_reader.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/util/global_index.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/util/config_reader.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/triggers.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_finedata.h
@@ -77,10 +91,10 @@ set(DICT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/tracking_altai.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data_streamer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/parallel_streaming_framer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/lightdata_writer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/recodata_writer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/recotrackdata_writer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/standard_analysis.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/writers/lightdata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/writers/recodata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/writers/recotrackdata.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/analysis_results.h
     # hough_transform.h is now part of MIST — no longer a local header,
     # so it does not need to be listed here for the ROOT dictionary.
     # If any of the headers above include <mist/ring_finding/hough_transform.h>,
@@ -115,12 +129,11 @@ set(SRC_FILES
     src/tracking_altai.cxx
     src/alcor_data_streamer.cxx
     src/parallel_streaming_framer.cxx
+    src/triggers.cxx
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
     src/recotrackdata_writer.cxx
-    src/standard_analysis.cxx
-    # src/ring-finding-algorithms/hough-transform.cxx removed —
-    # hough_transform is now compiled as part of mist::mist.
+    src/analysis_results.cxx
 )
 
 # --------------------------------------------------
@@ -170,12 +183,10 @@ endif()
 add_executable(lightdata_writer      macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
-add_executable(standard_analysis     macros/utilities/standard_analysis.cpp)
 
 target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
 target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
-target_link_libraries(standard_analysis     PRIVATE beam_test_analysis)
 
 # --------------------------------------------------
 # Install Rules
@@ -185,7 +196,6 @@ install(TARGETS
     lightdata_writer
     recodata_writer
     recotrackdata_writer
-    standard_analysis
     EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
@@ -224,3 +234,32 @@ configure_file(
 # Install so macros can include it
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
         DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/macros/")
+
+# --------------------------------------------------
+# Tests (off by default so downstream consumers skip them)
+#
+# BTANA_BUILD_TESTS is a CMake boolean option that defaults to OFF.  Enable
+# it explicitly during development:
+#     cmake -B build -DBTANA_BUILD_TESTS=ON
+#
+# Mirrors MIST's MIST_BUILD_TESTS pattern.  enable_testing() runs
+# unconditionally so `ctest` works when the option is toggled from the
+# command line without re-running the full configure step.
+# --------------------------------------------------
+option(BTANA_BUILD_TESTS "Build beam-test-analysis test executables" OFF)
+enable_testing()
+
+if(BTANA_BUILD_TESTS)
+    # Helper: build a test_<name> binary from test/tester_<name>.cxx and
+    # register it with CTest.  Avoids per-test boilerplate.
+    function(btana_add_test name)
+        add_executable(test_${name} test/tester_${name}.cxx)
+        target_link_libraries(test_${name} PRIVATE beam_test_analysis)
+        target_compile_features(test_${name} PRIVATE cxx_std_17)
+        add_test(NAME test_${name} COMMAND test_${name})
+    endfunction()
+
+    btana_add_test(global_index)
+
+    message(STATUS "[beam_test_analysis] Tests enabled — binaries will land in ${CMAKE_BINARY_DIR}/bin")
+endif()

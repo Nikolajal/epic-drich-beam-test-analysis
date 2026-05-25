@@ -3,27 +3,66 @@
 #include "utility.h"
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
+#include "util/toml_utils.h"
 
 /**
- * @file mapping.h
- * @brief Detector channel-to-position mapping for the ePIC dRICH beam test.
+ * @file Mapping.h
+ * @brief Detector channel-to-position Mapping for the ePIC dRICH beam test.
  *
  * Provides a full chain of lookups from raw ALCOR readout identifiers
- * (device, chip, EO channel) to physical (x, y) hit coordinates on the
- * SiPM plane, and exposes pre-built caches for performance-critical loops.
+ * (device, chip, EO channel) to physical (x, y) Hit coordinates on the
+ * SiPM plane, exposes pre-built caches for performance-critical loops,
+ * and resolves the HV bias line (channel) that powers any given pixel.
  *
  * ### Coordinate chain
  * ```
- * (device, chip) ──► (PDU, matrix)   [loaded from calibration file]
- *       EO channel ──► DO channel     [static look-up table per matrix]
- *  (DO channel, matrix) ──► (col, row) inside the PDU 16×16 grid
- *       (PDU, col, row) ──► (x, y) mm  [PDU origin + optional 180° rotation]
+ * (device, chip) ──► (PDU, matrix)     [loaded from calibration file]
+ *       EO channel ──► DO channel       [static look-up table per matrix]
+ *  (DO channel, matrix) ──► (col, row)  inside the PDU 16×16 grid
+ *       (PDU, col, row) ──► (x, y) mm   [PDU origin + optional 180° rotation]
  * ```
+ *
+ * ### HV channel identification
+ * Within each matrix quadrant the 64 pixels are arranged in an 8×8 block.
+ * HV bias lines run either along columns (VERTICAL) or rows (HORIZONTAL),
+ * as configured per-matrix in the calibration TOML under [hv_line_orientation].
+ * - VERTICAL   → HV line index = do_channel / 8   (0–7, same x)
+ * - HORIZONTAL → HV line index = do_channel % 8   (0–7, same y)
  *
  * @todo Add a method to generate a full-coverage map (Cartesian and R-φ).
  * @todo Profile cache benefit vs. on-the-fly computation.
  */
-class mapping
+
+// ---------------------------------------------------------------------------
+// Ancillary types used by both the Mapping class and external analysis code
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Orientation of a physical line of 8 adjacent SiPM pixels.
+ *
+ * VERTICAL   lines share the same x coordinate (constant column index).
+ * HORIZONTAL lines share the same y coordinate (constant row index).
+ * Used both for geometry analysis and HV bias-line identification.
+ */
+enum class line_orientation_type { Vertical, Horizontal };
+
+/**
+ * @brief Fully-qualified identifier of the HV bias line powering one pixel.
+ *
+ * The HV line index (0–7) selects one of the eight parallel bias lines
+ * within the matrix's 8×8 block, in the direction given by @c orientation.
+ */
+struct HvChannelAddress
+{
+    int pdu_index;               ///< PDU index [1–8].
+    int matrix_index;            ///< Matrix quadrant index [1–4].
+    int hv_line_index;           ///< HV line index within the matrix [0–7].
+    line_orientation_type orientation; ///< VERTICAL (column lines) or HORIZONTAL (row lines).
+};
+
+// ---------------------------------------------------------------------------
+
+class Mapping
 {
 public:
     // -------------------------------------------------------------------------
@@ -33,18 +72,19 @@ public:
     /**
      * @brief Construct and immediately load a calibration file.
      * @param conf_file_name Path to a TOML calibration file containing
-     *        @c pdu_xy_position, @c pdu_rotation, and
-     *        @c device_chip_to_pdu_matrix tables.
+     *        @c pdu_xy_position, @c pdu_rotation, @c device_chip_to_pdu_matrix,
+     *        and @c hv_line_orientation tables.
      */
-    explicit mapping(std::string conf_file_name);
+    explicit Mapping(std::string conf_file_name);
 
     /**
      * @brief Load (or reload) calibration data from a TOML file.
      *
-     * Populates the three mutable calibration maps:
-     * - @c pdu_xy_position  – physical centre of each PDU in mm.
-     * - @c pdu_rotation     – whether the PDU is rotated 180°.
+     * Populates the four mutable calibration maps:
+     * - @c pdu_xy_position        – physical centre of each PDU in mm.
+     * - @c pdu_rotation           – whether the PDU is rotated 180°.
      * - @c device_chip_to_pdu_matrix – ALCOR (device, chip) → (PDU, matrix).
+     * - @c hv_line_orientation    – HV bias line direction per matrix [1–4].
      *
      * Any previously cached index↔position data is invalidated on reload.
      *
@@ -56,24 +96,22 @@ public:
     /// @}
 
     // -------------------------------------------------------------------------
-    /** @name Single-hit position look-ups
+    /** @name Single-Hit position look-ups
      *
      *  All getters return @c std::nullopt when the requested identifier is
-     *  out of range or not present in the calibration tables, making it safe
-     *  to call without prior validity checks.
+     *  out of range or not present in the calibration tables.
      */
     /// @{
 
     /**
-     * @brief Translate an EO (even/odd) channel index to a DO (data-out)
-     *        channel index for the given matrix quadrant.
+     * @brief Translate an EO channel index to a DO channel index for the given matrix.
      *
      * The EO→DO permutation is hard-coded per matrix (1–4) and accounts for
      * the physical wire routing inside each ALCOR ASIC quadrant.
      *
      * @param matrix     Matrix index [1–4].
      * @param eo_channel EO channel index [0–63].
-     * @return DO channel index, or @c std::nullopt if inputs are invalid.
+     * @return DO channel index [0–63], or @c std::nullopt if inputs are invalid.
      */
     std::optional<int> get_do_channel(int matrix, int eo_channel) const;
 
@@ -88,10 +126,9 @@ public:
     /**
      * @brief Compute the physical (x, y) position from a PDU grid address.
      *
-     * The intra-PDU coordinate is computed from the pixel pitch (3.2 mm),
-     * guard-ring offsets, and an extra 0.3 mm gap between the two halves of
-     * the 16×16 grid (columns/rows 7→8).  The PDU origin is then added from
-     * @c pdu_xy_position.
+     * Pixel pitch is 3.2 mm with guard-ring offsets, plus a 0.3 mm inter-half
+     * gap between columns/rows 7 and 8 of the 16×16 grid.
+     * The PDU origin from @c pdu_xy_position is added last.
      *
      * @param pdu    PDU index [1–8].
      * @param column Column in the 16×16 PDU grid [0–15].
@@ -103,9 +140,9 @@ public:
     /**
      * @brief Compute the physical position from a (PDU, matrix, EO channel) triplet.
      *
-     * Internally calls get_do_channel() to resolve the column/row within the
-     * PDU grid, then applies the optional 180° rotation before delegating to
-     * get_position_from_pdu_column_row().
+     * Resolves EO→DO channel, computes the 16×16 grid address (applying the
+     * matrix quadrant offset), then applies the optional 180° rotation before
+     * delegating to get_position_from_pdu_column_row().
      *
      * @param pdu        PDU index [1–8].
      * @param matrix     Matrix index [1–4].
@@ -132,112 +169,168 @@ public:
      * @param entry Decoded fine-data word providing device, chip, and EO channel.
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
-    std::optional<std::array<float, 2>> get_position_from_finedata(alcor_finedata entry) const;
+    std::optional<std::array<float, 2>> get_position_from_finedata(AlcorFinedata entry) const
+    { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
 
     /**
-     * @brief Compute the physical position from a global TDC channel index.
+     * @brief Compute the physical position from a @ref GlobalIndex.
      *
-     * The global index encodes (device, chip, EO channel) into a single integer
-     * via the utility functions get_device_from_global_tdc_index() etc.
+     * Preferred form — pass a strongly-typed @ref GlobalIndex obtained from
+     * @ref GlobalIndex::from_components, @ref GlobalIndex::from_legacy, or
+     * @ref GlobalIndex::from_legacy_channel.
      *
-     * @param global_index Packed global TDC channel index.
+     * @param gi Validated @ref GlobalIndex identifying the channel.
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
-    std::optional<std::array<float, 2>> get_position_from_global_index(int global_index) const;
+    std::optional<std::array<float, 2>> get_position_from_global_index(::GlobalIndex gi) const
+    { return get_position_from_device_chip_eoch(gi.device(),
+                                                 gi.real_chip(),
+                                                 gi.eo_channel()); }
+
+    /**
+     * @brief Convenience overload — compute the physical position from the
+     *        raw 32-bit value stored on a Hit.
+     *
+     * Wraps the @p stored_raw into a @ref GlobalIndex and delegates to the
+     * value-type overload above.  Use this when calling from code that holds
+     * a `uint32_t` (e.g. the stored `internal_data.GlobalIndex` field on
+     * `AlcorFinedataStruct`).
+     *
+     * @param stored_raw  Stored new-layout @ref GlobalIndex raw.
+     * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
+     */
+    std::optional<std::array<float, 2>> get_position_from_global_index(int stored_raw) const
+    { return get_position_from_global_index(::GlobalIndex(static_cast<uint32_t>(stored_raw))); }
 
     /**
      * @brief Fill the @c hit_x / @c hit_y fields of a fine-data struct in-place.
      *
-     * Sets the fields to @c -99.f as a sentinel when the channel is not mapped.
+     * Sets the fields to @c 9.f as a sentinel when the channel is not mapped.
      *
      * @param entry Fine-data struct to annotate; modified in-place.
      */
-    void assign_position(alcor_finedata_struct &entry);
+    void assign_position(AlcorFinedataStruct &entry);
+
+    /// @}
+
+    // -------------------------------------------------------------------------
+    /** @name HV bias-line identification */
+    /// @{
+
+    /**
+     * @brief Retrieve the HV bias line orientation for a matrix quadrant.
+     *
+     * The orientation is loaded from the @c [hv_line_orientation] TOML table
+     * and controls how the DO channel index is decoded into an HV line index:
+     * - @c VERTICAL   → HV line index = do_channel / 8  (column, same x).
+     * - @c HORIZONTAL → HV line index = do_channel % 8  (row, same y).
+     *
+     * @param matrix_index Matrix index [1–4].
+     * @return Orientation enum value, or @c std::nullopt if not configured.
+     */
+    std::optional<line_orientation_type> get_hv_line_orientation(int matrix_index) const;
+
+    /**
+     * @brief Identify the HV bias line powering the pixel at a global TDC index.
+     *
+     * Decodes (device, chip, EO channel) from @p GlobalIndex, resolves
+     * (PDU, matrix, DO channel), then applies the per-matrix HV orientation to
+     * determine which of the eight bias lines (0–7) supplies that pixel.
+     *
+     * The returned @c HvChannelAddress contains the PDU, matrix, line index,
+     * and orientation — sufficient to uniquely identify the bias line across
+     * the full detector.
+     *
+     * @param GlobalIndex Packed global TDC channel index.
+     * @return Fully-qualified HV channel address, or @c std::nullopt if the
+     *         channel is unmapped or HV orientation is not configured.
+     */
+    std::optional<HvChannelAddress> get_hv_channel_from_global_index(int GlobalIndex) const;
 
     /// @}
 
     // -------------------------------------------------------------------------
     /** @name Position cache construction
      *
-     *  These methods pre-compute bidirectional look-up tables between global
-     *  TDC channel indices and physical (x, y) positions.  Building the caches
-     *  once and reusing them is significantly faster than calling the full
-     *  look-up chain inside tight event loops.
-     *
-     *  The caches are invalidated automatically when load_calib() is called.
+     *  Pre-computed bidirectional look-up tables between global TDC indices and
+     *  physical (x, y) positions.  Building the caches once before event loops
+     *  is significantly faster than calling the full look-up chain per Hit.
+     *  Caches are invalidated automatically when load_calib() is called.
      */
     /// @{
 
     /**
-     * @brief Build the @c index → position cache.
+     * @brief Build the index → position cache.
      *
      * Iterates over all valid global TDC indices (step 4, covering 2048 chips
      * × 4 EO-channel groups) and resolves each to a physical position.
-     * Channels that are unmapped or whose position falls within a 5 mm radius
-     * of the origin (used as a sentinel for absent/dead pixels) are skipped.
+     * Channels that are unmapped or fall within @p origin_cut of the origin
+     * (sentinel for absent/dead pixels) are skipped.
      *
-     * After this call, the cache can be queried with get_cached_position().
-     *
-     * @note The 5 mm origin cut mirrors the filter applied in the standard
-     *       event-loop snippet; adjust @p origin_cut if the geometry changes.
-     *
-     * @param origin_cut Radius threshold in mm below which a hit is considered
-     *                   invalid (default: 5.0 mm, applied independently on x
-     *                   and y via @c fabs).
+     * @param origin_cut Radius threshold in mm; hits with |x| < origin_cut
+     *                   AND |y| < origin_cut are excluded (default: 5.0 mm).
      */
     void build_index_to_position_cache(float origin_cut = 5.f);
 
     /**
-     * @brief Build the @c position → index reverse cache.
+     * @brief Build the position → index reverse cache.
      *
-     * Inverts the index→position cache.  Must be called *after*
-     * build_index_to_position_cache() (or will build it implicitly if not yet
-     * done).
+     * Inverts the index→position cache; builds it implicitly if not yet done.
      *
-     * Because two distinct channels can in principle share the same nominal
-     * position (e.g. dead-pixel replacements), a @p collision_policy argument
-     * controls the behaviour:
-     * - @c "first"  – keep the first index seen (default, safe for typical use).
+     * When two channels share the same nominal position, @p collision_policy
+     * controls the outcome:
+     * - @c "first"  – keep the first index seen (default).
      * - @c "last"   – overwrite with the last index seen.
-     * - @c "warn"   – keep first and emit a warning for every collision.
-     *
-     * After this call, the cache can be queried with get_cached_index().
+     * - @c "warn"   – keep first and log a warning per collision.
      *
      * @param collision_policy One of @c "first", @c "last", @c "warn".
      */
     void build_position_to_index_cache(std::string collision_policy = "first");
 
     /**
-     * @brief Query the index→position cache built by build_index_to_position_cache().
-     * @param global_index Global TDC channel index to look up.
-     * @return Cached {x, y} position, or @c std::nullopt if not in cache.
+     * @brief Query the index → position cache.
+     * @param GlobalIndex Global TDC channel index.
+     * @return Cached {x, y} in mm, or @c std::nullopt if not in cache.
      */
-    std::optional<std::array<float, 2>> get_cached_position(int global_index) const;
+    std::optional<std::array<float, 2>> get_cached_position(int GlobalIndex) const
+    { auto it = index_to_hit_xy.find(GlobalIndex); return (it != index_to_hit_xy.end()) ? std::optional{it->second} : std::nullopt; }
 
     /**
-     * @brief Query the position→index cache built by build_position_to_index_cache().
+     * @brief Query the position → index reverse cache.
      * @param x X coordinate in mm.
      * @param y Y coordinate in mm.
      * @return Cached global TDC index, or @c std::nullopt if not in cache.
      */
-    std::optional<int> get_cached_index(float x, float y) const;
+    std::optional<int> get_cached_index(float x, float y) const
+    { auto it = hit_xy_to_index.find({x, y}); return (it != hit_xy_to_index.end()) ? std::optional{it->second} : std::nullopt; }
 
     /**
-     * @brief Read-only access to the full index→position cache map.
+     * @brief Read-only access to the full index → position cache.
      *
      * Useful for iterating over all active channels, e.g. when filling
      * occupancy histograms or building detector response matrices.
-     *
-     * @return Const reference to the internal @c index_to_hit_xy map.
      */
-    const std::map<int, std::array<float, 2>> &get_index_to_position_map() const;
+    const std::map<int, std::array<float, 2>> &get_index_to_position_map() const { return index_to_hit_xy; }
 
     /**
-     * @brief Read-only access to the full position→index cache map.
-     * @return Const reference to the internal @c hit_xy_to_index map.
-     *         The key is encoded as a pair of floats {x, y}.
+     * @brief Read-only access to the full position → index reverse cache.
+     *        Key is {x, y} in mm as a pair of floats.
      */
-    const std::map<std::array<float, 2>, int> &get_position_to_index_map() const;
+    const std::map<std::array<float, 2>, int> &get_position_to_index_map() const { return hit_xy_to_index; }
+
+    /// @}
+
+    // -------------------------------------------------------------------------
+    /** @name Raw calibration table accessors */
+    /// @{
+
+    /**
+     * @brief Read-only access to the (device, chip) → (PDU, matrix) calibration map.
+     *
+     * Useful for enumerating all active (PDU, matrix) pairs, e.g. when
+     * building per-matrix electronics line structures.
+     */
+    const std::map<std::array<int, 2>, std::array<int, 2>> &get_device_chip_to_pdu_matrix_map() const { return device_chip_to_pdu_matrix; }
 
     /// @}
 
@@ -259,12 +352,17 @@ private:
     /// Physical centre position {x, y} in mm for each PDU, keyed by PDU index.
     static std::map<int, std::array<float, 2>> pdu_xy_position;
 
-    /// 180° rotation flag per PDU.  @c true means column/row are mirrored as
+    /// 180° rotation flag per PDU. @c true means column/row are mirrored as
     /// (15 − col, 15 − row) before the position lookup.
     static std::map<int, bool> pdu_rotation;
 
     /// Maps (device, chip) pairs to their (PDU, matrix) assignment.
     static std::map<std::array<int, 2>, std::array<int, 2>> device_chip_to_pdu_matrix;
+
+    /// HV bias line orientation per matrix quadrant [1–4].
+    /// VERTICAL  → bias lines run along columns (do_channel / 8).
+    /// HORIZONTAL → bias lines run along rows    (do_channel % 8).
+    static std::map<int, line_orientation_type> hv_line_orientation;
 
     /// @}
 
@@ -272,18 +370,9 @@ private:
     /** @name Position caches */
     /// @{
 
-    /// Cached map from global TDC index to physical position.
-    /// Populated by build_index_to_position_cache().
-    std::map<int, std::array<float, 2>> index_to_hit_xy;
-
-    /// Cached reverse map from physical position to global TDC index.
-    /// Populated by build_position_to_index_cache().
-    std::map<std::array<float, 2>, int> hit_xy_to_index;
-
-    /// Tracks whether index_to_hit_xy has been built.
+    std::map<int, std::array<float, 2>> index_to_hit_xy;   ///< global index → {x, y} mm.
+    std::map<std::array<float, 2>, int> hit_xy_to_index;   ///< {x, y} mm → global index.
     bool cache_index_to_xy_built{false};
-
-    /// Tracks whether hit_xy_to_index has been built.
     bool cache_xy_to_index_built{false};
 
     /// @}

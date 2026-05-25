@@ -1,15 +1,20 @@
-# mapping_conf.toml
+# mapping_conf.2025.toml — detector geometry for the 2025 test-beam run
+# Encodes the physical layout of PDUs in the detector plane and the
+# correspondence between ALCOR device/chip addresses and PDU positions.
 
+# Physical XY centre of each PDU [mm], relative to the beam-axis reference point.
+# Key = PDU index (1-based, per assembly drawing); value = [x, y].
 [pdu_xy_position]
-1 = [-82.0, 30.0]
-2 = [-26.0, 35.0]
-3 = [30.0, 30.0]
-4 = [30.0, -26.0]
-5 = [30.0, -82.0]
+1 = [-82.0,  30.0]
+2 = [-26.0,  35.0]
+3 = [ 30.0,  30.0]
+4 = [ 30.0, -26.0]
+5 = [ 30.0, -82.0]
 6 = [-26.0, -87.0]
 7 = [-82.0, -82.0]
 8 = [-82.0, -26.0]
 
+# true → PDU is mounted rotated 180° about its centre (reverses quadrant ordering).
 [pdu_rotation]
 1 = true
 2 = true
@@ -20,6 +25,10 @@
 7 = true
 8 = true
 
+# Maps "deviceID_chipIndex" → [pdu_index, quadrant] (quadrants 1–4, row-major).
+# Consecutive even/odd chip pairs share a quadrant (e.g. _0 and _1 cover the same
+# 2×2 pixel block on the SiPM tile, read by two independent ALCOR input channels).
+# PDU index 99 is a sentinel for non-Cherenkov (timing / ancillary) devices.
 [device_chip_to_pdu_matrix]
 "192_0" = [1, 1]
 "192_1" = [1, 1]
@@ -29,6 +38,14 @@
 "192_5" = [1, 3]
 "192_6" = [1, 4]
 "192_7" = [1, 4]
+"193_0" = [2, 1]
+"193_1" = [2, 1]
+"193_2" = [2, 2]
+"193_3" = [2, 2]
+"193_4" = [2, 3]
+"193_5" = [2, 3]
+"193_6" = [2, 4]
+"193_7" = [2, 4]
 "194_0" = [3, 1]
 "194_1" = [3, 1]
 "194_2" = [3, 2]
@@ -77,5 +94,5 @@
 "199_5" = [8, 3]
 "199_6" = [8, 4]
 "199_7" = [8, 4]
-"200_0" = [99, 1]
+"200_0" = [99, 1]   # device 200 = timing reference ALCOR — not a Cherenkov PDU
 "200_2" = [99, 1]

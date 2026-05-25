@@ -2,14 +2,14 @@
 
 /**
  * @file config_reader.h
- * @brief Run configuration and readout mapping utilities for the ePIC dRICH beam test.
+ * @brief Run configuration and readout Mapping utilities for the ePIC dRICH beam test.
  *
  * Provides:
- * - @ref readout_config_struct  – per-named-role (device, chip) assignment.
- * - @ref readout_config_list   – searchable container of readout configurations.
+ * - @ref ReadoutConfigStruct  – per-named-role (device, chip) assignment.
+ * - @ref ReadoutConfigList   – searchable container of readout configurations.
  * - @ref readout_config_reader – TOML file parser populating the above.
- * - @ref run_info_struct       – per-run beam, DAQ, sensor, and optics metadata.
- * - @ref run_info              – static database of run metadata and run lists.
+ * - @ref RunInfoStruct       – per-run beam, DAQ, sensor, and optics metadata.
+ * - @ref RunInfo              – static database of run metadata and run lists.
  *
  * @todo Re-write legacy text-based sections for full TOML configuration files.
  */
@@ -27,13 +27,17 @@
 #include <cstdint>
 #include <utility.h>
 #include <toml++/toml.h>
+#include "util/toml_utils.h"
 
 // =========================================================================
 //  Core tag set
 // =========================================================================
 
 /// Named roles that are mutually exclusive per (device, chip) pair.
-static const std::set<std::string> lightdata_core_tags = {"timing", "tracking", "cherenkov"};
+/// `inline` (C++17) gives a single shared definition across translation
+/// units — the previous `static` declaration produced one copy per TU
+/// (CODE_REVIEW §5.10).
+inline const std::set<std::string> lightdata_core_tags = {"timing", "tracking", "cherenkov"};
 
 // =========================================================================
 //  Readout configuration
@@ -45,19 +49,19 @@ static const std::set<std::string> lightdata_core_tags = {"timing", "tracking", 
  * The @c device_chip map keys are ALCOR device indices; values are the list
  * of chip indices active under that device for the given role.
  */
-struct readout_config_struct
+struct ReadoutConfigStruct
 {
     std::string name;                                      ///< Human-readable role name (e.g. @c "cherenkov").
     std::map<uint16_t, std::vector<uint16_t>> device_chip; ///< Active chips per device.
 
-    readout_config_struct() = default;
+    ReadoutConfigStruct() = default;
 
     /**
      * @brief Construct with an explicit name and device–chip map.
      * @param _name       Role name.
      * @param _device_chip Initial device–chip assignment.
      */
-    readout_config_struct(std::string _name, std::map<uint16_t, std::vector<uint16_t>> _device_chip);
+    ReadoutConfigStruct(std::string _name, std::map<uint16_t, std::vector<uint16_t>> _device_chip);
 
     /**
      * @brief Register a single (device, chip) pair.
@@ -76,22 +80,22 @@ struct readout_config_struct
 // =========================================================================
 
 /**
- * @brief Searchable container of @ref readout_config_struct entries.
+ * @brief Searchable container of @ref ReadoutConfigStruct entries.
  *
  * All find methods return raw pointers into the internal vector; the pointers
  * remain valid as long as the list is not modified.
  */
-class readout_config_list
+class ReadoutConfigList
 {
 public:
     // -------------------------------------------------------------------------
     /** @name Construction */
     /// @{
 
-    readout_config_list() = default;
+    ReadoutConfigList() = default;
 
     /// @brief Construct from an existing vector of configs (moved in).
-    explicit readout_config_list(std::vector<readout_config_struct> vec);
+    explicit ReadoutConfigList(std::vector<ReadoutConfigStruct> vec);
 
     /// @}
 
@@ -100,13 +104,14 @@ public:
     /// @{
 
     /// @brief First config whose @c name matches @p name, or @c nullptr.
-    readout_config_struct *find_by_name(const std::string &name);
+    ReadoutConfigStruct *find_by_name(const std::string &name);
+    const ReadoutConfigStruct *find_by_name(const std::string &name) const;
 
     /// @brief First config that contains @p device, or @c nullptr.
-    readout_config_struct *find_by_device(uint16_t device);
+    ReadoutConfigStruct *find_by_device(uint16_t device);
 
     /// @brief All configs that contain @p device.
-    std::vector<readout_config_struct *> find_all_by_device(uint16_t device);
+    std::vector<ReadoutConfigStruct *> find_all_by_device(uint16_t device);
 
     /// @brief Names of all configs that contain the (device, chip) pair.
     std::vector<std::string> find_by_device_and_chip(uint16_t device, uint16_t chip);
@@ -129,7 +134,22 @@ public:
 
     /// @}
 
-    std::vector<readout_config_struct> configs; ///< Ordered list of readout role assignments.
+    /// @brief Read-only view of the underlying configs.  Use this instead of
+    ///        the (now-private) member when iterating; the const-ref return
+    ///        keeps callers from accidentally mutating mid-loop and
+    ///        invalidating pointers returned by @ref find_by_device etc.
+    const std::vector<ReadoutConfigStruct> &all() const noexcept { return configs; }
+
+private:
+    /// Ordered list of readout role assignments.  Private so external code can
+    /// neither `push_back` (which would invalidate previously returned
+    /// pointers from `find_*`) nor mutate entries without going through the
+    /// class API (CODE_REVIEW §5.11).  No `.configs.push_back(...)` callers
+    /// exist today; if a future need arises, add a guarded `add_config(...)`
+    /// method here rather than re-exposing the vector.
+    std::vector<ReadoutConfigStruct> configs;
+
+public:
 };
 
 // =========================================================================
@@ -144,7 +164,7 @@ public:
  * @return Vector of matching role names.
  */
 std::vector<std::string> find_by_device_and_chip(
-    const std::map<std::string, readout_config_struct> &readout_config_utility,
+    const std::map<std::string, ReadoutConfigStruct> &readout_config_utility,
     uint16_t device,
     uint16_t chip);
 
@@ -156,16 +176,113 @@ std::vector<std::string> find_by_device_and_chip(
  * errors and the offending (device, chip) pair is silently skipped.
  *
  * @param config_file Path to the TOML configuration file.
- * @return Vector of @ref readout_config_struct, one per named role.
+ * @return Vector of @ref ReadoutConfigStruct, one per named role.
  */
-std::vector<readout_config_struct> readout_config_reader(std::string config_file = "conf/readout_config.toml");
+std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file = "conf/readout_config.toml");
+
+// =========================================================================
+//  Framer configuration
+// =========================================================================
+
+/**
+ * @brief Framing and timing constants for the parallel streaming framer.
+ *
+ * All values default to the same constants previously hard-coded as macros in
+ * @c ParallelStreamingFramer.h so that existing code is unaffected when no
+ * config file is provided.
+ */
+struct FramerConfigStruct
+{
+    uint16_t frame_size               = 1024; ///< Clock cycles per frame (320 MHz → 3.125 ns/cc).
+    int      first_frames_trigger     = 5000; ///< Start-of-spill frames reserved for noise measurement.
+    uint16_t afterpulse_deadtime      = 64;   ///< Afterpulse suppression deadtime (cc, ~200 ns).
+    uint16_t trigger_secondary_window = 200;  ///< Secondary-trigger detection window (cc, ~625 ns).
+
+    /// @brief Frame duration in nanoseconds.
+    float frame_length_ns() const { return frame_size * 3.125f; }
+};
+
+/**
+ * @brief Parse a TOML framer configuration file.
+ *
+ * Reads the @c [framer] table.  Missing keys fall back to the defaults in
+ * @ref FramerConfigStruct, so a minimal or even empty file is valid.
+ *
+ * @param config_file Path to the TOML configuration file.
+ * @return Populated @ref FramerConfigStruct.
+ */
+FramerConfigStruct FramerConfReader(std::string config_file = "conf/framer_conf.toml");
+
+// =========================================================================
+//  QA configuration — windows used by QA histograms (afterpulse, cross-talk)
+// =========================================================================
+
+/**
+ * @brief Per-window timing constants used by the QA pipeline.
+ *
+ * Two semantically different families live here:
+ *
+ *  - **Afterpulse sideband** (consumed by @ref ParallelStreamingFramer to
+ *    tag @c HitmaskAfterpulseNear / @c HitmaskAfterpulseFar on every
+ *    Hit).  Near and far windows are the same width — subtraction in the
+ *    QA profiles gives the DCR-corrected afterpulse probability.
+ *
+ *  - **Cross-talk scan & signal windows** (consumed by @ref lightdata_writer
+ *    in the per-spill CT scan loop).  Lift here so the same source of truth
+ *    drives both the diagnostic histograms (h_*_ct_dt, h_*_ct_dchannel_dt)
+ *    and the per-channel CT-probability profiles.
+ *
+ *  Defaults reproduce the previously hard-coded constants in
+ *  @c lightdata_writer.cxx exactly, so existing analyses are unaffected when
+ *  no @c [qa] section is provided in @c framer_conf.toml.
+ */
+struct QaConfigStruct
+{
+    // -------- Afterpulse sideband (clock cycles) --------
+    /// @brief Near window lower edge (Δt cc, inclusive).  Excludes Δt = 0 (the Hit itself).
+    int afterpulse_near_lo = 1;
+    /// @brief Near window upper edge (Δt cc, inclusive).  Default mirrors @c afterpulse_deadtime.
+    int afterpulse_near_hi = 64;
+    /// @brief Far (sideband) window start (Δt cc, inclusive).  Width matches the near window.
+    int afterpulse_sideband_offset = 256;
+
+    // -------- Cross-talk scan & signal windows (clock cycles) --------
+    /// @brief Outer Δt cutoff for the CT scan loop (inclusive lower bound).
+    /// Default extends to -10 cc so the diagnostic Δt histograms (both physical and
+    /// electrical) include the symmetric negative-Δt region — useful to verify that
+    /// CT really clusters near Δt = 0 rather than leaking into the sideband.
+    int ct_scan_dt_min = -10;
+    /// @brief Outer Δt cutoff for the CT scan loop (exclusive upper bound).
+    int ct_scan_dt_max = 200;
+    /// @brief Physical-CT signal window lower edge (Δt cc, inclusive).
+    int ct_phys_signal_lo = 0;
+    /// @brief Physical-CT signal window upper edge (Δt cc, inclusive).
+    int ct_phys_signal_hi = 10;
+    /// @brief Electrical-CT signal window lower edge (Δt cc, inclusive).
+    int ct_elec_signal_lo = -2;
+    /// @brief Electrical-CT signal window upper edge (Δt cc, inclusive).
+    int ct_elec_signal_hi = 10;
+};
+
+/**
+ * @brief Parse the @c [qa] table from a TOML configuration file.
+ *
+ * Missing keys fall back to the defaults in @ref QaConfigStruct (which
+ * reproduce the legacy hard-coded values), so a file with no @c [qa] section
+ * still yields valid configuration.
+ *
+ * @param config_file Path to the TOML configuration file (typically the same
+ *                    file used for @ref FramerConfReader).
+ * @return Populated @ref QaConfigStruct.
+ */
+QaConfigStruct qa_conf_reader(std::string config_file = "conf/framer_conf.toml");
 
 // =========================================================================
 //  Run metadata
 // =========================================================================
 
 /// @brief Optical radiator properties for one radiator layer.
-struct radiator_info_struct
+struct RadiatorInfoStruct
 {
     std::string type; ///< Radiator material identifier (e.g. @c "aerogel").
     std::string tag;  ///< Short label used in histogram naming.
@@ -177,10 +294,10 @@ struct radiator_info_struct
 /**
  * @brief Complete per-run metadata record.
  *
- * All fields are populated by @ref run_info::read_database().
+ * All fields are populated by @ref RunInfo::read_database().
  * Missing TOML keys are inherited from the immediately preceding run entry.
  */
-struct run_info_struct
+struct RunInfoStruct
 {
     // -------------------------------------------------------------------------
     /** @name Beam configuration */
@@ -217,7 +334,7 @@ struct run_info_struct
     // -------------------------------------------------------------------------
     /** @name Radiators */
     /// @{
-    std::vector<radiator_info_struct> radiators; ///< Ordered list of active radiator layers.
+    std::vector<RadiatorInfoStruct> radiators; ///< Ordered list of active radiator layers.
     /// @}
 };
 
@@ -232,7 +349,7 @@ struct run_info_struct
  * Missing fields in a run entry are inherited from the previous entry in
  * document order, allowing compact TOML files that only list deltas.
  */
-class run_info
+class RunInfo
 {
 public:
     // -------------------------------------------------------------------------
@@ -255,9 +372,9 @@ public:
     /**
      * @brief Retrieve the metadata record for @p run_id.
      * @param run_id Run identifier string (must match a key in the TOML file).
-     * @return The @ref run_info_struct, or @c std::nullopt if not found.
+     * @return The @ref RunInfoStruct, or @c std::nullopt if not found.
      */
-    static const std::optional<run_info_struct> get_run_info(const std::string &run_id);
+    static const std::optional<RunInfoStruct> get_run_info(const std::string &run_id);
 
     /// @}
 
@@ -289,7 +406,7 @@ private:
     /** @name Static databases */
     /// @{
 
-    static std::unordered_map<std::string, run_info_struct> run_info_database;          ///< run_id → metadata.
+    static std::unordered_map<std::string, RunInfoStruct> run_info_database;          ///< run_id → metadata.
     static std::unordered_map<std::string, std::vector<std::string>> run_list_database; ///< list_name → run IDs.
 
     /// @}

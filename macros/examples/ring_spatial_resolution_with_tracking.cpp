@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 /**
  * @file ring_spatial_resolution.cpp
@@ -53,7 +55,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     std::string input_filename_recotrackdata = data_repository + "/" + run_name + "/recotrackdata.root";
 
     //  Load recotrackdata, return if not available
-    TFile *input_file_recotrackdata = new TFile(input_filename_recotrackdata.c_str());
+    TFilePtr input_file_recotrackdata(TFile::Open(input_filename_recotrackdata.c_str(), "READ"));
     if (!input_file_recotrackdata || input_file_recotrackdata->IsZombie())
     {
         std::cerr << "[WARNING] Could not find recotrackdata, making it" << std::endl;
@@ -62,7 +64,7 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
 
     //  Link recotrackdata tree locally
     TTree *recotrackdata_tree = (TTree *)input_file_recotrackdata->Get("recotrackdata");
-    alcor_recotrackdata *recotrackdata = new alcor_recotrackdata();
+    AlcorRecotrackdata *recotrackdata = new AlcorRecotrackdata();
     recotrackdata->link_to_tree(recotrackdata_tree);
 
     //  Get number of frames, limited to maximum requested frames
@@ -70,18 +72,18 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     auto all_frames = min((int)n_frames, (int)max_frames);
 
     //  Time distribution
-    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_distribution("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
     //  First round X, Y, R
-    TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
-    TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
-    TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
-    TH1F *h_tracking_theta = new TH1F("h_tracking_theta", ";tracking #theta", 1000, 0, 0.1);
-    TH1F *h_tracking_phi = new TH1F("h_tracking_phi", ";tracking #phi", 1000, -3.1415, +3.1415);
+    RootHist<TH1F> h_first_round_X("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
+    RootHist<TH1F> h_first_round_Y("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
+    RootHist<TH1F> h_first_round_R("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
+    RootHist<TH1F> h_tracking_theta("h_tracking_theta", ";tracking #theta", 1000, 0, 0.1);
+    RootHist<TH1F> h_tracking_phi("h_tracking_phi", ";tracking #phi", 1000, -3.1415, +3.1415);
     //  Second round selection
-    TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
-    TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
-    TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
+    RootHist<TH2F> h_second_round_xy_map("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH2F> h_second_round_R_Ngamma("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
+    RootHist<TH1F> h_second_round_R_excluded("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
+    RootHist<TH1F> h_second_round_R_global("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
 
     //  Saving the frame number you can speed up secondary loops
     std::vector<int> start_of_spill_frame_ref;
@@ -142,11 +144,11 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
                 if ((time_delta_wrt_ref < time_cut_boundaries[0]) || (time_delta_wrt_ref > time_cut_boundaries[1]))
                     continue;
 
-                //  Check the hit has been labeled as ring-belonging
+                //  Check the Hit has been labeled as ring-belonging
                 //  This is done through a simple DBSCAN implementation
                 //  Density-Based Spatial Clustering of Applications with Noise > https://it.wikipedia.org/wiki/DBSCAN
                 //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
-                //  Clustering is done in alcor_recotrackdata::find_rings(...)
+                //  Clustering is done in AlcorRecotrackdata::find_rings(...)
                 //  TODO: add a flag for sensor type
                 if (recotrackdata->is_ring_tagged(current_hit))
                     continue;
@@ -234,34 +236,35 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     //  Generate a TGraph to hold each Ngamma resolution
     TGraphErrors *g_resolution = new TGraphErrors();
     g_resolution->SetName("g_resolution");
+    //  Hoisted TF1: see ring_spatial_resolution.cpp for the rationale
+    //  (CODE_REVIEW §6.9 — name-collision pattern in per-loop `new TF1`).
+    TF1 fit_gaus("fit_gaus", "gaus", 0, 150);
     //  Loop over the y_bin, i.e. Ngamma
     for (auto y_bin = 1; y_bin <= h_second_round_R_Ngamma->GetNbinsY(); y_bin++)
     {
         auto n_gamma = h_second_round_R_Ngamma->GetYaxis()->GetBinCenter(y_bin);
 
         //  Slice to the resolution
-        auto current_r_slice = h_second_round_R_Ngamma->ProjectionX(Form("r_slice_%i", y_bin), y_bin, y_bin);
+        std::unique_ptr<TH1D> current_r_slice(
+            h_second_round_R_Ngamma->ProjectionX(TString::Format("r_slice_%i", y_bin).Data(), y_bin, y_bin));
+        current_r_slice->SetDirectory(nullptr);
 
         //  Select appropriate statistics
         if (current_r_slice->GetEntries() < 100)
             continue;
 
-        //  Fit slice with a gaus function
-        auto fit_gaus = new TF1("fit_gaus", "gaus", 0, 150);
-        current_r_slice->Fit(fit_gaus, "QNR");
+        //  Fit slice with the hoisted gaus function
+        current_r_slice->Fit(&fit_gaus, "QNR");
 
         //  Discard if uncertainty is too high (unreliable fit)
-        if (fit_gaus->GetParError(2) / fit_gaus->GetParameter(2) > 0.075)
+        if (fit_gaus.GetParError(2) / fit_gaus.GetParameter(2) > 0.075)
             continue;
 
         //  Assign resolution value in the TGraph
         auto current_point = g_resolution->GetN();
-        g_resolution->SetPoint(current_point, n_gamma, fit_gaus->GetParameter(2));
-        g_resolution->SetPointError(current_point, 0., fit_gaus->GetParError(2));
-
-        //  Memory clean-up
-        delete current_r_slice;
-        delete fit_gaus;
+        g_resolution->SetPoint(current_point, n_gamma, fit_gaus.GetParameter(2));
+        g_resolution->SetPointError(current_point, 0., fit_gaus.GetParError(2));
+        // unique_ptr frees current_r_slice at end of iteration.
     }
 
     //  Fit w/ resolution function

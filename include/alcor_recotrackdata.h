@@ -1,20 +1,21 @@
 #pragma once
 
 /**
- * @file alcor_recotrackdata.h
- * @brief Track-matched reconstructed hit data for the ePIC dRICH prototype.
+ * @file AlcorRecotrackdata.h
+ * @brief Track-matched reconstructed Hit data for the ePIC dRICH prototype.
  *
- * Extends @ref alcor_recodata with per-track information imported from the
- * ALTAI tracking telescope.  Defines @ref alcor_recotrackdata_struct (track
- * fit parameters for one telescope plane) and @ref alcor_recotrackdata (the
+ * Extends @ref AlcorRecodata with per-track information imported from the
+ * ALTAI tracking telescope.  Defines @ref AlcorRecotrackdataStruct (track
+ * fit parameters for one telescope plane) and @ref AlcorRecotrackdata (the
  * container class providing track accessors, ROOT TTree I/O, and import from
- * @ref tracking_altai).
+ * @ref TrackingAltai).
  */
 
 #include "alcor_recodata.h"
 #include "tracking_altai.h"
 #include <vector>
 #include <cmath>
+#include <limits>
 #include "TTree.h"
 
 // =========================================================================
@@ -24,21 +25,26 @@
 /**
  * @brief Track fit parameters and extrapolated position for one telescope plane.
  */
-struct alcor_recotrackdata_struct
+struct AlcorRecotrackdataStruct
 {
-    float det_plane_x;     ///< Extrapolated X coordinate at the detector plane [mm].
-    float det_plane_y;     ///< Extrapolated Y coordinate at the detector plane [mm].
-    float traj_angcoeff_x; ///< Track angular coefficient along X (dx/dz).
-    float traj_angcoeff_y; ///< Track angular coefficient along Y (dy/dz).
-    float chi2ndof;        ///< Fit quality: χ²/NDF.
+    // Default-initialised to NaN so a silent `resize(idx+1)` in
+    // AlcorRecotrackdata::recotrackdata_at (CODE_REVIEW §2.7) cannot produce
+    // indeterminate float reads.  Callers that need a real value overwrite
+    // these explicitly; downstream consumers can test `std::isnan(...)` to
+    // detect uninitialised entries.
+    float det_plane_x     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated X coordinate at the detector plane [mm].
+    float det_plane_y     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated Y coordinate at the detector plane [mm].
+    float traj_angcoeff_x = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along X (dx/dz).
+    float traj_angcoeff_y = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along Y (dy/dz).
+    float chi2ndof        = std::numeric_limits<float>::quiet_NaN(); ///< Fit quality: χ²/NDF.
 
-    alcor_recotrackdata_struct() = default;
+    AlcorRecotrackdataStruct() = default;
 
     /**
      * @brief Construct from a reconstructed data entry.
-     * @param v Source @ref alcor_recodata object.
+     * @param v Source @ref AlcorRecodata object.
      */
-    alcor_recotrackdata_struct(alcor_recodata &v);
+    AlcorRecotrackdataStruct(AlcorRecodata &v);
 };
 
 // =========================================================================
@@ -48,29 +54,42 @@ struct alcor_recotrackdata_struct
 /**
  * @brief Container for track-matched reconstructed data.
  *
- * Inherits the full event/trigger machinery from @ref alcor_recodata and
- * adds a per-event vector of @ref alcor_recotrackdata_struct entries, one
+ * Inherits the full event/trigger machinery from @ref AlcorRecodata and
+ * adds a per-event vector of @ref AlcorRecotrackdataStruct entries, one
  * per telescope track reconstructed by ALTAI.
+ *
+ * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * Inherits the non-copyable / non-movable contract from @ref AlcorRecodata,
+ * declared explicitly below for clarity.  ROOT branch addresses bound here
+ * (recotrackdata_ptr) and inherited (recodata_ptr, triggers_ptr) are stable
+ * for the wrapper's lifetime.  Hold by reference, by @c std::unique_ptr,
+ * or as a class member.
  */
-class alcor_recotrackdata : public alcor_recodata
+class AlcorRecotrackdata : public AlcorRecodata
 {
 public:
+    AlcorRecotrackdata(const AlcorRecotrackdata &) = delete;
+    AlcorRecotrackdata &operator=(const AlcorRecotrackdata &) = delete;
+    AlcorRecotrackdata(AlcorRecotrackdata &&) = delete;
+    AlcorRecotrackdata &operator=(AlcorRecotrackdata &&) = delete;
+
     // -------------------------------------------------------------------------
     /** @name Construction */
     /// @{
 
     /// Default constructor — no shared pointers, all containers empty.
-    alcor_recotrackdata() = default;
+    AlcorRecotrackdata() = default;
 
     /**
-     * @brief Construct by linking to an existing @ref alcor_recodata.
+     * @brief Construct by linking to an existing @ref AlcorRecodata.
      *
-     * Shares the recodata and trigger pointer arrays of @p v so that a single
-     * TTree branch set covers both base and derived data.
+     * Shares the recodata and trigger pointer slots of @p v so that a single
+     * @c tree->GetEntry() updates both wrappers' views.  Caller MUST ensure
+     * @p v outlives the constructed @c AlcorRecotrackdata.
      *
-     * @param v Source recodata object whose internal pointers are borrowed.
+     * @param v Source recodata object whose internal pointers are aliased.
      */
-    alcor_recotrackdata(alcor_recodata &v);
+    AlcorRecotrackdata(AlcorRecodata &v);
 
     /// @}
 
@@ -81,15 +100,15 @@ public:
     /**
      * @brief Mutable access to a track entry; auto-resizes if @p idx is out of range.
      * @param idx Track index (0-based).
-     * @return Reference to the @ref alcor_recotrackdata_struct at @p idx.
+     * @return Reference to the @ref AlcorRecotrackdataStruct at @p idx.
      */
-    alcor_recotrackdata_struct &recotrackdata_at(std::size_t idx);
+    AlcorRecotrackdataStruct &recotrackdata_at(std::size_t idx);
 
     /// @brief Const access — bounds-checked, no auto-resize.
-    const alcor_recotrackdata_struct &recotrackdata_at(std::size_t idx) const { return recotrackdata.at(idx); }
+    const AlcorRecotrackdataStruct &recotrackdata_at(std::size_t idx) const { return recotrackdata.at(idx); }
 
     /// @brief Append a new track entry to the internal vector.
-    void add_recotrackdata(const alcor_recotrackdata_struct &entry) { recotrackdata.push_back(entry); }
+    void add_recotrackdata(const AlcorRecotrackdataStruct &entry) { recotrackdata.push_back(entry); }
 
     /// @brief Number of track entries in the current event.
     std::size_t n_recotrackdata() const { return recotrackdata.size(); }
@@ -192,7 +211,7 @@ public:
     /** @name I/O */
     /// @{
 
-    /// @brief Clear all track entries and release their memory; also calls @ref alcor_recodata::clear().
+    /// @brief Clear all track entries and release their memory; also calls @ref AlcorRecodata::clear().
     void clear();
 
     /**
@@ -220,12 +239,12 @@ public:
     /**
      * @brief Populate track entries from an ALTAI reconstruction vector.
      *
-     * Maps each @ref tracking_altai_struct in @p vec to an internal
-     * @ref alcor_recotrackdata_struct, preserving insertion order.
+     * Maps each @ref TrackingAltaiStruct in @p vec to an internal
+     * @ref AlcorRecotrackdataStruct, preserving insertion order.
      *
      * @param vec Per-track ALTAI output for the current event.
      */
-    void import_event(std::vector<tracking_altai_struct> vec);
+    void import_event(std::vector<TrackingAltaiStruct> vec);
 
     /// @}
 
@@ -234,8 +253,8 @@ private:
     /** @name Internal storage */
     /// @{
 
-    std::vector<alcor_recotrackdata_struct> recotrackdata;                       ///< Per-event track entries.
-    std::vector<alcor_recotrackdata_struct> *recotrackdata_ptr = &recotrackdata; ///< Raw pointer used by ROOT branch addressing.
+    std::vector<AlcorRecotrackdataStruct> recotrackdata;                       ///< Per-event track entries.
+    std::vector<AlcorRecotrackdataStruct> *recotrackdata_ptr = &recotrackdata; ///< Raw pointer used by ROOT branch addressing.
 
     /// @}
 };
