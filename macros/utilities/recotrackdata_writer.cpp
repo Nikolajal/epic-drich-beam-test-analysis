@@ -18,7 +18,7 @@ int main(int argc, char **argv)
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
     app.add_option("track_data_repository", track_data_repository);
-    app.add_option("track_run_name", run_name);
+    app.add_option("track_run_name", track_run_name);
     app.add_option("--max-spill", max_spill);
     app.add_flag("--force-recodata", force_recodata_rebuild);
     app.add_flag("--force-lightdata", force_lightdata_rebuild);

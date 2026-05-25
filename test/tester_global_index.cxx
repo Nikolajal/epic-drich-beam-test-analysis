@@ -335,6 +335,145 @@ void test_comparison_operators()
     CHECK(a < c);
 }
 
+// 16. tdc_ordinal — bit-exact equivalent of the pre-Phase-5 legacy
+//     `tdc_raw` value (channel_ordinal * 4 + tdc).  Suitable for
+//     histogram axes that bin one TDC sub-cell per bin.
+//
+// Catches the class of bug where a Fill site uses get_global_tdc_index()
+// directly (returns sparse packed value, millions) instead of going
+// through tdc_ordinal() (dense small int).  Hit in lightdata_writer.cxx
+// and parallel_streaming_framer.cxx during the Phase-5 migration.
+void test_tdc_ordinal()
+{
+    // Identity: tdc_ordinal() == channel_ordinal() * 4 + tdc() for every
+    // valid GlobalIndex.  Sample the full hardware space.
+    for (int device_off = 0; device_off < 8; ++device_off)
+        for (int chip_raw = 0; chip_raw <= 7; ++chip_raw)
+            for (int channel_raw = 0; channel_raw <= 31; ++channel_raw)
+                for (int tdc = 0; tdc <= 3; ++tdc)
+                {
+                    int chip_logical, channel_logical;
+                    if constexpr (gidx::kUsesSplitInTwo)
+                    {
+                        chip_logical    = chip_raw / 2;
+                        channel_logical = channel_raw + 32 * (chip_raw % 2);
+                    }
+                    else
+                    {
+                        chip_logical    = chip_raw;
+                        channel_logical = channel_raw;
+                    }
+                    const auto gi = GlobalIndex::from_components(
+                        device_off + 192, /*fifo=*/0,
+                        chip_logical, channel_logical, tdc);
+                    CHECK_EQ(gi.tdc_ordinal(),
+                             gi.channel_ordinal() * 4 + gi.tdc());
+                }
+}
+
+// 17. tdc_ordinal uniqueness — every distinct (channel_ordinal, tdc)
+//     pair must map to a distinct tdc_ordinal value (no collisions).
+//
+// Together with test_channel_ordinal_uniqueness below, this is the
+// invariant histograms binned on tdc_ordinal depend on for correctness.
+void test_tdc_ordinal_uniqueness()
+{
+    // Build the set of (channel_ordinal, tdc) → tdc_ordinal mappings and
+    // confirm one-to-one over the full hardware space.
+    // Use a flat array indexed by tdc_ordinal to detect collisions cheaply.
+    constexpr int kMaxOrdinal = 8 /*devices*/ * 256 /*channels-per-device*/ * 4 /*tdcs*/;
+    bool seen[kMaxOrdinal] = {};
+    int n_samples = 0;
+    for (int device_off = 0; device_off < 8; ++device_off)
+        for (int chip_raw = 0; chip_raw <= 7; ++chip_raw)
+            for (int channel_raw = 0; channel_raw <= 31; ++channel_raw)
+                for (int tdc = 0; tdc <= 3; ++tdc)
+                {
+                    int chip_logical, channel_logical;
+                    if constexpr (gidx::kUsesSplitInTwo)
+                    {
+                        chip_logical    = chip_raw / 2;
+                        channel_logical = channel_raw + 32 * (chip_raw % 2);
+                    }
+                    else
+                    {
+                        chip_logical    = chip_raw;
+                        channel_logical = channel_raw;
+                    }
+                    const auto gi = GlobalIndex::from_components(
+                        device_off + 192, /*fifo=*/0,
+                        chip_logical, channel_logical, tdc);
+                    const int t = gi.tdc_ordinal();
+                    CHECK(t >= 0 && t < kMaxOrdinal);
+                    CHECK(!seen[t]);   // no collisions
+                    seen[t] = true;
+                    ++n_samples;
+                }
+    CHECK_EQ(n_samples, 8 * 8 * 32 * 4);
+}
+
+// 18. channel_ordinal uniqueness — distinct physical channels (any TDC)
+//     give distinct channel_ordinal values.  Same invariant as test 17 but
+//     keyed on the channel (TDC stripped).
+void test_channel_ordinal_uniqueness()
+{
+    constexpr int kMaxChannelOrdinal = 8 * 256;
+    bool seen[kMaxChannelOrdinal] = {};
+    int n_samples = 0;
+    for (int device_off = 0; device_off < 8; ++device_off)
+        for (int chip_raw = 0; chip_raw <= 7; ++chip_raw)
+            for (int channel_raw = 0; channel_raw <= 31; ++channel_raw)
+            {
+                int chip_logical, channel_logical;
+                if constexpr (gidx::kUsesSplitInTwo)
+                {
+                    chip_logical    = chip_raw / 2;
+                    channel_logical = channel_raw + 32 * (chip_raw % 2);
+                }
+                else
+                {
+                    chip_logical    = chip_raw;
+                    channel_logical = channel_raw;
+                }
+                // tdc=0 — channel_ordinal is TDC-independent by design.
+                const auto gi = GlobalIndex::from_components(
+                    device_off + 192, /*fifo=*/0,
+                    chip_logical, channel_logical, /*tdc=*/0);
+                const int c = gi.channel_ordinal();
+                CHECK(c >= 0 && c < kMaxChannelOrdinal);
+                CHECK(!seen[c]);
+                seen[c] = true;
+                ++n_samples;
+            }
+    CHECK_EQ(n_samples, 8 * 8 * 32);
+}
+
+// 19. Default-constructed (invalid) GlobalIndex — channel_ordinal /
+//     tdc_ordinal saturate to 0 in release builds (debug builds assert).
+//
+// This is the saturation contract the API promises (see header comment
+// at GlobalIndex::channel_ordinal).  A caller that passes a default
+// instance to a Fill should land in bin 0 rather than indexing huge
+// negative bins from a `device() - 192` underflow.
+//
+// Only check in release (NDEBUG) — debug builds invoke the assert and
+// abort, which is exactly the contract on the debug side.
+void test_invalid_saturates_to_zero()
+{
+#ifdef NDEBUG
+    GlobalIndex invalid;            // raw_=0 → device()=0, channel_ordinal=?
+    CHECK(!invalid.is_valid());
+    CHECK_EQ(invalid.channel_ordinal(), 0);
+    CHECK_EQ(invalid.tdc_ordinal(),     0);
+#else
+    // Debug build — the asserts inside channel_ordinal() would fire if
+    // we called the getter on an invalid index.  Just confirm the
+    // validity bit semantics.
+    GlobalIndex invalid;
+    CHECK(!invalid.is_valid());
+#endif
+}
+
 // ---------------------------------------------------------------------------
 //  Entry point
 // ---------------------------------------------------------------------------
@@ -355,6 +494,10 @@ int main()
     test_channel_ordinal();
     test_channel_ordinal_independent_of_tdc();
     test_comparison_operators();
+    test_tdc_ordinal();
+    test_tdc_ordinal_uniqueness();
+    test_channel_ordinal_uniqueness();
+    test_invalid_saturates_to_zero();
 
     std::cout << s_tests_run << " tests run, " << s_tests_failed << " failed.\n";
 

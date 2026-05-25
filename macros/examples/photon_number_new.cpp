@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Global analysis parameters
@@ -66,7 +68,7 @@ TH1F *radial_efficiency(TH2F *rphi_coverage_map,
 {
     static int efficiency_histogram_counter = 0;
     auto *efficiency_histogram = new TH1F(
-        Form("h_efficiency_tmp_%d", efficiency_histogram_counter++),
+        TString::Format("h_efficiency_tmp_%d", efficiency_histogram_counter++).Data(),
         rphi_coverage_map->GetName(),
         radial_reference_axis->GetNbins(),
         radial_reference_axis->GetXmin(),
@@ -172,9 +174,24 @@ void photon_number_new(std::string data_repository, std::string run_name,
 {
     ROOT::Math::MinimizerOptions::SetDefaultPrintLevel(-1);
 
+    // CODE_REVIEW §6.5: every `new TH1F/TH2F` in this function was being
+    // auto-attached to the current TDirectory.  Once the input recodata.root
+    // is opened below, gDirectory == that input file → ~50 histograms inherit
+    // it.  When the file is closed (or even auto-closed at scope exit on a
+    // long run) the histograms are freed under the caller's feet.  Disabling
+    // AddDirectory globally for this function's lifetime prevents the
+    // automatic attachment; histograms are owned by the local raw pointers
+    // and live until the macro returns.  RAII guard restores the flag on
+    // every return / exception path.
+    struct AddDirectoryGuard {
+        bool prev;
+        AddDirectoryGuard() : prev(TH1::AddDirectoryStatus()) { TH1::AddDirectory(false); }
+        ~AddDirectoryGuard() { TH1::AddDirectory(prev); }
+    } _add_directory_guard;
+
     // ── Open input file ───────────────────────────────────────────────────────
     std::string input_filename = data_repository + "/" + run_name + "/recodata.root";
-    TFile *input_file = new TFile(input_filename.c_str());
+    TFilePtr input_file(TFile::Open(input_filename.c_str(), "READ"));
     if (!input_file || input_file->IsZombie())
     {
         std::cerr << "[ERROR] [photon_number] Cannot open " << input_filename << "\n";
@@ -228,78 +245,78 @@ void photon_number_new(std::string data_repository, std::string run_name,
     // ══════════════════════════════════════════════════════════════════════════
 
     // ── Circle-fit parameter distributions ───────────────────────────────────
-    TH1F *h_circle_fit_x_prompt = new TH1F("h_circle_fit_x_prompt", ";circle center x (mm)", 240, -30, 30);
-    TH1F *h_circle_fit_y_prompt = new TH1F("h_circle_fit_y_prompt", ";circle center y (mm)", 240, -30, 30);
-    TH1F *h_circle_fit_r_prompt = new TH1F("h_circle_fit_r_prompt", ";circle radius (mm)", 400, 30, 130);
-    TH1F *h_circle_fit_x_early = new TH1F("h_circle_fit_x_early", ";circle center x (mm)", 240, -30, 30);
-    TH1F *h_circle_fit_y_early = new TH1F("h_circle_fit_y_early", ";circle center y (mm)", 240, -30, 30);
-    TH1F *h_circle_fit_r_early = new TH1F("h_circle_fit_r_early", ";circle radius (mm)", 400, 30, 130);
+    RootHist<TH1F> h_circle_fit_x_prompt("h_circle_fit_x_prompt", ";circle center x (mm)", 240, -30, 30);
+    RootHist<TH1F> h_circle_fit_y_prompt("h_circle_fit_y_prompt", ";circle center y (mm)", 240, -30, 30);
+    RootHist<TH1F> h_circle_fit_r_prompt("h_circle_fit_r_prompt", ";circle radius (mm)", 400, 30, 130);
+    RootHist<TH1F> h_circle_fit_x_early("h_circle_fit_x_early", ";circle center x (mm)", 240, -30, 30);
+    RootHist<TH1F> h_circle_fit_y_early("h_circle_fit_y_early", ";circle center y (mm)", 240, -30, 30);
+    RootHist<TH1F> h_circle_fit_r_early("h_circle_fit_r_early", ";circle radius (mm)", 400, 30, 130);
 
     // ── Hit timing distribution ───────────────────────────────────────────────
-    TH1F *h_delta_time_all_hits = new TH1F("h_delta_time_all_hits",
+    RootHist<TH1F> h_delta_time_all_hits("h_delta_time_all_hits",
                                            ";t_{Hit}-t_{trig} (ns)", 10000, -312.5, 312.5);
 
     // ── 2D Hit maps ──────────────────────────────────────────────────────────
-    TH2F *h_hit_map_xy = new TH2F("h_hit_map_xy", ";x (mm);y (mm)",
+    RootHist<TH2F> h_hit_map_xy("h_hit_map_xy", ";x (mm);y (mm)",
                                   396, -99, 99, 396, -99, 99);
-    TH2F *h_hit_map_rphi = new TH2F("h_hit_map_rphi", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_hit_map_rphi("h_hit_map_rphi", ";#phi (rad);R (mm)",
                                     400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
 
     // ── Persistence maps for early/prompt coincidence frames ─────────────────
     // Only filled in frames where both prompt AND early hits are present.
-    TH2F *h_persistence_xy_prompt = new TH2F("h_persistence_xy_prompt",
+    RootHist<TH2F> h_persistence_xy_prompt("h_persistence_xy_prompt",
                                              ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_persistence_xy_early = new TH2F("h_persistence_xy_early",
+    RootHist<TH2F> h_persistence_xy_early("h_persistence_xy_early",
                                             ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_persistence_rphi_prompt = new TH2F("h_persistence_rphi_prompt",
+    RootHist<TH2F> h_persistence_rphi_prompt("h_persistence_rphi_prompt",
                                                ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
-    TH2F *h_persistence_rphi_early = new TH2F("h_persistence_rphi_early",
+    RootHist<TH2F> h_persistence_rphi_early("h_persistence_rphi_early",
                                               ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
 
     // ── Radial distributions — prompt signal ─────────────────────────────────
-    TH1F *h_radial_prompt_full = new TH1F("h_radial_prompt_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_prompt_in_gap = new TH1F("h_radial_prompt_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_prompt_ex_gap = new TH1F("h_radial_prompt_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_prompt_ex_gap_1350 = new TH1F("h_radial_prompt_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_prompt_ex_gap_1375 = new TH1F("h_radial_prompt_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_prompt_full("h_radial_prompt_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_prompt_in_gap("h_radial_prompt_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_prompt_ex_gap("h_radial_prompt_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_prompt_ex_gap_1350("h_radial_prompt_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_prompt_ex_gap_1375("h_radial_prompt_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
 
     // ── Radial distributions — DCR background ────────────────────────────────
-    TH1F *h_radial_dcr_full = new TH1F("h_radial_dcr_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_dcr_in_gap = new TH1F("h_radial_dcr_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_dcr_ex_gap = new TH1F("h_radial_dcr_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_dcr_ex_gap_1350 = new TH1F("h_radial_dcr_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_dcr_ex_gap_1375 = new TH1F("h_radial_dcr_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_dcr_full("h_radial_dcr_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_dcr_in_gap("h_radial_dcr_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_dcr_ex_gap("h_radial_dcr_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_dcr_ex_gap_1350("h_radial_dcr_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_dcr_ex_gap_1375("h_radial_dcr_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
 
     // ── Radial distributions — early satellite population ────────────────────
     // Uses early_ring_center as ring centre; DCR-subtracted using window-width scaling.
-    TH1F *h_radial_early_full = new TH1F("h_radial_early_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_early_in_gap = new TH1F("h_radial_early_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_early_ex_gap = new TH1F("h_radial_early_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_early_ex_gap_1350 = new TH1F("h_radial_early_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
-    TH1F *h_radial_early_ex_gap_1375 = new TH1F("h_radial_early_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_early_full("h_radial_early_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_early_in_gap("h_radial_early_in_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_early_ex_gap("h_radial_early_ex_gap", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_early_ex_gap_1350("h_radial_early_ex_gap_1350", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
+    RootHist<TH1F> h_radial_early_ex_gap_1375("h_radial_early_ex_gap_1375", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
 
     // ── Coverage maps ─────────────────────────────────────────────────────────
     static constexpr int kRadialFineBins = 100 * kCoverageGranularity;
-    TH2F *h_coverage_map_xy = new TH2F("h_coverage_map_xy", ";x (mm);y (mm)",
+    RootHist<TH2F> h_coverage_map_xy("h_coverage_map_xy", ";x (mm);y (mm)",
                                        396 * kCoverageGranularity, -99, 99,
                                        396 * kCoverageGranularity, -99, 99);
-    TH2F *h_coverage_map_rphi = new TH2F("h_coverage_map_rphi", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_coverage_map_rphi("h_coverage_map_rphi", ";#phi (rad);R (mm)",
                                          400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
                                          kRadialFineBins, kRadialLoMm, kRadialHiMm);
-    TH2F *h_coverage_map_rphi_1350 = new TH2F("h_coverage_map_rphi_1350", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_coverage_map_rphi_1350("h_coverage_map_rphi_1350", ";#phi (rad);R (mm)",
                                               400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
                                               kRadialFineBins, kRadialLoMm, kRadialHiMm);
-    TH2F *h_coverage_map_rphi_1375 = new TH2F("h_coverage_map_rphi_1375", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_coverage_map_rphi_1375("h_coverage_map_rphi_1375", ";#phi (rad);R (mm)",
                                               400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
                                               kRadialFineBins, kRadialLoMm, kRadialHiMm);
 
     // ── Hit-pair timing vs spatial separation ─────────────────────────────────
     // Hits time-sorted per frame: t_i <= t_j for i < j → dt_ij <= 0 always.
-    TH2F *h_pair_dt_trig_vs_separation = new TH2F(
+    RootHist<TH2F> h_pair_dt_trig_vs_separation(
         "h_pair_dt_trig_vs_separation", ";#DeltaR_{ij} (mm);t_{i}-t_{trig} (ns)",
         kPairSeparationBins, 0., kPairSeparationMaxMm,
         kPairDeltaTimeBins, -kPairDeltaTimeMaxNs, kPairDeltaTimeMaxNs);
-    TH2F *h_pair_dt_hit_vs_separation = new TH2F(
+    RootHist<TH2F> h_pair_dt_hit_vs_separation(
         "h_pair_dt_hit_vs_separation", ";#DeltaR_{ij} (mm);t_{i}-t_{j} (ns)",
         kPairSeparationBins, 0., kPairSeparationMaxMm,
         kPairDeltaTimeBins, -kPairDeltaTimeMaxNs, kPairDeltaTimeMaxNs);
@@ -311,17 +328,17 @@ void photon_number_new(std::string data_repository, std::string run_name,
     static constexpr int kDtSensorBins = 500; // 20 ps/bin over 10 ns
     static constexpr float kDtSensorLoNs = -5.f;
     static constexpr float kDtSensorHiNs = +5.f;
-    TH1F *h_dt_1350_full = new TH1F("h_dt_1350_full",
+    RootHist<TH1F> h_dt_1350_full("h_dt_1350_full",
                                     ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    TH1F *h_dt_1350_in_gap = new TH1F("h_dt_1350_in_gap",
+    RootHist<TH1F> h_dt_1350_in_gap("h_dt_1350_in_gap",
                                       ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    TH1F *h_dt_1350_ex_gap = new TH1F("h_dt_1350_ex_gap",
+    RootHist<TH1F> h_dt_1350_ex_gap("h_dt_1350_ex_gap",
                                       ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    TH1F *h_dt_1375_full = new TH1F("h_dt_1375_full",
+    RootHist<TH1F> h_dt_1375_full("h_dt_1375_full",
                                     ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    TH1F *h_dt_1375_in_gap = new TH1F("h_dt_1375_in_gap",
+    RootHist<TH1F> h_dt_1375_in_gap("h_dt_1375_in_gap",
                                       ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    TH1F *h_dt_1375_ex_gap = new TH1F("h_dt_1375_ex_gap",
+    RootHist<TH1F> h_dt_1375_ex_gap("h_dt_1375_ex_gap",
                                       ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
 
     // ── Early-to-prompt spatial correlation ───────────────────────────────────
@@ -335,15 +352,15 @@ void photon_number_new(std::string data_repository, std::string run_name,
     // h_early_hit_multiplicity_per_frame: early hits per frame — tests
     //   whether the early population is bimodal (second particle) or Poisson
     //   (constant fractional rate, consistent with time-walk or optical effect).
-    TH1F *h_early_to_prompt_nearest_dR = new TH1F(
+    RootHist<TH1F> h_early_to_prompt_nearest_dR(
         "h_early_to_prompt_nearest_dR",
         ";#DeltaR_{early#rightarrownearest prompt} (mm);entries",
         150, 0., 50.);
-    TH1F *h_same_channel_refire_count = new TH1F(
+    RootHist<TH1F> h_same_channel_refire_count(
         "h_same_channel_refire_count",
         ";N_{channels firing in both windows} per frame;frames",
         20, 0., 20.);
-    TH1F *h_early_hit_multiplicity_per_frame = new TH1F(
+    RootHist<TH1F> h_early_hit_multiplicity_per_frame(
         "h_early_hit_multiplicity_per_frame",
         ";N_{hits} in early window per frame;frames",
         50, 0, 50);
@@ -939,11 +956,11 @@ void photon_number_new(std::string data_repository, std::string run_name,
         const float sigma_seed = std::clamp((float)radial_histogram->GetRMS() * 0.4f, 0.5f, 4.0f);
         const float peak_amplitude_seed = radial_histogram->GetMaximum();
 
-        TF1 background_prefit(Form("background_prefit_%s", radial_histogram->GetName()),
+        TF1 background_prefit(TString::Format("background_prefit_%s", radial_histogram->GetName()).Data(),
                               "pol3", kFitRangeLoMm, kFitRangeHiMm);
         {
-            TH1F *sideband_clone = (TH1F *)radial_histogram->Clone(
-                Form("sideband_clone_%s", radial_histogram->GetName()));
+            RootHist<TH1F> sideband_clone(static_cast<TH1F*>(radial_histogram->Clone(
+                TString::Format("sideband_clone_%s", radial_histogram->GetName()).Data())));
             for (int ibin = 1; ibin <= sideband_clone->GetNbinsX(); ++ibin)
             {
                 double bin_center = sideband_clone->GetBinCenter(ibin);
@@ -961,7 +978,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
             delete sideband_clone;
         }
 
-        TF1 cb_fit_model(Form("cb_fit_%s", radial_histogram->GetName()),
+        TF1 cb_fit_model(TString::Format("cb_fit_%s", radial_histogram->GetName()).Data(),
                          crystal_ball_plus_pol3, kFitRangeLoMm, kFitRangeHiMm, 9);
         const char *parameter_names[9] = {
             "cb_amplitude", "peak_mu", "peak_sigma", "cb_alpha", "cb_n",
@@ -982,16 +999,18 @@ void photon_number_new(std::string data_repository, std::string run_name,
         radial_histogram->Fit(&cb_fit_model, "RQ");
         for (int iparam = 5; iparam < 9; ++iparam)
             cb_fit_model.ReleaseParameter(iparam);
+        // Single Fit instead of the previous three identical-args calls
+        // (CODE_REVIEW §6.6).  The fitter's result is deterministic given
+        // the same input + start values; re-fitting with the same options
+        // changes nothing but wall-clock time.
         TFitResultPtr fit_result = radial_histogram->Fit(&cb_fit_model, "RSQE");
-        fit_result = radial_histogram->Fit(&cb_fit_model, "RSQE");
-        fit_result = radial_histogram->Fit(&cb_fit_model, "RSQE");
 
         cb_fit_model.SetLineColor(current_fit_line_color);
         cb_fit_model.SetLineWidth(2);
         cb_fit_model.SetLineStyle(1);
         cb_fit_model.DrawCopy("SAME");
 
-        TF1 signal_only_component(Form("signal_only_%s", radial_histogram->GetName()),
+        TF1 signal_only_component(TString::Format("signal_only_%s", radial_histogram->GetName()).Data(),
                                   crystal_ball_plus_pol3, kFitRangeLoMm, kFitRangeHiMm, 9);
         for (int iparam = 0; iparam < 9; ++iparam)
             signal_only_component.SetParameter(iparam, cb_fit_model.GetParameter(iparam));
@@ -1002,7 +1021,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
         signal_only_component.SetLineStyle(kDashed);
         signal_only_component.DrawCopy("SAME");
 
-        TF1 background_only_component(Form("background_only_%s", radial_histogram->GetName()),
+        TF1 background_only_component(TString::Format("background_only_%s", radial_histogram->GetName()).Data(),
                                       "pol3", kFitRangeLoMm, kFitRangeHiMm);
         for (int iparam = 0; iparam < 4; ++iparam)
             background_only_component.SetParameter(iparam, cb_fit_model.GetParameter(5 + iparam));
@@ -1044,12 +1063,12 @@ void photon_number_new(std::string data_repository, std::string run_name,
             fit_results_pave->SetTextAlign(12);
             fit_results_pave->SetTextSize(0.035);
             fit_results_pave->SetTextColor(current_fit_line_color);
-            fit_results_pave->AddText(Form("N_{#gamma} = %.1f #pm %.1f",
-                                           n_gamma_integrated, n_gamma_error));
-            fit_results_pave->AddText(Form("#mu = %.2f mm",
-                                           cb_fit_model.GetParameter(1)));
-            fit_results_pave->AddText(Form("#sigma = %.2f mm",
-                                           cb_fit_model.GetParameter(2)));
+            fit_results_pave->AddText(TString::Format("N_{#gamma} = %.1f #pm %.1f",
+                                           n_gamma_integrated, n_gamma_error).Data());
+            fit_results_pave->AddText(TString::Format("#mu = %.2f mm",
+                                           cb_fit_model.GetParameter(1)).Data());
+            fit_results_pave->AddText(TString::Format("#sigma = %.2f mm",
+                                           cb_fit_model.GetParameter(2)).Data());
             //fit_results_pave->AddText(Form("#chi^{2}/ndf = %.2f",
             //                               chi2_per_ndf_value));
             fit_results_pave->Draw();
@@ -1120,9 +1139,9 @@ void photon_number_new(std::string data_repository, std::string run_name,
         early_histogram->Draw("HIST SAME");
         auto *info_pave = make_info_pave(0.12, 0.62, 0.58, 0.88);
         info_pave->AddText("#color[632]{Prompt}");
-        info_pave->AddText(Form("#color[632]{#mu_{%s} = %.2f mm}", quantity_label, prompt_peak_value));
+        info_pave->AddText(TString::Format("#color[632]{#mu_{%s} = %.2f mm}", quantity_label, prompt_peak_value).Data());
         info_pave->AddText("#color[600]{Early}");
-        info_pave->AddText(Form("#color[600]{#mu_{%s} = %.2f mm}", quantity_label, early_peak_value));
+        info_pave->AddText(TString::Format("#color[600]{#mu_{%s} = %.2f mm}", quantity_label, early_peak_value).Data());
         info_pave->Draw();
     };
     draw_ring_parameter_pad(1, h_circle_fit_x_prompt, h_circle_fit_x_early,
@@ -1202,8 +1221,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
     }
     canvas_sensor_comparison->cd(2);
     {
-        TH1F *h_yield_ratio_1375_over_1350 = (TH1F *)h_radial_prompt_ex_gap_1375
-                                                 ->Clone("h_yield_ratio_1375_over_1350");
+        RootHist<TH1F> h_yield_ratio_1375_over_1350(static_cast<TH1F*>(h_radial_prompt_ex_gap_1375->Clone("h_yield_ratio_1375_over_1350")));
         h_yield_ratio_1375_over_1350->Divide(h_radial_prompt_ex_gap_1350);
         h_yield_ratio_1375_over_1350->SetTitle(";R (mm);yield ratio 1375/1350");
         h_yield_ratio_1375_over_1350->SetLineColor(kBlack);
@@ -1227,9 +1245,9 @@ void photon_number_new(std::string data_repository, std::string run_name,
     // ── c7: Column-normalised pair histograms — P(dt | dR) ───────────────────
     auto column_normalise_2d = [](TH2F *input_histogram) -> TH2F *
     {
-        TH2F *normalised = (TH2F *)input_histogram->Clone(
-            Form("%s_col_normalised", input_histogram->GetName()));
-        normalised->SetTitle(Form("%s  [col-normalised]", input_histogram->GetTitle()));
+        RootHist<TH2F> normalised(static_cast<TH2F*>(input_histogram->Clone(
+            TString::Format("%s_col_normalised", input_histogram->GetName()).Data())));
+        normalised->SetTitle(TString::Format("%s  [col-normalised]", input_histogram->GetTitle()).Data());
         for (int ix = 1; ix <= normalised->GetNbinsX(); ++ix)
         {
             double column_integral = 0.;
@@ -1263,7 +1281,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
     {
         auto make_profile_histogram = [&](const char *name, const char *y_axis_title) -> TH1F *
         {
-            auto *profile = new TH1F(name, Form(";#DeltaR_{ij} (mm);%s", y_axis_title),
+            auto *profile = new TH1F(name, TString::Format(";#DeltaR_{ij} (mm);%s", y_axis_title).Data(),
                                      kPairSeparationBins, 0., kPairSeparationMaxMm);
             profile->SetMarkerStyle(20);
             profile->SetLineWidth(2);
@@ -1284,7 +1302,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
         for (int separation_bin = 1; separation_bin <= kPairSeparationBins; ++separation_bin)
         {
             TH1D *slice_projection = h_pair_dt_hit_vs_separation->ProjectionY(
-                Form("slice_projection_%d", separation_bin), separation_bin, separation_bin);
+                TString::Format("slice_projection_%d", separation_bin).Data(), separation_bin, separation_bin);
             if (slice_projection->GetEntries() < 20)
             {
                 delete slice_projection;
@@ -1670,7 +1688,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
             pad_title_pave->SetBorderSize(0);
             pad_title_pave->SetTextAlign(22);
             pad_title_pave->SetTextSize(0.05);
-            pad_title_pave->AddText(Form("%s  [zoom]", pad_title));
+            pad_title_pave->AddText(TString::Format("%s  [zoom]", pad_title).Data());
             pad_title_pave->Draw();
 
             auto *sensor_legend = new TLegend(0.55, 0.75, 0.88, 0.88);

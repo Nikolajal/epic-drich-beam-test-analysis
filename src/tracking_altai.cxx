@@ -18,11 +18,11 @@ int TrackingAltai::get_event_tracks_size(uint32_t event_id) const
 
 void TrackingAltai::load_tracking_file(const std::string &input_file)
 {
-    mist::logger::info(Form("(TrackingAltai::load_tracking_file) Loading tracking file"));
+    mist::logger::info(TString::Format("(TrackingAltai::load_tracking_file) Loading tracking file").Data());
     std::ifstream infile(input_file);
     if (!infile.is_open())
     {
-        mist::logger::warning(Form("Cannot open input file : %s", input_file.c_str()));
+        mist::logger::warning(TString::Format("Cannot open input file : %s", input_file.c_str()).Data());
         return;
     }
 
@@ -47,12 +47,18 @@ void TrackingAltai::load_tracking_file(const std::string &input_file)
         }
 
         ss >> event_id;
-        data_map[event_id].emplace_back();
+        // Hoist the per-line map[event_id] + .back() lookup so we do them
+        // ONCE instead of 11× (one per stream operator).  Previous version
+        // did 22 map operator[]/back() calls per input line.
+        auto &tracks_for_event = data_map[event_id];
+        auto &track = tracks_for_event.emplace_back();
 
-        ss >> data_map[event_id].back().zero_plane_x >> data_map[event_id].back().zero_plane_y >> data_map[event_id].back().zero_plane_z >> data_map[event_id].back().angcoeff_dx >> data_map[event_id].back().angcoeff_dy >> data_map[event_id].back().angcoeff_dz >> data_map[event_id].back().chi2 >> data_map[event_id].back().ndof >> data_map[event_id].back().chi2ndof >> data_map[event_id].back().timestamp;
-        data_map[event_id].back().event_id = event_id;
+        ss >> track.zero_plane_x >> track.zero_plane_y >> track.zero_plane_z
+           >> track.angcoeff_dx  >> track.angcoeff_dy  >> track.angcoeff_dz
+           >> track.chi2 >> track.ndof >> track.chi2ndof >> track.timestamp;
+        track.event_id = event_id;
     }
 
-    mist::logger::info(Form("(TrackingAltai::load_tracking_file) Done! Found %zu track events", data_map.size()));
+    mist::logger::info(TString::Format("(TrackingAltai::load_tracking_file) Done! Found %zu track events", data_map.size()).Data());
     infile.close();
 }

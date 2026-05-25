@@ -33,6 +33,14 @@ ReadoutConfigStruct *ReadoutConfigList::find_by_name(const std::string &name)
     return (it != configs.end()) ? &(*it) : nullptr;
 }
 
+const ReadoutConfigStruct *ReadoutConfigList::find_by_name(const std::string &name) const
+{
+    auto it = std::find_if(configs.begin(), configs.end(),
+                           [&](const ReadoutConfigStruct &cfg)
+                           { return cfg.name == name; });
+    return (it != configs.end()) ? &(*it) : nullptr;
+}
+
 ReadoutConfigStruct *ReadoutConfigList::find_by_device(uint16_t device)
 {
     auto it = std::find_if(configs.begin(), configs.end(),
@@ -115,7 +123,7 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
             return readout_config;
         }
 
-        mist::logger::info(Form("(readout_config_reader) Reading readout config: %s", config_file.c_str()));
+        mist::logger::info(TString::Format("(readout_config_reader) Reading readout config: %s", config_file.c_str()).Data());
 
         for (auto &[name, entry] : *readout_table)
         {
@@ -130,7 +138,7 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
             auto *devices_node = entry_tbl->get("devices");
             if (!devices_node)
             {
-                mist::logger::warning(Form("(readout_config_reader) Entry '%s' has no 'devices' key — skipping.", cfg_name.c_str()));
+                mist::logger::warning(TString::Format("(readout_config_reader) Entry '%s' has no 'devices' key — skipping.", cfg_name.c_str()).Data());
                 continue;
             }
             auto *devices_array = devices_node->as_array();
@@ -160,8 +168,8 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                         for (uint16_t c = 0; c < 8; ++c)
                             requested_chips.push_back(c);
                     else
-                        mist::logger::warning(Form("(readout_config_reader) Unknown chips token '%s' for device %d",
-                                                   chips_str->c_str(), device));
+                        mist::logger::warning(TString::Format("(readout_config_reader) Unknown chips token '%s' for device %d",
+                                                   chips_str->c_str(), device).Data());
                 }
                 else if (auto *chips_array = chips_node->as_array())
                 {
@@ -183,9 +191,9 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                         {
                             if (lightdata_core_tags.count(conflict_name))
                             {
-                                mist::logger::error(Form("(readout_config_reader) Conflict: device %d chip %d already "
+                                mist::logger::error(TString::Format("(readout_config_reader) Conflict: device %d chip %d already "
                                                          "assigned to core tag '%s', cannot assign to '%s'",
-                                                         device, chip, conflict_name.c_str(), cfg_name.c_str()));
+                                                         device, chip, conflict_name.c_str(), cfg_name.c_str()).Data());
                                 conflict_found = true;
                                 break;
                             }
@@ -204,8 +212,8 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(readout_config_reader) Failed to parse TOML config '%s': %s",
-                                   config_file.c_str(), std::string(err.description()).c_str()));
+        mist::logger::warning(TString::Format("(readout_config_reader) Failed to parse TOML config '%s': %s",
+                                   config_file.c_str(), std::string(err.description()).c_str()).Data());
         return readout_config;
     }
 
@@ -229,7 +237,7 @@ FramerConfigStruct FramerConfReader(std::string config_file)
             mist::logger::warning("(FramerConfReader) No [framer] table found — using defaults.");
             return cfg;
         }
-        mist::logger::info(Form("(FramerConfReader) Reading framer config: %s", config_file.c_str()));
+        mist::logger::info(TString::Format("(FramerConfReader) Reading framer config: %s", config_file.c_str()).Data());
         if (auto v = (*framer_table)["frame_size"].value<int64_t>())
             cfg.frame_size = static_cast<uint16_t>(*v);
         if (auto v = (*framer_table)["first_frames_trigger"].value<int64_t>())
@@ -241,13 +249,13 @@ FramerConfigStruct FramerConfReader(std::string config_file)
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(FramerConfReader) TOML parse error in '%s': %s — using defaults.",
-                                   config_file.c_str(), std::string(err.description()).c_str()));
+        mist::logger::warning(TString::Format("(FramerConfReader) TOML parse error in '%s': %s — using defaults.",
+                                   config_file.c_str(), std::string(err.description()).c_str()).Data());
     }
     catch (const std::exception &err)
     {
-        mist::logger::warning(Form("(FramerConfReader) Error reading '%s': %s — using defaults.",
-                                   config_file.c_str(), err.what()));
+        mist::logger::warning(TString::Format("(FramerConfReader) Error reading '%s': %s — using defaults.",
+                                   config_file.c_str(), err.what()).Data());
     }
     return cfg;
 }
@@ -266,7 +274,7 @@ QaConfigStruct qa_conf_reader(std::string config_file)
             // No [qa] section — silent (defaults reproduce legacy behaviour).
             return cfg;
         }
-        mist::logger::info(Form("(qa_conf_reader) Reading QA config: %s", config_file.c_str()));
+        mist::logger::info(TString::Format("(qa_conf_reader) Reading QA config: %s", config_file.c_str()).Data());
 
         if (auto v = (*qa_table)["afterpulse_near_lo"].value<int64_t>())
             cfg.afterpulse_near_lo = static_cast<int>(*v);
@@ -303,13 +311,13 @@ QaConfigStruct qa_conf_reader(std::string config_file)
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(qa_conf_reader) TOML parse error in '%s': %s — using defaults.",
-                                   config_file.c_str(), std::string(err.description()).c_str()));
+        mist::logger::warning(TString::Format("(qa_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                   config_file.c_str(), std::string(err.description()).c_str()).Data());
     }
     catch (const std::exception &err)
     {
-        mist::logger::warning(Form("(qa_conf_reader) Error reading '%s': %s — using defaults.",
-                                   config_file.c_str(), err.what()));
+        mist::logger::warning(TString::Format("(qa_conf_reader) Error reading '%s': %s — using defaults.",
+                                   config_file.c_str(), err.what()).Data());
     }
     return cfg;
 }
@@ -318,7 +326,7 @@ QaConfigStruct qa_conf_reader(std::string config_file)
 
 void RunInfo::read_database(std::string filename)
 {
-    mist::logger::info(Form("(RunInfo::read_database) Reading run database: %s", filename.c_str()));
+    mist::logger::info(TString::Format("(RunInfo::read_database) Reading run database: %s", filename.c_str()).Data());
 
     try
     {
@@ -398,8 +406,8 @@ void RunInfo::read_database(std::string filename)
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(RunInfo::read_database) Failed to parse '%s': %s",
-                                   filename.c_str(), std::string(err.description()).c_str()));
+        mist::logger::warning(TString::Format("(RunInfo::read_database) Failed to parse '%s': %s",
+                                   filename.c_str(), std::string(err.description()).c_str()).Data());
     }
 }
 
@@ -411,7 +419,7 @@ const std::optional<RunInfoStruct> RunInfo::get_run_info(const std::string &run_
 
 void RunInfo::read_runslists(std::string runlist_file)
 {
-    mist::logger::info(Form("(RunInfo::read_runslists) Reading run list: %s", runlist_file.c_str()));
+    mist::logger::info(TString::Format("(RunInfo::read_runslists) Reading run list: %s", runlist_file.c_str()).Data());
 
     try
     {
@@ -440,8 +448,8 @@ void RunInfo::read_runslists(std::string runlist_file)
     }
     catch (const toml::parse_error &err)
     {
-        mist::logger::warning(Form("(RunInfo::read_runslists) Failed to parse '%s': %s",
-                                   runlist_file.c_str(), std::string(err.description()).c_str()));
+        mist::logger::warning(TString::Format("(RunInfo::read_runslists) Failed to parse '%s': %s",
+                                   runlist_file.c_str(), std::string(err.description()).c_str()).Data());
     }
 }
 

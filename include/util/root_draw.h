@@ -22,10 +22,17 @@
  */
 inline void draw_circle(std::array<float, 3> parameters, int line_colour = kBlack, int line_style = kSolid, int line_width = 1)
 {
-    auto result = new TEllipse(parameters[0], parameters[1], parameters[2]);
-    result->SetFillStyle(0);
-    result->SetLineColor(line_colour);
-    result->SetLineStyle(line_style);
-    result->SetLineWidth(line_width);
-    result->DrawEllipse(parameters[0], parameters[1], parameters[2], 0, 0, 360, 0, "same");
+    // Previous version `new TEllipse(...); result->DrawEllipse(...)` was
+    // doubly wrong (CODE_REVIEW §5.6):
+    //   - `TEllipse::DrawEllipse` constructs a SECOND TEllipse internally
+    //     and draws it; the named `result` was never drawn and never freed.
+    //   - The heap-allocated `result` leaked on every call.
+    // DrawClone makes a copy of the local stack TEllipse and registers it
+    // with the current pad (which owns the clone) — no leak, no double-draw.
+    TEllipse ellipse(parameters[0], parameters[1], parameters[2]);
+    ellipse.SetFillStyle(0);
+    ellipse.SetLineColor(line_colour);
+    ellipse.SetLineStyle(line_style);
+    ellipse.SetLineWidth(line_width);
+    ellipse.DrawClone("same");
 }

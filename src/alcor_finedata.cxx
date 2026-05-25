@@ -1,5 +1,6 @@
 #include "alcor_finedata.h"
 #include "TROOT.h"
+#include <memory>
 
 //  TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression | merge data here
 //  TODO: understand what is the issue with generate calibration
@@ -38,11 +39,22 @@ AlcorFinedataStruct::AlcorFinedataStruct(const AlcorDataStruct &d)
 
 float AlcorFinedata::get_phase() const
 {
-    //  Acquire a single shared lock for the entire method body.
-    //  We access calibration_parameters and channel_calibration_method DIRECTLY
-    //  (not through get_param* / get_calibration_method) to avoid recursive
-    //  locking on the non-reentrant std::shared_mutex.
-    std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+    //  Fast path: once calibration is frozen (via freeze_calibration()),
+    //  the table is immutable for the rest of the process — every reader
+    //  can skip the std::shared_mutex acquisition entirely.  Per-Hit
+    //  shared_lock was a real contention point on the 16-thread framer
+    //  even with no contention against writers, because shared_mutex
+    //  still does atomic RMW on its reader count (CODE_REVIEW §3.1).
+    //
+    //  Slow path: during setup the table is still mutable, so we take
+    //  the shared lock as before.
+    //
+    //  We access calibration_parameters and channel_calibration_method
+    //  DIRECTLY (not through get_param* / get_calibration_method) to avoid
+    //  recursive locking on the non-reentrant std::shared_mutex.
+    std::shared_lock<std::shared_mutex> lock(calibration_mutex, std::defer_lock);
+    if (!is_calibration_frozen())
+        lock.lock();
 
     auto calib_it = calibration_parameters.find(get_global_index());
     if (calib_it == calibration_parameters.end())
@@ -204,12 +216,16 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         if (!overwrite_calibration && calibration_parameters.count(xbin - 1))
             continue;
 
-        //  Small set protection
-        auto current_tdc_fine_calib = calibration_histogram->ProjectionY(Form("tmp_%i", xbin), xbin, xbin);
+        //  Small set protection.  unique_ptr handles every continue / return
+        //  path including the convergence-skip branch below — the previous
+        //  raw new + per-path `delete` leaked the TH1D when the convergence
+        //  test failed (CODE_REVIEW §3.2).
+        std::unique_ptr<TH1D> current_tdc_fine_calib(
+            calibration_histogram->ProjectionY(TString::Format("tmp_%i", xbin).Data(), xbin, xbin));
+        current_tdc_fine_calib->SetDirectory(nullptr); // don't pollute gDirectory
         if (current_tdc_fine_calib->GetEntries() < 250)
         {
             skipped_channels.push_back(xbin - 1);
-            delete current_tdc_fine_calib;
             continue;
         }
 
@@ -245,10 +261,10 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
             second_parameter = static_cast<float>(fine_dist_fit_function->GetParameter(3));
         }
         if (fabs(second_parameter - first_parameter - 62.5) > 10)
-            continue;
+            continue;   // unique_ptr frees current_tdc_fine_calib here
 
         calibration_parameters[xbin - 1] = {first_parameter, second_parameter, 0.};
-        delete current_tdc_fine_calib;
+        // unique_ptr frees at end of loop iteration; no manual delete needed.
     }
 
     //  Debug

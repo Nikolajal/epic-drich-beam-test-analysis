@@ -294,10 +294,33 @@ public:
     ///   the final detector lands, re-evaluate whether to drop it.
     [[nodiscard]] constexpr int channel_ordinal() const noexcept
     {
+        // device() is uint16_t; subtracting 192 underflows wildly when the
+        // GlobalIndex is default-constructed (device() == 0).  Callers using
+        // the return value as a histogram bin would then index huge negative
+        // bins (CODE_REVIEW §5.12).  Guard with an assert (debug) and saturate
+        // to 0 on the invalid case (release) so the bin index stays sensible.
+        assert(is_valid() && device() >= 192 &&
+               "channel_ordinal: requires is_valid() && device() >= 192");
+        if (!is_valid() || device() < 192)
+            return 0;
         if constexpr (gidx::kUsesSplitInTwo)
             return (device() - 192) * 256 + real_chip() * 32 + chip_local_channel();
         else
             return (device() - 192) * 512 + chip()      * 64 + channel();
+    }
+
+    /// @brief Dense, counter-style per-TDC ordinal — `channel_ordinal * 4 + tdc`.
+    ///
+    /// Bit-exact equivalent of the pre-Phase-5 "global tdc index" (the
+    /// legacy `tdc_raw` value): a small integer in [0, 4 × max_ordinal + 3]
+    /// suitable for histogram axes that bin one TDC sub-cell per bin.
+    ///
+    /// Use this in place of @ref raw() / @ref get_global_tdc_index() when
+    /// the value is going to a `TH1::Fill` / `SetBinContent` — those need a
+    /// dense small integer, not the packed 32-bit form.
+    [[nodiscard]] constexpr int tdc_ordinal() const noexcept
+    {
+        return channel_ordinal() * 4 + tdc();
     }
 
     // ------------------------------------------------------------------

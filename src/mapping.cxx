@@ -164,8 +164,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
                     static_cast<float>((*arr)[0].value_or(0.0)),
                     static_cast<float>((*arr)[1].value_or(0.0))};
         }
-        mist::logger::info(Form("(Mapping::load_calib) pdu_xy_position size: %zu",
-                                pdu_xy_position.size()));
+        mist::logger::info(TString::Format("(Mapping::load_calib) pdu_xy_position size: %zu",
+                                pdu_xy_position.size()).Data());
     }
 
     // --- pdu_rotation -----------------------------------------------------------
@@ -180,8 +180,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
             if (pdu_index >= 1 && pdu_index <= 8)
                 pdu_rotation[pdu_index] = rotation_flag;
         }
-        mist::logger::info(Form("(Mapping::load_calib) pdu_rotation size: %zu",
-                                pdu_rotation.size()));
+        mist::logger::info(TString::Format("(Mapping::load_calib) pdu_rotation size: %zu",
+                                pdu_rotation.size()).Data());
     }
 
     // --- device_chip_to_pdu_matrix ----------------------------------------------
@@ -195,8 +195,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
             auto separator = key_string.find('_');
             if (separator == std::string::npos)
             {
-                mist::logger::info(Form("(Mapping::load_calib) Skipping invalid key: %s",
-                                        key_string.c_str()));
+                mist::logger::info(TString::Format("(Mapping::load_calib) Skipping invalid key: %s",
+                                        key_string.c_str()).Data());
                 continue;
             }
 
@@ -210,8 +210,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
                 device_chip_to_pdu_matrix[{device_index, chip_index}] = {pdu_index, matrix_index};
             }
         }
-        mist::logger::info(Form("(Mapping::load_calib) device_chip_to_pdu_matrix size: %zu",
-                                device_chip_to_pdu_matrix.size()));
+        mist::logger::info(TString::Format("(Mapping::load_calib) device_chip_to_pdu_matrix size: %zu",
+                                device_chip_to_pdu_matrix.size()).Data());
     }
 
     // --- hv_line_orientation ----------------------------------------------------
@@ -227,8 +227,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
                 (orientation_string == "H") ? line_orientation_type::Horizontal
                                             : line_orientation_type::Vertical;
         }
-        mist::logger::info(Form("(Mapping::load_calib) hv_line_orientation size: %zu",
-                                hv_line_orientation.size()));
+        mist::logger::info(TString::Format("(Mapping::load_calib) hv_line_orientation size: %zu",
+                                hv_line_orientation.size()).Data());
     }
 }
 
@@ -277,9 +277,9 @@ void Mapping::build_index_to_position_cache(float origin_cut)
             }
 
     cache_index_to_xy_built = true;
-    mist::logger::info(Form("(Mapping::build_index_to_position_cache) "
+    mist::logger::info(TString::Format("(Mapping::build_index_to_position_cache) "
                             "Built cache with %d entries (origin_cut = %.1f mm).",
-                            number_of_mapped_channels, origin_cut));
+                            number_of_mapped_channels, origin_cut).Data());
 }
 
 void Mapping::build_position_to_index_cache(std::string collision_policy)
@@ -305,22 +305,22 @@ void Mapping::build_position_to_index_cache(std::string collision_policy)
             if (collision_policy == "last")
                 it->second = GlobalIndex;
             else if (collision_policy == "warn")
-                mist::logger::info(Form("(Mapping::build_position_to_index_cache) "
+                mist::logger::info(TString::Format("(Mapping::build_position_to_index_cache) "
                                         "Collision at (%.3f, %.3f): keeping index %d, "
                                         "ignoring index %d.",
                                         position[0], position[1],
-                                        it->second, GlobalIndex));
+                                        it->second, GlobalIndex).Data());
             // "first" (default): keep already-stored entry, do nothing
         }
     }
 
     cache_xy_to_index_built = true;
-    mist::logger::info(Form("(Mapping::build_position_to_index_cache) "
+    mist::logger::info(TString::Format("(Mapping::build_position_to_index_cache) "
                             "Built reverse cache with %zu entries "
                             "(%d collision(s), policy = '%s').",
                             hit_xy_to_index.size(),
                             number_of_collisions,
-                            collision_policy.c_str()));
+                            collision_policy.c_str()).Data());
 }
 
 // ============================================================================

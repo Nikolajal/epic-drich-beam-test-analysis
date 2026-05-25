@@ -19,6 +19,9 @@
  * @param spill_max  Last spill inclusive (-1 = all spills found in file)
  */
 
+#include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 #include <TFile.h>
 #include <TH1D.h>
 #include <TH2D.h>
@@ -39,7 +42,7 @@ void plot_fine_scan_evolution(
     // -------------------------------------------------------------------------
     // Open file
     // -------------------------------------------------------------------------
-    TFile *f = TFile::Open(filename.c_str(), "READ");
+    TFilePtr f(TFile::Open(filename.c_str(), "READ"));
     if (!f || f->IsZombie())
     {
         std::cerr << "[ERROR] Cannot open " << filename << "\n";
@@ -50,13 +53,12 @@ void plot_fine_scan_evolution(
     // Discover available spills
     // -------------------------------------------------------------------------
     int n_spills_in_file = 0;
-    while (f->GetKey(Form("h_fine_scan_cherenkov_spill%03d", n_spills_in_file)))
+    while (f->GetKey(TString::Format("h_fine_scan_cherenkov_spill%03d", n_spills_in_file).Data()))
         ++n_spills_in_file;
 
     if (n_spills_in_file == 0)
     {
         std::cerr << "[ERROR] No per-spill histograms found in " << filename << "\n";
-        f->Close();
         return;
     }
 
@@ -74,11 +76,10 @@ void plot_fine_scan_evolution(
     // output TH2D exactly matches what was stored (no hardcoded bin counts).
     // -------------------------------------------------------------------------
     TH3F *h3_proto = (TH3F *)f->Get(
-        Form("h_fine_scan_cherenkov_spill%03d", spill_min));
+        TString::Format("h_fine_scan_cherenkov_spill%03d", spill_min).Data());
     if (!h3_proto)
     {
         std::cerr << "[ERROR] Cannot read prototype histogram.\n";
-        f->Close();
         return;
     }
     const int   n_dt_bins = h3_proto->GetNbinsY();
@@ -98,9 +99,9 @@ void plot_fine_scan_evolution(
     // -------------------------------------------------------------------------
     for (int ch : channels)
     {
-        TH2D *h_evolution = new TH2D(
-            Form("h_dt_vs_spill_ch%d", ch),
-            Form("Channel %d;Spill;#Delta t (ns)", ch),
+        RootHist<TH2D> h_evolution(
+            TString::Format("h_dt_vs_spill_ch%d", ch).Data(),
+            TString::Format("Channel %d;Spill;#Delta t (ns)", ch).Data(),
             n_spills, spill_min - 0.5, spill_max + 0.5,
             n_dt_bins, dt_lo, dt_hi);
         h_evolution->SetDirectory(nullptr);
@@ -108,7 +109,7 @@ void plot_fine_scan_evolution(
         for (int s = spill_min; s <= spill_max; ++s)
         {
             TH3F *h3 = (TH3F *)f->Get(
-                Form("h_fine_scan_cherenkov_spill%03d", s));
+                TString::Format("h_fine_scan_cherenkov_spill%03d", s).Data());
             if (!h3)
             {
                 std::cerr << "[WARN] Spill " << s << " missing, skipping.\n";
@@ -122,7 +123,7 @@ void plot_fine_scan_evolution(
             const int bx = h3->GetXaxis()->FindBin(static_cast<double>(ch));
 
             TH1D *h_dt = h3->ProjectionY(
-                Form("hpy_ch%d_s%03d", ch, s),
+                TString::Format("hpy_ch%d_s%03d", ch, s).Data(),
                 bx, bx,   // single channel bin
                 0, -1);   // all fine bins
             h_dt->SetDirectory(nullptr);
@@ -139,8 +140,8 @@ void plot_fine_scan_evolution(
         }
 
         TCanvas *c = new TCanvas(
-            Form("c_dtspill_ch%d", ch),
-            Form("#Delta t vs spill — channel %d", ch),
+            TString::Format("c_dtspill_ch%d", ch).Data(),
+            TString::Format("#Delta t vs spill — channel %d", ch).Data(),
             900, 500);
         c->SetLeftMargin(0.10);
         c->SetBottomMargin(0.12);

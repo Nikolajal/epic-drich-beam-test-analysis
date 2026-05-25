@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 #include <mist/logger/logger.h>
 
 void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC/test-beam-rec/Data/",
@@ -8,7 +10,7 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
     //  Input files
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
-    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str(), "READ"));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
         mist::logger::error("[dark_count_rate] Could not open recodata: " + input_filename_recodata);
@@ -25,10 +27,10 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
     auto used_frames = 0;
 
     // ── Histograms ────────────────────────────────────────────────────────────
-    TH1F *h_dcr = new TH1F("h_dcr", "Dark Count Rate;DCR [kHz];Entries", 40, 0, 20);
-    TProfile *h_dcr_per_channel = new TProfile("h_dcr_per_channel", ";channel;DCR [kHz];", 2048, 0, 2048);
-    TH1F *h_average_dcr = new TH1F("h_average_dcr", "1350;DCR [kHz];Entries", 50, 0, 10);
-    TH1F *h_average_dcr_2 = new TH1F("h_average_dcr_2", "1375;DCR [kHz];Entries", 50, 0, 10);
+    RootHist<TH1F> h_dcr("h_dcr", "Dark Count Rate;DCR [kHz];Entries", 40, 0, 20);
+    RootHist<TProfile> h_dcr_per_channel("h_dcr_per_channel", ";channel;DCR [kHz];", 2048, 0, 2048);
+    RootHist<TH1F> h_average_dcr("h_average_dcr", "1350;DCR [kHz];Entries", 50, 0, 10);
+    RootHist<TH1F> h_average_dcr_2("h_average_dcr_2", "1375;DCR [kHz];Entries", 50, 0, 10);
 
     // Log-binned distributions for Gaussian fitting (mirrors extract_DCR)
     // Log binning is used here because DCR spans ~3 decades (0.1–100 kHz);

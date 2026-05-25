@@ -12,9 +12,9 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "TFile.h"
 #include "TTree.h"
 #include "alcor_data.h"
+#include "util/root_io.h"
 
 class AlcorDataStreamer
 {
@@ -39,7 +39,7 @@ public:
      */
     AlcorDataStreamer(AlcorDataStreamer &&other) noexcept
         : filename(std::move(other.filename)),
-          file(std::exchange(other.file, nullptr)),
+          file(std::move(other.file)),
           tree(std::exchange(other.tree, nullptr)),
           device_id(other.device_id),
           fifo_id(other.fifo_id),
@@ -48,7 +48,20 @@ public:
           cursor(other.cursor),
           valid(std::exchange(other.valid, false)),
           rollover_count_per_spill(std::move(other.rollover_count_per_spill))
-    {}
+    {
+        // CRITICAL: ROOT branch addresses on `tree` still point at the
+        // source's `data` fields (set by `data.link_to_tree(tree)` in the
+        // source's ctor).  After this move-ctor returns the source goes
+        // out of scope; its destructor frees `data`, leaving the branch
+        // addresses dangling.  Re-link so the branches target *this*'s
+        // `data` fields — SetBranchAddress is idempotent so the last call
+        // wins.  Without this, the next `tree->GetEntry()` writes into
+        // freed memory (manifesting as "pure virtual function called"
+        // crashes inside TTree::GetEntry → TLeaf::ReadValue once the
+        // memory gets recycled).
+        if (tree)
+            data.link_to_tree(tree);
+    }
 
     /**
      * @brief Move-assign; source is left invalid after the operation.
@@ -143,7 +156,7 @@ private:
     /// @{
 
     std::string filename;                         ///< Path of the ROOT file being read.
-    TFile *file = nullptr;                        ///< Owning pointer to the open TFile.
+    TFilePtr file;                                ///< Owning handle to the open TFile (closes on destruction).
     TTree *tree = nullptr;                        ///< Non-owning pointer into @c file.
     int device_id = -1;                           ///< RDO id parsed from "rdo-NNN" in the path; -1 if not found. Used to overwrite the bogus upstream device branch.
     int fifo_id = -1;                             ///< FIFO id parsed from "fifo_NN" in the filename; -1 if not found. Used to overwrite the fifo branch per-Hit.

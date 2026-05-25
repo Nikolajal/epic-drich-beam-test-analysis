@@ -17,8 +17,8 @@
 #include <cstring>
 #include <iostream>
 
-#include "TFile.h"
 #include "TTree.h"
+#include "util/root_io.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Internal constants
@@ -56,11 +56,11 @@ ResultMap AnalysisResults::load() const
 {
     ResultMap out;
 
-    TFile *f = TFile::Open(fPath.c_str(), "READ");
+    TFilePtr f(TFile::Open(fPath.c_str(), "READ"));
     if (!f || f->IsZombie())
     {
         // Silently return empty map — file may not exist yet on the first run.
-        return out;
+        return out;  // TFilePtr dtor handles cleanup of zombie files
     }
 
     TTree *t = dynamic_cast<TTree *>(f->Get(kTreeName));
@@ -70,8 +70,7 @@ ResultMap AnalysisResults::load() const
                             std::string(kTreeName) +
                             "' tree in " +
                             fPath);
-        f->Close();
-        return out;
+        return out;  // TFilePtr dtor closes f
     }
 
     // ── Branch wiring ────────────────────────────────────────────────────────
@@ -96,8 +95,7 @@ ResultMap AnalysisResults::load() const
              std::string(qty_buf)}] = {val, err};
     }
 
-    f->Close();
-    return out;
+    return out;  // TFilePtr dtor closes f
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +110,7 @@ ResultMap AnalysisResults::load() const
  */
 void AnalysisResults::write(const ResultMap &data) const
 {
-    TFile *f = new TFile(fPath.c_str(), "RECREATE");
+    TFilePtr f(TFile::Open(fPath.c_str(), "RECREATE"));
     if (!f || f->IsZombie())
     {
         mist::logger::error("[AnalysisResults] ERROR: cannot open '" +
@@ -152,7 +150,7 @@ void AnalysisResults::write(const ResultMap &data) const
     }
 
     f->Write();
-    f->Close();
+    // TFilePtr dtor closes f after Write().
 
     mist::logger::info("[AnalysisResults] Wrote " +
                        std::to_string(data.size()) +

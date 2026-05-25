@@ -319,16 +319,25 @@ public:
     /// @name Spatial Getters
     /// @{
 
-    /** @brief Returns the pixel-randomised x-coordinate, uniform within ±1.5 mm of the Hit position. */
+    /** @brief Returns the pixel-randomised x-coordinate, uniform within ±1.5 mm of the Hit position.
+     *
+     *  The engine is a `thread_local mist::Rnd` (per-thread safe).  The distribution
+     *  object is cached `static thread_local` because this getter is called inside
+     *  per-Hit hot loops in `lightdata_writer.cxx` (≥20 sites); constructing a fresh
+     *  `std::uniform_real_distribution<float>` per call was measurable in framer-pipeline
+     *  runtime.  Hoisting it removes that overhead while keeping the per-thread engine.
+     */
     float get_hit_x_rnd() const {
         thread_local mist::Rnd rng;
-        return internal_data.hit_x + rng.uniform(-1.5f, 1.5f);
+        static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
+        return internal_data.hit_x + pixel_jitter(rng.engine());
     }
 
     /** @brief Returns the pixel-randomised y-coordinate, uniform within ±1.5 mm of the Hit position. */
     float get_hit_y_rnd() const {
         thread_local mist::Rnd rng;
-        return internal_data.hit_y + rng.uniform(-1.5f, 1.5f);
+        static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
+        return internal_data.hit_y + pixel_jitter(rng.engine());
     }
 
     /** @brief Returns the radial distance from the origin using a freshly randomised position. */
@@ -759,4 +768,44 @@ private:
      *       the object being viewed.
      */
     inline static std::shared_mutex calibration_mutex{};
+
+    /**
+     * @brief Frozen-table fast-path flag (CODE_REVIEW §3.1).
+     *
+     * Once calibration loading is complete the table is immutable for the rest
+     * of the run.  Setting this flag lets per-Hit readers like @ref get_phase
+     * skip the @c shared_lock entirely — atomic reads only.
+     *
+     * The framer / writer setup calls @ref freeze_calibration after loading
+     * (typically right after @ref read_calib_from_file or @ref generate_calibration
+     * finishes, before workers are spawned).  Subsequent setter calls are NOT
+     * blocked at compile time; they take the unique lock as before — but
+     * concurrent setters and lock-free readers can race, so don't call setters
+     * after freezing.
+     */
+    inline static std::atomic<bool> calibration_frozen_{false};
+
+public:
+    /**
+     * @brief Mark the calibration table immutable so per-Hit readers can
+     *        skip the shared-mutex acquisition.
+     *
+     * Idempotent; once set, stays set for the process lifetime.  Use only
+     * after every calibration setter has finished (typically right before
+     * spawning worker threads).
+     */
+    static void freeze_calibration() noexcept
+    {
+        calibration_frozen_.store(true, std::memory_order_release);
+    }
+
+    /**
+     * @brief Returns whether the calibration table has been frozen.
+     */
+    static bool is_calibration_frozen() noexcept
+    {
+        return calibration_frozen_.load(std::memory_order_acquire);
+    }
+
+private:
 };

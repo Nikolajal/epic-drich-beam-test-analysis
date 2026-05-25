@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 #include <mist/mist.h>
 
 /**
@@ -17,7 +19,7 @@ void fine_calibration(std::string data_repository, std::string run_name, int max
     //  Input files
     //  ---
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
-    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str(), "READ"));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
         mist::logger::error("recodata file not found: " +
@@ -46,9 +48,12 @@ void fine_calibration(std::string data_repository, std::string run_name, int max
     //  --- --- --- --- --- ---
     //  Output definition
     //  ---
-    TH2F *h_time_diff_to_channel = new TH2F("h_time_diff_to_channel", ";channel index;#Delta_{t} (t_{Hit} - t_{trigger})", 2048, -0.5, 2047.5, 400, -20, 20);
-    TH2F *h_time_diff_to_device = new TH2F("h_time_diff_to_device", ";device index;#Delta_{t} (t_{Hit} - t_{trigger})", 8, 191.5, 199.5, 2e3, -200, 200);
-    TH2F *h_time_diff_to_device_channel = new TH2F("h_time_diff_to_device", ";device index;#Delta_{t} (t_{Hit} - t_{trigger})", 64, -0.5, 63.5, 2e3, -200, 200);
+    RootHist<TH2F> h_time_diff_to_channel("h_time_diff_to_channel", ";channel index;#Delta_{t} (t_{Hit} - t_{trigger})", 2048, -0.5, 2047.5, 400, -20, 20);
+    RootHist<TH2F> h_time_diff_to_device("h_time_diff_to_device", ";device index;#Delta_{t} (t_{Hit} - t_{trigger})", 8, 191.5, 199.5, 2e3, -200, 200);
+    // Distinct ROOT name from the histogram above — previous duplicate
+    // "h_time_diff_to_device" silently displaced the first one in gDirectory
+    // so only this second TH2F was ever Write()n (CODE_REVIEW §6.8).
+    RootHist<TH2F> h_time_diff_to_device_channel("h_time_diff_to_device_channel", ";device index;#Delta_{t} (t_{Hit} - t_{trigger})", 64, -0.5, 63.5, 2e3, -200, 200);
     /*
     //  Time distribution
     TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);

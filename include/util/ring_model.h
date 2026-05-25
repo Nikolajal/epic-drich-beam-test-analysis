@@ -16,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 #include <Math/Functor.h>
@@ -155,9 +156,12 @@ using RingFitResults = std::array<std::array<double, 2>, 6>;
  */
 inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double, 6> initial_values, bool fix_XY = true)
 {
-    RingFitResults result;
+    RingFitResults result{}; // value-init so the failure path returns zeros, not garbage
 
-    auto chi2_function = [&](const double *parameters)
+    // Explicit captures: target_histogram by value (it's a pointer, safe to
+    // copy), nothing by reference.  Avoids the [&] footgun once the lambda
+    // ever escapes the function (CODE_REVIEW §5.5).
+    auto chi2_function = [target_histogram](const double *parameters)
     {
         double chi2 = 0;
         for (auto x_bin = 1; x_bin <= target_histogram->GetNbinsX(); x_bin++)
@@ -217,8 +221,12 @@ inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double
     {
         iTer++;
         mist::logger::debug("par " + fit_result.GetParameterName(iTer) + " : " + std::to_string(current_parameter) + " +- " + std::to_string(fit_result.Errors()[iTer]));
-        if (iTer > 6)
-            continue;
+        // result is std::array<…, 6> — valid indices 0..5.  The previous
+        // guard `if (iTer > 6) continue` would let iTer == 6 fall through and
+        // write past the end of result; with `iTer >= (int)result.size()`
+        // (== 6) we stop the moment we'd OOB (CODE_REVIEW §5.4).
+        if (iTer >= static_cast<int>(result.size()))
+            break;
         result[iTer][0] = current_parameter;
         result[iTer][1] = fit_result.Errors()[iTer];
     }
@@ -232,22 +240,29 @@ inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double
  * @param sigma_values          List of sigma multipliers.
  * @param logistic_input_values Optional azimuthal-gap descriptors.
  * @param n_points              Number of points per contour (default: 500).
- * @return                      One TGraph per sigma value, caller takes ownership.
+ * @return                      One owning `unique_ptr<TGraph>` per sigma value.
+ *
+ * Returning `unique_ptr` makes ownership explicit (CODE_REVIEW §5.3).
+ * `TGraph` is not adopted by `gDirectory` like `TH1`, so the previous raw
+ * `TGraph *` return leaked per call unless every caller remembered to
+ * `delete` afterwards.  Callers that need to hand a `TGraph` over to ROOT
+ * (e.g. for `DrawClone`-style ownership transfer) call `.release()`.
  */
-inline std::vector<TGraph *> plot_ring_integral(RingFitResults fit_results, std::vector<float> sigma_values, std::vector<std::array<double, 4>> logistic_input_values = {}, int n_points = 500)
+inline std::vector<std::unique_ptr<TGraph>> plot_ring_integral(RingFitResults fit_results, std::vector<float> sigma_values, std::vector<std::array<double, 4>> logistic_input_values = {}, int n_points = 500)
 {
-    std::vector<TGraph *> result;
+    std::vector<std::unique_ptr<TGraph>> result;
+    result.reserve(sigma_values.size());
     for (auto current_sigma_value : sigma_values)
     {
-        result.push_back(new TGraph());
-        auto &current_graph = result.back();
+        auto graph = std::make_unique<TGraph>();
         for (auto i_point = 0; i_point <= n_points; i_point++)
         {
             auto current_phi = -TMath::Pi() + 2 * TMath::Pi() * (1. * i_point) / n_points;
             auto current_x = fit_results[0][0] + (fit_results[2][0] + current_sigma_value * ring_fit_function_sigma_function(current_phi, fit_results[3][0], logistic_input_values)) * cos(current_phi);
             auto current_y = fit_results[1][0] + (fit_results[2][0] + current_sigma_value * ring_fit_function_sigma_function(current_phi, fit_results[3][0], logistic_input_values)) * sin(current_phi);
-            current_graph->SetPoint(i_point, current_x, current_y);
+            graph->SetPoint(i_point, current_x, current_y);
         }
+        result.push_back(std::move(graph));
     }
     return result;
 }
