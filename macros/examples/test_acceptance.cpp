@@ -1,4 +1,5 @@
 #include "../lib_loader.h"
+#include "util/root_hist.h"
 
 // ===== Geometry Configuration =====
 // A geometry_config struct encapsulates all detector-specific parameters
@@ -247,7 +248,7 @@ void test_acceptance(const geometry_config &geom, bool draw_plots = true)
 
     // --- Control plot 1: sensor center map ---
     TGraph *sensor_center_graph = new TGraph();
-    sensor_center_graph->SetTitle(Form("%s: Sensor centers;x [mm];y [mm]", geom.name.c_str()));
+    sensor_center_graph->SetTitle(TString::Format("%s: Sensor centers;x [mm];y [mm]", geom.name.c_str()).Data());
     int sensor_graph_point_index = 0;
     for (const auto &[sensor_center_x, sensor_center_y] : geom.sensor_centers)
         sensor_center_graph->SetPoint(sensor_graph_point_index++, sensor_center_x, sensor_center_y);
@@ -266,17 +267,17 @@ void test_acceptance(const geometry_config &geom, bool draw_plots = true)
 
     // --- Control plot 2: Gaussian weight map ---
     const int weight_map_bins = 300;
-    TH2D *gaussian_weight_map_histogram = new TH2D(
-        Form("gaussian_weight_map_%s", geom.name.c_str()),
-        Form("%s: Gaussian weight map (G(r)#times#DeltaA);x [mm];y [mm]", geom.name.c_str()),
+    RootHist<TH2D> gaussian_weight_map_histogram(
+        TString::Format("gaussian_weight_map_%s", geom.name.c_str()).Data(),
+        TString::Format("%s: Gaussian weight map (G(r)#times#DeltaA);x [mm];y [mm]", geom.name.c_str()).Data(),
         weight_map_bins, -geom.plot_xy_max, geom.plot_xy_max,
         weight_map_bins, -geom.plot_xy_max, geom.plot_xy_max);
 
     // --- Control plot 3: radial profile of accumulated Gaussian weight ---
     const int radial_profile_bins = 200;
-    TH1D *radial_weight_profile_histogram = new TH1D(
-        Form("radial_weight_profile_%s", geom.name.c_str()),
-        Form("%s: Radial weight profile;r [mm];#sum G(r)#times#DeltaA", geom.name.c_str()),
+    RootHist<TH1D> radial_weight_profile_histogram(
+        TString::Format("radial_weight_profile_%s", geom.name.c_str()).Data(),
+        TString::Format("%s: Radial weight profile;r [mm];#sum G(r)#times#DeltaA", geom.name.c_str()).Data(),
         radial_profile_bins, 0.0, geom.plot_xy_max);
 
     // --- Main integration loop ---
@@ -321,8 +322,8 @@ void test_acceptance(const geometry_config &geom, bool draw_plots = true)
 
     // --- Drawing ---
     TCanvas *sensor_map_canvas = new TCanvas(
-        Form("sensor_map_canvas_%s", geom.name.c_str()),
-        Form("Sensor map — %s", geom.name.c_str()), 700, 700);
+        TString::Format("sensor_map_canvas_%s", geom.name.c_str()).Data(),
+        TString::Format("Sensor map — %s", geom.name.c_str()).Data(), 700, 700);
     sensor_map_canvas->SetGrid();
     sensor_center_graph->SetMarkerStyle(6);
     sensor_center_graph->SetMarkerColor(kBlue + 1);
@@ -333,20 +334,20 @@ void test_acceptance(const geometry_config &geom, bool draw_plots = true)
     TLatex *acceptance_label = new TLatex();
     acceptance_label->SetNDC();
     acceptance_label->SetTextSize(0.03);
-    acceptance_label->DrawLatex(0.15, 0.92, Form("Acceptance: %.4f", acceptance_fraction));
+    acceptance_label->DrawLatex(0.15, 0.92, TString::Format("Acceptance: %.4f", acceptance_fraction).Data());
 
     TCanvas *weight_map_canvas = new TCanvas(
-        Form("weight_map_canvas_%s", geom.name.c_str()),
-        Form("Gaussian weight map — %s", geom.name.c_str()), 700, 700);
+        TString::Format("weight_map_canvas_%s", geom.name.c_str()).Data(),
+        TString::Format("Gaussian weight map — %s", geom.name.c_str()).Data(), 700, 700);
     weight_map_canvas->SetGrid();
     gaussian_weight_map_histogram->SetStats(false);
     gaussian_weight_map_histogram->Draw("COLZ");
     nominal_ring_graph->Draw("L same");
-    acceptance_label->DrawLatex(0.15, 0.92, Form("Acceptance: %.4f", acceptance_fraction));
+    acceptance_label->DrawLatex(0.15, 0.92, TString::Format("Acceptance: %.4f", acceptance_fraction).Data());
 
     TCanvas *radial_profile_canvas = new TCanvas(
-        Form("radial_profile_canvas_%s", geom.name.c_str()),
-        Form("Radial weight profile — %s", geom.name.c_str()), 800, 500);
+        TString::Format("radial_profile_canvas_%s", geom.name.c_str()).Data(),
+        TString::Format("Radial weight profile — %s", geom.name.c_str()).Data(), 800, 500);
     radial_profile_canvas->SetGrid();
     radial_weight_profile_histogram->SetLineColor(kBlue + 1);
     radial_weight_profile_histogram->SetLineWidth(2);
@@ -376,9 +377,9 @@ void test_acceptance(const geometry_config &geom, bool draw_plots = true)
 
     TLegend *radial_profile_legend = new TLegend(0.65, 0.75, 0.88, 0.88);
     radial_profile_legend->AddEntry(ring_center_line,
-                                    Form("R_{0} = %.1f mm", geom.ring_nominal_radius), "l");
+                                    TString::Format("R_{0} = %.1f mm", geom.ring_nominal_radius).Data(), "l");
     radial_profile_legend->AddEntry(ring_sigma_minus_line,
-                                    Form("#sigma_{r} = %.1f mm", geom.radial_sigma), "l");
+                                    TString::Format("#sigma_{r} = %.1f mm", geom.radial_sigma).Data(), "l");
     radial_profile_legend->Draw();
 }
 

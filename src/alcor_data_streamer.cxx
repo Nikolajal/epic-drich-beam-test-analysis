@@ -8,7 +8,7 @@
 AlcorDataStreamer::AlcorDataStreamer(const std::string &fname)
     : filename(fname)
 {
-    file = TFile::Open(filename.c_str(), "READ");
+    file.reset(TFile::Open(filename.c_str(), "READ"));
     if (!file || file->IsZombie())
         return;
 
@@ -42,13 +42,13 @@ AlcorDataStreamer::AlcorDataStreamer(const std::string &fname)
     {
         tree->GetEntry(0);
         if (device_id > 0 && data.get_data().device <= 0)
-            mist::logger::warning(Form(
+            mist::logger::warning(TString::Format(
                 "(AlcorDataStreamer) Overriding bogus device branch with %d (parsed from %s)",
-                device_id, filename.c_str()));
+                device_id, filename.c_str()).Data());
         if (fifo_id >= 0 && data.get_data().fifo != fifo_id)
-            mist::logger::warning(Form(
+            mist::logger::warning(TString::Format(
                 "(AlcorDataStreamer) Overriding bogus fifo branch with %d (parsed from %s)",
-                fifo_id, filename.c_str()));
+                fifo_id, filename.c_str()).Data());
     }
     //  Read gRollover — one point per spill, y = rollover count during that spill.
     if (auto *rollover_graph = dynamic_cast<TGraph *>(file->Get("gRollover")))
@@ -67,17 +67,13 @@ AlcorDataStreamer &AlcorDataStreamer::operator=(AlcorDataStreamer &&other) noexc
     if (this == &other)
         return *this;
 
-    // clean up existing resources before taking ownership of other's
+    // Reset branch addresses on *this* tree before the old file is closed.
+    // TFilePtr's move-assignment closes + deletes the current file implicitly.
     if (tree)
         tree->ResetBranchAddresses();
-    if (file)
-    {
-        file->Close();
-        delete file;
-    }
 
     filename = std::move(other.filename);
-    file = other.file;
+    file = std::move(other.file);   // closes old file, takes ownership of other's
     tree = other.tree;
     data = std::move(other.data);
     n_entries = other.n_entries;
@@ -87,19 +83,23 @@ AlcorDataStreamer &AlcorDataStreamer::operator=(AlcorDataStreamer &&other) noexc
     fifo_id = other.fifo_id;
     rollover_count_per_spill = std::move(other.rollover_count_per_spill);
 
-    other.file = nullptr;
     other.tree = nullptr;
     other.valid = false;
+
+    // Same rationale as the move-ctor: re-link branches to *this's `data`
+    // fields, otherwise tree->GetEntry() writes to the source's freed
+    // memory.  SetBranchAddress is idempotent.
+    if (tree)
+        data.link_to_tree(tree);
+
     return *this;
 }
 
 AlcorDataStreamer::~AlcorDataStreamer() noexcept
 {
+    // Reset branch addresses before TFilePtr closes the file —
+    // members destruct in reverse declaration order, so this body
+    // runs before file's destructor (which calls Close() + delete).
     if (tree)
         tree->ResetBranchAddresses();
-    if (file)
-    {
-        file->Close();
-        delete file;
-    }
 }

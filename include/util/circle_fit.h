@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <Math/Functor.h>
 #include <Fit/Fitter.h>
@@ -38,9 +39,12 @@ using CircleFitResults = std::array<std::array<float, 2>, 3>;
 inline CircleFitResults fit_circle(std::vector<std::array<float, 2>> points,
                                      std::array<float, 3> initial_values,
                                      bool fix_XY = true,
-                                     std::vector<int> exclude_points = {{}})
+                                     std::vector<int> exclude_points = {})
 {
-    CircleFitResults result;
+    // Value-initialised so the result is zeroed even if we hit the
+    // failure path below — the caller can also test result[2][0] for
+    // NaN to distinguish "fit failed" from "fit succeeded with R = 0".
+    CircleFitResults result{};
 
     //  Chi2 minimisation for points in a circle
     auto chi2_function = [&](const double *parameters)
@@ -78,8 +82,11 @@ inline CircleFitResults fit_circle(std::vector<std::array<float, 2>> points,
     //  Fitting
     if (!fitter.FitFCN())
     {
-        // Error("fit_circle", "Fit failed");
-        //  return {{{-2., 0.}, {-2., 0.}, {-2., 0.}}};
+        // Fit failed — return a NaN-tagged sentinel so the caller cannot
+        // silently propagate garbage values.  Test e.g. std::isnan(result[2][0]).
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        for (auto &row : result) { row[0] = nan; row[1] = nan; }
+        return result;
     }
     const ROOT::Fit::FitResult &fit_result = fitter.Result();
 

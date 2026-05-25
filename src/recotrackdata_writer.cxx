@@ -1,6 +1,8 @@
 #include "writers/recotrackdata.h"
 #include "alcor_recodata.h"
 #include "alcor_recotrackdata.h"
+#include <memory>
+// TFilePtr is available via the alcor_recodata.h → utility.h → util/root_io.h chain.
 
 void recotrackdata_writer(
     std::string data_repository,
@@ -15,18 +17,24 @@ void recotrackdata_writer(
     //  Input recodata files
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
-    //  Load recodata, return if not available
-    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    //  Load recodata, return if not available.  TFilePtr: closes + deletes on
+    //  scope exit; ROOT objects attached to the TFile are freed by Close().
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str()));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
-        std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
-        delete input_file_recodata;
+        mist::logger::warning("(recotrackdata_writer) Could not find recodata, making it");
         return;
     }
 
     //  Link recodata tree locally
-    TTree *recodata_tree = (TTree *)input_file_recodata->Get("recodata");
-    AlcorRecodata *recodata = new AlcorRecodata();
+    auto *recodata_tree = input_file_recodata->Get<TTree>("recodata");
+    if (!recodata_tree)
+    {
+        mist::logger::error(TString::Format("(recotrackdata_writer) 'recodata' tree missing in %s",
+                                 input_filename_recodata.c_str()).Data());
+        return;
+    }
+    auto recodata = std::make_unique<AlcorRecodata>();
     recodata->link_to_tree(recodata_tree);
 
     //  Input recotrackdata
@@ -37,27 +45,29 @@ void recotrackdata_writer(
 
     //  Prepare output file
     std::string outname = data_repository + "/" + run_name + "/recotrackdata.root";
-    /*
-    if (std::filesystem::exists(outname) && !force_recodata_rebuild)
-    {
-        std::cout << "[INFO] Output file already exists, skipping: " << outname << std::endl;
-        return; // or continue;
-    }
-    */
 
     //  Link recodata tree locally
     //  TODO safer implementation: recodata MUST be initialised earlier, may break
-    TFile *output_file = TFile::Open(outname.c_str(), "RECREATE");
+    TFilePtr output_file(TFile::Open(outname.c_str(), "RECREATE"));
+    if (!output_file || output_file->IsZombie())
+    {
+        mist::logger::error(TString::Format("(recotrackdata_writer) Failed to open output %s for writing", outname.c_str()).Data());
+        return;
+    }
+    // TDirectory::TContext RAII guard so every Write() below lands in
+    // output_file regardless of where gDirectory might wander to in between.
+    TDirectory::TContext ctx(output_file.get());
+
     TTree *recotrackdata_tree = new TTree("recotrackdata", "Recotrackdata tree");
-    AlcorRecotrackdata *recotrackdata = new AlcorRecotrackdata(*recodata); // TODO internal linking
+    // NOTE: *recodata dereference invokes AlcorRecotrackdata(const AlcorRecodata&)
+    // which today copies the branch-binding *_ptr members verbatim — a latent
+    // dangle once D-08's no-copy contract lands.  Documented; fix follows in D-08.
+    auto recotrackdata = std::make_unique<AlcorRecotrackdata>(*recodata);
     recotrackdata->write_to_tree(recotrackdata_tree);
 
     //  Get number of frames, limited to maximum requested frames
     auto n_frames = recodata_tree->GetEntries();
     auto all_frames = n_frames; // std::min((int)n_frames, (int)max_frames); // TODO: understand this
-
-    TH1F *test = new TH1F("test", "", 10000, 0, 20);
-    TH1F *test2 = new TH1F("test2", "", 100000, 0, 200);
 
     //  Loop over frames
     auto i_spill = -1;
@@ -72,7 +82,8 @@ void recotrackdata_writer(
         recodata_tree->GetEntry(i_frame);
 
         //  HitmaskDeadLane signals the event is start of spill, tells which channels are available
-        auto current_trigger = recodata->get_triggers();
+        // const& over get_triggers_link() to avoid copying the whole vector per frame.
+        const auto &current_trigger = recodata->get_triggers_link();
         auto it = std::find_if(current_trigger.begin(), current_trigger.end(), [](const TriggerEvent &t)
                                { return t.index == TriggerStartOfSpill; });
         if (it != current_trigger.end())
@@ -96,10 +107,6 @@ void recotrackdata_writer(
             //  Keep track of the actual number of frames used in the analysis
             altai_events_counter++;
 
-            //  Exclude events with 0 or multiple tracks
-            if (current_tracking.event_has_one_track(altai_events_counter))
-                test->Fill(current_tracking.get_timestamp(altai_events_counter, 0) * 1.e-9);
-
             //  Recotrack events counter
             recotrack_events_counter++;
             recotrackdata->import_event(current_tracking.get_event_tracks(altai_events_counter));
@@ -109,44 +116,11 @@ void recotrackdata_writer(
         }
     }
 
-    /*
-    i_spill = 0;
-    double previous_timestamp = current_tracking.get_timestamp(0, 0); // Timestamp of first track of first event -> Could be null/0 to check
-    double starting_timestamp = current_tracking.get_timestamp(0, 0); // Timestamp of first track of first event -> Could be null/0 to check
-    for (auto i_track_event = 0; i_track_event < current_tracking.get_number_of_events(); ++i_track_event)
-    {
-        per_spill_events_counter_trackdata[i_spill]++;
-        if (!current_tracking.event_has_at_least_one_track(i_track_event))
-            continue;
-        auto current_timestamp = current_tracking.get_timestamp(i_track_event, 0);
-        if ((current_timestamp - previous_timestamp) * 1.e-10 > 1)
-        {
-            per_spill_events_counter_trackdata[i_spill]--;
-            i_spill++;
-            per_spill_events_counter_trackdata[i_spill]++;
-        }
-        test->Fill((current_timestamp - previous_timestamp) * 1.e-10);
-        test2->Fill((current_timestamp - starting_timestamp) * 1.e-10);
-        previous_timestamp = current_timestamp;
-    }
-
-    auto reco_spill_shift = 0;
-    for (auto [spill, count] : per_spill_events_counter_trackdata)
-    {
-        if (per_spill_events_counter_recodata[spill + reco_spill_shift] == 0)
-        {
-            reco_spill_shift++;
-            continue;
-        }
-        mist::logger::debug(Form("Spill %d, recodata nevs %d, recotrack nevs %d", spill, per_spill_events_counter_recodata[spill + reco_spill_shift], count));
-        if (per_spill_events_counter_recodata[spill + reco_spill_shift] == count)
-            mist::logger::debug(Form("Spill %d, matched!", spill));
-    }
-            */
-
-    mist::logger::info(Form("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter));
+    mist::logger::info(TString::Format("(recotrackdata_writer) Matched %d frames to tracking trigger", recotrack_events_counter).Data());
+    // TContext ctx (above) ensures Write lands in output_file; explicit cd
+    // for redundancy in case the RAII guard's scope ever moves.
+    output_file->cd();
     recotrackdata_tree->Write();
-    test->Write();
-    test2->Write();
-    output_file->Close();
+    // unique_ptr<TFile> dtor calls Close() and deletes the object — no manual
+    // output_file->Close(); + leak.
 }

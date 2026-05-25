@@ -1,4 +1,5 @@
 #include "alcor_spilldata.h"
+#include <unordered_map>
 
 // ============================================================================
 //  AlcorSpilldataStruct
@@ -26,12 +27,8 @@ void AlcorSpilldataStruct::clear()
 
     frame_reference.clear();
     frame_reference.shrink_to_fit();
-
-    //  Re-synchronise the branch-address pointers after potential reallocation.
-    dead_mask_list_ptr = &dead_mask_list;
-    participants_mask_list_ptr = &participants_mask_list;
-    frame_reference_ptr = &frame_reference;
-    lightdata_list_in_frame_ptr = &lightdata_list_in_frame;
+    // No `*_ptr` to re-sync — those live on AlcorSpilldata now, and the
+    // wrapper is non-movable so their addresses are stable for its lifetime.
 }
 
 // ============================================================================
@@ -45,17 +42,21 @@ std::map<uint32_t, std::vector<uint8_t>> AlcorSpilldata::get_not_dead_participan
     //  Prefer the flat-list representation (populated after TTree::GetEntry).
     if (!spilldata.participants_mask_list.empty())
     {
+        // Build a (device → dead_mask) lookup ONCE up front so the inner
+        // search over dead_mask_list collapses from O(M) to O(1).  Net cost:
+        // O(N + M) instead of O(N·M) where N = participants_mask_list size,
+        // M = dead_mask_list size.
+        std::unordered_map<uint8_t, uint32_t> device_to_dead_mask;
+        device_to_dead_mask.reserve(spilldata.dead_mask_list.size());
+        for (const auto &dm : spilldata.dead_mask_list)
+            device_to_dead_mask.emplace(dm.device, dm.mask);
+
         for (const auto &pm : spilldata.participants_mask_list)
         {
             uint32_t dead_mask = 0;
-            for (const auto &dm : spilldata.dead_mask_list)
-            {
-                if (dm.device == pm.device)
-                {
-                    dead_mask = dm.mask;
-                    break;
-                }
-            }
+            if (auto it = device_to_dead_mask.find(pm.device);
+                it != device_to_dead_mask.end())
+                dead_mask = it->second;
             result[pm.device] = decode_bits(pm.mask & ~dead_mask);
         }
     }
@@ -81,10 +82,15 @@ void AlcorSpilldata::link_to_tree(TTree *input_tree)
     if (!input_tree)
         return;
 
-    input_tree->SetBranchAddress("dead_mask", &spilldata.dead_mask_list_ptr);
-    input_tree->SetBranchAddress("participants_mask", &spilldata.participants_mask_list_ptr);
-    input_tree->SetBranchAddress("frame", &spilldata.frame_reference_ptr);
-    input_tree->SetBranchAddress("lightdata", &spilldata.lightdata_list_in_frame_ptr);
+    // SetBranchAddress takes the ADDRESS OF the pointer slot.  ROOT will
+    // dereference *_ptr_ on each GetEntry and write into the vector it
+    // refers to.  The slots live on the wrapper (this object) and were
+    // anchored to spilldata's vectors in sync_ptrs_().  Since the wrapper
+    // is non-movable, the addresses below remain valid for its lifetime.
+    input_tree->SetBranchAddress("dead_mask",         &dead_mask_list_ptr_);
+    input_tree->SetBranchAddress("participants_mask", &participants_mask_list_ptr_);
+    input_tree->SetBranchAddress("frame",             &frame_reference_ptr_);
+    input_tree->SetBranchAddress("lightdata",         &lightdata_list_in_frame_ptr_);
 }
 
 void AlcorSpilldata::write_to_tree(TTree *output_tree)
@@ -92,24 +98,24 @@ void AlcorSpilldata::write_to_tree(TTree *output_tree)
     if (!output_tree)
         return;
 
-    output_tree->Branch("dead_mask", &spilldata.dead_mask_list);
+    // Branch() takes the address of the std::vector itself; ROOT iterates
+    // it on each Fill.  Stable because the wrapper (and therefore
+    // spilldata) is non-movable.
+    output_tree->Branch("dead_mask",         &spilldata.dead_mask_list);
     output_tree->Branch("participants_mask", &spilldata.participants_mask_list);
-    output_tree->Branch("frame", &spilldata.frame_reference);
-    output_tree->Branch("lightdata", &spilldata.lightdata_list_in_frame);
+    output_tree->Branch("frame",             &spilldata.frame_reference);
+    output_tree->Branch("lightdata",         &spilldata.lightdata_list_in_frame);
 }
 
 void AlcorSpilldata::prepare_tree_fill()
 {
-    //  1. Reset flat vectors and re-synchronise branch-address pointers.
+    //  1. Reset flat vectors.  No need to re-sync *_ptr_ — they were
+    //     anchored once in the constructor and the wrapper is non-movable,
+    //     so the addresses are still correct.
     spilldata.dead_mask_list.clear();
     spilldata.participants_mask_list.clear();
     spilldata.frame_reference.clear();
     spilldata.lightdata_list_in_frame.clear();
-
-    spilldata.dead_mask_list_ptr = &spilldata.dead_mask_list;
-    spilldata.participants_mask_list_ptr = &spilldata.participants_mask_list;
-    spilldata.frame_reference_ptr = &spilldata.frame_reference;
-    spilldata.lightdata_list_in_frame_ptr = &spilldata.lightdata_list_in_frame;
 
     //  2. Transfer masks into flat vectors (pre-reserve for a single allocation).
     spilldata.dead_mask_list.reserve(spilldata.dead_mask.size());
@@ -143,7 +149,7 @@ void AlcorSpilldata::prepare_tree_fill()
 }
 
 // ============================================================================
-//  Free-function merge / reduce utilities
+//  Free-function merge utilities
 // ============================================================================
 
 void merge_lightdata(AlcorLightdataStruct &lhs, AlcorLightdataStruct &&rhs)
@@ -176,29 +182,4 @@ void merge(AlcorSpilldataStruct &lhs, AlcorSpilldataStruct &&rhs)
         if (!inserted)
             merge_lightdata(it->second, std::move(rhs_data));
     }
-}
-
-void merge(AlcorSpilldata &lhs, AlcorSpilldata &&rhs)
-{
-    merge(lhs.get_spilldata_link(), std::move(rhs.get_spilldata()));
-}
-
-AlcorSpilldataStruct operator+(AlcorSpilldataStruct lhs, AlcorSpilldataStruct rhs)
-{
-    std::cerr << "[WARNING] (AlcorSpilldataStruct operator+) "
-                 "This function is under revision — results are unreliable!\n";
-
-    lhs.dead_mask.merge(std::move(rhs.dead_mask));
-    lhs.participants_mask.merge(std::move(rhs.participants_mask));
-    lhs.frame_and_lightdata.merge(std::move(rhs.frame_and_lightdata));
-    return lhs;
-}
-
-AlcorSpilldata operator+(AlcorSpilldata lhs, const AlcorSpilldata &rhs)
-{
-    std::cerr << "[WARNING] (AlcorSpilldata operator+) "
-                 "This function is under revision — results are unreliable!\n";
-
-    lhs.get_spilldata_link() = std::move(lhs.get_spilldata_link()) + rhs.get_spilldata();
-    return lhs;
 }

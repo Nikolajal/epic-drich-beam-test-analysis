@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 /**
  * @file ring_spatial_resolution.cpp
@@ -141,7 +143,7 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
     //  Load recodata, return if not available
-    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str(), "READ"));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
         std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
@@ -159,20 +161,20 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
 
     //  Analysis results and QA
     // --- Expected Coverage Map
-    TH2F *h_xy_coverage_full = new TH2F("h_xy_coverage_full", ";x (mm);y (mm)", 396 * _RPHI_GRANULAR_BINS_, -99, 99, 396 * _RPHI_GRANULAR_BINS_, -99, 99);
-    TH2F *h_rphi_coverage_full = new TH2F("h_rphi_coverage_full", ";#phi (rad); R (mm)", 400 * _RPHI_GRANULAR_BINS_, -TMath::Pi(), +TMath::Pi(), 50 * _RPHI_GRANULAR_BINS_, 25, 125);
+    RootHist<TH2F> h_xy_coverage_full("h_xy_coverage_full", ";x (mm);y (mm)", 396 * _RPHI_GRANULAR_BINS_, -99, 99, 396 * _RPHI_GRANULAR_BINS_, -99, 99);
+    RootHist<TH2F> h_rphi_coverage_full("h_rphi_coverage_full", ";#phi (rad); R (mm)", 400 * _RPHI_GRANULAR_BINS_, -TMath::Pi(), +TMath::Pi(), 50 * _RPHI_GRANULAR_BINS_, 25, 125);
     // --- Dataset Map
-    TH2F *h_xy_hits_full = new TH2F("h_xy_hits_full", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_rphi_hits_full = new TH2F("h_rphi_hits_full", ";#phi (rad); R (mm)", 400, -TMath::Pi(), +TMath::Pi(), 75, 25, 125);
-    TH1F *h_r_distribution_full = new TH1F("h_r_distribution_full", ";R (mm)", 50, 25, 125);
-    TH1F *h_r_distribution_excluded = new TH1F("h_r_distribution_excluded", ";R (mm)", 50, 25, 125);
-    TH1F *h_r_distribution_included = new TH1F("h_r_distribution_included", ";R (mm)", 50, 25, 125);
+    RootHist<TH2F> h_xy_hits_full("h_xy_hits_full", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH2F> h_rphi_hits_full("h_rphi_hits_full", ";#phi (rad); R (mm)", 400, -TMath::Pi(), +TMath::Pi(), 75, 25, 125);
+    RootHist<TH1F> h_r_distribution_full("h_r_distribution_full", ";R (mm)", 50, 25, 125);
+    RootHist<TH1F> h_r_distribution_excluded("h_r_distribution_excluded", ";R (mm)", 50, 25, 125);
+    RootHist<TH1F> h_r_distribution_included("h_r_distribution_included", ";R (mm)", 50, 25, 125);
     //  Time distribution
-    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_distribution("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
     //  First round X, Y, R
-    TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 240, -30, 30);
-    TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 240, -30, 30);
-    TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 400, 30, 130);
+    RootHist<TH1F> h_first_round_X("h_first_round_X", ";circle center x coordinate (mm)", 240, -30, 30);
+    RootHist<TH1F> h_first_round_Y("h_first_round_Y", ";circle center y coordinate (mm)", 240, -30, 30);
+    RootHist<TH1F> h_first_round_R("h_first_round_R", ";circle radius (mm)", 400, 30, 130);
 
     //  Store useful cache
     //  --- Saving the frame number you can speed up secondary loops
@@ -203,9 +205,6 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
         auto default_hardware_trigger = recodata->get_trigger_by_index(0);
         if (default_hardware_trigger)
         {
-            //  Save trigger frames for later, ref to the actual number of used frames in the analysis
-            // frame_of_interest_ref.push_back({i_frame, default_hardware_trigger->fine_time});
-
             //  Container for selected hits
             std::vector<std::array<float, 2>> selected_points;
             float avg_radius = 0.; // First estimate for radius
@@ -285,13 +284,18 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
 
                 //  --- X-Y Coverage map ---
 
+                // Fill with unit weight; the per-spill normalisation `1/N_spills`
+                // is applied via `h->Scale(...)` once at the end of the GetEntry
+                // loop, where `N_spills = start_of_spill_frame_ref.size()` is
+                // final.  Using the live `.size()` here would over-weight bins
+                // touched in earlier spills (divisor grows from 1 toward N).
                 auto index_coverage = index_to_bins_covered_xy_rphi.find(recodata->get_global_index(current_hit));
                 if (index_coverage != index_to_bins_covered_xy_rphi.end())
                 {
                     for (auto bin : index_coverage->second[0])
-                        h_xy_coverage_full->AddBinContent(bin[0], bin[1], 1. / start_of_spill_frame_ref.size());
+                        h_xy_coverage_full->AddBinContent(bin[0], bin[1], 1.0);
                     for (auto bin : index_coverage->second[1])
-                        h_rphi_coverage_full->AddBinContent(bin[0], bin[1], 1. / start_of_spill_frame_ref.size());
+                        h_rphi_coverage_full->AddBinContent(bin[0], bin[1], 1.0);
                     continue;
                 }
 
@@ -300,10 +304,14 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
                 auto bin_center_x_low = h_xy_coverage_full->GetXaxis()->FindBin(current_position[0] - 1.5);
                 auto bin_center_y_right = h_xy_coverage_full->GetYaxis()->FindBin(current_position[1] + 1.5);
                 auto bin_center_y_left = h_xy_coverage_full->GetYaxis()->FindBin(current_position[1] - 1.5);
+                // Cache-miss: AddBinContent (not Set) so multiple global_index
+                // entries whose smearing windows overlap accumulate correctly.
+                // SetBinContent would wipe out earlier channels' contributions
+                // to the same bin.
                 for (auto x_bin = bin_center_x_low; x_bin <= bin_center_x_top; ++x_bin)
                     for (auto y_bin = bin_center_y_left; y_bin <= bin_center_y_right; ++y_bin)
                     {
-                        h_xy_coverage_full->SetBinContent(x_bin, y_bin, 1. / start_of_spill_frame_ref.size());
+                        h_xy_coverage_full->AddBinContent(x_bin, y_bin, 1.0);
                         index_to_bins_covered_xy_rphi[recodata->get_global_index(current_hit)][0].push_back({x_bin, y_bin});
                     }
 
@@ -332,7 +340,9 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
                         if (std::find(current_vector.begin(), current_vector.end(), std::array<int, 2>{phi_bin, r_bin}) != current_vector.end())
                             continue;
 
-                        h_rphi_coverage_full->SetBinContent(phi_bin, r_bin, 1. / start_of_spill_frame_ref.size());
+                        // Cache-miss: AddBinContent (not Set) — same reasoning
+                        // as the x-y branch above.
+                        h_rphi_coverage_full->AddBinContent(phi_bin, r_bin, 1.0);
                         current_vector.push_back({phi_bin, r_bin});
                     }
                 }
@@ -396,6 +406,13 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
         }
     }
 
+    // Apply the per-spill normalisation now that the spill count is final.
+    // Bin contents above were filled with unit weight; `Scale(1/N)` gives the
+    // intended "per-spill expected coverage" interpretation.
+    const double inv_total_spills = 1.0 / std::max<size_t>(1, start_of_spill_frame_ref.size());
+    h_xy_coverage_full->Scale(inv_total_spills);
+    h_rphi_coverage_full->Scale(inv_total_spills);
+
     gStyle->SetOptStat(0);
     gStyle->SetOptFit(0);
 
@@ -444,7 +461,11 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
                                                  {kRed, 2, kDashed},
                                                  {kRed, 2, kDashed}};
     auto iTer = -1;
-    for (auto current_plot : sigma_plots)
+    // Iterate by reference: sigma_plots now holds std::unique_ptr<TGraph>;
+    // operator-> works the same.  Lifetime: the TGraphs live until
+    // sigma_plots goes out of scope at end of function; the surrounding
+    // canvas draw happens before that.
+    for (auto &current_plot : sigma_plots)
     {
         iTer++;
         current_plot->SetLineColor(plot_nice[iTer][0]);
@@ -486,7 +507,7 @@ void photon_number(std::string data_repository, std::string run_name, int max_fr
     //  Test Sigma
     new TCanvas();
     TGraph *test = new TGraph();
-    TH1F *frame = new TH1F("", "", 1000, -TMath::Pi(), TMath::Pi());
+    RootHist<TH1F> frame("", "", 1000, -TMath::Pi(), TMath::Pi());
     frame->SetMinimum(2.0);
     frame->SetMaximum(3.5);
     frame->GetXaxis()->SetTitle("#phi (rad)");

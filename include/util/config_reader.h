@@ -34,7 +34,10 @@
 // =========================================================================
 
 /// Named roles that are mutually exclusive per (device, chip) pair.
-static const std::set<std::string> lightdata_core_tags = {"timing", "tracking", "cherenkov"};
+/// `inline` (C++17) gives a single shared definition across translation
+/// units — the previous `static` declaration produced one copy per TU
+/// (CODE_REVIEW §5.10).
+inline const std::set<std::string> lightdata_core_tags = {"timing", "tracking", "cherenkov"};
 
 // =========================================================================
 //  Readout configuration
@@ -102,6 +105,7 @@ public:
 
     /// @brief First config whose @c name matches @p name, or @c nullptr.
     ReadoutConfigStruct *find_by_name(const std::string &name);
+    const ReadoutConfigStruct *find_by_name(const std::string &name) const;
 
     /// @brief First config that contains @p device, or @c nullptr.
     ReadoutConfigStruct *find_by_device(uint16_t device);
@@ -130,7 +134,22 @@ public:
 
     /// @}
 
-    std::vector<ReadoutConfigStruct> configs; ///< Ordered list of readout role assignments.
+    /// @brief Read-only view of the underlying configs.  Use this instead of
+    ///        the (now-private) member when iterating; the const-ref return
+    ///        keeps callers from accidentally mutating mid-loop and
+    ///        invalidating pointers returned by @ref find_by_device etc.
+    const std::vector<ReadoutConfigStruct> &all() const noexcept { return configs; }
+
+private:
+    /// Ordered list of readout role assignments.  Private so external code can
+    /// neither `push_back` (which would invalidate previously returned
+    /// pointers from `find_*`) nor mutate entries without going through the
+    /// class API (CODE_REVIEW §5.11).  No `.configs.push_back(...)` callers
+    /// exist today; if a future need arises, add a guarded `add_config(...)`
+    /// method here rather than re-exposing the vector.
+    std::vector<ReadoutConfigStruct> configs;
+
+public:
 };
 
 // =========================================================================

@@ -40,23 +40,33 @@
  * @brief Container and analysis engine for a collection of reconstructed ALCOR hits.
  *
  * ### Ownership and pointer semantics
- * By default the class owns its data through internal `std::vector` members.  The
- * `set_*_ptr` / `set_*_link` family of methods allows an external vector to be adopted,
- * which is useful when the data are managed by a ROOT branch.  After calling
- * `link_to_tree()` the internal pointers are re-targeted to ROOT's branch buffers and
- * must not be invalidated while the tree is in use.
+ * The class owns its data through internal `std::vector` members.  After
+ * @ref link_to_tree the @c recodata_ptr / @c triggers_ptr slots hold the
+ * address of those owned vectors; ROOT's `TTree::SetBranchAddress` is bound
+ * to the address of the *_ptr slot (`&recodata_ptr`).
  *
- * @warning Mixing owned and borrowed storage (i.e. calling `set_recodata_ptr` after
- *          `link_to_tree`) leads to undefined behaviour.
+ * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * ROOT branches bind to the address of the wrapper's @c _ptr slots.  Any
+ * copy or move of @c AlcorRecodata would either duplicate the slot value
+ * (pointing into the source's freed memory after destruction) or relocate
+ * the slot (leaving ROOT's branch binding dangling).  Hold by reference,
+ * by @c std::unique_ptr, or as a class member.  Same contract as
+ * @ref AlcorSpilldata.
  */
 class AlcorRecodata
 {
+public:
+    AlcorRecodata(const AlcorRecodata &) = delete;
+    AlcorRecodata &operator=(const AlcorRecodata &) = delete;
+    AlcorRecodata(AlcorRecodata &&) = delete;
+    AlcorRecodata &operator=(AlcorRecodata &&) = delete;
+
 private:
     std::vector<TriggerEvent> triggers;                  ///< Owned trigger collection.
-    std::vector<TriggerEvent> *triggers_ptr = &triggers; ///< Active pointer (may point to external storage).
+    std::vector<TriggerEvent> *triggers_ptr = &triggers; ///< Branch-address pointer slot — points at the owned vector for the wrapper's lifetime (non-movable class).
 
     std::vector<AlcorFinedataStruct> recodata;                  ///< Owned Hit collection.
-    std::vector<AlcorFinedataStruct> *recodata_ptr = &recodata; ///< Active pointer (may point to external storage).
+    std::vector<AlcorFinedataStruct> *recodata_ptr = &recodata; ///< Branch-address pointer slot — points at the owned vector for the wrapper's lifetime.
 
     // ---- Hough-transform internals ----------------------------------------
     std::vector<float> hough_r_bins; ///< Radial bin centres used during Hough voting.
@@ -91,14 +101,14 @@ public:
      */
     ///@{
 
-    /// @brief Return a copy of the full Hit vector.
-    inline std::vector<AlcorFinedataStruct> get_recodata() const { return recodata; }
+    /// @brief Read-only access to the full Hit vector (by reference — no copy).
+    inline const std::vector<AlcorFinedataStruct> &get_recodata() const { return recodata; }
 
-    /// @brief Return the raw pointer to the active Hit vector (may be external).
+    /// @brief Return the raw pointer slot used by ROOT for branch binding.
     inline std::vector<AlcorFinedataStruct> *get_recodata_ptr() { return recodata_ptr; }
 
-    /// @brief Return a copy of the Hit struct at index @p i.
-    inline AlcorFinedataStruct get_recodata(int i) const { return recodata[i]; }
+    /// @brief Read-only access to the Hit struct at index @p i (by reference — no copy).
+    inline const AlcorFinedataStruct &get_recodata(int i) const { return recodata[i]; }
 
     /// @brief Return a mutable reference to the full Hit vector.
     inline std::vector<AlcorFinedataStruct> &get_recodata_link() { return recodata; }
@@ -118,10 +128,10 @@ public:
      */
     inline AlcorFinedata get_finedata(int i) const { return AlcorFinedata(recodata[i]); }
 
-    /// @brief Return a copy of the full trigger vector.
-    inline std::vector<TriggerEvent> get_triggers() const { return triggers; }
+    /// @brief Read-only access to the full trigger vector (by reference — no copy).
+    inline const std::vector<TriggerEvent> &get_triggers() const { return triggers; }
 
-    /// @brief Return the raw pointer to the active trigger vector (may be external).
+    /// @brief Return the raw pointer slot used by ROOT for branch binding.
     inline std::vector<TriggerEvent> *get_triggers_ptr() { return triggers_ptr; }
 
     /// @brief Return a mutable reference to the full trigger vector.
@@ -169,15 +179,21 @@ public:
     inline float get_hit_phi(int i, std::array<float, 2> v) const { return std::atan2(get_hit_y(i) - v[1], get_hit_x(i) - v[0]); }
 
     /// @brief Pixel-randomised x-coordinate (uniform ±1.5 mm jitter within the pixel cell).
+    ///
+    /// Distribution is cached `static thread_local` to avoid per-call construction —
+    /// this getter sits in hot lightdata_writer loops; see the matching note on
+    /// `AlcorFinedata::get_hit_x_rnd`.
     inline float get_hit_x_rnd(int i) const {
         thread_local mist::Rnd rng;
-        return recodata[i].hit_x + rng.uniform(-1.5f, 1.5f);
+        static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
+        return recodata[i].hit_x + pixel_jitter(rng.engine());
     }
 
     /// @brief Pixel-randomised y-coordinate (uniform ±1.5 mm jitter within the pixel cell).
     inline float get_hit_y_rnd(int i) const {
         thread_local mist::Rnd rng;
-        return recodata[i].hit_y + rng.uniform(-1.5f, 1.5f);
+        static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
+        return recodata[i].hit_y + pixel_jitter(rng.engine());
     }
 
     /// @brief Radial distance from the origin using randomised coordinates.
@@ -251,22 +267,29 @@ public:
 
     // ================================================================
     /** @name Setters
+     *
+     * The previous by-value `set_recodata(...)`, `set_triggers(...)`,
+     * `set_recodata_link(...)`, `set_triggers_link(...)` methods are
+     * removed (CODE_REVIEW §D-08) — no callers, and they either copy
+     * multi-MB containers per call or invite the F1/F2/F3 branch-address
+     * traps now blocked by the non-copyable contract.
+     *
+     * The `set_*_ptr` family is **retained** because @ref AlcorRecotrackdata
+     * uses it to alias its parent @ref AlcorRecodata's vectors so each
+     * `tree->GetEntry()` propagates through both wrappers.  External code
+     * should not call these directly — the parent-aliasing pattern is a
+     * narrow internal contract enforced by the non-copyable invariant on
+     * both wrappers (caller is responsible for outliving the parent).
      */
     ///@{
 
-    /// @brief Replace the entire Hit collection.
-    inline void set_recodata(std::vector<AlcorFinedataStruct> v) { recodata = v; }
-
-    /// @brief Replace the Hit at index @p i.
-    inline void set_recodata(int i, AlcorFinedataStruct v) { recodata[i] = v; }
-
-    /// @brief Replace the entire trigger collection.
-    inline void set_triggers(const std::vector<TriggerEvent> v) { triggers = v; }
-
-    /// @brief Redirect the active Hit pointer to an external vector.
+    /// @brief Alias the branch-binding pointer slot to an external vector
+    ///        (internal API used by @ref AlcorRecotrackdata to share its
+    ///        parent's data).  Caller MUST ensure the source object
+    ///        outlives this one.
     inline void set_recodata_ptr(std::vector<AlcorFinedataStruct> *v) { recodata_ptr = v; }
 
-    /// @brief Redirect the active trigger pointer to an external vector.
+    /// @brief Same as @ref set_recodata_ptr but for the trigger vector.
     inline void set_triggers_ptr(std::vector<TriggerEvent> *v) { triggers_ptr = v; }
 
     /// @brief Overwrite the global channel index of Hit @p i.
@@ -280,12 +303,6 @@ public:
 
     /// @brief Overwrite the quality bitmask of Hit @p i (full replacement).
     inline void set_hit_mask(int i, uint32_t v) { recodata[i].HitMask = v; }
-
-    /// @brief Rebind the active Hit pointer to @p v (copies vector and rebinds pointer).
-    void set_recodata_link(std::vector<AlcorFinedataStruct> &v);
-
-    /// @brief Rebind the active trigger pointer to @p v (copies vector and rebinds pointer).
-    void set_triggers_link(std::vector<TriggerEvent> &v);
 
     ///@}
 

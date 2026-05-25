@@ -15,6 +15,7 @@
 #include "tracking_altai.h"
 #include <vector>
 #include <cmath>
+#include <limits>
 #include "TTree.h"
 
 // =========================================================================
@@ -26,11 +27,16 @@
  */
 struct AlcorRecotrackdataStruct
 {
-    float det_plane_x;     ///< Extrapolated X coordinate at the detector plane [mm].
-    float det_plane_y;     ///< Extrapolated Y coordinate at the detector plane [mm].
-    float traj_angcoeff_x; ///< Track angular coefficient along X (dx/dz).
-    float traj_angcoeff_y; ///< Track angular coefficient along Y (dy/dz).
-    float chi2ndof;        ///< Fit quality: χ²/NDF.
+    // Default-initialised to NaN so a silent `resize(idx+1)` in
+    // AlcorRecotrackdata::recotrackdata_at (CODE_REVIEW §2.7) cannot produce
+    // indeterminate float reads.  Callers that need a real value overwrite
+    // these explicitly; downstream consumers can test `std::isnan(...)` to
+    // detect uninitialised entries.
+    float det_plane_x     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated X coordinate at the detector plane [mm].
+    float det_plane_y     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated Y coordinate at the detector plane [mm].
+    float traj_angcoeff_x = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along X (dx/dz).
+    float traj_angcoeff_y = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along Y (dy/dz).
+    float chi2ndof        = std::numeric_limits<float>::quiet_NaN(); ///< Fit quality: χ²/NDF.
 
     AlcorRecotrackdataStruct() = default;
 
@@ -51,10 +57,22 @@ struct AlcorRecotrackdataStruct
  * Inherits the full event/trigger machinery from @ref AlcorRecodata and
  * adds a per-event vector of @ref AlcorRecotrackdataStruct entries, one
  * per telescope track reconstructed by ALTAI.
+ *
+ * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * Inherits the non-copyable / non-movable contract from @ref AlcorRecodata,
+ * declared explicitly below for clarity.  ROOT branch addresses bound here
+ * (recotrackdata_ptr) and inherited (recodata_ptr, triggers_ptr) are stable
+ * for the wrapper's lifetime.  Hold by reference, by @c std::unique_ptr,
+ * or as a class member.
  */
 class AlcorRecotrackdata : public AlcorRecodata
 {
 public:
+    AlcorRecotrackdata(const AlcorRecotrackdata &) = delete;
+    AlcorRecotrackdata &operator=(const AlcorRecotrackdata &) = delete;
+    AlcorRecotrackdata(AlcorRecotrackdata &&) = delete;
+    AlcorRecotrackdata &operator=(AlcorRecotrackdata &&) = delete;
+
     // -------------------------------------------------------------------------
     /** @name Construction */
     /// @{
@@ -65,10 +83,11 @@ public:
     /**
      * @brief Construct by linking to an existing @ref AlcorRecodata.
      *
-     * Shares the recodata and trigger pointer arrays of @p v so that a single
-     * TTree branch set covers both base and derived data.
+     * Shares the recodata and trigger pointer slots of @p v so that a single
+     * @c tree->GetEntry() updates both wrappers' views.  Caller MUST ensure
+     * @p v outlives the constructed @c AlcorRecotrackdata.
      *
-     * @param v Source recodata object whose internal pointers are borrowed.
+     * @param v Source recodata object whose internal pointers are aliased.
      */
     AlcorRecotrackdata(AlcorRecodata &v);
 

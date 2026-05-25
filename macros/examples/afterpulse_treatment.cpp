@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 /**
  * @file trigger_coincidence.cpp
@@ -38,7 +40,7 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
     //  Load recodata, return if not available
-    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str(), "READ"));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
         std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
@@ -55,12 +57,12 @@ void afterpulse_treatment(std::string data_repository, std::string run_name, int
     auto all_frames = min((int)n_frames, (int)max_frames);
 
     //  Time distribution
-    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-    TH1F *h_t_AP_distribution = new TH1F("h_t_AP_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-    TH1F *h_t_noAP_distribution = new TH1F("h_t_noAP_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_distribution("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_AP_distribution("h_t_AP_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_noAP_distribution("h_t_noAP_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
     //  Time distribution
-    TH1F *h_t_detector_0 = new TH1F("h_t_detector_0", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
-    TH1F *h_t_detector_1 = new TH1F("h_t_detector_1", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_detector_0("h_t_detector_0", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_detector_1("h_t_detector_1", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
 
     //  --- --- --- --- --- ---
     //  Loop on data

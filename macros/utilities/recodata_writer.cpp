@@ -48,23 +48,23 @@ int main(int argc, char **argv)
             auto recovered_run_list = RunInfo::get_run_list(RunList);
             if (!recovered_run_list)
             {
-                mist::logger::error(Form("Run list '%s' not found in database", RunList.c_str()));
-                throw CLI::ValidationError("--run-list", Form("Run list '%s' not found in database", RunList.c_str()));
+                mist::logger::error(TString::Format("Run list '%s' not found in database", RunList.c_str()).Data());
+                throw CLI::ValidationError("--run-list", TString::Format("Run list '%s' not found in database", RunList.c_str()).Data());
             }
 
             auto list_start = std::chrono::high_resolution_clock::now();
             for (const auto &current_run_name : *recovered_run_list)
             {
                 auto start = std::chrono::high_resolution_clock::now();
-                mist::logger::info(Form("(recodata_writer) Starting writing recodata for run '%s'", current_run_name.c_str()));
+                mist::logger::info(TString::Format("(recodata_writer) Starting writing recodata for run '%s'", current_run_name.c_str()).Data());
                 recodata_writer(data_repository, current_run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf, trigger_config_file);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
-                mist::logger::info(Form("(recodata_writer) Total time taken: %f seconds", elapsed.count()));
+                mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", elapsed.count()).Data());
             }
             auto list_end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> list_elapsed = list_end - list_start;
-            mist::logger::info(Form("(recodata_writer) Total time taken: %f seconds", list_elapsed.count()));
+            mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", list_elapsed.count()).Data());
         }
         else
         {
@@ -72,7 +72,7 @@ int main(int argc, char **argv)
             recodata_writer(data_repository, run_name, max_spill, force_recodata_rebuild, force_lightdata_rebuild, mapping_conf, trigger_config_file);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
-            mist::logger::info(Form("(recodata_writer) Total time taken: %f seconds", elapsed.count()));
+            mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", elapsed.count()).Data());
         }
     }
     catch (const CLI::ParseError &e)

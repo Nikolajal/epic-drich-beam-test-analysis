@@ -1,4 +1,8 @@
+// LINT-OK-FILE: scratchpad — analysis entry-points are toggled by
+// commenting/uncommenting lines below; per-line LINT-OK markers would
+// add noise.  Refactor to a proper driver if this stabilises.
 #include "../lib_loader.h"
+#include "util/root_hist.h"
 #include "dark_count_rate.cpp"
 #include "photon_number.cpp"
 
@@ -75,7 +79,7 @@ void my_test(
 
     g_dcr_1350->SetTitle("DCR vs V_{bias};V_{bias} (V);DCR (kHz)");
 
-    TH1F *h_frame_dcr = new TH1F("h_frame_dcr", ";V_{bias} (V);DCR (kHz)", 50, 50, 55);
+    RootHist<TH1F> h_frame_dcr("h_frame_dcr", ";V_{bias} (V);DCR (kHz)", 50, 50, 55);
     h_frame_dcr->SetMinimum(0.25);
     h_frame_dcr->SetMaximum(25);
 

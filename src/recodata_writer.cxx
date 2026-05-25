@@ -25,21 +25,57 @@ void recodata_writer(
     //  Framer configuration
     auto framer_cfg = FramerConfReader(framer_conf);
 
-    //  Input files
+    //  Input file — open lightdata.root, auto-rebuild via lightdata_writer
+    //  if missing/corrupt or if force_lightdata_rebuild is set (CODE_REVIEW §D-06).
+    //  TFilePtr is owning: closes + deletes on every exit path.
     std::string input_filename = data_repository + "/" + run_name + "/lightdata.root";
-    TFile *input_file = open_or_build_rootfile(input_filename, lightdata_writer, data_repository, run_name, max_spill, force_lightdata_rebuild);
-    if (!input_file)
-        return;
+    TFilePtr input_file(TFile::Open(input_filename.c_str(), "READ"));
+    if (!input_file || input_file->IsZombie() || force_lightdata_rebuild)
+    {
+        mist::logger::warning("(recodata_writer) " + input_filename +
+                              " missing, corrupt, or rebuild forced — running lightdata_writer");
+        // Default trailing args (calibration / framer config) preserve the
+        // previous helper's hardcoded behaviour.  Callers that need to
+        // forward custom config paths should call lightdata_writer directly
+        // before recodata_writer rather than relying on this fallback.
+        lightdata_writer(data_repository, run_name, max_spill,
+                         force_lightdata_rebuild, /*requested_n_threads=*/-1);
+        input_file.reset(TFile::Open(input_filename.c_str(), "READ"));
+        if (!input_file || input_file->IsZombie())
+        {
+            mist::logger::error("(recodata_writer) Could not open " + input_filename +
+                                " even after rebuild — aborting");
+            return;
+        }
+    }
 
-    //  Link lightdata tree locally
-    TTree *lightdata_tree = (TTree *)input_file->Get("lightdata");
+    //  Link lightdata tree locally — use TFile::Get<TTree> which returns the
+    //  correctly typed pointer (cleaner than a C-style cast that can mask a
+    //  type mismatch).  Bail out if the branch is missing.
+    auto *lightdata_tree = input_file->Get<TTree>("lightdata");
+    if (!lightdata_tree)
+    {
+        mist::logger::error(TString::Format("(recodata_writer) 'lightdata' tree missing in %s",
+                                 input_filename.c_str()).Data());
+        return;
+    }
     AlcorSpilldata *spilldata = new AlcorSpilldata();
     spilldata->link_to_tree(lightdata_tree);
 
     AlcorFinedata::read_calib_from_file(data_repository + "/" + run_name + "/fine_calib.txt");
 
-    auto fine_time_calib_th2f = (TH2F *)input_file->Get("h_fine_calib");
+    auto fine_time_calib_th2f = input_file->Get<TH2F>("h_fine_calib");
+    if (!fine_time_calib_th2f)
+    {
+        mist::logger::error(TString::Format("(recodata_writer) 'h_fine_calib' histogram missing in %s",
+                                 input_filename.c_str()).Data());
+        return;
+    }
     AlcorFinedata::generate_calibration(fine_time_calib_th2f, true);
+    //  Calibration table is now built; signal immutability so per-Hit
+    //  AlcorFinedata::get_phase() readers skip the shared_mutex
+    //  (CODE_REVIEW §3.1).  No worker threads have spawned yet.
+    AlcorFinedata::freeze_calibration();
 
     //  Progress tracking — multi-bar with one subtask (per-frame post-processing).
     //  Main bar shows overall spill progress; the subtask clock is restarted
@@ -69,11 +105,16 @@ void recodata_writer(
     std::string outname = data_repository + "/" + run_name + "/recodata.root";
     if (std::filesystem::exists(outname) && !force_recodata_rebuild)
     {
-        mist::logger::info(Form("Output file already exists, skipping: %s", outname.c_str()));
+        mist::logger::info(TString::Format("Output file already exists, skipping: %s", outname.c_str()).Data());
         return;
     }
 
-    TFile *output_file = TFile::Open(outname.c_str(), "RECREATE");
+    TFilePtr output_file(TFile::Open(outname.c_str(), "RECREATE"));
+    if (!output_file || output_file->IsZombie())
+    {
+        mist::logger::error(TString::Format("(recodata_writer) Failed to create output file %s", outname.c_str()).Data());
+        return;
+    }
     TTree *recodata_tree = new TTree("recodata", "Recodata tree");
     AlcorRecodata recodata;
     recodata.write_to_tree(recodata_tree);
@@ -118,7 +159,7 @@ void recodata_writer(
     //  h_edge_trigger_position: coarse time of edge-rejected triggers,
     //    to verify the 25 ns cut is well placed
 
-    TH2F *h_trigger_qa = new TH2F(
+    RootHist<TH2F> h_trigger_qa(
         "h_trigger_qa",
         "Trigger selection QA;trigger;outcome",
         n_triggers, 0, n_triggers,
@@ -129,7 +170,7 @@ void recodata_writer(
     h_trigger_qa->GetYaxis()->SetBinLabel(2, "edge-rejected");
     h_trigger_qa->GetYaxis()->SetBinLabel(3, "duplicate-rejected");
 
-    TH2F *h_frames_per_spill = new TH2F(
+    RootHist<TH2F> h_frames_per_spill(
         "h_frames_per_spill",
         "Frame counts per spill;spill;category",
         all_spills, 0, all_spills,
@@ -139,7 +180,7 @@ void recodata_writer(
     h_frames_per_spill->GetYaxis()->SetBinLabel(3, "had edge trigger");
     h_frames_per_spill->GetYaxis()->SetBinLabel(4, "duplicate-rejected");
 
-    TH2F *h_edge_trigger_position = new TH2F(
+    RootHist<TH2F> h_edge_trigger_position(
         "h_edge_trigger_position",
         "Position of edge-rejected triggers;trigger;coarse time (cc)",
         n_triggers, 0, n_triggers,
@@ -147,7 +188,7 @@ void recodata_writer(
     for (int i = 0; i < n_triggers; ++i)
         h_edge_trigger_position->GetXaxis()->SetBinLabel(i + 1, registry.triggers[i].second.c_str());
 
-    std::unordered_map<int, TH1F *> h_trigger_time_diff_w_cherenkov;
+    std::unordered_map<int, RootHist<TH1F>> h_trigger_time_diff_w_cherenkov;
 
     //  ── Loop over spills ─────────────────────────────────────────────────────
     std::map<int, std::vector<float>> map_of_offsets;
@@ -171,7 +212,7 @@ void recodata_writer(
                                                });
             if (timing_trigger != current_trigger_list.end())
             {
-                for (auto current_cherenkov : current_lightdata.get_cherenkov_hits_link())
+                for (const auto &current_cherenkov : current_lightdata.get_cherenkov_hits_link())
                 {
                     AlcorFinedata current_hit(current_cherenkov);
                     auto index = current_hit.get_global_index();
@@ -207,16 +248,16 @@ void recodata_writer(
             temy_testt.set_rollover(0);
             temy_testt.set_coarse(0);
             temy_testt.set_fine(0);
-            mist::logger::debug(Form("channel %i - offset: %f", channel_index, offset_value));
-            mist::logger::debug(Form("channel %i - param0: %f", channel_index, AlcorFinedata::get_param0(channel_index)));
-            mist::logger::debug(Form("channel %i - param1: %f", channel_index, AlcorFinedata::get_param1(channel_index)));
-            mist::logger::debug(Form("channel %i - param2: %f", channel_index, AlcorFinedata::get_param2(channel_index)));
-            mist::logger::debug(Form("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()));
+            mist::logger::debug(TString::Format("channel %i - offset: %f", channel_index, offset_value).Data());
+            mist::logger::debug(TString::Format("channel %i - param0: %f", channel_index, AlcorFinedata::get_param0(channel_index)).Data());
+            mist::logger::debug(TString::Format("channel %i - param1: %f", channel_index, AlcorFinedata::get_param1(channel_index)).Data());
+            mist::logger::debug(TString::Format("channel %i - param2: %f", channel_index, AlcorFinedata::get_param2(channel_index)).Data());
+            mist::logger::debug(TString::Format("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()).Data());
             AlcorFinedata::set_param2(channel_index, -offset_value / BTANA_ALCOR_CC_TO_NS);
-            mist::logger::debug(Form("channel %i - param0: %f", channel_index, AlcorFinedata::get_param0(channel_index)));
-            mist::logger::debug(Form("channel %i - param1: %f", channel_index, AlcorFinedata::get_param1(channel_index)));
-            mist::logger::debug(Form("channel %i - param2: %f", channel_index, AlcorFinedata::get_param2(channel_index)));
-            mist::logger::debug(Form("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()));
+            mist::logger::debug(TString::Format("channel %i - param0: %f", channel_index, AlcorFinedata::get_param0(channel_index)).Data());
+            mist::logger::debug(TString::Format("channel %i - param1: %f", channel_index, AlcorFinedata::get_param1(channel_index)).Data());
+            mist::logger::debug(TString::Format("channel %i - param2: %f", channel_index, AlcorFinedata::get_param2(channel_index)).Data());
+            mist::logger::debug(TString::Format("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()).Data());
         }
         AlcorFinedata::set_param2(channel_index, -offset_value / BTANA_ALCOR_CC_TO_NS);
     }
@@ -298,12 +339,25 @@ void recodata_writer(
             bool had_edge = false;
             std::map<uint8_t, TriggerEvent> accepted_triggers;
 
-            for (auto current_trigger : current_lightdata.get_triggers())
+            // Trigger selection order matters:
+            //   1. Skip the UNKNOWN sentinel.
+            //   2. Edge rejection — edge-rejected triggers do NOT count toward
+            //      the per-frame "we've seen this index already" set.
+            //   3. Duplicate check (against accepted_triggers from earlier
+            //      iterations of this same loop, i.e. earlier in the frame):
+            //      - within BTANA_TRIGGER_MIN_SEPARATION cc → temporal dup,
+            //        drop silently;
+            //      - else → distinct second firing of the same trigger →
+            //        reject the whole frame.
+            //   4. Otherwise: accept (insert into accepted_triggers), create
+            //      the time-diff histogram lazily, fill it.
+            // The previous version inserted at the top of the loop BEFORE the
+            // duplicate check, so the check at (3) was always true and every
+            // trigger was silently dropped on the temporal-duplicate branch.
+            for (const auto &current_trigger : current_lightdata.get_triggers())
             {
                 if (current_trigger.index == _TRIGGER_UNKNOWN_)
                     continue;
-
-                accepted_triggers[current_trigger.index] = current_trigger;
 
                 const int reg_bin = registry.index_of(current_trigger.index) + 0.5; // centre of bin
 
@@ -317,9 +371,10 @@ void recodata_writer(
                     continue;
                 }
 
-                if (accepted_triggers.count(current_trigger.index))
+                if (auto it = accepted_triggers.find(current_trigger.index);
+                    it != accepted_triggers.end())
                 {
-                    auto &prev = accepted_triggers[current_trigger.index];
+                    const auto &prev = it->second;
                     if (std::fabs((float)current_trigger.coarse - (float)prev.coarse) < BTANA_TRIGGER_MIN_SEPARATION)
                         continue; // temporal duplicate, drop silently
 
@@ -328,16 +383,17 @@ void recodata_writer(
                     break;
                 }
 
+                // First time seeing this trigger index in this frame — accept.
                 accepted_triggers[current_trigger.index] = current_trigger;
                 if (!h_trigger_time_diff_w_cherenkov.count(current_trigger.index))
                     h_trigger_time_diff_w_cherenkov[current_trigger.index] =
-                        new TH1F(
-                            Form("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()),
+                        RootHist<TH1F>(
+                            TString::Format("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()).Data(),
                             ";#Delta_{t} (t_{Hit} - t_{trigger}) ns;Normalised entries",
                             5e3,
                             -500,
                             500);
-                for (auto current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
+                for (const auto &current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
                     h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(
                         AlcorFinedata(current_cherenkov_hit_struct).get_time_ns() -
                         current_trigger.fine_time);
@@ -363,7 +419,7 @@ void recodata_writer(
             }
 
             //  ── Cherenkov hits ─────────────────────────────────────────────────
-            for (auto current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
+            for (const auto &current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
                 recodata.add_hit(current_cherenkov_hit_struct);
 
             recodata_tree->Fill();
@@ -372,8 +428,8 @@ void recodata_writer(
             h_frames_per_spill->Fill(i_spill, 1.5); // accepted
         }
 
-        mist::logger::info(Form("Spill %i done — accepted: %i  had-edge: %i  duplicate-rejected: %i  total: %zu",
-                                i_spill, n_accepted, n_edge, n_duplicate, frames_in_spill.size()));
+        mist::logger::info(TString::Format("Spill %i done — accepted: %i  had-edge: %i  duplicate-rejected: %i  total: %zu",
+                                i_spill, n_accepted, n_edge, n_duplicate, frames_in_spill.size()).Data());
 
         //  Reflect the just-completed spill on the main bar.
         progress_bars.update(i_spill + 1, all_spills);
@@ -394,181 +450,11 @@ void recodata_writer(
     h_trigger_qa->Write();
     h_frames_per_spill->Write();
     h_edge_trigger_position->Write();
-    for (auto [key, val] : h_trigger_time_diff_w_cherenkov)
+    for (auto &[key, val] : h_trigger_time_diff_w_cherenkov)
         val->Write();
     //
-    //  ---
-    //  --- Close file
-    input_file->Close();
-    output_file->Close();
-    //  ---
+    //  input_file and output_file closed automatically by TFilePtr dtors.
     //  End: QA plots
     //  --- --- --- --- --- ---
 }
 
-/*
-// ============================================================================
-//  QA / CALIBRATION — retained for eventual retrieval
-// ============================================================================
-
-  //  Get calibration
-  TH2F *h_calibration_data = (TH2F *)input_file->Get("TH2F_fine_calib_global_index");
-  // spilldata->generate_calibration(h_calibration_data);
-  // spilldata->read_calib_from_file("alcor_fine_calibration.txt");
-
-  //  Proximity cache for cross-talk tagging
-  std::map<std::array<float, 2>, int> hit_to_index_xy;
-  for (auto &[i_index, pos] : index_to_hit_xy)
-    hit_to_index_xy[pos] = i_index;
-
-  const float pitch = 4.0f;
-  const float tolerance = 1.f;
-  std::map<int, std::vector<int>> index_to_proximity_index;
-  float average_hits = 0.f;
-  for (auto &[current_index, current_position] : index_to_hit_xy)
-  {
-    auto &current_neighbors_list = index_to_proximity_index[current_index];
-    for (int x_neighbor : {-1, 0, 1})
-      for (int y_neighbor : {-1, 0, 1})
-      {
-        if (x_neighbor == 0 && y_neighbor == 0)
-          continue;
-        std::array<float, 2> candidate = {
-            current_position[0] + x_neighbor * pitch,
-            current_position[1] + y_neighbor * pitch};
-        for (auto &[position, GlobalIndex] : hit_to_index_xy)
-        {
-          float distance = std::hypot(position[0] - candidate[0], position[1] - candidate[1]);
-          if (distance < tolerance)
-          {
-            current_neighbors_list.push_back(GlobalIndex);
-            break;
-          }
-        }
-      }
-    average_hits += current_neighbors_list.size();
-  }
-  mist::logger::debug(Form("index_to_proximity_index size: %zu", index_to_proximity_index.size()));
-  mist::logger::debug(Form("index_to_proximity_index avg: %f", average_hits / index_to_proximity_index.size()));
-
-  //  QA histograms
-  TProfile *h_dcr_rate_start_of_spill = new TProfile("h_dcr_rate_start_of_spill", ";global channel;DCR (kHz)", 2056, 0, 2056);
-  TProfile *h_hit_rate_triggered       = new TProfile("h_hit_rate_triggered",       ";global channel;DCR (kHz)", 2056, 0, 2056);
-  TH2F *h_unknown_trigger_devices      = new TH2F("h_unknown_trigger_devices",      ";spill;device ID", all_spills, 0, all_spills, 30, 190, 220);
-  TH2F *h_trigger_occupancy            = new TH2F("h_trigger_occupancy",            ";;saved frame ID + 10k*spill", 1000 * all_spills, 0, 1000000 * all_spills, 256, 0, 256);
-  std::map<uint8_t, TH2F *> h_hitmap_per_trigger;
-  std::map<uint8_t, TH2F *> h_time_delta_triggers;
-  std::map<uint8_t, TH1F *> h_triggers_per_spill;
-  TH2F *h_full_hitmap             = new TH2F("h_full_hitmap",             ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-  TH1F *h_selected_radius_dist    = new TH1F("h_selected_radius_dist",    ";x (mm);y (mm)", 600, 0, 150);
-  TH2F *h_full_hitmap_selected    = new TH2F("h_full_hitmap_selected",    ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-  TH2F *h_full_hitmap_selected_2  = new TH2F("h_full_hitmap_selected_2",  ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-  TH1F *h_delta_time_selected     = new TH1F("h_delta_time_selected",     ";delta time (ns)", 2 * framer_cfg.frame_size, -BTANA_ALCOR_CC_TO_NS * 2 * framer_cfg.frame_size, BTANA_ALCOR_CC_TO_NS * 2 * framer_cfg.frame_size);
-  TH1F *h_active_participants_per_channel = new TH1F("h_active_participants_per_channel", ";global index", 2048, 0, 2048);
-  TH2F *h_delta_trigger_fine_calib              = new TH2F("h_delta_trigger_fine_calib",              ";fine tdc;#Delta t (ns)", 100, 20, 120, 1000, -200, 200);
-  TH1F *h_delta_trigger_fine_calib_1d           = new TH1F("h_delta_trigger_fine_calib_1d",           ";#Delta t (ns)", 1000, -200, 200);
-  TH1F *h_delta_trigger_fine_nocalib_1d         = new TH1F("h_delta_trigger_fine_nocalib_1d",         ";#Delta t (ns)", 100, -200, 200);
-  TH2F *h_delta_trigger_timing_fine_calib       = new TH2F("h_delta_trigger_timing_fine_calib",       ";fine tdc;#Delta t (ns)", 100, 20, 120, 1000, -200, 200);
-  TH1F *h_delta_trigger_timing_fine_calib_1d    = new TH1F("h_delta_trigger_timing_fine_calib_1d",    ";#Delta t (ns)", 100, -200, 200);
-  TH1F *h_delta_trigger_timing_fine_nocalib_1d  = new TH1F("h_delta_trigger_timing_fine_nocalib_1d",  ";#Delta t (ns)", 1000, -200, 200);
-  TH1F *h_available_channel_chip_0_timing = new TH1F("h_available_channel_chip_0_timing", "", 32, 0, 32);
-  TH1F *h_available_channel_chip_1_timing = new TH1F("h_available_channel_chip_1_timing", "", 32, 0, 32);
-  TH2F *h_timing_hit_map                  = new TH2F("h_timing_hit_map",                  ";chip 0 hits;chip 1 hits", 33, 0, 33, 33, 0, 33);
-  TH1F *h_timing_delta_time               = new TH1F("h_timing_delta_time",               "", 5000, -100, 100);
-  TH1F *h_timing_cherenkov_delta_time     = new TH1F("h_timing_cherenkov_delta_time",     "", 2000, -200, 600);
-  TH1F *h_timing_trigger_0_delta_time     = new TH1F("h_timing_trigger_0_delta_time",     "", 1000, -200, 200);
-  TH2F *h_timing_cherenkov_delta_time_device = new TH2F("h_timing_cherenkov_delta_time_device", ";device ID;#Delta t (ns)", 10000, 0, 10000, 1000, -200, 200);
-
-  //  Participants per channel (for DCR)
-  std::map<int, std::vector<float>> participants_channel;
-  std::map<int, std::vector<float>> hit_time_per_channel;
-  std::map<int, float> trigger_in_frame;
-
-  //  Inside frame loop — timing reference
-  int timing_hit_chip_0 = 0, timing_hit_chip_1 = 0;
-  float timing_ref_chip_0 = 0, timing_ref_chip_1 = 0;
-  // Map keys are global_channel_raw() values — per-channel uniqueness with
-  // TDC bits cleared.  Storage is the new-layout raw (Phase 5), so
-  // construction is direct (no from_legacy).
-  std::map<uint32_t, bool> map_timing_hit_chip_0, map_timing_hit_chip_1;
-  for (auto current_timing_hit_struct : current_lightdata.get_timing_hits_link())
-  {
-    AlcorFinedata current_timing_hit(current_timing_hit_struct);
-    const uint32_t channel_key =
-        ::GlobalIndex(current_timing_hit.get_global_index()).global_channel_raw();
-
-    if (current_timing_hit.get_chip() == 0 && !map_timing_hit_chip_0[channel_key])
-    {
-      timing_hit_chip_0++;
-      timing_ref_chip_0 += (current_timing_hit.get_coarse() - current_timing_hit.get_phase());
-      map_timing_hit_chip_0[channel_key] = true;
-    }
-    if (current_timing_hit.get_chip() == 2 && !map_timing_hit_chip_1[channel_key])
-    {
-      timing_hit_chip_1++;
-      timing_ref_chip_1 += (current_timing_hit.get_coarse() - current_timing_hit.get_phase());
-      map_timing_hit_chip_1[channel_key] = true;
-    }
-  }
-  if (timing_hit_chip_0 && timing_hit_chip_1)
-    h_timing_hit_map->Fill(timing_hit_chip_0, timing_hit_chip_1);
-  auto ref_timing   = (timing_ref_chip_1 / timing_hit_chip_1 + timing_ref_chip_0 / timing_hit_chip_0) / 2.;
-  auto delta_timing = (timing_ref_chip_1 / timing_hit_chip_1 - timing_ref_chip_0 / timing_hit_chip_0);
-  auto timing_available = ((timing_hit_chip_0 == 32) && (timing_hit_chip_1 == 31)) && (fabs(delta_timing + 0.15) < 3 * 0.180);
-
-  //  Inside frame loop — cross-talk tagging
-  std::map<int, std::vector<float>> prev_hit_time_per_channel;
-  int prev_frame_reference = -1;
-  std::map<std::pair<int, float>, int> channel_time_to_recodata_index;
-  bool frames_are_adjacent = (current_frame == prev_frame_reference + 1);
-  for (auto &[GlobalIndex, times] : hit_time_per_channel)
-  {
-    if (times.empty()) continue;
-    if (!index_to_proximity_index.count(GlobalIndex)) continue;
-    for (auto neighbor_index : index_to_proximity_index[GlobalIndex])
-    {
-      for (auto t_self : times)
-        for (auto t_neighbor : hit_time_per_channel[neighbor_index])
-          if ((t_neighbor - t_self) < BTANA_CROSS_TALK_DEADTIME && (t_neighbor - t_self) > 0)
-            if (channel_time_to_recodata_index.count({neighbor_index, t_neighbor}))
-              recodata.add_hit_mask_bit(channel_time_to_recodata_index[{neighbor_index, t_neighbor}], HitmaskCrossTalk);
-      if (frames_are_adjacent)
-        for (auto t_self : times)
-          for (auto t_neighbor : prev_hit_time_per_channel[neighbor_index])
-            if ((t_neighbor - t_self) < BTANA_CROSS_TALK_DEADTIME && (t_neighbor - t_self) > 0)
-              if (channel_time_to_recodata_index.count({neighbor_index, t_neighbor}))
-                recodata.add_hit_mask_bit(channel_time_to_recodata_index[{neighbor_index, t_neighbor}], HitmaskCrossTalk);
-    }
-  }
-  prev_hit_time_per_channel = hit_time_per_channel;
-  prev_frame_reference = current_frame;
-
-  //  Per-channel DCR fill
-  for (auto [GlobalIndex, hits] : participants_channel)
-  {
-    if (trigger_in_frame.count(100))
-      h_dcr_rate_start_of_spill->Fill(GlobalIndex, hit_time_per_channel[GlobalIndex].size() + hits.size());
-    if (trigger_in_frame.count(0))
-      h_hit_rate_triggered->Fill(GlobalIndex, hit_time_per_channel[GlobalIndex].size() + hits.size());
-  }
-
-  //  Normalise & save QA plots
-  h_dcr_rate_start_of_spill->Scale((1./1000.) * (1./(framer_cfg.frame_size * BTANA_ALCOR_CC_TO_NS * 1e-9)));
-  h_hit_rate_triggered->Scale((1./1000.) * (1./(framer_cfg.frame_size * BTANA_ALCOR_CC_TO_NS * 1e-9)));
-  h_full_hitmap->Write();
-  h_full_hitmap_selected->Write();
-  h_full_hitmap_selected_2->Write();
-  h_active_participants_per_channel->Write();
-  h_selected_radius_dist->Write();
-  h_delta_time_selected->Write();
-  h_dcr_rate_start_of_spill->Write();
-  h_hit_rate_triggered->Write();
-  h_trigger_occupancy->Write();
-  h_unknown_trigger_devices->Write();
-  h_delta_trigger_fine_calib->Write();
-  for (auto [index, hist] : h_time_delta_triggers)  hist->Write();
-  for (auto [index, hist] : h_triggers_per_spill)   hist->Write();
-  for (auto [index, hist] : h_hitmap_per_trigger)   hist->Write();
-  spilldata->write_calib_to_file("alcor_fine_calibration.txt");
-
-*/

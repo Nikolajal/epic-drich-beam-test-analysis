@@ -87,12 +87,8 @@ public:
     /** @brief Default constructor. */
     ParallelStreamingFramer() = default;
 
-    /** @brief Destructor. */
-    ~ParallelStreamingFramer()
-    {
-        delete h2_fine_tune_distribution;
-        delete h_afterpulse_dt;
-    }
+    /** @brief Destructor.  Histograms are RAII-owned (RootHist members); no manual delete. */
+    ~ParallelStreamingFramer() = default;
 
     /**
      * @brief Construct a framer from a list of input files.
@@ -140,13 +136,12 @@ public:
     // -------------------------------------------------------------------------
 
     /**
-     * @brief Returns a copy of the current spill data.
-     * @return The accumulated @ref AlcorSpilldata for the current spill.
-     */
-    AlcorSpilldata get_spilldata() const { return spilldata; }
-
-    /**
      * @brief Returns a reference to the current spill data.
+     *
+     * The previous by-value `get_spilldata()` overload was removed when
+     * @ref AlcorSpilldata became non-copyable (CODE_REVIEW §D-08).  All
+     * callers should hold a reference / `unique_ptr` to the owning wrapper.
+     *
      * @return Reference to the internal @ref AlcorSpilldata object.
      */
     AlcorSpilldata &get_spilldata_link() { return spilldata; }
@@ -162,7 +157,7 @@ public:
      * @brief Returns the fine tune distribution per tdc index.
      * @return fine tune distribution per tdc index.
      */
-    TH2F *get_fine_tune_distribution() { return h2_fine_tune_distribution; }
+    TH2F *get_fine_tune_distribution() { return h2_fine_tune_distribution.get(); }
 
     /**
      * @brief Returns the same-channel Δt distribution used to validate the
@@ -173,7 +168,7 @@ public:
      * the near window (default 1–64 cc) and the far sideband (default
      * 256–319 cc) with comfortable headroom.
      */
-    TH1F *get_afterpulse_dt_distribution() { return h_afterpulse_dt; }
+    TH1F *get_afterpulse_dt_distribution() { return h_afterpulse_dt.get(); }
 
     /**
      * @brief Returns the per-stream, per-spill rollover correction table.
@@ -181,6 +176,16 @@ public:
      *         Entries are clock-cycle offsets; empty/zero entries indicate no correction.
      */
     const std::vector<std::vector<uint64_t>> &get_rollover_correction_table() const { return rollover_correction_per_stream_and_spill; }
+
+    /**
+     * @brief Read-only access to the loaded readout configuration.
+     *
+     * Use to query which device/chip pairs are assigned to each sub-detector
+     * role (timing / tracking / cherenkov) without re-parsing the TOML.
+     * Added for CODE_REVIEW §D-07 (timing chip IDs are no longer hardcoded
+     * in @c lightdata_writer.cxx).
+     */
+    const ReadoutConfigList &get_readout_config() const { return readout_config; }
 
     /**
      * @brief Returns the filenames of the data streams in index order.
@@ -192,17 +197,9 @@ public:
     // Setters
     // -------------------------------------------------------------------------
 
-    /**
-     * @brief Sets the spill data by value.
-     * @param v The @ref AlcorSpilldata object to assign.
-     */
-    void set_spilldata(AlcorSpilldata v) { spilldata = v; }
-
-    /**
-     * @brief Sets the spill data by reference.
-     * @param v Reference to the @ref AlcorSpilldata object to assign.
-     */
-    void set_spilldata_link(AlcorSpilldata &v) { spilldata = v; }
+    // set_spilldata*() removed: AlcorSpilldata is non-copyable and non-movable
+    // (CODE_REVIEW §D-08); replace any future "replace the spill" use case
+    // with `framer.get_spilldata_link().clear()` + repopulate-in-place.
 
     /**
      * @brief Sets the number of parallel processing threads.
@@ -294,6 +291,33 @@ public:
     bool next_spill();
 
     /**
+     * @brief Per-worker-thread scratch space (frame map + QA histograms).
+     *
+     * Each `std::async` worker in @ref next_spill owns one of these.  Two
+     * dominant per-Hit contention points are addressed by isolating them per
+     * worker:
+     *
+     *  1. **`frame_map`** — a private `std::map<uint32_t, AlcorLightdataStruct>`
+     *     that the worker writes to without acquiring @c frame_mutexes_access.
+     *     The shared `frame_mutexes_access` lock used to serialise every Hit's
+     *     `frame_and_lightdata[]` insertion across all 16 worker threads; that
+     *     was the dominant bottleneck even after the QA-fill move.  At spill
+     *     end @ref next_spill merges every worker's `frame_map` into the master
+     *     `spilldata.frame_and_lightdata` via @ref merge_lightdata.
+     *  2. **`h2_fine_tune` / `h_afterpulse`** — clones of the master QA
+     *     histograms, also filled lock-free by the worker and merged into the
+     *     master via `TH1::Add` at spill end (then freed).
+     *
+     * `spilldata_masks_mutex` is still used for `is_start_spill()` paths
+     * (rare; once per stream per spill).
+     */
+    struct WorkerQA {
+        TH2F *h2_fine_tune = nullptr; ///< Per-thread clone of @ref h2_fine_tune_distribution.
+        TH1F *h_afterpulse = nullptr; ///< Per-thread clone of @ref h_afterpulse_dt.
+        std::map<uint32_t, AlcorLightdataStruct> frame_map; ///< Per-worker frame buffer; merged into master at spill end.
+    };
+
+    /**
      * @brief Processes a single data stream for the current spill.
      *
      * Applies the per-stream, per-spill rollover correction (if any) before
@@ -301,9 +325,19 @@ public:
      * the correct frame regardless of missed rollover ticks.
      *
      * @param stream_index Index into @ref data_streams of the stream to process.
-     * @param _frame_size  Number of clock cycles per frame.
+     * @param qa           Per-worker scratch space (frame map + QA histograms).
+     *                     **Required** for parallel callers — workers write
+     *                     their frames into @c qa->frame_map without holding
+     *                     @c frame_mutexes_access.  May be @c nullptr only for
+     *                     a hypothetical single-threaded test driver; in that
+     *                     case the function falls back to direct writes into
+     *                     @c spilldata.frame_and_lightdata under the lock.
+     *
+     * Frame size is read directly from the @c _frame_size member; the
+     * previous `int _frame_size` parameter was an unused override (it
+     * just shadowed the member) — dropped per CODE_REVIEW §1.4.
      */
-    void process(size_t stream_index, int _frame_size);
+    void process(size_t stream_index, WorkerQA *qa = nullptr);
 
 private:
     // -------------------------------------------------------------------------
@@ -316,8 +350,11 @@ private:
      * Uses `std::visit` over the variant — the monostate arm is a no-op,
      * so callers never need to check whether a bar is assigned before calling this.
      *
-     * Thread-safe: both `ProgressBar` and `SubtaskProgressBar` are internally
-     * mutex-guarded, so concurrent calls from worker threads are safe.
+     * Thread-safe: both `ProgressBar` and `SubtaskProgressBar` from MIST's
+     * `<mist/logger>` are internally mutex-guarded (verified against MIST
+     * `dev`: each bar owns a `std::mutex` taken on every state-mutating
+     * method).  Concurrent calls from worker threads are safe.
+     * Closes CODE_REVIEW §1.10.
      */
     void _update_bar(int64_t current, int64_t total);
 
@@ -439,11 +476,11 @@ private:
     /// @name Histograms
     /// @{
 
-    /** @brief Fine tune distribution per tdc index. */
-    TH2F *h2_fine_tune_distribution;
+    /** @brief Fine tune distribution per tdc index — RAII-owned, no manual delete. */
+    RootHist<TH2F> h2_fine_tune_distribution;
 
-    /** @brief Same-channel Δt distribution (cc) — diagnostic for the afterpulse QA windows. */
-    TH1F *h_afterpulse_dt;
+    /** @brief Same-channel Δt distribution (cc) — diagnostic for the afterpulse QA windows.  RAII-owned. */
+    RootHist<TH1F> h_afterpulse_dt;
 
     /// @}
 };

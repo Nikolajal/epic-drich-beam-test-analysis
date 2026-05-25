@@ -1,3 +1,5 @@
+#include "../lib_loader.h"
+#include "util/root_hist.h"
 #include <TGraphErrors.h>
 #include <TCanvas.h>
 #include <TAxis.h>
@@ -94,7 +96,7 @@ void radiator_npe_comparison()
     canvas->SetTopMargin(0.08);
 
     // Create TH1F frame with 3 bins
-    TH1F *frame = new TH1F("frame", "", 3, 0.5, 3.5);
+    RootHist<TH1F> frame("frame", "", 3, 0.5, 3.5);
     frame->SetStats(0);
     frame->SetMinimum(10.0);
     frame->SetMaximum(40.0);

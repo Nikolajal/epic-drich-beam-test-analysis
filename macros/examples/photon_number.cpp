@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 // ─── Global analysis parameters ──────────────────────────────────────────────
 
@@ -38,7 +40,7 @@ TH1F *radial_efficiency(TH2F *h_rphi, const TAxis *ref_axis,
     double r_lo = ref_axis->GetXmin();
     double r_hi = ref_axis->GetXmax();
     static int eff_counter = 0;
-    auto *h = new TH1F(Form("h_eff_tmp_%d", eff_counter++),
+    auto *h = new TH1F(TString::Format("h_eff_tmp_%d", eff_counter++).Data(),
                        h_rphi->GetName(), n_out, r_lo, r_hi);
 
     std::vector<std::array<float, 2>> active_ranges = ranges;
@@ -134,7 +136,7 @@ void photon_number(std::string data_repository, std::string run_name,
                    int max_frames = 10000000)
 {
     std::string fname = data_repository + "/" + run_name + "/recodata.root";
-    TFile *f_in = new TFile(fname.c_str());
+    TFilePtr f_in(TFile::Open(fname.c_str(), "READ"));
     if (!f_in || f_in->IsZombie())
     {
         std::cerr << "[ERROR] Cannot open " << fname << "\n";
@@ -183,38 +185,38 @@ void photon_number(std::string data_repository, std::string run_name,
               << total_dcr_frames_prescan << " DCR frames\n";
 
     // ── Histograms ────────────────────────────────────────────────────────────
-    TH1F *h_fit_x = new TH1F("h_fit_x", ";circle center x (mm)", 240, -30, 30);
-    TH1F *h_fit_y = new TH1F("h_fit_y", ";circle center y (mm)", 240, -30, 30);
-    TH1F *h_fit_r = new TH1F("h_fit_r", ";circle radius (mm)", 400, 30, 130);
-    TH1F *h_dt = new TH1F("h_dt", ";t_{Hit}-t_{trig} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_fit_x("h_fit_x", ";circle center x (mm)", 240, -30, 30);
+    RootHist<TH1F> h_fit_y("h_fit_y", ";circle center y (mm)", 240, -30, 30);
+    RootHist<TH1F> h_fit_r("h_fit_r", ";circle radius (mm)", 400, 30, 130);
+    RootHist<TH1F> h_dt("h_dt", ";t_{Hit}-t_{trig} (ns)", 200, -312.5, 312.5);
 
-    TH2F *h_xy_hits = new TH2F("h_xy_hits", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_rphi_hits = new TH2F("h_rphi_hits", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_xy_hits("h_xy_hits", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH2F> h_rphi_hits("h_rphi_hits", ";#phi (rad);R (mm)",
                                  400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
 
-    TH1F *h_r_full = new TH1F("h_r_full", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_in_gap = new TH1F("h_r_in_gap", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap = new TH1F("h_r_ex_gap", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1350 = new TH1F("h_r_ex_gap_1350", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1375 = new TH1F("h_r_ex_gap_1375", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_full("h_r_full", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_in_gap("h_r_in_gap", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_ex_gap("h_r_ex_gap", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_ex_gap_1350("h_r_ex_gap_1350", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_ex_gap_1375("h_r_ex_gap_1375", ";R (mm)", kRBins, kRLo, kRHi);
 
-    TH1F *h_r_full_dcr = new TH1F("h_r_full_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_in_gap_dcr = new TH1F("h_r_in_gap_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_dcr = new TH1F("h_r_ex_gap_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1350_dcr = new TH1F("h_r_ex_gap_1350_dcr", ";R (mm)", kRBins, kRLo, kRHi);
-    TH1F *h_r_ex_gap_1375_dcr = new TH1F("h_r_ex_gap_1375_dcr", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_full_dcr("h_r_full_dcr", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_in_gap_dcr("h_r_in_gap_dcr", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_ex_gap_dcr("h_r_ex_gap_dcr", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_ex_gap_1350_dcr("h_r_ex_gap_1350_dcr", ";R (mm)", kRBins, kRLo, kRHi);
+    RootHist<TH1F> h_r_ex_gap_1375_dcr("h_r_ex_gap_1375_dcr", ";R (mm)", kRBins, kRLo, kRHi);
 
     static constexpr int kRFineBins = 100 * kCoverageGranularity;
-    TH2F *h_xy_cov = new TH2F("h_xy_cov", ";x (mm);y (mm)",
+    RootHist<TH2F> h_xy_cov("h_xy_cov", ";x (mm);y (mm)",
                               396 * kCoverageGranularity, -99, 99,
                               396 * kCoverageGranularity, -99, 99);
-    TH2F *h_rphi_cov = new TH2F("h_rphi_cov", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_rphi_cov("h_rphi_cov", ";#phi (rad);R (mm)",
                                 400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
                                 kRFineBins, kRLo, kRHi);
-    TH2F *h_rphi_cov_1350 = new TH2F("h_rphi_cov_1350", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_rphi_cov_1350("h_rphi_cov_1350", ";#phi (rad);R (mm)",
                                      400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
                                      kRFineBins, kRLo, kRHi);
-    TH2F *h_rphi_cov_1375 = new TH2F("h_rphi_cov_1375", ";#phi (rad);R (mm)",
+    RootHist<TH2F> h_rphi_cov_1375("h_rphi_cov_1375", ";#phi (rad);R (mm)",
                                      400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
                                      kRFineBins, kRLo, kRHi);
 
@@ -417,16 +419,22 @@ void photon_number(std::string data_repository, std::string run_name,
         h->Scale(1., "width");
         h->Scale(phi_scale);
     };
-    TH1F *eff_full = radial_efficiency(h_rphi_cov, r_axis, {{-(float)TMath::Pi(), (float)TMath::Pi()}});
-    TH1F *eff_in_gap = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, true);
-    TH1F *eff_ex_gap = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, false);
-    apply_correction(h_r_full, eff_full, 1.f);
-    apply_correction(h_r_in_gap, eff_in_gap, phi_extrapolation_scale(kPhiGapRanges, true));
-    apply_correction(h_r_ex_gap, eff_ex_gap, phi_extrapolation_scale(kPhiGapRanges, false));
-    TH1F *eff_1350 = radial_efficiency(h_rphi_cov_1350, r_axis, kPhiGapRanges, false);
-    TH1F *eff_1375 = radial_efficiency(h_rphi_cov_1375, r_axis, kPhiGapRanges, false);
-    apply_correction(h_r_ex_gap_1350, eff_1350, phi_extrapolation_scale(kPhiGapRanges, false));
-    apply_correction(h_r_ex_gap_1375, eff_1375, phi_extrapolation_scale(kPhiGapRanges, false));
+    // radial_efficiency() scans a 4M-bin TH2 — compute each unique (h_cov,
+    // phi_range, inclusive?) tuple ONCE and reuse the result for both the
+    // signal correction and the DCR correction below.  Previous code called
+    // each helper twice (apply_correction + apply_correction_dcr branches)
+    // for ~5 redundant 4M-bin scans (CODE_REVIEW §6.1).
+    TH1F *eff_full   = radial_efficiency(h_rphi_cov,      r_axis, {{-(float)TMath::Pi(), (float)TMath::Pi()}});
+    TH1F *eff_in_gap = radial_efficiency(h_rphi_cov,      r_axis, kPhiGapRanges, true);
+    TH1F *eff_ex_gap = radial_efficiency(h_rphi_cov,      r_axis, kPhiGapRanges, false);
+    TH1F *eff_1350   = radial_efficiency(h_rphi_cov_1350, r_axis, kPhiGapRanges, false);
+    TH1F *eff_1375   = radial_efficiency(h_rphi_cov_1375, r_axis, kPhiGapRanges, false);
+
+    apply_correction(h_r_full,        eff_full,   1.f);
+    apply_correction(h_r_in_gap,      eff_in_gap, phi_extrapolation_scale(kPhiGapRanges, true));
+    apply_correction(h_r_ex_gap,      eff_ex_gap, phi_extrapolation_scale(kPhiGapRanges, false));
+    apply_correction(h_r_ex_gap_1350, eff_1350,   phi_extrapolation_scale(kPhiGapRanges, false));
+    apply_correction(h_r_ex_gap_1375, eff_1375,   phi_extrapolation_scale(kPhiGapRanges, false));
 
     int used_dcr = total_dcr_frames_prescan;
     auto apply_correction_dcr = [&](TH1F *h, TH1F *h_eff, float phi_scale)
@@ -436,16 +444,12 @@ void photon_number(std::string data_repository, std::string run_name,
         h->Scale(1., "width");
         h->Scale(phi_scale);
     };
-    TH1F *eff_full_d = radial_efficiency(h_rphi_cov, r_axis, {{-(float)TMath::Pi(), (float)TMath::Pi()}});
-    TH1F *eff_in_gap_d = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, true);
-    TH1F *eff_ex_gap_d = radial_efficiency(h_rphi_cov, r_axis, kPhiGapRanges, false);
-    TH1F *eff_1350_d = radial_efficiency(h_rphi_cov_1350, r_axis, kPhiGapRanges, false);
-    TH1F *eff_1375_d = radial_efficiency(h_rphi_cov_1375, r_axis, kPhiGapRanges, false);
-    apply_correction_dcr(h_r_full_dcr, eff_full_d, 1.f);
-    apply_correction_dcr(h_r_in_gap_dcr, eff_in_gap_d, phi_extrapolation_scale(kPhiGapRanges, true));
-    apply_correction_dcr(h_r_ex_gap_dcr, eff_ex_gap_d, phi_extrapolation_scale(kPhiGapRanges, false));
-    apply_correction_dcr(h_r_ex_gap_1350_dcr, eff_1350_d, phi_extrapolation_scale(kPhiGapRanges, false));
-    apply_correction_dcr(h_r_ex_gap_1375_dcr, eff_1375_d, phi_extrapolation_scale(kPhiGapRanges, false));
+    // Reuse the efficiency histograms computed above — args are identical.
+    apply_correction_dcr(h_r_full_dcr,        eff_full,   1.f);
+    apply_correction_dcr(h_r_in_gap_dcr,      eff_in_gap, phi_extrapolation_scale(kPhiGapRanges, true));
+    apply_correction_dcr(h_r_ex_gap_dcr,      eff_ex_gap, phi_extrapolation_scale(kPhiGapRanges, false));
+    apply_correction_dcr(h_r_ex_gap_1350_dcr, eff_1350,   phi_extrapolation_scale(kPhiGapRanges, false));
+    apply_correction_dcr(h_r_ex_gap_1375_dcr, eff_1375,   phi_extrapolation_scale(kPhiGapRanges, false));
     h_r_full->Add(h_r_full_dcr, -1.);
     h_r_in_gap->Add(h_r_in_gap_dcr, -1.);
     h_r_ex_gap->Add(h_r_ex_gap_dcr, -1.);
@@ -495,9 +499,9 @@ void photon_number(std::string data_repository, std::string run_name,
         float pk = h->GetMaximum();
 
         // Sideband background fit over [kFitLo, fit_hi] with signal masked
-        TF1 f_bkg(Form("f_bkg_%s", h->GetName()), "pol2", kFitLo, fit_hi);
+        TF1 f_bkg(TString::Format("f_bkg_%s", h->GetName()).Data(), "pol2", kFitLo, fit_hi);
         {
-            TH1F *h_sb = (TH1F *)h->Clone(Form("h_sb_%s", h->GetName()));
+            RootHist<TH1F> h_sb(static_cast<TH1F*>(h->Clone(TString::Format("h_sb_%s", h->GetName()).Data())));
             float mask = 3.5f * sig_seed;
             for (int i = 1; i <= h_sb->GetNbinsX(); ++i)
             {
@@ -516,7 +520,7 @@ void photon_number(std::string data_repository, std::string run_name,
         double bkg_c1 = f_bkg.GetParameter(1);
         double bkg_c2 = f_bkg.GetParameter(2);
 
-        TF1 f_model(Form("f_model_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
+        TF1 f_model(TString::Format("f_model_%s", h->GetName()).Data(), full_model, kFitLo, fit_hi, 8);
         {
             const char *pnames[8] = {"gaus_amp", "mu", "sigma", "gs_amp", "gs_sig",
                                      "pol2_c0", "pol2_c1", "pol2_c2"};
@@ -557,7 +561,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_model.DrawCopy("SAME");
 
         // Core Gaussian (dashed)
-        TF1 f_core(Form("f_core_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
+        TF1 f_core(TString::Format("f_core_%s", h->GetName()).Data(), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_core.SetParameter(i, f_model.GetParameter(i));
         f_core.SetParameter(3, 0.);
@@ -570,7 +574,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_core.DrawCopy("SAME");
 
         // Broad Gaussian / right shoulder (dotted, orange)
-        TF1 f_gs(Form("f_gs_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
+        TF1 f_gs(TString::Format("f_gs_%s", h->GetName()).Data(), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_gs.SetParameter(i, f_model.GetParameter(i));
         f_gs.SetParameter(0, 0.);
@@ -583,7 +587,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_gs.DrawCopy("SAME");
 
         // Background (dash-dot, gray)
-        TF1 f_bkg_draw(Form("f_bkgd_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
+        TF1 f_bkg_draw(TString::Format("f_bkgd_%s", h->GetName()).Data(), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_bkg_draw.SetParameter(i, f_model.GetParameter(i));
         f_bkg_draw.SetParameter(0, 0.);
@@ -594,7 +598,7 @@ void photon_number(std::string data_repository, std::string run_name,
         f_bkg_draw.DrawCopy("SAME");
 
         // N_gamma: integrate signal only (zero background) over [kFitLo, fit_hi]
-        TF1 f_sig(Form("f_sig_%s", h->GetName()), full_model, kFitLo, fit_hi, 8);
+        TF1 f_sig(TString::Format("f_sig_%s", h->GetName()).Data(), full_model, kFitLo, fit_hi, 8);
         for (int i = 0; i < 8; ++i)
             f_sig.SetParameter(i, f_model.GetParameter(i));
         f_sig.SetParameter(5, 0.);
@@ -707,7 +711,7 @@ void photon_number(std::string data_repository, std::string run_name,
     leg->AddEntry(h_r_ex_gap_1375, "S13360-1375 (dev 196-199)", "l");
     leg->Draw();
     c5->cd(2);
-    TH1F *h_ratio = (TH1F *)h_r_ex_gap_1375->Clone("h_sensor_ratio");
+    RootHist<TH1F> h_ratio(static_cast<TH1F*>(h_r_ex_gap_1375->Clone("h_sensor_ratio")));
     h_ratio->Divide(h_r_ex_gap_1350);
     h_ratio->SetTitle(";R (mm);yield ratio 1375/1350");
     h_ratio->SetLineColor(kBlack);

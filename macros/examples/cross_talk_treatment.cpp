@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 /**
  * @file cross_talk_treatment.cpp
@@ -48,7 +50,7 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
 
     //  ── Input ────────────────────────────────────────────────────────────────
     std::string input_filename = data_repository + "/" + run_name + "/recodata.root";
-    TFile *input_file = new TFile(input_filename.c_str());
+    TFilePtr input_file(TFile::Open(input_filename.c_str(), "READ"));
     if (!input_file || input_file->IsZombie())
     {
         std::cerr << "[ERROR] Cannot open recodata: " << input_filename << std::endl;
@@ -67,26 +69,26 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
     const float kDtMax    =  kDtBins * BTANA_ALCOR_CC_TO_NS;  //  3200 ns
     const float kElecDtLo = -5      * BTANA_ALCOR_CC_TO_NS;   // -15.625 ns (headroom around -2 cc)
 
-    TH1F *h_phys_dt = new TH1F("h_phys_dt",
+    RootHist<TH1F> h_phys_dt("h_phys_dt",
         ";#Delta_{t} = t_{j} - t_{i} (ns);physical neighbour pairs / primary Hit",
         kDtBins, 0, kDtMax);
-    TH1F *h_elec_dt = new TH1F("h_elec_dt",
+    RootHist<TH1F> h_elec_dt("h_elec_dt",
         ";#Delta_{t} = t_{j} - t_{i} (ns);electrical neighbour pairs / primary Hit",
         kDtBins + 5, kElecDtLo, kDtMax);
     //  Smeared spatial hitmaps for CT-tagged hits (100 fills per Hit, ±1.5 mm uniform smear).
-    TH2F *h_phys_ct_hitmap = new TH2F("h_phys_ct_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_elec_ct_hitmap = new TH2F("h_elec_ct_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH2F> h_phys_ct_hitmap("h_phys_ct_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH2F> h_elec_ct_hitmap("h_elec_ct_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     //  2D diagnostic: (Δchannel, Δt) for every in-frame pair — no neighbour
     //  definition needed; CT clusters near the origin, DCR is flat in Δt.
-    TH2F *h_dchannel_dt = new TH2F("h_dchannel_dt",
+    RootHist<TH2F> h_dchannel_dt("h_dchannel_dt",
         ";#Delta channel (j #minus i);#Delta_{t} (cc)",
         65, -32.5, 32.5,
         26, -5.5, 20.5);
 
     //  Per-channel corrected CT probability (filled once per primary Hit)
-    TProfile *h_phys_ct_corr = new TProfile("h_phys_ct_corrected_per_channel",
+    RootHist<TProfile> h_phys_ct_corr("h_phys_ct_corrected_per_channel",
         ";global channel;Corrected physical CT probability (%)", 2048, 0, 2048);
-    TProfile *h_elec_ct_corr = new TProfile("h_elec_ct_corrected_per_channel",
+    RootHist<TProfile> h_elec_ct_corr("h_elec_ct_corrected_per_channel",
         ";global channel;Corrected electrical CT probability (%)", 2048, 0, 2048);
 
     //  ── Loop ─────────────────────────────────────────────────────────────────
@@ -156,13 +158,17 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
                     if (is_elec) ++n_elec_far;
             }
 
-            //  Smeared hitmaps: n_ct_neighbours × 100 fills so density ∝ CT rate
+            //  Smeared hitmaps: weight = n_ct_neighbours × 100 per primary Hit.
+            //  Statistical content matches the previous N×100 unit-Fill loop
+            //  in expectation but at ~100× lower per-Hit cost (CODE_REVIEW §6.4).
             if (xi > -990.f)
             {
-                for (int _k = 0; _k < n_phys_near * 100; ++_k)
-                    h_phys_ct_hitmap->Fill(recodata->get_hit_x_rnd(i), recodata->get_hit_y_rnd(i));
-                for (int _k = 0; _k < n_elec_near * 100; ++_k)
-                    h_elec_ct_hitmap->Fill(recodata->get_hit_x_rnd(i), recodata->get_hit_y_rnd(i));
+                if (n_phys_near > 0)
+                    h_phys_ct_hitmap->Fill(recodata->get_hit_x_rnd(i), recodata->get_hit_y_rnd(i),
+                                           100.0 * n_phys_near);
+                if (n_elec_near > 0)
+                    h_elec_ct_hitmap->Fill(recodata->get_hit_x_rnd(i), recodata->get_hit_y_rnd(i),
+                                           100.0 * n_elec_near);
             }
 
             //  Fill corrected CT probability per channel.

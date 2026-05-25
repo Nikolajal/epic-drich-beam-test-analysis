@@ -9,52 +9,38 @@
  * Used by the analysis macros to make their inputs self-healing.
  */
 
-#include <functional>
-#include <iostream>
-#include <string>
+#include <memory>
 #include <TFile.h>
 
 /**
- * @brief Open a ROOT file for reading, rebuilding it if missing or corrupted.
+ * @brief Custom deleter for ROOT `TFile` that closes before deleting.
  *
- * Tries to open @p filename.  If the file is absent, a zombie, or
- * @p force_rebuild is @c true, calls @p builder with the supplied arguments to
- * regenerate it, then re-opens it.
- *
- * @param filename          Path to the ROOT file to open.
- * @param builder           Callable that creates the file from raw data.
- * @param data_repository   Passed verbatim as the first argument to @p builder.
- * @param run_name          Passed verbatim as the second argument.
- * @param max_spill         Passed verbatim as the third argument.
- * @param force_rebuild     If @c true, always rebuild (default: false).
- * @return                  Open @c TFile* in READ mode, or @c nullptr on failure.
+ * `TFile` destruction does call `Close()` internally, but the order is not
+ * guaranteed to be "close → free buffers → write directory record".  An
+ * explicit `Close()` first removes that ambiguity and is symmetrical with
+ * the manual "always close before delete" idiom you'd write by hand.
  */
-inline TFile *open_or_build_rootfile(const std::string &filename,
-                                     std::function<void(std::string, std::string, int, bool, int, std::string, std::string, std::string, std::string, std::string)> builder,
-                                     const std::string &data_repository,
-                                     const std::string &run_name,
-                                     int max_spill,
-                                     bool force_rebuild = false)
+struct RootFileDeleter
 {
-    //  Try to open the file
-    if (!force_rebuild)
+    void operator()(TFile *file) const noexcept
     {
-        TFile *input_file = TFile::Open(filename.c_str(), "READ");
-        if (input_file && !input_file->IsZombie())
-            return input_file;
-        delete input_file; // Delete if zombie
+        if (file)
+        {
+            if (file->IsOpen())
+                file->Close();
+            delete file;
+        }
     }
-    std::cout << "[WARNING] File '" << filename << "' missing, corrupted or rebuild forced, creating it\n";
+};
 
-    //  Re-build file
-    builder(data_repository, run_name, max_spill, force_rebuild, -1, "", "", "", "", "");
+/// Owning handle for a ROOT `TFile` — closes on destruction (CODE_REVIEW §5.9).
+using TFilePtr = std::unique_ptr<TFile, RootFileDeleter>;
 
-    TFile *input_file = TFile::Open(filename.c_str(), "READ");
-    if (!input_file || input_file->IsZombie())
-    {
-        std::cerr << "[ERROR] Could not open file '" << filename << "' even after rebuilding\n";
-        delete input_file;
-        return nullptr;
-    }
-    return input_file;
-}
+// The previous `open_or_build_rootfile()` helper (CODE_REVIEW §D-06) was
+// removed: it pretended to be general but carried a 10-arg std::function
+// builder with 7 args hardcoded inside the helper, and had exactly one
+// caller (recodata_writer).  The auto-rebuild logic is now inlined at the
+// single call site in src/recodata_writer.cxx where it is explicit and
+// readable.  Restore this helper only if a second writer chain (e.g.
+// recotrackdata → recodata → lightdata, currently bail-on-missing) needs
+// the same pattern.

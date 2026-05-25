@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 
 /**
  * @file ring_spatial_resolution.cpp
@@ -47,7 +49,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
     //  Load recodata, return if not available
-    TFile *input_file_recodata = new TFile(input_filename_recodata.c_str());
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str(), "READ"));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
         std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
@@ -64,16 +66,16 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     auto all_frames = min((int)n_frames, (int)max_frames);
 
     //  Time distribution
-    TH1F *h_t_distribution = new TH1F("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
+    RootHist<TH1F> h_t_distribution("h_t_distribution", ";t_{Hit} - t_{timing} (ns)", 200, -312.5, 312.5);
     //  First round X, Y, R
-    TH1F *h_first_round_X = new TH1F("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
-    TH1F *h_first_round_Y = new TH1F("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
-    TH1F *h_first_round_R = new TH1F("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
+    RootHist<TH1F> h_first_round_X("h_first_round_X", ";circle center x coordinate (mm)", 120, -30, 30);
+    RootHist<TH1F> h_first_round_Y("h_first_round_Y", ";circle center y coordinate (mm)", 120, -30, 30);
+    RootHist<TH1F> h_first_round_R("h_first_round_R", ";circle radius (mm)", 200, 30, 130);
     //  Second round selection
-    TH2F *h_second_round_xy_map = new TH2F("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    TH2F *h_second_round_R_Ngamma = new TH2F("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
-    TH1F *h_second_round_R_excluded = new TH1F("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
-    TH1F *h_second_round_R_global = new TH1F("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
+    RootHist<TH2F> h_second_round_xy_map("h_second_round_xy_map", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH2F> h_second_round_R_Ngamma("h_second_round_R_Ngamma", ";circle radius (mm);N_{#gamma}", 200, 30, 130, 97, 3, 100);
+    RootHist<TH1F> h_second_round_R_excluded("h_second_round_R_excluded", ";circle radius - point radius (mm)", 120, -30, 30);
+    RootHist<TH1F> h_second_round_R_global("h_second_round_R_global", ";circle radius - point radius (mm)", 120, -30, 30);
 
     //  Saving the frame numebr you can speed up secondary loops
     std::vector<int> start_of_spill_frame_ref;
@@ -213,34 +215,38 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     //  Generate a TGraph to hold each Ngamma resolution
     TGraphErrors *g_resolution = new TGraphErrors();
     g_resolution->SetName("g_resolution");
+    //  Hoisted out of the loop: `new TF1("fit_gaus", ...)` every iteration
+    //  with the same name made ROOT silently destroy the previous one on
+    //  construction; the explicit `delete` then freed the new allocation.
+    //  Fragile pattern — one stack TF1 reused works the same and avoids
+    //  the rename dance (CODE_REVIEW §6.9).
+    TF1 fit_gaus("fit_gaus", "gaus", 0, 150);
     //  Loop over the y_bin, i.e. Ngamma
     for (auto y_bin = 1; y_bin <= h_second_round_R_Ngamma->GetNbinsY(); y_bin++)
     {
         auto n_gamma = h_second_round_R_Ngamma->GetYaxis()->GetBinCenter(y_bin);
 
         //  Slice to the resolution
-        auto current_r_slice = h_second_round_R_Ngamma->ProjectionX(Form("r_slice_%i", y_bin), y_bin, y_bin);
+        std::unique_ptr<TH1D> current_r_slice(
+            h_second_round_R_Ngamma->ProjectionX(TString::Format("r_slice_%i", y_bin).Data(), y_bin, y_bin));
+        current_r_slice->SetDirectory(nullptr);
 
         //  Select appropriate statistics
         if (current_r_slice->GetEntries() < 100)
             continue;
 
-        //  Fit slice with a gaus function
-        auto fit_gaus = new TF1("fit_gaus", "gaus", 0, 150);
-        current_r_slice->Fit(fit_gaus, "QNR");
+        //  Fit slice with the hoisted gaus function
+        current_r_slice->Fit(&fit_gaus, "QNR");
 
         //  Discard if uncertainty is too high (unreliable fit)
-        if (fit_gaus->GetParError(2) / fit_gaus->GetParameter(2) > 0.075)
+        if (fit_gaus.GetParError(2) / fit_gaus.GetParameter(2) > 0.075)
             continue;
 
         //  Assign resolution value in the TGraph
         auto current_point = g_resolution->GetN();
-        g_resolution->SetPoint(current_point, n_gamma, fit_gaus->GetParameter(2));
-        g_resolution->SetPointError(current_point, 0., fit_gaus->GetParError(2));
-
-        //  Memory clean-up
-        delete current_r_slice;
-        delete fit_gaus;
+        g_resolution->SetPoint(current_point, n_gamma, fit_gaus.GetParameter(2));
+        g_resolution->SetPointError(current_point, 0., fit_gaus.GetParError(2));
+        // unique_ptr frees current_r_slice at end of iteration; no manual delete.
     }
 
     //  Fit w/ resolution function

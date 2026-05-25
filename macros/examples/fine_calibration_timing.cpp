@@ -1,4 +1,6 @@
 #include "../lib_loader.h"
+#include "util/root_io.h"
+#include "util/root_hist.h"
 #include <mist/mist.h>
 
 /**
@@ -305,7 +307,7 @@ double windowed_mode(TH1D *h, double half_window_ns)
  *  - h_fine_calib_scan         : TH3F (GlobalIndex x coarse_delta x fine_par)
  */
 void run_pass0_analysis(
-    std::vector<AlcorLightdataStruct> frames_in_spill,
+    const std::vector<AlcorLightdataStruct> &frames_in_spill,
     TH1F *h_timing_delta_chip_means,
     TH2F *h_timing_delta_channel,
     TH3F *h_fine_calib_scan,
@@ -343,7 +345,7 @@ void run_pass0_analysis(
                                           : mean0;
                     if (h_fine_calib_scan)
                         h_fine_calib_scan->Fill(
-                            h.get_global_index(),
+                            ::GlobalIndex(h.get_global_index()).tdc_ordinal(),
                             h.get_coarse() - ref,
                             h.get_fine());
                 }
@@ -359,7 +361,7 @@ void run_pass0_analysis(
                     else
                         continue;
                     if (h_timing_delta_channel)
-                        h_timing_delta_channel->Fill(h.get_global_index(), t - ref);
+                        h_timing_delta_channel->Fill(::GlobalIndex(h.get_global_index()).tdc_ordinal(), t - ref);
                 }
             });
 
@@ -378,7 +380,7 @@ void run_pass0_analysis(
  * h_fine_scan_cherenkov may be null; if non-null, fills (GlobalIndex, dt, fine).
  */
 void run_pass1_analysis(
-    std::vector<AlcorLightdataStruct> frames_in_spill,
+    const std::vector<AlcorLightdataStruct> &frames_in_spill,
     TH1F *h_timing_delta_chip_means,
     TH2F *h_cherenkov_delta_channel,
     TH3F *h_fine_scan_cherenkov,
@@ -443,7 +445,7 @@ void run_pass1_analysis(
                 if (std::fabs(dt) > 12.f)
                     continue;
                 if (h_cherenkov_delta_channel)
-                    h_cherenkov_delta_channel->Fill(Hit.get_global_index(), dt, w);
+                    h_cherenkov_delta_channel->Fill(::GlobalIndex(Hit.get_global_index()).tdc_ordinal(), dt, w);
                 // Fill fine scan — same structure as timing pass0:
                 // x = GlobalIndex, y = delta_t, z = fine parameter
                 // This lets you check whether the fine interpolation non-linearity
@@ -451,7 +453,7 @@ void run_pass1_analysis(
                 // exactly as done for timing channels in pass0.
                 if (h_fine_scan_cherenkov)
                     h_fine_scan_cherenkov->Fill(
-                        Hit.get_global_index(),
+                        ::GlobalIndex(Hit.get_global_index()).tdc_ordinal(),
                         dt,
                         Hit.get_fine());
             }
@@ -474,7 +476,7 @@ void run_pass1_analysis(
  * All histogram arguments may be null.
  */
 void run_selftrigger_analysis(
-    std::vector<AlcorLightdataStruct> frames_in_spill,
+    const std::vector<AlcorLightdataStruct> &frames_in_spill,
     TH1F *h_window_multiplicity,
     TH1F *h_window_sigma,
     TH2F *h_sigma_vs_multiplicity,
@@ -521,7 +523,7 @@ void run_selftrigger_analysis(
                 if (h_delta_selfref)
                     for (const auto &h : w)
                         h_delta_selfref->Fill(
-                            h.get_global_index(),
+                            ::GlobalIndex(h.get_global_index()).tdc_ordinal(),
                             h.get_time_ns() - mean);
             });
 
@@ -545,8 +547,12 @@ void fine_calibration_timing(
     // Input
     const std::string input_filename =
         data_repository + "/" + run_name + "/lightdata.root";
-    TFile *input_file = new TFile(input_filename.c_str());
-
+    TFilePtr input_file(TFile::Open(input_filename.c_str(), "READ"));
+    if (!input_file || input_file->IsZombie())
+    {
+        mist::logger::error("(fine_calibration_timing) Cannot open input: " + input_filename);
+        return;
+    }
     TTree *lightdata_tree = (TTree *)input_file->Get("lightdata");
     AlcorSpilldata *spilldata = new AlcorSpilldata();
     spilldata->link_to_tree(lightdata_tree);
@@ -566,8 +572,13 @@ void fine_calibration_timing(
         data_repository + "/" + run_name + "/timing_fine_calib.root";
     if (std::filesystem::exists(outname) && !force_recodata_rebuild)
         mist::logger::info(
-            Form("Output file already exists, skipping: %s", outname.c_str()));
-    TFile *output_file = TFile::Open(outname.c_str(), "RECREATE");
+            TString::Format("Output file already exists, skipping: %s", outname.c_str()).Data());
+    TFilePtr output_file(TFile::Open(outname.c_str(), "RECREATE"));
+    if (!output_file || output_file->IsZombie())
+    {
+        mist::logger::error("(fine_calibration_timing) Cannot create output: " + outname);
+        return;
+    }
 
     // Fit functions
     TF2 *fit_linear_gaus = new TF2(
@@ -602,15 +613,15 @@ void fine_calibration_timing(
     // -------------------------------------------------------------------------
     // Pass 0 — fine-time calibration scan
     // -------------------------------------------------------------------------
-    TH1F *h_chip_means_pass0 = new TH1F(
+    RootHist<TH1F> h_chip_means_pass0(
         "h_timing_delta_chip_means_pass0",
         "Mean chip 0 - Mean chip 1;#Delta t (ns);Entries",
         800, -4.0, 4.0);
-    TH2F *h_channel_pass0 = new TH2F(
+    RootHist<TH2F> h_channel_pass0(
         "h_timing_delta_channel_pass0",
         "Timing residuals pass 0;Global index;#Delta t (ns)",
         400, 8180.0, 8580.0, 600, -12.0, 12.0);
-    TH3F *h_fine_scan_pass0 = new TH3F(
+    RootHist<TH3F> h_fine_scan_pass0(
         "h_fine_calib_scan_pass0",
         "Fine calibration scan;Global index;#Delta t (ns);Fine parameter",
         400, 8180.0, 8580.0, 240, -12.0, 12.0, 256, -0.5, 255.5);
@@ -618,7 +629,7 @@ void fine_calibration_timing(
     mist::logger::info("Starting pass 0");
     spill_loop([&](int /*spill*/, auto &frames)
                { run_pass0_analysis(frames,
-                                    h_chip_means_pass0, h_channel_pass0, h_fine_scan_pass0); });
+                                    h_chip_means_pass0.get(), h_channel_pass0.get(), h_fine_scan_pass0.get()); });
     mist::logger::info("All done for pass 0");
 
     TGraphErrors *g_offset = new TGraphErrors();
@@ -638,7 +649,7 @@ void fine_calibration_timing(
 
         h_fine_scan_pass0->GetXaxis()->SetRange(bx, bx);
         TH2D *h_zy = (TH2D *)h_fine_scan_pass0->Project3D(
-            Form("%d_yz", global_idx));
+            TString::Format("%d_yz", global_idx).Data());
 
         fit_linear_gaus->SetParameter(0, 10.);
         fit_linear_gaus->SetParameter(1, 0.008);
@@ -674,21 +685,21 @@ void fine_calibration_timing(
     // -------------------------------------------------------------------------
     auto run_calib_timing = [&]()
     {
-        TH1F *h_chip_means = new TH1F(
+        RootHist<TH1F> h_chip_means(
             "h_timing_delta_chip_means_pass1",
             "Mean chip 0 - Mean chip 1;#Delta t (ns);Entries",
             800, -4.0, 4.0);
-        TH2F *h_channel = new TH2F(
+        RootHist<TH2F> h_channel(
             "h_timing_delta_channel_pass1",
             "Timing residuals pass 1;Global index;#Delta t (ns)",
             400, 8180.0, 8580.0, 600, -12.0, 12.0);
-        TH3F *h_fine_scan = new TH3F(
+        RootHist<TH3F> h_fine_scan(
             "h_fine_calib_scan_pass1",
             "Fine calibration scan pass 1;Global index;#Delta t (ns);Fine parameter",
             400, 8180.0, 8580.0, 240, -12.0, 12.0, 256, -0.5, 255.5);
 
         spill_loop([&](int /*spill*/, auto &frames)
-                   { run_pass0_analysis(frames, h_chip_means, h_channel, h_fine_scan); });
+                   { run_pass0_analysis(frames, h_chip_means.get(), h_channel.get(), h_fine_scan.get()); });
 
         for (int bx = 1; bx <= h_channel->GetNbinsX(); ++bx)
         {
@@ -698,7 +709,7 @@ void fine_calibration_timing(
                 h_channel->GetXaxis()->GetBinCenter(bx));
 
             TH1D *h_y = h_channel->ProjectionY(
-                Form("%d_y", global_idx), bx, bx);
+                TString::Format("%d_y", global_idx).Data(), bx, bx);
             for (int i = 0; i < 3; ++i)
                 h_y->Fit(fit_gaus, "Q");
 
@@ -721,18 +732,18 @@ void fine_calibration_timing(
     for (int i = 0; i < 2; ++i)
         run_calib_timing();
 
-    TH1F *h_chip_means_pass2 = new TH1F(
+    RootHist<TH1F> h_chip_means_pass2(
         "h_timing_delta_chip_means_pass2",
         "Mean chip 0 - Mean chip 1 (post timing calib);#Delta t (ns);Entries",
         800, -4.0, 4.0);
-    TH2F *h_channel_pass2 = new TH2F(
+    RootHist<TH2F> h_channel_pass2(
         "h_timing_delta_channel_pass2",
         "Timing residuals after convergence;Global index;#Delta t (ns)",
         400, 8180.0, 8580.0, 600, -12.0, 12.0);
 
     spill_loop([&](int /*spill*/, auto &frames)
                { run_pass0_analysis(frames,
-                                    h_chip_means_pass2, h_channel_pass2, nullptr, false); });
+                                    h_chip_means_pass2.get(), h_channel_pass2.get(), nullptr, false); });
     mist::logger::info("All done for pass 1");
 
     // -------------------------------------------------------------------------
@@ -742,7 +753,7 @@ void fine_calibration_timing(
     // as internal reference. Compare against h_selfref_after to measure
     // how much calibration collapsed the per-channel spread.
     // -------------------------------------------------------------------------
-    TH2F *h_selfref_before = new TH2F(
+    RootHist<TH2F> h_selfref_before(
         "h_selfref_before",
         "Self-trigger #Delta t before Cherenkov calib;Global index;#Delta t (ns)",
         8100, 0, 8100, 300, -12.0, 12.0);
@@ -758,17 +769,17 @@ void fine_calibration_timing(
     // Weight hook: replace the uniform lambda with a geometric ring-weight
     // closure once the constrained circle fit is implemented.
     // -------------------------------------------------------------------------
-    TH2F *h_cherenkov_delta = new TH2F(
+    RootHist<TH2F> h_cherenkov_delta(
         "h_cherenkov_delta_channel",
         "Cherenkov #Delta t vs channel;Global index;#Delta t (ns)",
         8100, 0, 8100, 300, -12.0, 12.0);
 
-    TH1F *h_tref_quality = new TH1F(
+    RootHist<TH1F> h_tref_quality(
         "h_tref_quality",
         "t_{ref} inter-chip delta;#Delta t (ns);Entries",
         400, -2.0, 2.0);
 
-    TH3F *h_fine_scan_cherenkov_pass0 = new TH3F(
+    RootHist<TH3F> h_fine_scan_cherenkov_pass0(
         "h_fine_scan_cherenkov_pass0",
         "Fine calibration scan;Global index;#Delta t (ns);Fine parameter",
         8100, 0, 8100,
@@ -778,11 +789,40 @@ void fine_calibration_timing(
     // Per-spill fine scan: one TH3F per spill, filled in the final diagnostic
     // pass after calibration converges. Useful for checking temporal stability
     // of the fine-parameter vs delta_t correlation across spills.
-    std::vector<TH3F *> h_fine_scan_cher_per_spill(all_spills, nullptr);
+    //
+    // ┌── WARNING ────────────────────────────────────────────────────────┐
+    // │ Each TH3F here is 8100 × 150 × 120 = 145.8 M bins ≈ 580 MB per   │
+    // │ spill (CODE_REVIEW §6.2).  On a run with hundreds of spills this │
+    // │ OOMs most workstations.                                            │
+    // │                                                                     │
+    // │ ⚠ Likely-broken X axis: the Fill call below passes                 │
+    // │   `Hit.get_global_index()` which returns the **packed 32-bit raw  │
+    // │   value with TDC bits zeroed** (alcor_data.h:203).  A valid index │
+    // │   sets bit 31 → numerical value ≥ 2³¹, way outside the [0, 8100]  │
+    // │   X axis range.  Every Fill probably lands in the X overflow bin. │
+    // │   Verify with a TBrowser on h_fine_scan_cherenkov_spill000 — if   │
+    // │   the X axis has only overflow content, the macro hasn't been     │
+    // │   plotting per-channel data since the bit layout changed (Phase-5).│
+    // │                                                                     │
+    // │ Three escape hatches (domain decision):                            │
+    // │   (a) Switch to THnSparseF — sparse storage; memory ∝ filled bins.│
+    // │       Touches run_pass1_analysis' signature + every TH3F::Fill.    │
+    // │   (b) Re-anchor X to GlobalIndex::channel_ordinal() (dense 0..4096│
+    // │       for current hardware), then optionally shrink further to    │
+    // │       the timing-channel range (~64 bins).  Restores per-channel  │
+    // │       data IF the verify step above shows X-overflow today.       │
+    // │   (c) Drop X entirely: TH2F<dt × fine> instead of TH3F.  Free if  │
+    // │       X has been overflow-only anyway — 72 KB/spill (8000×).      │
+    // │                                                                     │
+    // │ Pick (a) if you want the full 3D sparse data; (b) if you need     │
+    // │ per-channel resolution back and can list the active channels;     │
+    // │ (c) if X has been overflow-only and per-channel was already lost. │
+    // └────────────────────────────────────────────────────────────────────┘
+    std::vector<RootHist<TH3F>> h_fine_scan_cher_per_spill(all_spills, nullptr);
     for (int i = 0; i < all_spills; ++i)
-        h_fine_scan_cher_per_spill[i] = new TH3F(
-            Form("h_fine_scan_cherenkov_spill%03d", i),
-            Form("Fine scan Cherenkov spill %d;Global index;#Delta t (ns);Fine parameter", i),
+        h_fine_scan_cher_per_spill[i] = RootHist<TH3F>(
+            TString::Format("h_fine_scan_cherenkov_spill%03d", i).Data(),
+            TString::Format("Fine scan Cherenkov spill %d;Global index;#Delta t (ns);Fine parameter", i).Data(),
             8100, 0, 8100,
             150, -15.0, 15.0,
             120, -20.5, 140.5);
@@ -798,7 +838,7 @@ void fine_calibration_timing(
                 h_cherenkov_delta->GetXaxis()->GetBinCenter(bx));
 
             TH1D *h_y = h_cherenkov_delta->ProjectionY(
-                Form("cher_py_%d", global_idx), bx, bx);
+                TString::Format("cher_py_%d", global_idx).Data(), bx, bx);
             h_y->SetDirectory(nullptr);
 
             // Sparse channels: coarsen bins for fit stability.
@@ -838,8 +878,8 @@ void fine_calibration_timing(
         h_cherenkov_delta->Reset();
         spill_loop([&](int /*spill*/, auto &frames)
                    { run_pass1_analysis(frames,
-                                        h_tref_quality,
-                                        h_cherenkov_delta,
+                                        h_tref_quality.get(),
+                                        h_cherenkov_delta.get(),
                                         nullptr,
                                         false, // sigma_weight off
                                         [](const AlcorFinedata &)
@@ -852,19 +892,19 @@ void fine_calibration_timing(
     // Self-trigger histograms — declared here so before/after pass 2 is
     // possible.  h_selfref_before is filled above; h_selfref_after after pass 2.
     // -------------------------------------------------------------------------
-    TH1F *h_st_multiplicity = new TH1F(
+    RootHist<TH1F> h_st_multiplicity(
         "h_selftrigger_multiplicity",
         "Self-trigger cluster multiplicity;N hits;Entries",
         60, 0, 60);
-    TH1F *h_st_sigma = new TH1F(
+    RootHist<TH1F> h_st_sigma(
         "h_selftrigger_sigma",
         "Self-trigger cluster time RMS;#sigma (ns);Entries",
         200, 0, 10);
-    TH2F *h_st_sigma_vs_mult = new TH2F(
+    RootHist<TH2F> h_st_sigma_vs_mult(
         "h_selftrigger_sigma_vs_mult",
         "Cluster time RMS vs multiplicity;N hits;#sigma (ns)",
         60, 0, 60, 200, 0, 10);
-    TH2F *h_selfref_after = new TH2F(
+    RootHist<TH2F> h_selfref_after(
         "h_selfref_after",
         "Self-trigger #Delta t after Cherenkov calib;Global index;#Delta t (ns)",
         8100, 0, 8100, 300, -12.0, 12.0);
@@ -874,11 +914,11 @@ void fine_calibration_timing(
         run_calib_cherenkov();
     mist::logger::info("All done for pass 2");
 
-    TH1F *h_chip_means_pass3 = new TH1F(
+    RootHist<TH1F> h_chip_means_pass3(
         "h_timing_delta_chip_means_pass3",
         "Mean chip 0 - Mean chip 1 (post-Cherenkov);#Delta t (ns);Entries",
         800, -4.0, 4.0);
-    TH2F *h_cherenkov_final = new TH2F(
+    RootHist<TH2F> h_cherenkov_final(
         "h_cherenkov_delta_final",
         "Cherenkov #Delta t after calibration;Global index;#Delta t (ns)",
         8100, 0, 8100, 300, -12.0, 12.0);
@@ -887,14 +927,14 @@ void fine_calibration_timing(
     spill_loop([&](int spill, auto &frames)
                {
                    run_pass1_analysis(frames,
-                                      h_chip_means_pass3,
-                                      h_cherenkov_final,
-                                      h_fine_scan_cher_per_spill[spill],
+                                      h_chip_means_pass3.get(),
+                                      h_cherenkov_final.get(),
+                                      h_fine_scan_cher_per_spill[spill].get(),
                                       false);
                    run_pass1_analysis(frames,
                                       nullptr,
                                       nullptr,
-                                      h_fine_scan_cherenkov_pass0,
+                                      h_fine_scan_cherenkov_pass0.get(),
                                       false);
                });
 
@@ -989,5 +1029,5 @@ void fine_calibration_timing(
     for (int i = 0; i < all_spills; ++i)
         h_fine_scan_cher_per_spill[i]->Write();
 
-    output_file->Close();
+    // output_file closed automatically by TFilePtr dtor.
 }

@@ -1,28 +1,14 @@
 #include "alcor_recodata.h"
 
 // =============================================================================
-// Reference setters
-// =============================================================================
-
-void AlcorRecodata::set_recodata_link(std::vector<AlcorFinedataStruct> &v)
-{
-    recodata = v;
-    recodata_ptr = &recodata;
-}
-
-void AlcorRecodata::set_triggers_link(std::vector<TriggerEvent> &v)
-{
-    triggers = v;
-    triggers_ptr = &triggers;
-}
-
-// =============================================================================
 // Trigger search
 // =============================================================================
 
 std::optional<TriggerEvent> AlcorRecodata::get_trigger_by_index(uint8_t index) const
 {
-    auto current_trigger = get_triggers();
+    // Use the const-ref accessor — get_triggers() returns by reference now
+    // (no per-call deep copy of the trigger vector, CODE_REVIEW §D-08).
+    const auto &current_trigger = get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(),
                            [index](const TriggerEvent &t)
                            { return t.index == index; });
@@ -80,11 +66,11 @@ void AlcorRecodata::write_to_tree(TTree *output_tree)
 
 void AlcorRecodata::find_rings(float distance_length_cut, float distance_time_cut)
 {
-    auto i_index = -1;
     std::map<int, std::map<int, std::vector<int>>> proximity_hit_list;
-    for (auto current_hit : recodata)
+    // Index-only loop: the previous `for (auto current_hit : recodata)` copied
+    // every Hit struct just to throw the value away.
+    for (int i_index = 0; i_index < (int)recodata.size(); ++i_index)
     {
-        i_index++;
         for (auto j_index = i_index + 1; j_index < (int)recodata.size(); j_index++)
         {
             if (get_device(i_index) != get_device(j_index))
@@ -98,6 +84,7 @@ void AlcorRecodata::find_rings(float distance_length_cut, float distance_time_cu
 
     for (auto &[current_device, proximity_hit_list_device] : proximity_hit_list)
     {
+        (void)current_device; // device key not used directly; partners come from proximity_hit_list_device.
         int selected_main_index = -1;
         int selected_size = -1;
         for (auto &[main_index, current_index_list] : proximity_hit_list_device)
@@ -107,8 +94,15 @@ void AlcorRecodata::find_rings(float distance_length_cut, float distance_time_cu
             selected_main_index = main_index;
             selected_size = current_index_list.size();
         }
+        // Guard: defensive against any future code path that could leave the
+        // device entry without a winning main_index.  add_hit_mask(-1, …) would
+        // index recodata[-1] (UB on std::vector::operator[]).
+        if (selected_main_index < 0)
+            continue;
         add_hit_mask(selected_main_index, encode_bit(HitmaskRingTagFirst));
-        for (auto current_index : proximity_hit_list[current_device][selected_main_index])
+        // Reuse the already-destructured device-local map instead of repeating
+        // the proximity_hit_list[current_device][...] double lookup.
+        for (auto current_index : proximity_hit_list_device[selected_main_index])
             add_hit_mask(current_index, encode_bit(HitmaskRingTagFirst));
     }
 }
@@ -177,8 +171,8 @@ void AlcorRecodata::build_hough_lut(const std::map<int, std::array<float, 2>> &i
         }
     }
     hough_accum.assign(hough_r_bins.size() * hough_nx * hough_ny, 0);
-    mist::logger::info(Form("Hough LUT built: %zu channels, %zu R bins, grid %dx%d",
-                            hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny));
+    mist::logger::info(TString::Format("Hough LUT built: %zu channels, %zu R bins, grid %dx%d",
+                            hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny).Data());
 }
 
 void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)

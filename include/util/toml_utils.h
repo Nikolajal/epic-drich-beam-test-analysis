@@ -11,6 +11,7 @@
  */
 
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <toml++/toml.h>
 
@@ -32,7 +33,13 @@ inline toml::table toml_parse_with_cutoff(const std::string &filepath,
 {
     std::ifstream file(filepath);
     if (!file.is_open())
-        return toml::parse_file(filepath); // let toml++ emit the proper error
+    {
+        // No double-IO on the error path (CODE_REVIEW §5.13: previous version
+        // did `return toml::parse_file(filepath)` here which would re-open
+        // the same file just to surface the open error).  std::runtime_error
+        // is sufficient; the message + path is all callers need.
+        throw std::runtime_error("toml_parse_with_cutoff: cannot open file: " + filepath);
+    }
 
     std::string content, line;
     while (std::getline(file, line))

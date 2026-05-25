@@ -233,6 +233,23 @@ To build documentation locally:
 doxygen docs/Doxyfile
 ```
 
+**For contributors:** the project's naming and style rules are documented in
+[`docs/coding_conventions.md`](docs/coding_conventions.md).
+
+### Repository-side checks (`tools/`)
+
+Two standalone scripts live under [`tools/`](tools/).  Run them after any
+change that touches histograms, GlobalIndex usage, or build infrastructure —
+they catch the bug classes the recent Phase-5 migration surfaced.
+
+| Script | Purpose | Typical use |
+|---|---|---|
+| [`tools/lint_codebase.py`](tools/lint_codebase.py) | **Static lint.**  Flags histogram-Fill arguments that bypass the GlobalIndex ordinal accessors (R1), debug-leftover histogram names (R2), commented-out function-call lines (R3), and legacy Phase-4 bit-bashing formulas (R4).  Suppress per-line with `// LINT-OK: <reason>` or whole-file with `// LINT-OK-FILE: <reason>`. | `tools/lint_codebase.py` — exits 0 if clean, 1 on findings. |
+| [`tools/check_qa.py`](tools/check_qa.py) | **Runtime QA content check.**  Opens an output ROOT file, walks every `TH1`/`TH2`/`TH3`/`TProfile`, and flags histograms that are empty or have most content in over/underflow.  Catches Phase-5 fill-target mismatches that the lint missed. | `tools/check_qa.py path/to/lightdata.root --known-empty 'Streaming Trigger/.*' --known-overflow 'Single-Pixel Noise/h_afterpulse_dt'` — exits 0 if all histograms are OK, expected-empty, or expected-overflow. |
+
+Both are pure-Python (PyROOT for `check_qa`) and require no build.  See the
+header docstring of each script for the full set of options.
+
 ---
 
 ## Testing & CI
