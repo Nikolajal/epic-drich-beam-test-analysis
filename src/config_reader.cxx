@@ -459,6 +459,55 @@ const std::optional<std::vector<std::string>> RunInfo::get_run_list(const std::s
     return (it != run_list_database.end()) ? std::optional{it->second} : std::nullopt;
 }
 
+// --- streaming_trigger_conf_reader --------------------------------------
+
+StreamingTriggerConfigStruct
+streaming_trigger_conf_reader(std::string config_file)
+{
+    StreamingTriggerConfigStruct cfg;
+    try
+    {
+        auto tbl = toml_parse_with_cutoff(config_file);
+        auto *st_table = tbl["streaming_trigger"].as_table();
+        if (!st_table)
+        {
+            // No [streaming_trigger] section — silent (defaults are sensible).
+            return cfg;
+        }
+        mist::logger::info(TString::Format(
+            "(streaming_trigger_conf_reader) Reading streaming-trigger config: %s",
+            config_file.c_str()).Data());
+
+        if (auto v = (*st_table)["time_window_ns"].value<double>())
+            cfg.time_window_ns = static_cast<float>(*v);
+        if (auto v = (*st_table)["n_sigma_threshold"].value<double>())
+            cfg.n_sigma_threshold = static_cast<float>(*v);
+        if (auto v = (*st_table)["min_noise_hits"].value<double>())
+            cfg.min_noise_hits = *v;
+
+        if (cfg.time_window_ns <= 0.f)
+            mist::logger::warning("(streaming_trigger_conf_reader) time_window_ns must be > 0 — "
+                                  "reverting to default 5 ns.");
+        if (cfg.min_noise_hits < 1.0)
+            mist::logger::warning("(streaming_trigger_conf_reader) min_noise_hits < 1 admits "
+                                  "channels with zero or one observed hits — rate estimate "
+                                  "is unreliable and the noise-score tail will inflate.");
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(TString::Format(
+            "(streaming_trigger_conf_reader) TOML parse error in '%s': %s — using defaults.",
+            config_file.c_str(), std::string(err.description()).c_str()).Data());
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(TString::Format(
+            "(streaming_trigger_conf_reader) Error reading '%s': %s — using defaults.",
+            config_file.c_str(), err.what()).Data());
+    }
+    return cfg;
+}
+
 // --- static member definitions -------------------------------------------
 
 std::unordered_map<std::string, RunInfoStruct> RunInfo::run_info_database = {};
