@@ -508,6 +508,103 @@ streaming_trigger_conf_reader(std::string config_file)
     return cfg;
 }
 
+// --- streaming_hough_conf_reader ----------------------------------------
+
+StreamingHoughConfigStruct
+streaming_hough_conf_reader(std::string config_file)
+{
+    StreamingHoughConfigStruct cfg;
+    try
+    {
+        auto tbl = toml_parse_with_cutoff(config_file);
+        auto *sh_table = tbl["streaming_hough"].as_table();
+        if (!sh_table)
+        {
+            // No [streaming_hough] section — silent (defaults match the
+            // hardcoded values still in lightdata_writer.cxx).
+            return cfg;
+        }
+        mist::logger::info(TString::Format(
+            "(streaming_hough_conf_reader) Reading streaming-Hough config: %s",
+            config_file.c_str()).Data());
+
+        // Hough accumulator geometry
+        if (auto v = (*sh_table)["r_min"].value<double>())
+            cfg.r_min = static_cast<float>(*v);
+        if (auto v = (*sh_table)["r_max"].value<double>())
+            cfg.r_max = static_cast<float>(*v);
+        if (auto v = (*sh_table)["r_step"].value<double>())
+            cfg.r_step = static_cast<float>(*v);
+        if (auto v = (*sh_table)["cell_size"].value<double>())
+            cfg.cell_size = static_cast<float>(*v);
+
+        // Per-frame ring-finder parameters
+        if (auto v = (*sh_table)["time_cut_ns"].value<double>())
+            cfg.time_cut_ns = static_cast<float>(*v);
+        if (auto v = (*sh_table)["threshold_fraction"].value<double>())
+            cfg.threshold_fraction = static_cast<float>(*v);
+        if (auto v = (*sh_table)["min_hits_slack"].value<double>())
+            cfg.min_hits_slack = static_cast<float>(*v);
+        if (auto v = (*sh_table)["hough_threshold_fraction"].value<double>())
+            cfg.hough_threshold_fraction = static_cast<float>(*v);
+        if (auto v = (*sh_table)["max_rings"].value<int64_t>())
+            cfg.max_rings = static_cast<int>(*v);
+        if (auto v = (*sh_table)["collection_radius"].value<double>())
+            cfg.collection_radius = static_cast<float>(*v);
+
+        // fit_circle initial guess
+        if (auto v = (*sh_table)["fit_circle_init_x"].value<double>())
+            cfg.fit_circle_init_x = static_cast<float>(*v);
+        if (auto v = (*sh_table)["fit_circle_init_y"].value<double>())
+            cfg.fit_circle_init_y = static_cast<float>(*v);
+        if (auto v = (*sh_table)["fit_circle_init_r"].value<double>())
+            cfg.fit_circle_init_r = static_cast<float>(*v);
+
+        // Sanity warnings
+        if (cfg.r_min < 0.f || cfg.r_max <= cfg.r_min)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) invalid radius range — "
+                "r_min must be ≥ 0 and r_max must exceed r_min.");
+        if (cfg.r_step <= 0.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) r_step must be > 0.");
+        if (cfg.cell_size <= 0.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) cell_size must be > 0.");
+        if (cfg.time_cut_ns <= 0.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) time_cut_ns must be > 0.");
+        if (cfg.threshold_fraction <= 0.f || cfg.threshold_fraction > 1.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) threshold_fraction should be in (0, 1].");
+        if (cfg.min_hits_slack <= 0.f || cfg.min_hits_slack > 1.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) min_hits_slack should be in (0, 1].");
+        if (cfg.hough_threshold_fraction <= 0.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) hough_threshold_fraction must be > 0.");
+        if (cfg.max_rings <= 0)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) max_rings must be ≥ 1.");
+        if (cfg.collection_radius <= 0.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) collection_radius must be > 0.");
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(TString::Format(
+            "(streaming_hough_conf_reader) TOML parse error in '%s': %s — using defaults.",
+            config_file.c_str(), std::string(err.description()).c_str()).Data());
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(TString::Format(
+            "(streaming_hough_conf_reader) Error reading '%s': %s — using defaults.",
+            config_file.c_str(), err.what()).Data());
+    }
+    return cfg;
+}
+
 // --- static member definitions -------------------------------------------
 
 std::unordered_map<std::string, RunInfoStruct> RunInfo::run_info_database = {};

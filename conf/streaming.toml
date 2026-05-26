@@ -1,0 +1,83 @@
+# conf/streaming.toml — software trigger pipeline configuration
+#
+# Two stages share this file:
+#   [streaming_trigger]  — stage 1: DCR-weighted score + time clustering
+#   [streaming_hough]    — stage 2: Hough ring finder + fit_circle refinement
+#
+# Both stages are documented in include/triggers/streaming/DISCUSSION.md.
+# The framer does NOT read this file — these are writer-side knobs.  The
+# section names are kept identical to the pre-Phase-2 location (which was
+# inside conf/framer_conf.toml) to avoid breaking existing run scripts.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1 — DCR-weighted streaming score (D-12, v1 shipped)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Fires when the per-window weighted score
+#     S = sum_{hits in window} 1 / lambda_channel
+# crosses `n_sigma_threshold` standardised deviations above its pure-noise
+# expectation.  Channels that haven't accumulated at least `min_noise_hits`
+# in the first-frames noise sample are excluded from the weight bundle —
+# under-measured channels have wildly variable rate estimates that would
+# inflate the noise-score tail (the old `lambda_floor_hz` strategy
+# rewarded rare-fire channels with maximum weight; this gate avoids it).
+#
+# Tune `n_sigma_threshold` offline from the two QA score histograms
+# (h_streaming_score_noise, h_streaming_score_data) — see § 1.5 in
+# include/triggers/streaming/DISCUSSION.md.  Set to a large value
+# (e.g. 1000) to disable firing while still accumulating QA hists.
+[streaming_trigger]
+time_window_ns      =   20.0    # sliding-window width (ns)
+n_sigma_threshold   =   15.0    # fire when score >= this many sigma above noise mean
+min_noise_hits      =    5.0    # min noise-sample hits for a channel to enter the weight bundle
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2 — Hough ring finder (gated on stage 1)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Runs on every frame where stage 1 fired.  Selects Cherenkov hits within
+# ±time_cut_ns of the streaming-trigger's fine_time, votes them into a
+# Hough accumulator, extracts up to `max_rings` peak cells, and refines
+# each ring's centre with a least-squares `fit_circle` on the assigned
+# hits.  Emits one `_TRIGGER_HOUGH_RING_FOUND_` event per ring.
+#
+# **Currently the values below are documentation-only** — the algorithm
+# still uses hardcoded constants in src/lightdata_writer.cxx.  Phase 4
+# of the streaming-trigger consolidation (see § 2.5 of
+# include/triggers/streaming/DISCUSSION.md) wires every knob below into
+# the algorithm.  Keep the defaults matching the hardcoded values so
+# that wiring is behaviour-preserving.
+[streaming_hough]
+
+# Hough accumulator geometry — set once at writer init via
+# mist::ring_finding::HoughTransform's constructor.
+r_min               =   20.0    # minimum ring radius scanned (mm)
+r_max               =  120.0    # maximum ring radius scanned (mm)
+r_step              =    1.0    # radius granularity (mm)
+cell_size           =    3.0    # XY accumulator cell size (mm) — sets the
+                                # discrete centre resolution.  Sub-cell
+                                # refinement is § 2.3 in the DISCUSSION.
+
+# Per-frame ring-finder parameters
+time_cut_ns         =   10.0    # hits with |t_hit - t_streaming| < this enter the Hough
+                                # (was hardcoded 10 ns; SHOULD default to match
+                                #  [streaming_trigger].time_window_ns once §2.5
+                                #  open-item lands.  Currently mismatched.)
+threshold_fraction  =    0.33   # min fraction of active hits in a peak cell
+min_hits_slack      =    0.75   # min_hits passed to alcor_find_rings_hough =
+                                # this × min_active (slack below the absolute
+                                # threshold; tolerates statistical fluctuation)
+hough_threshold_fraction = 0.004 # min_active = ceil(this × N_active_cherenkov)
+                                # Both min_active and 1× scaling baseline.
+                                # See open item: re-derive now that stage 1
+                                # already pre-filters Hough entry.
+max_rings           =    2      # hard cap on rings returned per frame
+collection_radius   =    7.5    # mm — ring band width for hit assignment
+
+# fit_circle initial guess (centre prior).  Currently a fixed
+# centre-at-origin / R=50 mm guess regardless of where the Hough peaked.
+# Open item: pass the Hough's discrete (x_c, y_c, R) instead so the fit
+# refines locally rather than climbing back from a generic starting point.
+fit_circle_init_x   =    0.0    # mm
+fit_circle_init_y   =    0.0    # mm
+fit_circle_init_r   =   50.0    # mm
