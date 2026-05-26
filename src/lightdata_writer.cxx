@@ -1344,32 +1344,51 @@ void lightdata_writer(
     //  Pre-made overlay canvas for visual threshold tuning.
     //  Noise (first-frames) in red, data-taking in blue, log-Y so the tails
     //  separating signal from noise are visible across many decades.  The
-    //  axis range [0, 50] is wider than each individual hist's default
-    //  display crop so the long data tail is visible at a glance.
+    //  canvas is built self-contained: clones of the hists (detached from
+    //  the output TDirectory and marked kCanDelete) plus a heap-allocated
+    //  legend.  Without this, the reopened canvas references freed memory
+    //  (stack-scoped legend, hists owned by RootHist) and segfaults inside
+    //  TCanvas::Build when the browser tries to redraw it.
     {
-        TCanvas c_streaming_score_overlay(
+        TCanvas *c_streaming_score_overlay = new TCanvas(
             "c_streaming_score_overlay",
             "Streaming-trigger score: noise (red) vs data (blue)",
             1600, 800);
-        c_streaming_score_overlay.cd();
-        c_streaming_score_overlay.SetLogy();
-        c_streaming_score_overlay.SetGridx();
-        c_streaming_score_overlay.SetGridy();
-        //  Draw data first so its (larger) tail sets the y-range; noise
-        //  drawn SAME on top.  Both share the n_σ axis.
-        h_streaming_score_data ->SetTitle(
+        c_streaming_score_overlay->cd();
+        c_streaming_score_overlay->SetLogy();
+        c_streaming_score_overlay->SetGridx();
+        c_streaming_score_overlay->SetGridy();
+
+        //  Clone hists into the canvas: detached from any directory, with
+        //  kCanDelete set so the canvas destructor frees them.  Unique names
+        //  to avoid collisions with the standalone hists written elsewhere
+        //  in the same TDirectory.
+        TH1F *h_data_overlay = static_cast<TH1F *>(
+            h_streaming_score_data->Clone("h_streaming_score_data_overlay"));
+        h_data_overlay->SetDirectory(nullptr);
+        h_data_overlay->SetBit(TObject::kCanDelete);
+        h_data_overlay->SetTitle(
             "Streaming-trigger score;n_{#sigma};probability per bin");
-        h_streaming_score_data ->Draw("HIST");
-        h_streaming_score_noise->Draw("HIST SAME");
-        TLegend leg(0.65, 0.75, 0.88, 0.88);
-        leg.SetBorderSize(0);
-        leg.SetFillStyle(0);
-        leg.AddEntry(h_streaming_score_data .get(),
-                     "Data-taking (signal + noise)", "l");
-        leg.AddEntry(h_streaming_score_noise.get(),
-                     "First-frames (noise only)",   "l");
-        leg.Draw();
-        c_streaming_score_overlay.Write();
+        h_data_overlay->Draw("HIST");
+
+        TH1F *h_noise_overlay = static_cast<TH1F *>(
+            h_streaming_score_noise->Clone("h_streaming_score_noise_overlay"));
+        h_noise_overlay->SetDirectory(nullptr);
+        h_noise_overlay->SetBit(TObject::kCanDelete);
+        h_noise_overlay->Draw("HIST SAME");
+
+        TLegend *leg = new TLegend(0.65, 0.75, 0.88, 0.88);
+        leg->SetBorderSize(0);
+        leg->SetFillStyle(0);
+        leg->AddEntry(h_data_overlay,  "Data-taking (signal + noise)", "l");
+        leg->AddEntry(h_noise_overlay, "First-frames (noise only)",    "l");
+        leg->SetBit(TObject::kCanDelete);
+        leg->Draw();
+
+        c_streaming_score_overlay->Modified();
+        c_streaming_score_overlay->Update();
+        c_streaming_score_overlay->Write();
+        delete c_streaming_score_overlay;   // also deletes overlay clones + legend
     }
     h_streaming_trigger_frames_examples->Write();
     h_streaming_trigger_full_hitmap->Write();
