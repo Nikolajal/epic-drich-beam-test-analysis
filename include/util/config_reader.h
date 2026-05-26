@@ -393,6 +393,39 @@ struct StreamingHoughConfigStruct
     /// @brief Ring band width [mm] for hit assignment.
     float collection_radius = 7.5f;
 
+    /// @brief Half-range [mm] of the X/Y axis on the per-ring centre QA
+    /// histograms (the hists span @c [-this, +this]).  Not consumed by
+    /// the Hough algorithm itself — purely a QA-axis knob.  Set wider
+    /// than the expected centre spread; the bin width is automatically
+    /// snapped to @c cell_size so n_bins × cell_size covers it exactly.
+    float centre_xy_half_range_mm = 25.f;
+
+    /// @brief Sliding-window size (in accumulator cells, per axis) used
+    /// by MIST's peak finder.  Default `1` = legacy single-cell peak.
+    /// Set to `2` (combined with halved `cell_size` / `r_step`) to
+    /// enable sub-cell aggregation — the peak finder then sums a
+    /// 2×2×2 sub-cell window at every position on the finer grid and
+    /// reports the position with the maximum aggregated count.  Volume
+    /// equivalence is the caller's responsibility: `aggregation_window_cells = 2`
+    /// at half-sized cells covers the same physical volume as the
+    /// single-cell finder at the original cell size, so `min_hits`
+    /// and `threshold_fraction` retain their physical meaning.
+    /// Diagnostic evidence and design in
+    /// `include/triggers/streaming/DISCUSSION.md` § 2.3.1.
+    int aggregation_window_cells = 1;
+
+    /// @brief Half-width [mm] of extra (x, y) padding around the hit
+    /// bounding box passed to MIST's `build_lut`.  Negative (default)
+    /// keeps the legacy behaviour of padding by `r_max` — safest but
+    /// bloats the accumulator for detectors whose ring centres are
+    /// physically constrained near the detector plane.  Picking a
+    /// smaller value shrinks `n_cells` and speeds up voting + the SAT
+    /// peak finder proportionally.  Suggested rule of thumb: set this
+    /// to ~1.5–2× the observed centre spread in `ring_X/Y_first` QA
+    /// hists, well below `r_max`.  No effect on physics if the chosen
+    /// value comfortably brackets the real ring centres.
+    float centre_padding_mm = -1.f;
+
     // ── fit_circle initial guess ────────────────────────────────────
     /// @brief Initial centre X [mm] for the per-ring circle fit.
     float fit_circle_init_x = 0.f;
@@ -413,6 +446,112 @@ struct StreamingHoughConfigStruct
  */
 StreamingHoughConfigStruct
 streaming_hough_conf_reader(std::string config_file = "conf/streaming.toml");
+
+// =========================================================================
+//  Recodata live-QA pipeline configuration (`[recodata]` block)
+// =========================================================================
+
+/**
+ * @brief Knobs for the recodata-side live-QA pipeline.
+ *
+ * V1 minimum-viable scope (see `include/triggers/streaming/DISCUSSION.md`
+ * § 2.6).  Drives the coverage map / `eff(R)` / radial(R) / N_photons
+ * machinery that runs inline in `recodata_writer` so beam-test
+ * operators can see Cherenkov physics observables without a separate
+ * offline analysis pass.
+ *
+ * Centre convention:  the coverage map and `eff(R)` are computed once
+ * at writer init with a **fixed nominal centre** (the beam-axis
+ * projection on the detector plane, typically `(0, 0)`).  Per-hit
+ * `(R, φ)` and per-ring `f_coverage` use the **per-event fit-refined
+ * Hough centre** (re-computed by recodata via `fit_circle` on the
+ * mask-tagged hits — no `TriggerEvent` schema bump).  The `eff(R)`
+ * discrepancy from this mismatch is < 1 % at the ~10–25 mm centre
+ * wander observed in `ring_X/Y_first_hough` (DISCUSSION § 2.6).
+ *
+ * φ-gap (in_gap / ex_gap) and sensor-model (k1350 / k1375) splits
+ * from the offline `photon_number_new.cpp` macro are **not** in V1.
+ * Surface them when the V1 plots demand a finer breakdown.
+ */
+struct RecodataConfigStruct
+{
+    // ── Coverage map geometry ───────────────────────────────────────
+    /// @brief Coverage map azimuthal binning over @c [-π, π].  Default
+    /// 360 = 1°/bin, matches the offline macro.  Coarser is fine for
+    /// smooth `eff(R)`; finer only helps if you also intend to read
+    /// the 2D coverage map directly.
+    int n_phi_bins_coverage = 360;
+
+    /// @brief Coverage map radial bin count over `[r_min, r_max]`.
+    /// 80 bins over 25–125 mm = 1.25 mm/bin, matches the macro.
+    int n_r_bins_coverage = 80;
+
+    /// @brief Coverage / radial map lower R edge [mm].
+    float r_min_coverage_mm = 25.f;
+
+    /// @brief Coverage / radial map upper R edge [mm].
+    float r_max_coverage_mm = 125.f;
+
+    /// @brief Channel pixel half-width [mm] (3 mm pitch → 1.5).  Used
+    /// by both `build_coverage_map` and `azimuthal_coverage_fraction`.
+    float channel_half_width_mm = 1.5f;
+
+    /// @brief Nominal ring centre X [mm] for coverage / `eff(R)`.
+    /// Beam-axis projection on the detector plane.  Default 0 = beam
+    /// centred; override for off-axis beam runs.
+    float nominal_centre_x_mm = 0.f;
+
+    /// @brief Nominal ring centre Y [mm].  See @ref nominal_centre_x_mm.
+    float nominal_centre_y_mm = 0.f;
+
+    // ── Per-ring photon counting ────────────────────────────────────
+    /// @brief Bandwidth [mm] used by `azimuthal_coverage_fraction`:
+    /// a channel counts as "on the arc" if `||r_ch - R|| < delta_r`.
+    /// Should match the upstream `collection_radius` from
+    /// `[streaming_hough]` so the coverage estimate is consistent
+    /// with the hit-assignment cut.
+    float delta_r_for_coverage_mm = 3.f;
+
+    /// @brief Minimum hits per ring for the re-fit to be attempted.
+    /// Below this we skip the ring (and emit no N_photons / radial
+    /// fill).  Matches the upstream `min_hits` floor in the Hough
+    /// stage so the two are consistent.
+    int min_hits_per_ring = 5;
+
+    /// @brief Skip channels with `r_channel < this` when building the
+    /// coverage map.  Default 0 = no extra filter (the loose
+    /// `|x|<5 && |y|<5` filter from `index_to_hit_xy` construction
+    /// remains in effect).
+    ///
+    /// When the coverage map shows a "low-R bump" at small `R` that
+    /// doesn't correspond to any physical channel in the detector
+    /// geometry — typically because `Mapping` returns slightly-bogus
+    /// positions for uncalibrated / unused channel slots — bump this
+    /// above the bump's R to crop it out.  The bump appears at
+    /// `R ≈ √(x²+y²)` of the offending channels, so set the knob
+    /// just above the smallest *legitimate* `r_channel` in your
+    /// detector.
+    ///
+    /// Diagnostic to identify problem channels: at startup,
+    /// `recodata_writer` logs the 10 smallest-r channels in
+    /// `index_to_hit_xy`.  Cross-check against detector geometry.
+    float min_channel_r_for_coverage_mm = 0.f;
+};
+
+/**
+ * @brief Parse the @c [recodata] table from a TOML configuration file.
+ *
+ * Missing keys fall back to the defaults in @ref RecodataConfigStruct.
+ * The parser echoes loaded values via `mist::logger::info` at startup
+ * — same "did my edit take effect?" diagnostic as
+ * @ref streaming_hough_conf_reader.
+ *
+ * @param config_file Path to the TOML configuration file
+ *                    (defaults to @c "conf/recodata.toml").
+ * @return Populated @ref RecodataConfigStruct.
+ */
+RecodataConfigStruct
+recodata_conf_reader(std::string config_file = "conf/recodata.toml");
 
 // =========================================================================
 //  Run metadata

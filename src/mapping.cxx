@@ -33,17 +33,28 @@ std::optional<std::array<float, 2>> Mapping::get_position_from_pdu_column_row(in
     if (pdu < 0 || column < 0 || row < 0)
         return std::nullopt;
 
+    //  Reject PDUs that aren't in the geometry table — covers PDU 99
+    //  (the sentinel for non-Cherenkov / timing devices defined in
+    //  `mapping_conf.toml`) and any other unregistered PDU index.
+    //  Previously this branch silently fell through, returning the
+    //  bare intra-PDU offset (no PDU origin added) — i.e. positions
+    //  in the range (1.85 to 37.45) × (1.85 to 50.45) mm that look
+    //  geometrically valid but correspond to no real Cherenkov
+    //  channel.  Those phantom positions populated `index_to_hit_xy`
+    //  for the timing devices, producing a "low-R bump" in the
+    //  recodata-side coverage map (DISCUSSION § 2.6) and any other
+    //  geometry-derived product that iterates the map.
+    auto it = pdu_xy_position.find(pdu);
+    if (it == pdu_xy_position.end())
+        return std::nullopt;
+
     //  Intra-PDU coordinate: 3.2 mm pitch, guard-ring offsets, 0.3 mm inter-half gap
     float x = 0.05f + 0.1f + 0.2f + 1.5f + 3.2f * column + (column > 7 ? 0.3f : 0.f);
     float y = 0.05f + 0.1f + 0.2f + 1.5f + 3.2f * row + (row > 7 ? 0.3f : 0.f);
 
-    //  Add PDU origin
-    auto it = pdu_xy_position.find(pdu);
-    if (it != pdu_xy_position.end())
-    {
-        x += it->second[0];
-        y += it->second[1];
-    }
+    //  Add PDU origin (guaranteed found by the early return above).
+    x += it->second[0];
+    y += it->second[1];
 
     return std::array<float, 2>{x, y};
 }

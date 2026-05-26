@@ -130,11 +130,13 @@ set(SRC_FILES
     src/alcor_data_streamer.cxx
     src/parallel_streaming_framer.cxx
     src/triggers/config.cxx
-    src/triggers/streaming.cxx
+    src/triggers/streaming/score.cxx
+    src/triggers/streaming/hough.cxx
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
     src/recotrackdata_writer.cxx
     src/analysis_results.cxx
+    src/radiator_efficiency.cxx
 )
 
 # --------------------------------------------------

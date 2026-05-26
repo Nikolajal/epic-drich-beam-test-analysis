@@ -562,6 +562,12 @@ streaming_hough_conf_reader(std::string config_file)
             cfg.hough_threshold_fraction = static_cast<float>(*v);
         if (auto v = (*sh_table)["collection_radius"].value<double>())
             cfg.collection_radius = static_cast<float>(*v);
+        if (auto v = (*sh_table)["centre_xy_half_range_mm"].value<double>())
+            cfg.centre_xy_half_range_mm = static_cast<float>(*v);
+        if (auto v = (*sh_table)["aggregation_window_cells"].value<int64_t>())
+            cfg.aggregation_window_cells = static_cast<int>(*v);
+        if (auto v = (*sh_table)["centre_padding_mm"].value<double>())
+            cfg.centre_padding_mm = static_cast<float>(*v);
 
         // fit_circle initial guess
         if (auto v = (*sh_table)["fit_circle_init_x"].value<double>())
@@ -594,6 +600,40 @@ streaming_hough_conf_reader(std::string config_file)
         if (cfg.collection_radius <= 0.f)
             mist::logger::warning(
                 "(streaming_hough_conf_reader) collection_radius must be > 0.");
+        if (cfg.centre_xy_half_range_mm <= 0.f)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) centre_xy_half_range_mm must be > 0.");
+        if (cfg.aggregation_window_cells < 1)
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) aggregation_window_cells must be ≥ 1.");
+
+        //  Echo the loaded values back — saves a class of "did my TOML
+        //  edit actually take effect?" confusion at the start of a run.
+        //  One line per logical group, fixed format so it's grep-able.
+        mist::logger::info(TString::Format(
+            "(streaming_hough_conf_reader) geom: r_min=%.2f r_max=%.2f r_step=%.2f cell_size=%.2f",
+            cfg.r_min, cfg.r_max, cfg.r_step, cfg.cell_size).Data());
+        mist::logger::info(TString::Format(
+            "(streaming_hough_conf_reader) thresholds: threshold_fraction=%.3f min_hits_slack=%.3f "
+            "hough_threshold_fraction=%.4f collection_radius=%.2f",
+            cfg.threshold_fraction, cfg.min_hits_slack,
+            cfg.hough_threshold_fraction, cfg.collection_radius).Data());
+        mist::logger::info(TString::Format(
+            "(streaming_hough_conf_reader) peak finder: aggregation_window_cells=%d %s",
+            cfg.aggregation_window_cells,
+            cfg.aggregation_window_cells > 1
+                ? "(SLIDING-WINDOW AGGREGATION ACTIVE)"
+                : "(legacy single-cell)").Data());
+        mist::logger::info(TString::Format(
+            "(streaming_hough_conf_reader) lut padding: centre_padding_mm=%.2f %s",
+            cfg.centre_padding_mm,
+            cfg.centre_padding_mm < 0.f
+                ? "(default = r_max, full coverage)"
+                : "(tight pad — accumulator shrunk)").Data());
+        mist::logger::info(TString::Format(
+            "(streaming_hough_conf_reader) fit_circle init: x=%.2f y=%.2f r=%.2f; centre_xy_half_range=%.2f",
+            cfg.fit_circle_init_x, cfg.fit_circle_init_y, cfg.fit_circle_init_r,
+            cfg.centre_xy_half_range_mm).Data());
     }
     catch (const toml::parse_error &err)
     {
@@ -605,6 +645,104 @@ streaming_hough_conf_reader(std::string config_file)
     {
         mist::logger::warning(TString::Format(
             "(streaming_hough_conf_reader) Error reading '%s': %s — using defaults.",
+            config_file.c_str(), err.what()).Data());
+    }
+    return cfg;
+}
+
+// --- recodata_conf_reader -----------------------------------------------
+//
+// Parses the [recodata] table.  All fields are optional; missing keys
+// keep the defaults from RecodataConfigStruct (which match the offline
+// macro's conventions for direct comparison).  Same parse-error pattern
+// as streaming_hough_conf_reader — TOML parse failure is non-fatal
+// (a missing file just means default config), but bad parses are
+// logged.
+
+RecodataConfigStruct
+recodata_conf_reader(std::string config_file)
+{
+    RecodataConfigStruct cfg;
+
+    try
+    {
+        toml::table tbl = toml::parse_file(config_file);
+        mist::logger::info(TString::Format(
+            "(recodata_conf_reader) Reading recodata config: %s",
+            config_file.c_str()).Data());
+
+        if (auto *r_table = tbl["recodata"].as_table())
+        {
+            if (auto v = (*r_table)["n_phi_bins_coverage"].value<int64_t>())
+                cfg.n_phi_bins_coverage = static_cast<int>(*v);
+            if (auto v = (*r_table)["n_r_bins_coverage"].value<int64_t>())
+                cfg.n_r_bins_coverage = static_cast<int>(*v);
+            if (auto v = (*r_table)["r_min_coverage_mm"].value<double>())
+                cfg.r_min_coverage_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["r_max_coverage_mm"].value<double>())
+                cfg.r_max_coverage_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["channel_half_width_mm"].value<double>())
+                cfg.channel_half_width_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["nominal_centre_x_mm"].value<double>())
+                cfg.nominal_centre_x_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["nominal_centre_y_mm"].value<double>())
+                cfg.nominal_centre_y_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["delta_r_for_coverage_mm"].value<double>())
+                cfg.delta_r_for_coverage_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["min_hits_per_ring"].value<int64_t>())
+                cfg.min_hits_per_ring = static_cast<int>(*v);
+            if (auto v = (*r_table)["min_channel_r_for_coverage_mm"].value<double>())
+                cfg.min_channel_r_for_coverage_mm = static_cast<float>(*v);
+        }
+        else
+        {
+            mist::logger::warning(
+                "(recodata_conf_reader) No `[recodata]` table found — using defaults.");
+        }
+
+        // Sanity warnings — same style as streaming_hough_conf_reader.
+        if (cfg.n_phi_bins_coverage <= 0 || cfg.n_r_bins_coverage <= 0)
+            mist::logger::warning(
+                "(recodata_conf_reader) coverage bin counts must be > 0.");
+        if (cfg.r_max_coverage_mm <= cfg.r_min_coverage_mm)
+            mist::logger::warning(
+                "(recodata_conf_reader) r_max_coverage_mm must exceed r_min_coverage_mm.");
+        if (cfg.channel_half_width_mm <= 0.f)
+            mist::logger::warning(
+                "(recodata_conf_reader) channel_half_width_mm must be > 0.");
+        if (cfg.delta_r_for_coverage_mm <= 0.f)
+            mist::logger::warning(
+                "(recodata_conf_reader) delta_r_for_coverage_mm must be > 0.");
+        if (cfg.min_hits_per_ring < 1)
+            mist::logger::warning(
+                "(recodata_conf_reader) min_hits_per_ring must be ≥ 1.");
+
+        // Echo loaded values — same diagnostic pattern as
+        // streaming_hough_conf_reader.  Grep-friendly fixed format.
+        mist::logger::info(TString::Format(
+            "(recodata_conf_reader) coverage map: nphi=%d nR=%d  R=[%.2f, %.2f] mm  "
+            "channel_half_width=%.2f mm",
+            cfg.n_phi_bins_coverage, cfg.n_r_bins_coverage,
+            cfg.r_min_coverage_mm, cfg.r_max_coverage_mm,
+            cfg.channel_half_width_mm).Data());
+        mist::logger::info(TString::Format(
+            "(recodata_conf_reader) nominal centre: (%.2f, %.2f) mm  "
+            "delta_r_for_coverage=%.2f mm  min_hits_per_ring=%d  "
+            "min_channel_r_for_coverage=%.2f mm",
+            cfg.nominal_centre_x_mm, cfg.nominal_centre_y_mm,
+            cfg.delta_r_for_coverage_mm, cfg.min_hits_per_ring,
+            cfg.min_channel_r_for_coverage_mm).Data());
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(TString::Format(
+            "(recodata_conf_reader) TOML parse error in '%s': %s — using defaults.",
+            config_file.c_str(), std::string(err.description()).c_str()).Data());
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(TString::Format(
+            "(recodata_conf_reader) Error reading '%s': %s — using defaults.",
             config_file.c_str(), err.what()).Data());
     }
     return cfg;
