@@ -129,7 +129,8 @@ set(SRC_FILES
     src/tracking_altai.cxx
     src/alcor_data_streamer.cxx
     src/parallel_streaming_framer.cxx
-    src/triggers.cxx
+    src/triggers/config.cxx
+    src/triggers/streaming.cxx
     src/lightdata_writer.cxx
     src/recodata_writer.cxx
     src/recotrackdata_writer.cxx

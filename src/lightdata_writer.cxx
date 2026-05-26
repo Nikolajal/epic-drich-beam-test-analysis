@@ -1,10 +1,13 @@
 #include "parallel_streaming_framer.h"
 #include "writers/lightdata.h"
+#include "triggers/streaming.h"
 #include "mapping.h"
 #include <mist/ring_finding/hough_transform.h>
 #include "TProfile2D.h"
 #include "TNamed.h"
 #include "TParameter.h"
+#include "TCanvas.h"
+#include "TLegend.h"
 #include <algorithm>
 #include <numeric>
 
@@ -173,6 +176,7 @@ void lightdata_writer(
     //  Load framer + QA configuration (both live in framer_conf_file)
     auto framer_cfg = FramerConfReader(framer_conf_file);
     auto qa_cfg     = qa_conf_reader(framer_conf_file);
+    auto streaming_trigger_cfg = streaming_trigger_conf_reader(framer_conf_file);
 
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
@@ -379,13 +383,43 @@ void lightdata_writer(
     RootHist<TH1F> h_streaming_trigger_center_X_second("h_streaming_trigger_center_X_second", ";x (mm)", 100, -25, 25);
     RootHist<TH1F> h_streaming_trigger_center_Y_second("h_streaming_trigger_center_Y_second", ";y (mm)", 100, -25, 25);
     RootHist<TH1F> h_streaming_trigger_center_R_second("h_streaming_trigger_center_R_second", ";R (mm)", 200, 20, 120);
-    const float time_window_ns = 5.f;
-    RootHist<TH1F> h_streaming_trigger_delta_t_leading_edge("h_streaming_trigger_delta_t_leading_edge", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns), 0., time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_delta_t_half_centroid("h_streaming_trigger_delta_t_half_centroid", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_delta_t_first_half("h_streaming_trigger_delta_t_first_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_delta_t_second_half("h_streaming_trigger_delta_t_second_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
-    RootHist<TH2F> h_streaming_trigger_sigma_vs_nhits("h_streaming_trigger_sigma_vs_nhits", ";n_{hits} in peak window;|odd_median - even_median| ns", 50, 0, 50, 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
-    RootHist<TH2F> h_streaming_trigger_median_vs_window("h_delta_median_vs_window", ";t_{last} - t_{first} in peak window ns;|odd_median - even_median| ns", 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns, 1000 * (time_window_ns * 2), -time_window_ns, time_window_ns);
+    const float time_window_ns = streaming_trigger_cfg.time_window_ns;
+    //  D-12 QA score histograms.  Always filled — the noise hist accumulates
+    //  during the first-frames window of every spill, the data hist during
+    //  the rest of the spill.  Same n_σ axis so the misfire and acceptance
+    //  integrals at any threshold are directly comparable.  See
+    //  include/triggers/DISCUSSION.md § 2.3.
+    RootHist<TH1F> h_streaming_score_noise(
+        "h_streaming_score_noise",
+        ";n_{#sigma} (first-frames sample);entries",
+        500, 0.f, 50.f);
+    RootHist<TH1F> h_streaming_score_data(
+        "h_streaming_score_data",
+        ";n_{#sigma} (data-taking);entries",
+        500, 0.f, 50.f);
+    //  Colour scheme for the overlay canvas written further down:
+    //  noise (first-frames) = red, data-taking = blue.  Set at hist
+    //  creation so the colours stick whether you draw the individual
+    //  hists or the overlay.
+    h_streaming_score_noise->SetLineColor(kRed);
+    h_streaming_score_data ->SetLineColor(kBlue);
+    h_streaming_score_noise->SetLineWidth(2);
+    h_streaming_score_data ->SetLineWidth(2);
+    //  Streaming-trigger Δt QA histograms — 20 bins per ns of axis range
+    //  (50 ps resolution, more than enough for SiPM timing QA).  Capped to
+    //  keep the TH2F well below ROOT's 1 GB-per-object write buffer.  Was
+    //  historically 1000 / ns, which scaled quadratically on the 2D
+    //  histograms and crashed the writer when `time_window_ns` was bumped
+    //  past ~10 ns.
+    constexpr int kBinsPerNs = 20;
+    const int dt_bins_1d = kBinsPerNs * static_cast<int>(time_window_ns);
+    const int dt_bins_2d = kBinsPerNs * static_cast<int>(time_window_ns * 2);
+    RootHist<TH1F> h_streaming_trigger_delta_t_leading_edge("h_streaming_trigger_delta_t_leading_edge", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_1d, 0., time_window_ns);
+    RootHist<TH1F> h_streaming_trigger_delta_t_half_centroid("h_streaming_trigger_delta_t_half_centroid", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_2d, -time_window_ns, time_window_ns);
+    RootHist<TH1F> h_streaming_trigger_delta_t_first_half("h_streaming_trigger_delta_t_first_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_2d, -time_window_ns, time_window_ns);
+    RootHist<TH1F> h_streaming_trigger_delta_t_second_half("h_streaming_trigger_delta_t_second_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_2d, -time_window_ns, time_window_ns);
+    RootHist<TH2F> h_streaming_trigger_sigma_vs_nhits("h_streaming_trigger_sigma_vs_nhits", ";n_{hits} in peak window;|odd_median - even_median| ns", 50, 0, 50, dt_bins_2d, -time_window_ns, time_window_ns);
+    RootHist<TH2F> h_streaming_trigger_median_vs_window("h_delta_median_vs_window", ";t_{last} - t_{first} in peak window ns;|odd_median - even_median| ns", dt_bins_2d, -time_window_ns, time_window_ns, dt_bins_2d, -time_window_ns, time_window_ns);
     RootHist<TH1F> h_streaming_trigger_tdc_step_sizes("h_streaming_trigger_tdc_step_sizes", ";t_{i+1} - t_{i} ns;entries", 1000, 0., 1.);
     RootHist<TH1F> h_streaming_trigger_tdc_zero_times("h_streaming_trigger_tdc_zero_times", ";t_{Hit} ns;entries", 10000, 0., framer_cfg.frame_length_ns());
     RootHist<TH1F> h_streaming_trigger_tdc_zero_cluster_size("h_streaming_trigger_tdc_zero_cluster_size", ";n_{hits} in peak;entries", 50, 0., 50.);
@@ -430,6 +464,15 @@ void lightdata_writer(
     if (max_spill != 1000)
         mist::logger::info("(ParallelStreamingFramer::next_spill) Requested to stop at spill : " +
                            std::to_string(max_spill));
+
+    // ── Streaming-trigger weights (D-12) ─────────────────────────────────
+    // The bundle persists across spills (cumulative DCR via h_dcr_per_channel
+    // → newer spills supersede older builds, but a freshly-rebuilt-empty
+    // bundle would lose spill 0's data when spill 1's noise frames fire).
+    // The rebuild itself happens once per spill, at the noise → data
+    // boundary inside the per-frame loop — see the `built_for_spill` flag
+    // reset at the start of each spill and the in-loop rebuild block.
+    StreamingTriggerWeights streaming_weights;
 
     // Use a while-loop instead of a for-loop so we can restart the multi-bar
     // BEFORE the next next_spill() call — which itself updates the framer
@@ -500,10 +543,29 @@ void lightdata_writer(
 
         n_active_cherenkov_channels = active_sensors.size();
 
-        //  Streaming trigger utilities
+        //  Streaming-trigger weights (D-12: DCR-weighted, n_σ-thresholded).
+        //  The bundle itself is run-scope (declared above the spill loop),
+        //  so spill N's noise frames see spill N-1's already-built weights.
+        //  We only reset the per-spill "have we rebuilt yet" flag here;
+        //  the actual rebuild happens once, at the noise → data boundary
+        //  inside the per-frame loop.  Rebuilding per spill (rather than
+        //  once per run) tracks channels that come online / drop out across
+        //  spills (e.g. an RDO that was off in spill 0 starts contributing
+        //  from spill 1) and channels whose rates drift over the fill.
+        bool streaming_weights_built_for_spill = false;
+
+        //  Hough ring-finder threshold — a *separate* knob from the streaming
+        //  trigger above (the Hough operates on candidate frames the trigger
+        //  already accepted, and wants a minimum hit count to seed a ring).
+        //  Was historically shared with the streaming-trigger `threshold` int;
+        //  D-12 split the two.  Formula: ceil(0.004 × N_active_Cherenkov),
+        //  floored at 1.
         const float cherenkov_fraction = 0.004f;
-        const int threshold = 10000; //5; //std::max(1, static_cast<int>(std::ceil(cherenkov_fraction * n_active_cherenkov_channels)));
-        std::vector<std::pair<int, float>> carry_over_hits;
+        const int hough_threshold = std::max(
+            1, static_cast<int>(std::ceil(cherenkov_fraction *
+                                          n_active_cherenkov_channels)));
+
+        std::vector<std::tuple<int, float, float>> carry_over_hits;
 
         //  Info
         mist::logger::info("(lightdata_writer) Spill " +
@@ -685,22 +747,62 @@ void lightdata_writer(
                 }
             }
 
-            //  --- Cherenkov sliding window trigger
-            run_streaming_trigger(spilldata,
-                                  frame_id,
-                                  time_window_ns,
-                                  threshold,
-                                  carry_over_hits,
-                                  h_streaming_trigger_delta_t_leading_edge.get(),
-                                  h_streaming_trigger_delta_t_half_centroid.get(),
-                                  h_streaming_trigger_delta_t_first_half.get(),
-                                  h_streaming_trigger_delta_t_second_half.get(),
-                                  h_streaming_trigger_sigma_vs_nhits.get(),
-                                  h_streaming_trigger_median_vs_window.get(),
-                                  h_streaming_trigger_tdc_step_sizes.get(),
-                                  h_streaming_trigger_tdc_zero_times.get(),
-                                  h_streaming_trigger_tdc_zero_cluster_size.get(),
-                                  framer_cfg.frame_length_ns());
+            //  --- Cherenkov sliding window trigger (D-12: DCR-weighted score).
+            //  QA score histogram destination depends on which window of the
+            //  spill we're in: first-frames → noise sample; rest → data sample.
+            const bool is_first_frames_window =
+                (static_cast<int>(frame_id) < framer_cfg.first_frames_trigger);
+            //  Build streaming weights exactly once per spill, at the moment
+            //  the first data frame is encountered (i.e. immediately after
+            //  the spill's 5000 first-frames trigger frames have completed
+            //  their DCR fills into h_dcr_per_channel).  Cumulative across
+            //  spills + this spill's own noise data — captures channels that
+            //  come online late (RDO previously off) and channels that drift.
+            //  During the first-frames window itself, `streaming_weights`
+            //  remains empty: the noise QA hist fills at n_σ = 0 for spill 0
+            //  but accumulates real distributions from spill 1 onward (where
+            //  prior spills' DCR informs the bundle once it's built).
+            if (!is_first_frames_window && !streaming_weights_built_for_spill)
+            {
+                streaming_weights = build_streaming_trigger_weights(
+                    h_dcr_per_channel.get(),
+                    streaming_trigger_cfg.time_window_ns,
+                    framer_cfg.frame_length_ns(),
+                    streaming_trigger_cfg.min_noise_hits,
+                    &active_sensors);   // restrict to this spill's participants
+                streaming_weights_built_for_spill = true;
+                //  Sanity log — confirms the active-channel filter is firing:
+                //  n_modelled should equal min(N_active_this_spill, N_measured).
+                //  If it equals N_measured even when some RDOs are off this
+                //  spill, the filter isn't being applied.
+                mist::logger::info("(streaming_trigger) Spill " +
+                                   std::to_string(ispill) +
+                                   ": active=" + std::to_string(active_sensors.size()) +
+                                   ", modelled=" + std::to_string(streaming_weights.n_channels_modelled) +
+                                   ", E[S]=" + std::to_string(streaming_weights.expected_score_per_window) +
+                                   ", σ_S=" + std::to_string(streaming_weights.sigma_score_per_window));
+            }
+            TH1F *h_score_for_this_frame = is_first_frames_window
+                                               ? h_streaming_score_noise.get()
+                                               : h_streaming_score_data.get();
+            run_streaming_trigger_weighted(
+                spilldata,
+                frame_id,
+                streaming_trigger_cfg.time_window_ns,
+                streaming_weights,
+                streaming_trigger_cfg.n_sigma_threshold,
+                carry_over_hits,
+                h_score_for_this_frame,
+                h_streaming_trigger_delta_t_leading_edge.get(),
+                h_streaming_trigger_delta_t_half_centroid.get(),
+                h_streaming_trigger_delta_t_first_half.get(),
+                h_streaming_trigger_delta_t_second_half.get(),
+                h_streaming_trigger_sigma_vs_nhits.get(),
+                h_streaming_trigger_median_vs_window.get(),
+                h_streaming_trigger_tdc_step_sizes.get(),
+                h_streaming_trigger_tdc_zero_times.get(),
+                h_streaming_trigger_tdc_zero_cluster_size.get(),
+                framer_cfg.frame_length_ns());
 
             //  ---
             if (!spilldata.has_trigger(frame_id))
@@ -744,7 +846,7 @@ void lightdata_writer(
                                 ring_candidates_index.push_back(index);
                             }
                         }
-                        auto found_rings = AlcorFinedata::alcor_find_rings_hough(ring_finder, ring_candidates, 0.33, threshold * 0.75, threshold, 2, 7.5);
+                        auto found_rings = AlcorFinedata::alcor_find_rings_hough(ring_finder, ring_candidates, 0.33, hough_threshold * 0.75, hough_threshold, 2, 7.5);
                         h_streaming_trigger_ring_finder_nrings->Fill(found_rings.size());
                         index = -1;
                         std::array<int, 2> hough_trigger_hits = {0, 0};
@@ -1224,6 +1326,51 @@ void lightdata_writer(
     TDirectory *streaming_trigger_dir = outfile->mkdir("Streaming Trigger");
     streaming_trigger_dir->cd();
     auto streaming_ring_index = registry.index_of(static_cast<TriggerNumber>(_TRIGGER_STREAMING_RING_FOUND_));
+    //  D-12 QA score histograms — drive the threshold-tuning workflow described
+    //  in include/triggers/DISCUSSION.md § 2.4.  Same n_σ axis on both so the
+    //  misfire and acceptance integrals at any threshold are directly comparable.
+    //  Normalised by entry count so y-axis is **probability per bin** rather
+    //  than raw counts — makes noise vs data integrals above a threshold
+    //  directly readable as false-positive rate vs signal acceptance.
+    if (h_streaming_score_noise->GetEntries() > 0)
+        h_streaming_score_noise->Scale(1.0 / h_streaming_score_noise->GetEntries());
+    if (h_streaming_score_data->GetEntries() > 0)
+        h_streaming_score_data->Scale(1.0 / h_streaming_score_data->GetEntries());
+    h_streaming_score_noise->GetYaxis()->SetTitle("probability per bin");
+    h_streaming_score_data ->GetYaxis()->SetTitle("probability per bin");
+    h_streaming_score_noise->Write();
+    h_streaming_score_data->Write();
+
+    //  Pre-made overlay canvas for visual threshold tuning.
+    //  Noise (first-frames) in red, data-taking in blue, log-Y so the tails
+    //  separating signal from noise are visible across many decades.  The
+    //  axis range [0, 50] is wider than each individual hist's default
+    //  display crop so the long data tail is visible at a glance.
+    {
+        TCanvas c_streaming_score_overlay(
+            "c_streaming_score_overlay",
+            "Streaming-trigger score: noise (red) vs data (blue)",
+            1600, 800);
+        c_streaming_score_overlay.cd();
+        c_streaming_score_overlay.SetLogy();
+        c_streaming_score_overlay.SetGridx();
+        c_streaming_score_overlay.SetGridy();
+        //  Draw data first so its (larger) tail sets the y-range; noise
+        //  drawn SAME on top.  Both share the n_σ axis.
+        h_streaming_score_data ->SetTitle(
+            "Streaming-trigger score;n_{#sigma};probability per bin");
+        h_streaming_score_data ->Draw("HIST");
+        h_streaming_score_noise->Draw("HIST SAME");
+        TLegend leg(0.65, 0.75, 0.88, 0.88);
+        leg.SetBorderSize(0);
+        leg.SetFillStyle(0);
+        leg.AddEntry(h_streaming_score_data .get(),
+                     "Data-taking (signal + noise)", "l");
+        leg.AddEntry(h_streaming_score_noise.get(),
+                     "First-frames (noise only)",   "l");
+        leg.Draw();
+        c_streaming_score_overlay.Write();
+    }
     h_streaming_trigger_frames_examples->Write();
     h_streaming_trigger_full_hitmap->Write();
     h_streaming_trigger_time_cut_hitmap->Write();
@@ -1321,296 +1468,4 @@ void lightdata_writer(
     //  outfile closed automatically by TFilePtr dtor (CODE_REVIEW §4.12).
     //  End: QA plots
     //  --- --- --- --- --- ---
-}
-
-bool run_streaming_trigger(AlcorSpilldata &current_spill,
-                           int frame_id,
-                           const float time_window_ns,
-                           const int threshold,
-                           std::vector<std::pair<int, float>> &carry_over_hits,
-                           TH1F *h_delta_t_leading_edge,
-                           TH1F *h_delta_t_half_centroid,
-                           TH1F *h_delta_t_half_center_left,
-                           TH1F *h_delta_t_half_center_right,
-                           TH2F *h_sigma_vs_nhits,
-                           TH2F *h_median_vs_window,
-                           TH1F *h_tdc_step_sizes,
-                           TH1F *h_tdc_zero_times,
-                           TH1F *h_tdc_zero_cluster_size,
-                           float frame_length_ns)
-{
-    auto &cherenkov_hits = current_spill.get_frame_cherenkov_hits(frame_id);
-
-    //  Build and sort finedata hits
-    std::vector<AlcorFinedata> cherenkov_finedata_hits;
-    cherenkov_finedata_hits.reserve(cherenkov_hits.size());
-    for (const auto &h : cherenkov_hits)
-        cherenkov_finedata_hits.emplace_back(h);
-    std::sort(cherenkov_finedata_hits.begin(), cherenkov_finedata_hits.end());
-
-    //  Deque window: front = oldest Hit, back = newest Hit.
-    //  Eviction is always from the front (O(1)), insertion always at the back (O(1)).
-    //  Each entry is {original_index, time_ns}.
-    std::deque<std::pair<int, float>> window;
-    for (const auto &entry : carry_over_hits)
-        window.push_back(entry);
-
-    //  Snapshot of the window at peak occupancy — used for QA histograms and
-    //  trigger time. Stored as a sorted vector of times for median computation.
-    std::vector<float> peak_times;
-
-    bool in_cluster = false;
-    int peak_count = 0;
-    bool has_fired = false;
-
-    //  Helper: median of a sorted vector of floats.
-    //  Precondition: times must be sorted, size > 0.
-    auto median_of = [](std::vector<float> times) -> float
-    {
-        //  Already sorted
-        //  std::sort(times.begin(), times.end());
-        const int n = static_cast<int>(times.size());
-        return (n % 2 == 1)
-                   ? times[n / 2]
-                   : (times[n / 2 - 1] + times[n / 2]) * 0.5f;
-    };
-
-    auto end_of_cluster = [&]()
-    {
-        // --- Leading edge reference
-        const float t_leading = peak_times.front(); // already sorted
-        for (auto i_ter = 1; i_ter < static_cast<int>(peak_times.size()); i_ter++)
-            h_delta_t_leading_edge->Fill(peak_times[i_ter] - t_leading);
-
-        auto clean_times = [](const std::vector<float> &times) -> std::vector<float>
-        {
-            //  Minimum-IQR recursive outlier removal.
-            //  At each step, compare the two candidate ranges obtained by excluding
-            //  either the first or last endpoint. Remove the endpoint that creates
-            //  the larger gap relative to the inner spread — but ONLY if that gap
-            //  exceeds a minimum ratio threshold, meaning it is a genuine outlier.
-            //  Recurse until no outlier is found or fewer than 3 hits remain.
-            //
-            //  kOutlierRatio: the endpoint gap must be at least this many times
-            //  larger than the other candidate range to be considered an outlier.
-            //  Empirically 2.0 is a reasonable starting point — if the removed
-            //  endpoint is a real Cherenkov photon, both ranges are comparable
-            //  and no removal occurs.
-            constexpr float kOutlierRatio = 2.0f;
-
-            std::vector<float> result = times;
-            while (true)
-            {
-                const int n = static_cast<int>(result.size());
-                if (n <= 3)
-                    break; // cannot clean further — need at least 3 hits
-
-                const float range_excl_last = result[n - 2] - result[0];  // range excluding last
-                const float range_excl_first = result[n - 1] - result[1]; // range excluding first
-
-                if (range_excl_last <= range_excl_first && range_excl_last * kOutlierRatio < range_excl_first)
-                    result.pop_back(); // last Hit is a genuine outlier
-                else if (range_excl_first < range_excl_last && range_excl_first * kOutlierRatio < range_excl_last)
-                    result.erase(result.begin()); // first Hit is a genuine outlier
-                else
-                    break; // no outlier found — stop
-            }
-            return result;
-        };
-        std::vector<float> cleaned_times = clean_times(peak_times);
-
-        constexpr float kPeakSeparation_ns = 2.0f;
-        constexpr float kSigma_ns = 0.3f;
-        constexpr float kPopulationRatio = 20.f; // main:early
-
-        std::vector<float> first_times;
-        std::vector<float> second_times;
-
-        if (cleaned_times.size() >= 2)
-        {
-            // Start: all hits assigned to main peak
-            // log-likelihood ratio for Hit t:
-            //   LLR = log[ p(t|main) * 19 ] - log[ p(t|early) * 1 ]
-            // If LLR < 0, Hit is more likely from early peak.
-            // We don't know the peak centers, so we bootstrap:
-            // center_main  = mean of all hits (good starting point, 19/20 are main)
-            // center_early = center_main - kPeakSeparation_ns
-
-            auto sorted_for_init = cleaned_times; // already sorted
-            float center_main = median_of(sorted_for_init);
-            float center_early = center_main - kPeakSeparation_ns;
-
-            // One EM pass is enough given the strong ratio prior
-            for (int iter = 0; iter < 3; ++iter)
-            {
-                first_times.clear();
-                second_times.clear();
-                float sum_main = 0.f, sum_early = 0.f;
-                int n_main = 0, n_early = 0;
-
-                for (auto t : cleaned_times)
-                {
-                    const float d_main = (t - center_main) / kSigma_ns;
-                    const float d_early = (t - center_early) / kSigma_ns;
-                    // log-ratio: positive → main, negative → early
-                    const float llr = 0.5f * (d_early * d_early - d_main * d_main) + std::log(kPopulationRatio);
-                    if (llr >= 0.f)
-                    {
-                        second_times.push_back(t);
-                        sum_main += t;
-                        n_main++;
-                    }
-                    else
-                    {
-                        first_times.push_back(t);
-                        sum_early += t;
-                        n_early++;
-                    }
-                }
-
-                // Update centers for next iteration
-                if (n_main > 0)
-                    center_main = sum_main / n_main;
-                if (n_early > 0)
-                    center_early = sum_early / n_early;
-                // If no early hits found, fix center_early relative to main
-                if (n_early == 0)
-                    center_early = center_main - kPeakSeparation_ns;
-            }
-        }
-        else
-        {
-            second_times = cleaned_times;
-        }
-
-        auto leave_one_out_mean = [&](const std::vector<float> &input_vec) -> std::vector<float>
-        {
-            std::vector<float> result;
-            if (input_vec.size() < 2)
-                return result;
-
-            float full_val = 0.f;
-            for (auto val : input_vec)
-                full_val += val;
-
-            const int n = static_cast<int>(input_vec.size());
-            for (auto val : input_vec)
-                result.push_back(val - (full_val - val) / (n - 1));
-
-            return result;
-        };
-
-        auto clean_first_times = leave_one_out_mean(first_times);
-        auto clean_second_times = leave_one_out_mean(second_times);
-        for (auto val : clean_first_times)
-            h_delta_t_half_center_left->Fill(val);
-        for (auto val : clean_second_times)
-            h_delta_t_half_center_right->Fill(val);
-
-        // --- Split-half median
-        // Odd/even split by index; each half uses the median of the *other* half
-        // as reference — statistically independent, so the difference distribution
-        // is unbiased. σ_measured = √2 × σ_single_photon.
-        std::vector<float> even_times, odd_times;
-        for (auto i_ter = 0; i_ter < static_cast<int>(cleaned_times.size()); i_ter++)
-        {
-            if (i_ter % 2 == 0)
-                even_times.push_back(cleaned_times[i_ter]);
-            else
-                odd_times.push_back(cleaned_times[i_ter]);
-        }
-
-        if (!even_times.empty() && !odd_times.empty())
-        {
-            const float even_median = median_of(even_times);
-            const float odd_median = median_of(odd_times);
-            for (auto t : even_times)
-            {
-                h_sigma_vs_nhits->Fill(cleaned_times.size(), t - odd_median);
-                h_delta_t_half_centroid->Fill(t - odd_median);
-            }
-            for (auto t : odd_times)
-            {
-                h_sigma_vs_nhits->Fill(cleaned_times.size(), t - even_median);
-                h_delta_t_half_centroid->Fill(t - even_median);
-            }
-            h_median_vs_window->Fill(cleaned_times.back() - cleaned_times.front(), even_median - odd_median);
-        }
-
-        constexpr float kTdcEpsilon = 1e-4f; // 0.1 ps — below any physical LSB
-        int n_zero_steps = 0;
-        for (auto i = 1; i < static_cast<int>(cleaned_times.size()); i++)
-        {
-            const float step = cleaned_times[i] - cleaned_times[i - 1];
-            h_tdc_step_sizes->Fill(step);
-            if (std::fabs(step) < kTdcEpsilon)
-            {
-                n_zero_steps++;
-                h_tdc_zero_times->Fill(cleaned_times[i]);
-            }
-        }
-        if (n_zero_steps > 0)
-            h_tdc_zero_cluster_size->Fill(peak_count);
-
-        has_fired = true;
-
-        //  Trigger time is the median of the peak window — robust to DCR outliers.
-        const float trigger_time = median_of(peak_times);
-        current_spill.add_trigger_to_frame(frame_id,
-                                           {static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_),
-                                            static_cast<uint16_t>(peak_count),
-                                            static_cast<float>(trigger_time)});
-
-        in_cluster = false;
-        peak_count = 0;
-        peak_times.clear();
-    };
-
-    for (int ihit = 0; ihit < static_cast<int>(cherenkov_finedata_hits.size()); ++ihit)
-    {
-        if (cherenkov_finedata_hits[ihit].is_afterpulse())
-            continue;
-
-        const float current_time = cherenkov_finedata_hits[ihit].get_time_ns();
-
-        //  Evict from the front of the deque — O(1) per eviction.
-        while (!window.empty() && (current_time - window.front().second) > time_window_ns)
-            window.pop_front();
-        window.push_back({ihit, current_time});
-
-        const int count = static_cast<int>(window.size());
-
-        if (count >= threshold)
-        {
-            in_cluster = true;
-
-            cherenkov_finedata_hits[ihit].set_streaming_ring_trigger_mask();
-            cherenkov_hits[ihit].HitMask = cherenkov_finedata_hits[ihit].get_mask();
-
-            //  Update peak snapshot when occupancy grows.
-            if (count > peak_count)
-            {
-                peak_count = count;
-                peak_times.clear();
-                for (const auto &entry : window)
-                    peak_times.push_back(entry.second);
-                // peak_times is already in time order since window is ordered
-                // (deque front = oldest, back = newest, hits are sorted)
-            }
-        }
-        else if (in_cluster)
-        {
-            end_of_cluster();
-        }
-    }
-
-    if (in_cluster)
-        end_of_cluster();
-
-    //  Carry-over: hits still in the deque window at frame boundary.
-    carry_over_hits.clear();
-    for (const auto &entry : window)
-        carry_over_hits.push_back({-1, entry.second - frame_length_ns});
-
-    return has_fired;
 }

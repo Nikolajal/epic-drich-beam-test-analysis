@@ -278,6 +278,56 @@ struct QaConfigStruct
 QaConfigStruct qa_conf_reader(std::string config_file = "conf/framer_conf.toml");
 
 // =========================================================================
+//  Streaming-trigger configuration
+// =========================================================================
+
+/**
+ * @brief Tuning knobs for the DCR-weighted streaming trigger (D-12).
+ *
+ * The streaming trigger is a per-frame online pre-filter for Hough ring
+ * finding.  See [`include/triggers/DISCUSSION.md`](../triggers/DISCUSSION.md)
+ * § 2 for the algorithm and § 2.4 for the threshold-tuning workflow.
+ *
+ * The TOML loader accepts a `[streaming_trigger]` section in the framer
+ * config file; missing keys fall back to the defaults below so an
+ * un-configured file is still valid.
+ */
+struct StreamingTriggerConfigStruct
+{
+    /// @brief Sliding-window width [ns].  Hits within this Δt window form a cluster.
+    float time_window_ns   = 5.f;
+
+    /// @brief Threshold on standardised score $n_\sigma = (S - \mathbb{E}[S])/\sigma_S$.
+    ///        Cluster fires when the score crosses this value.  Initial guess
+    ///        suggested in the design doc is 3; tune offline from the two QA
+    ///        score histograms.  Set to a very large value (e.g. 1000) to
+    ///        disable firing while still accumulating QA — see § 2.4 in
+    ///        `include/triggers/DISCUSSION.md`.
+    float n_sigma_threshold = 3.f;
+
+    /// @brief Minimum number of hits a channel must accumulate in the noise
+    ///        sample before it enters the streaming-trigger weight bundle.
+    ///        Channels firing fewer times have unreliable rate estimates
+    ///        (the rare-fire end of the spectrum produces large outlier
+    ///        weights that inflate the noise-score tail).  Default 5.0
+    ///        gives ~45 % relative error on the rate estimate.  Increase
+    ///        for stricter purity, decrease for more channels in early
+    ///        spills.
+    double min_noise_hits   = 5.0;
+};
+
+/**
+ * @brief Parse the @c [streaming_trigger] table from a TOML configuration file.
+ *
+ * Missing keys fall back to the defaults in @ref StreamingTriggerConfigStruct.
+ *
+ * @param config_file Path to the TOML configuration file.
+ * @return Populated @ref StreamingTriggerConfigStruct.
+ */
+StreamingTriggerConfigStruct
+streaming_trigger_conf_reader(std::string config_file = "conf/framer_conf.toml");
+
+// =========================================================================
 //  Run metadata
 // =========================================================================
 

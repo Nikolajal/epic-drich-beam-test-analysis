@@ -1,14 +1,15 @@
 /**
- * @file triggers.cxx
+ * @file triggers/config.cxx
  * @brief Out-of-line implementation of @ref trigger_conf_reader.
  *
  * Keeps the toml++ parser and `<mist/logger>` dependencies behind the .cxx
- * boundary so `triggers.h` stays cheap for callers that only need the
- * @ref TriggerNumber / @ref TriggerEvent / @ref TriggerRegistry types.
+ * boundary so [`triggers/config.h`](../../include/triggers/config.h) stays
+ * cheap for callers that only need the schema types and reader prototype.
  *
  * ## Design notes
  *
- * Two trigger modes, no scoring, no wildcards (see DISCUSSION.md → D-05):
+ * Two trigger modes, no scoring, no wildcards (see
+ * [`include/triggers/DISCUSSION.md`](../../include/triggers/DISCUSSION.md) § 1):
  *
  * - **Device-mode**: the hardware tag is the discriminator.  A `[[trigger]]`
  *   entry with no source-selector keys (no `fifo`, no `column`, no `pixel`)
@@ -23,7 +24,7 @@
  * old schema) is rejected with a clear error pointing at the entry's name.
  */
 
-#include "triggers.h"
+#include "triggers/config.h"
 
 #include <toml++/toml.h>
 #include "util/toml_utils.h"

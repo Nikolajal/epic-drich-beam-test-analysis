@@ -113,10 +113,14 @@ threshold.  Frames without a streaming trigger are dropped by the lightdata
 writer — the streaming trigger is the **pre-filter** for the Hough
 ring-finding stage downstream.
 
-> **Status as of 2026-05-26:**  designed, awaiting implementation.  Current
-> code in `lightdata_writer.cxx::run_streaming_trigger()` is the unweighted
-> v0 with a hardcoded `threshold = 10000` (effectively disabled).  The v1
-> described below will live in `triggers/streaming.{h,cxx}`.
+> **Status as of 2026-05-26:**  v1 shipped.  Lives in
+> [`triggers/streaming.{h,cxx}`](streaming.h) — extracted out of
+> `lightdata_writer.cxx` and rewritten around DCR-weighted scoring and
+> $n_\sigma$ thresholding.  The TOML knobs are in `conf/framer_conf.toml`
+> under `[streaming_trigger]`.  The v0 unweighted entry point
+> (`run_streaming_trigger`) is kept alongside the v1 entry point
+> (`run_streaming_trigger_weighted`) for reference and migration paths;
+> the lightdata writer now calls v1 exclusively.
 
 ### 2.1  Why weighted counting
 
@@ -146,35 +150,97 @@ $w_i = s_i / \lambda_i$ is deferred — see §2.5.
 
 ### 2.2  Reading DCR
 
-The framer's existing `h_afterpulse_dt` is **already per-channel**.  Its
-flat Δt tail (beyond the afterpulse window) is pure DCR by construction —
-no separate calibration step, no separate file.  The streaming trigger
-reads the histogram in place at startup (and re-reads as it updates).
+The streaming trigger consumes the existing per-channel DCR profile that
+the lightdata writer already maintains for its own QA:
 
-**Floor:**  channel DCR is clamped at 1 kHz from below.  This handles
-dead-quiet channels (or genuinely dead ones) without dividing by zero or
-producing huge weights; the cap is well below any realistic operating
-DCR.
+| Histogram | Filled where | Content |
+|---|---|---|
+| `h_dcr_per_channel` (TProfile) | [`src/lightdata_writer.cxx`](../../src/lightdata_writer.cxx) — DCR-QA fill site, conditional on `TriggerFirstFrames` being present on the frame | `TProfile::Fill(channel_ordinal, per_frame_hit_count)`: bin content is the **mean** per-frame hit count over all noise frames processed so far |
+
+Because TProfile stores the per-bin mean internally, the per-channel rate
+collapses to:
+
+$$\lambda_c \;=\; \frac{\langle N_{\mathrm{hits/frame}}(c)\rangle}{T_{\mathrm{frame}}}$$
+
+with $T_{\mathrm{frame}} = \mathrm{frame\_size} \cdot T_{\mathrm{cc}}$.
+No noise-window duration counter, no spill bookkeeping — the writer
+already accumulates everything correctly through the existing fill site.
+
+The helper `build_streaming_trigger_weights()` (declared in
+[`triggers/streaming.h`](streaming.h)) consumes the pre-Scale TProfile
+(passed as `const TH1*` for API flexibility) and emits the
+channel-ordinal → weight map plus the precomputed $\mathbb{E}[S | H_0]$
+and $\sigma_{S|H_0}$ moments — all in dimensionless **"expected hits per
+trigger window"** units (no Hz, no seconds; the
+$T_{\mathrm{win}}/T_{\mathrm{frame}}$ ratio is the only normalisation
+needed and it's dimensionless).
+
+**Rebuild cadence.**  Exactly **once per spill**, at the moment the
+per-frame loop transitions from the first-frames (noise) window into the
+data window — i.e. immediately after this spill's noise frames have
+finished populating `h_dcr_per_channel`.  Rebuilding per spill (rather
+than once per run) is intentional: channels can come online late (an RDO
+that was off in spill 0 starts contributing from spill 1) or drift in
+rate over the fill, and a per-spill rebuild keeps the bundle current
+without paying for redundant computation on every frame.
+
+The bundle itself is **run-scope** — it persists across spills.  Spill
+N's noise frames thus see spill N-1's already-built weights, not an
+empty bundle.  Only the "have we rebuilt yet for this spill" flag is
+reset at spill start.
+
+**Spill 0 caveat.**  Before the very first noise→data crossing the
+bundle is empty (default-constructed `σ = 0`, `n_σ_of() ≡ 0`).  Spill 0's
+*noise* QA hist therefore fills at `n_σ = 0` until the first build
+completes.  Spill 0's *data* QA hist and all subsequent spills (both QA
+hists) get real distributions.
+
+**Floor:**  channel DCR is clamped at 1 kHz from below.  Channels with no
+entries in the noise sample (dead, masked, unmeasured, or simply unfilled
+in the current spill's accumulation) get the floor weight via the
+bundle's `default_weight` field — no special-casing in the hot loop.
+
+**Statistics:**  with `first_frames_trigger = 5000` frames × 1024 cc ≈
+16 ms beam-off time per spill, even a 100 Hz channel collects ~1.6 entries
+per spill — accuracy improves linearly with spill count, and the per-spill
+rebuild keeps the trigger using the freshest estimate available.
 
 ### 2.3  Threshold and QA
 
-The score $S$ is converted to an $n_\sigma$ deviation from noise expectation
-before thresholding:
+The score $S$ is converted to a standardised score before thresholding:
 
 $$n_\sigma = \frac{S - \mathbb{E}[S \mid H_0]}{\sqrt{\mathrm{Var}[S \mid H_0]}}$$
 
-with $\mathbb{E}[S \mid H_0] = T \cdot N_{\text{ch}}$ and
-$\mathrm{Var}[S \mid H_0] = T \cdot \sum_i 1/\lambda_i$.  The framer fires
-when $n_\sigma \geq n_\sigma^\star$, where $n_\sigma^\star$ is set in the
-config.
+with $\mathbb{E}[S \mid H_0] = N_{\mathrm{ch}}^{\mathrm{active}}$ and
+$\mathrm{Var}[S \mid H_0] = \sum_{c \in \mathrm{active}} 1/m_c$, where
+"active" denotes channels both reliably measured in the cumulative noise
+sample (≥ `min_noise_hits`) and actually participating in the current
+spill.  The framer fires when $n_\sigma \geq n_\sigma^\star$, where
+$n_\sigma^\star$ is set in the config.
+
+> **`n_σ` is a standardised score, *not* a Gaussian z-score.**  The
+> underlying $S$ is **positive-bounded** ($S \geq 0$, by construction —
+> weights are positive, hit counts are non-negative).  That alone forces
+> the noise distribution to be one-sided: the minimum admissible
+> $n_\sigma$ is $-\sqrt{\Lambda}$, where $\Lambda = \sum_c m_c$ is the
+> expected total hits per window.  For sparse noise ($\Lambda \lesssim 1$,
+> typical) the distribution can barely fluctuate below the mean, and the
+> per-hit sampling regime (we fill QA at every hit, dropping S = 0
+> windows) shifts the *observed* distribution strictly positive.  Bin
+> structure is also discretised by integer hit counts (the comb seen on
+> the noise plot).  Operationally this is fine — $n_\sigma$ is used as a
+> **discriminator** between noise and signal tails, not as a literal
+> "standard deviations above zero".  Don't expect the noise QA hist to be
+> centred at zero or Gaussian-shaped.
 
 **Two QA histograms** are filled **always**, regardless of whether the
-threshold is crossed:
+threshold is crossed.  Both are normalised by entry count at write time
+so the y-axis is **probability per bin**:
 
 | Histogram | When filled | What it tells you |
 |---|---|---|
-| `h_streaming_score_noise` | First-frames window (beam-off; the start-of-spill noise sample tagged by `first_frames_trigger`) | Pure-noise $n_\sigma$ distribution.  $\int_{n_\sigma \geq n_\sigma^\star}$ → **misfire probability** |
-| `h_streaming_score_data` | Data-taking window (the post-first-frames part of the spill, when hardware triggers are firing) | Signal+noise distribution.  $\int_{n_\sigma \geq n_\sigma^\star}/\int$ → **acceptance**; $1 - \text{acceptance}$ → missed-fire rate |
+| `h_streaming_score_noise` | First-frames window (beam-off; the start-of-spill noise sample tagged by `first_frames_trigger`) | Pure-noise $n_\sigma$ distribution.  $\int_{n_\sigma \geq n_\sigma^\star}$ → **misfire probability** (directly readable thanks to the probability normalisation) |
+| `h_streaming_score_data` | Data-taking window (the post-first-frames part of the spill, when hardware triggers are firing) | Signal+noise distribution.  $\int_{n_\sigma \geq n_\sigma^\star}$ → **acceptance**; $1 - \mathrm{acceptance}$ → missed-fire rate |
 
 ### 2.4  Workflow
 
@@ -267,4 +333,4 @@ origin natively.
 ---
 
 *Document version: 2026-05-26.*
-*Implements: D-05 (landed), D-12 (designed, pending).*
+*Implements: D-05 (landed), D-12 (v1 landed — DCR-weighted score, $n_\sigma$ threshold, QA score histograms, dedicated translation unit).*

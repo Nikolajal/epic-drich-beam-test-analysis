@@ -44,18 +44,47 @@ This repository aims to:
 ```
 .
 ├── include/                    # Public header files for all classes and utilities
+│   ├── utility.h               # Umbrella header — re-exports everything in util/
+│   ├── util/                   # Small header-only helpers (GlobalIndex, RootHist, …)
+│   ├── triggers.h              # Umbrella header — re-exports events / config / registry
+│   ├── triggers/               # Trigger subsystem
+│   │   ├── events.h            #   - runtime types: TriggerNumber, TriggerEvent
+│   │   ├── config.h            #   - schema + reader: DeviceTrigger, ChannelTrigger, TriggerConfigSet
+│   │   ├── registry.h          #   - bin-label lookup: TriggerRegistry
+│   │   ├── streaming.h         #   - algorithm: DCR-weighted streaming trigger
+│   │   └── DISCUSSION.md       #   - community-facing design notes
+│   └── writers/                # Independent pipeline-stage entry points (no umbrella by design — see DISCUSSION attention-point)
 ├── src/                        # Implementation files (.cxx)
 ├── macros/                     # ROOT macros for analysis
 │   ├── examples/               # Ready-to-run example macros
 │   └── utilities/              # Pipeline entry-point macros (lightdata, recodata, …)
 ├── scripts/                    # Build and install scripts
-├── conf/                       # Readout, Mapping, and trigger configuration files
+├── conf/                       # Readout, Mapping, trigger, and streaming-trigger
+│                                #   configuration files
 ├── run-lists/                  # Run database and run list definitions (.toml)
 ├── dict/                       # ROOT dictionary linkdef header
 ├── docs/                       # Doxygen configuration and generated documentation
 ├── CMakeLists.txt              # CMake build configuration
 └── README.md
 ```
+
+### Repository conventions for `include/` subdirectories
+
+Three coexisting organisational patterns, each fitting its role:
+
+| Pattern | Example | When to use |
+|---|---|---|
+| **Umbrella + helpers** | [`utility.h`](include/utility.h) ↔ [`util/`](include/util) | Subsystem of small, low-coupling, header-only helpers.  The umbrella is a pure re-exporter; consumers `#include "utility.h"` to get everything or cherry-pick from `util/`. |
+| **Subsystem types + algorithms** | [`triggers.h`](include/triggers.h) ↔ [`triggers/`](include/triggers) | Subsystem with cross-cutting types **and** algorithms.  Types/config/registry live in sub-headers re-exported by the umbrella; algorithm headers (e.g. [`triggers/streaming.h`](include/triggers/streaming.h)) are **not** re-exported — include them deliberately. |
+| **Category grouping** | [`writers/`](include/writers) | Folder of independent entry points that share no types or interface.  No umbrella; adding one would re-export nothing.  Stays flat on purpose. |
+
+> **Trigger subsystem.**  The two-mode config schema (device / channel) plus
+> the DCR-weighted streaming trigger (D-12) are documented in
+> [`include/triggers/DISCUSSION.md`](include/triggers/DISCUSSION.md).  TOML
+> knobs live in [`conf/framer_conf.toml`](conf/framer_conf.toml) under the
+> `[streaming_trigger]` section; tune `n_sigma_threshold` from the QA score
+> histograms (`Streaming Trigger/h_streaming_score_{noise,data}` in the
+> lightdata output) after a first run.
 
 ---
 
