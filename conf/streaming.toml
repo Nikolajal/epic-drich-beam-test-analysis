@@ -59,25 +59,32 @@ cell_size           =    3.0    # XY accumulator cell size (mm) — sets the
                                 # refinement is § 2.3 in the DISCUSSION.
 
 # Per-frame ring-finder parameters
-time_cut_ns         =   10.0    # hits with |t_hit - t_streaming| < this enter the Hough
-                                # (was hardcoded 10 ns; SHOULD default to match
-                                #  [streaming_trigger].time_window_ns once §2.5
-                                #  open-item lands.  Currently mismatched.)
-threshold_fraction  =    0.33   # min fraction of active hits in a peak cell
-min_hits_slack      =    0.75   # min_hits passed to alcor_find_rings_hough =
-                                # this × min_active (slack below the absolute
-                                # threshold; tolerates statistical fluctuation)
-hough_threshold_fraction = 0.004 # min_active = ceil(this × N_active_cherenkov)
-                                # Both min_active and 1× scaling baseline.
-                                # See open item: re-derive now that stage 1
-                                # already pre-filters Hough entry.
-max_rings           =    2      # hard cap on rings returned per frame
-collection_radius   =    7.5    # mm — ring band width for hit assignment
+#
+# Note: the time pre-cut around the streaming-trigger's `fine_time`
+# is NOT configurable here — it is **inherited from the streaming
+# trigger's `time_window_ns`** (above).  There's no physical reason
+# the Hough's hit-selection window should differ from the score stage's
+# clustering window, and allowing them to drift only creates confusion.
+#
+# Note: `max_rings` is NOT configurable either — it is **hardcoded to 2**
+# in the algorithm because the detector has two Cherenkov radiators
+# (aerogel + gas) and there is no physical configuration that can
+# produce more than two concentric Cherenkov rings in a single event.
+threshold_fraction       =   0.33    # min fraction of active hits in a peak cell
+min_hits_slack           =   0.75    # min_hits passed to alcor_find_rings_hough =
+                                     # this × min_active (slack below the
+                                     # absolute threshold; tolerates statistical
+                                     # fluctuation)
+hough_threshold_fraction =   0.004   # min_active = ceil(this × N_active_cherenkov)
+                                     # Both min_active and 1× scaling baseline.
+                                     # See open item: re-derive now that stage 1
+                                     # already pre-filters Hough entry.
+collection_radius        =   7.5     # mm — ring band width for hit assignment
 
 # fit_circle initial guess (centre prior).  Currently a fixed
 # centre-at-origin / R=50 mm guess regardless of where the Hough peaked.
 # Open item: pass the Hough's discrete (x_c, y_c, R) instead so the fit
 # refines locally rather than climbing back from a generic starting point.
-fit_circle_init_x   =    0.0    # mm
-fit_circle_init_y   =    0.0    # mm
-fit_circle_init_r   =   50.0    # mm
+fit_circle_init_x        =   0.0     # mm
+fit_circle_init_y        =   0.0     # mm
+fit_circle_init_r        =  50.0     # mm

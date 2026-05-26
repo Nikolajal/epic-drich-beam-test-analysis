@@ -538,17 +538,28 @@ streaming_hough_conf_reader(std::string config_file)
         if (auto v = (*sh_table)["cell_size"].value<double>())
             cfg.cell_size = static_cast<float>(*v);
 
-        // Per-frame ring-finder parameters
-        if (auto v = (*sh_table)["time_cut_ns"].value<double>())
-            cfg.time_cut_ns = static_cast<float>(*v);
+        // Per-frame ring-finder parameters.
+        // `time_cut_ns` is inherited from streaming_trigger.time_window_ns
+        // and `max_rings` is hardcoded to 2 — see the struct doc and
+        // include/triggers/streaming/DISCUSSION.md § 2 for the rationale.
+        // If the user mistakenly sets either key in TOML, warn loudly
+        // (the value is silently ignored).
+        if ((*sh_table)["time_cut_ns"])
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) `time_cut_ns` is no longer a "
+                "knob — the Hough time pre-cut is inherited from "
+                "`streaming_trigger.time_window_ns`.  Ignoring.");
+        if ((*sh_table)["max_rings"])
+            mist::logger::warning(
+                "(streaming_hough_conf_reader) `max_rings` is no longer a "
+                "knob — hardcoded to 2 (one ring per radiator).  Ignoring.");
+
         if (auto v = (*sh_table)["threshold_fraction"].value<double>())
             cfg.threshold_fraction = static_cast<float>(*v);
         if (auto v = (*sh_table)["min_hits_slack"].value<double>())
             cfg.min_hits_slack = static_cast<float>(*v);
         if (auto v = (*sh_table)["hough_threshold_fraction"].value<double>())
             cfg.hough_threshold_fraction = static_cast<float>(*v);
-        if (auto v = (*sh_table)["max_rings"].value<int64_t>())
-            cfg.max_rings = static_cast<int>(*v);
         if (auto v = (*sh_table)["collection_radius"].value<double>())
             cfg.collection_radius = static_cast<float>(*v);
 
@@ -571,9 +582,6 @@ streaming_hough_conf_reader(std::string config_file)
         if (cfg.cell_size <= 0.f)
             mist::logger::warning(
                 "(streaming_hough_conf_reader) cell_size must be > 0.");
-        if (cfg.time_cut_ns <= 0.f)
-            mist::logger::warning(
-                "(streaming_hough_conf_reader) time_cut_ns must be > 0.");
         if (cfg.threshold_fraction <= 0.f || cfg.threshold_fraction > 1.f)
             mist::logger::warning(
                 "(streaming_hough_conf_reader) threshold_fraction should be in (0, 1].");
@@ -583,9 +591,6 @@ streaming_hough_conf_reader(std::string config_file)
         if (cfg.hough_threshold_fraction <= 0.f)
             mist::logger::warning(
                 "(streaming_hough_conf_reader) hough_threshold_fraction must be > 0.");
-        if (cfg.max_rings <= 0)
-            mist::logger::warning(
-                "(streaming_hough_conf_reader) max_rings must be ≥ 1.");
         if (cfg.collection_radius <= 0.f)
             mist::logger::warning(
                 "(streaming_hough_conf_reader) collection_radius must be > 0.");

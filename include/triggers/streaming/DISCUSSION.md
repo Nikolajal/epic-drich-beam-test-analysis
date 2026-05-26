@@ -260,21 +260,30 @@ streaming-trigger event with fine_time = t★
 
 ### 2.2  Parameter inventory (current values)
 
-| Where | Current value | What it controls |
-|---|---|---|
-| `HoughTransform` ctor | `r_min = 20 mm`, `r_max = 120 mm` | Radius scan range |
-| `HoughTransform` ctor | `r_step = 1 mm` | Radius granularity in the accumulator |
-| `HoughTransform` ctor | `cell_size = 3 mm` | Accumulator XY cell size — **sets the discrete centre resolution** (see §2.3) |
-| Time pre-cut         | `±10 ns` (hardcoded) | Hits selected around `fine_time` |
-| `alcor_find_rings_hough` | `threshold_fraction = 0.33` | Min fraction of active hits in peak cell |
-| `alcor_find_rings_hough` | `min_hits = hough_threshold × 0.75` | Absolute min vote count (slack on min_active) |
-| `alcor_find_rings_hough` | `min_active = hough_threshold` (= `ceil(0.004 · N_active)`) | Minimum surviving hits for Hough to run |
-| `alcor_find_rings_hough` | `max_rings = 2` | Hard cap on rings returned per frame |
-| `alcor_find_rings_hough` | `collection_radius = 7.5 mm` | Width of ring band for hit association |
-| `fit_circle`         | `init = {0, 0, 50}` | Centre-at-origin / R = 50 mm prior |
+| Where | Current value | What it controls | Tunable? |
+|---|---|---|---|
+| `HoughTransform` ctor | `r_min = 20 mm`, `r_max = 120 mm` | Radius scan range | ✅ `[streaming_hough].r_min/r_max` |
+| `HoughTransform` ctor | `r_step = 1 mm` | Radius granularity in the accumulator | ✅ `[streaming_hough].r_step` |
+| `HoughTransform` ctor | `cell_size = 3 mm` | Accumulator XY cell size — **sets the discrete centre resolution** (see §2.3) | ✅ `[streaming_hough].cell_size` |
+| Time pre-cut          | inherited from streaming-score window | Hits selected around `fine_time` (`|t_hit − t_streaming| < time_window_ns`) | ❌ inherited from `[streaming_trigger].time_window_ns` |
+| `alcor_find_rings_hough` | `threshold_fraction = 0.33` | Min fraction of active hits in peak cell | ✅ `[streaming_hough].threshold_fraction` |
+| `alcor_find_rings_hough` | `min_hits = min_active × 0.75` | Absolute min vote count (slack on min_active) | ✅ `[streaming_hough].min_hits_slack` |
+| `alcor_find_rings_hough` | `min_active = ceil(0.004 · N_active)` | Minimum surviving hits for Hough to run | ✅ `[streaming_hough].hough_threshold_fraction` |
+| `alcor_find_rings_hough` | `max_rings = 2` | Hard cap on rings returned per frame | ❌ hardcoded (physical: two radiators ⇒ max two concentric rings) |
+| `alcor_find_rings_hough` | `collection_radius = 7.5 mm` | Width of ring band for hit association | ✅ `[streaming_hough].collection_radius` |
+| `fit_circle`          | `init = {0, 0, 50}` | Centre / radius initial guess (centre-at-origin prior) | ✅ `[streaming_hough].fit_circle_init_{x,y,r}` |
 
-Every entry in this table moves to a config knob in Phase 4 of the
-consolidation plan.
+**Non-tunable rationale:**
+
+- `time_cut_ns` is **inherited from `[streaming_trigger].time_window_ns`**.
+  There is no physical reason for the Hough hit-selection window to
+  differ from the score-stage clustering window — allowing them to drift
+  only creates a configuration with two ways to misalign.
+- `max_rings = 2` is a **detector-geometry constraint**: the dRICH
+  prototype has two Cherenkov radiators (aerogel + gas), so at most two
+  concentric rings can fire on a single charged-particle event.  A
+  third "ring" from the algorithm would necessarily be noise or
+  combinatorial — better to cap it at the physical limit.
 
 ### 2.3  Sub-cell centre refinement  *(was D-03)*
 
@@ -353,24 +362,24 @@ Items that become small focused changes once the Hough stage is its
 own translation unit with config-driven knobs (Phase 5 of the
 consolidation plan):
 
-- **Time-cut width alignment.**  The Hough's time pre-cut (±10 ns
-  hardcoded) is half the streaming-score window (currently 20 ns).
-  These should default to matching values — otherwise the Hough may
-  drop hits that the score stage included, or vice versa.  Default
-  the Hough's `time_cut_ns` to the score's `time_window_ns`.
+- ✅ **Time-cut width alignment** — closed by design.  The Hough's time
+  pre-cut is **inherited** from `[streaming_trigger].time_window_ns`
+  (no separate knob).  See § 2.2.
+- ✅ **`max_rings` policy** — closed by design.  Hardcoded to 2 because
+  the detector has two Cherenkov radiators and no physically realisable
+  single-event configuration can produce more than two concentric rings.
+  See § 2.2.
 - **`fit_circle` init from Hough peak.**  The current `{0, 0, 50}` fixed
   prior pulls every ring towards origin / R = 50 mm regardless of where
   the Hough actually peaked.  Pass the Hough's discrete `(x_c, y_c, R)`
   estimate as the initial guess; the fit then refines locally instead
-  of climbing back from a generic starting point.
+  of climbing back from a generic starting point.  Config knobs
+  `fit_circle_init_{x,y,r}` are retained as a fallback / override.
 - **Hough threshold formula review.**  `hough_threshold = ceil(0.004 ×
-  N_active_cherenkov)` was tuned for the era when the streaming trigger
-  didn't gate Hough entry.  Now that stage 1 is selective, stage 2's
-  threshold can be re-derived (or made a flat tunable knob).
-- **Multi-ring beyond 2.**  The `max_rings = 2` cap may be limiting for
-  multi-track events (cosmic + beam) or events with reflection rings.
-  Audit how many frames hit the cap; consider raising or making
-  configurable.
+  N_active_cherenkov)` (now `hough_threshold_fraction`) was tuned for
+  the era when the streaming trigger didn't gate Hough entry.  Now that
+  stage 1 is selective, stage 2's threshold can be re-derived (or made
+  a flat tunable knob).
 - **QA refresh.**  Plot `n_σ_streaming` vs `n_rings_found` to expose the
   correlation between the two stages; per-ring radius histograms with
   overlay for the two ring slots; Δt between Hough-trigger time and

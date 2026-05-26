@@ -367,9 +367,17 @@ struct StreamingHoughConfigStruct
     float cell_size  = 3.f;
 
     // ── Per-frame ring-finder parameters ────────────────────────────
-    /// @brief Time pre-cut around streaming-trigger fine_time [ns].
-    /// Hits with `|t_hit - t_streaming| < this` enter the Hough.
-    float time_cut_ns = 10.f;
+    //
+    // **`time_cut_ns` is NOT a knob here.**  The Hough's time pre-cut
+    // around the streaming-trigger's `fine_time` is inherited from
+    // `StreamingTriggerConfigStruct::time_window_ns` — there's no
+    // physical reason for the Hough hit-selection window to differ
+    // from the score-stage clustering window.
+    //
+    // **`max_rings` is NOT a knob either.**  Hardcoded to 2 in the
+    // algorithm because the detector has two Cherenkov radiators
+    // (aerogel + gas); no physically realisable single-event
+    // configuration produces more than two concentric rings.
 
     /// @brief Minimum fraction of currently-active hits in a peak accumulator cell.
     float threshold_fraction = 0.33f;
@@ -381,9 +389,6 @@ struct StreamingHoughConfigStruct
     /// @brief `min_active = ceil(this × N_active_cherenkov)`.  Both the
     /// "Hough may run at all" gate and the baseline for `min_hits_slack`.
     float hough_threshold_fraction = 0.004f;
-
-    /// @brief Hard cap on number of rings returned per frame.
-    int   max_rings  = 2;
 
     /// @brief Ring band width [mm] for hit assignment.
     float collection_radius = 7.5f;
