@@ -285,63 +285,8 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
     gROOT->SetBatch(current_batch_ROOT);
 }
 
-// =============================================================================
-// AlcorFinedata — Finding rings algorithms
-// =============================================================================
-
-std::vector<mist::ring_finding::RingResult> AlcorFinedata::alcor_find_rings_hough(
-    mist::ring_finding::HoughTransform &ht,
-    std::vector<AlcorFinedata> &alcor_hits,
-    float threshold_fraction,
-    int min_hits,
-    int min_active,
-    int max_rings,
-    float collection_radius)
-{
-    // --- Build generic Hit vector, keeping a parallel index map -------------
-    // generic_to_alcor[i] gives the index into alcor_hits that corresponds to
-    // generic_hits[i].  This lets us write mask bits back after ring finding.
-    std::vector<mist::ring_finding::Hit> generic_hits;
-    std::vector<int> generic_to_alcor;
-    generic_hits.reserve(alcor_hits.size());
-    generic_to_alcor.reserve(alcor_hits.size());
-
-    for (int i = 0; i < static_cast<int>(alcor_hits.size()); ++i)
-    {
-        const auto &h = alcor_hits[i];
-
-        // ALCOR-specific filters — do not belong in HoughTransform
-        if (h.is_afterpulse())
-            continue;
-        if (h.get_device() >= 200)
-            continue;
-
-        generic_hits.push_back({h.get_hit_x(),
-                                h.get_hit_y(),
-                                h.get_time_ns(),
-                                static_cast<int>(4 * h.get_global_channel_index())});
-        generic_to_alcor.push_back(i);
-    }
-
-    // --- Run the generic ring finder ----------------------------------------
-    std::vector<mist::ring_finding::RingResult> rings =
-        ht.find_rings(generic_hits, threshold_fraction, min_hits,
-                      max_rings, collection_radius);
-
-    // --- Write mask bits back onto the original AlcorFinedata hits ---------
-    // Ring mask bits in declaration order; extend the array for more rings.
-    const std::array<HitMask, 2> ring_masks = {
-        HitmaskHoughRingTagFirst,
-        HitmaskHoughRingTagSecond};
-
-    for (int ring_idx = 0; ring_idx < static_cast<int>(rings.size()); ++ring_idx)
-    {
-        if (ring_idx >= static_cast<int>(ring_masks.size()))
-            break; // no mask bit defined for this ring index
-
-        for (int generic_idx : rings[ring_idx].hit_indices)
-            alcor_hits[generic_to_alcor[generic_idx]].add_mask_bit(ring_masks[ring_idx]);
-    }
-
-    return rings;
-}
+// AlcorFinedata ring-finding adapter (`alcor_find_rings_hough`) removed
+// during Phase 3 of the streaming-trigger consolidation — the logic now
+// lives inline in `src/triggers/streaming/hough.cxx`, the only consumer.
+// See the header comment block at the top of `alcor_finedata.h` and
+// `include/triggers/streaming/DISCUSSION.md` § 2 for context.

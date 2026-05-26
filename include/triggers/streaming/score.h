@@ -1,26 +1,25 @@
 #pragma once
 
 /**
- * @file triggers/streaming.h
- * @brief Per-frame online streaming-trigger evaluator.
+ * @file triggers/streaming/score.h
+ * @brief Stage 1 of the streaming-trigger pipeline — DCR-weighted score.
  *
- * Time-cluster pre-filter for the Hough ring-finding stage downstream: scans
- * a frame's Cherenkov hits with a sliding time window and emits a
- * `_TRIGGER_STREAMING_RING_FOUND_` event when a cluster crosses threshold.
- * Frames without a streaming trigger are dropped by the lightdata writer.
+ * Time-cluster pre-filter for the Hough ring-finding stage downstream:
+ * scans a frame's Cherenkov hits with a sliding time window, computes a
+ * DCR-weighted score `S = Σ_hits 1/m_c`, and emits a
+ * `_TRIGGER_STREAMING_RING_FOUND_` event when the standardised score
+ * `n_σ = (S − E[S])/σ_S` crosses the configured threshold.  Frames
+ * without a streaming trigger are dropped by the lightdata writer.
  *
- * ## Status
+ * **v0 entry point** (`run_streaming_trigger`) is the original
+ * unweighted hit-count version, kept here as a reference and migration
+ * path.  **v1 entry point** (`run_streaming_trigger_weighted`) is the
+ * DCR-weighted score described above and is what the lightdata writer
+ * currently calls.
  *
- * **v0 (current):** unweighted hit count, threshold is an integer hit count.
- * The function lives here as a literal lift from `src/lightdata_writer.cxx`
- * during the D-12 refactor — algorithm unchanged in this step.
- *
- * **v1 (in progress, D-12):** DCR-weighted score, threshold as $n_\sigma$
- * deviation from noise expectation, two QA histograms (noise + data) for
- * offline threshold validation.  See
- * [`include/triggers/DISCUSSION.md`](DISCUSSION.md) for the design.
- *
- * @see triggers/DISCUSSION.md — community-facing design reference.
+ * Configuration lives in [`conf/streaming.toml`](../../../conf/streaming.toml)
+ * under `[streaming_trigger]`.  Design rationale and the threshold-tuning
+ * workflow are in [`DISCUSSION.md`](DISCUSSION.md) § 1.
  */
 
 #include <set>
@@ -29,7 +28,6 @@
 #include "alcor_spilldata.h"
 
 class TH1F;
-class TH2F;
 class TProfile;
 
 /**
@@ -187,36 +185,23 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
  * @param time_window_ns             Width of the sliding trigger window [ns].
  * @param threshold                  Minimum Hit count to fire the trigger.
  * @param carry_over_hits            Hits that spill into the next frame (in/out).
- * @param h_delta_t_leading_edge     Diagnostic histogram: Δt to leading edge.
- * @param h_delta_t_half_centroid    Diagnostic histogram: Δt to half-centroid.
- * @param h_delta_t_half_center_left  Diagnostic histogram: Δt left half-centre.
- * @param h_delta_t_half_center_right Diagnostic histogram: Δt right half-centre.
- * @param h_sigma_vs_nhits           2D diagnostic: σ vs. Hit count.
- * @param h_median_vs_window         2D diagnostic: median vs. window size.
- * @param h_tdc_step_sizes           Diagnostic histogram: TDC step sizes.
- * @param h_tdc_zero_times           Diagnostic histogram: TDC zero times.
- * @param h_tdc_zero_cluster_size    Diagnostic histogram: TDC zero cluster size.
  * @param frame_length_ns            Frame duration in nanoseconds; used to shift
  *                                   carry-over Hit times at frame boundaries.
  *                                   Required (no default) — must be derived from
  *                                   the active @ref FramerConfigStruct so that
  *                                   changes in the TOML config propagate here.
  * @return @c true if the trigger fired for this frame.
+ *
+ * @note  All per-cluster timing-QA histogram arguments were dropped in
+ *        the 2026-Q2 sweep (the last survivor was `h_sigma_vs_nhits`).
+ *        See DISCUSSION.md § 2.5 for the dropped-hists list and the open
+ *        items that may justify re-introducing a focused subset.
  */
 bool run_streaming_trigger(AlcorSpilldata &current_spill,
                            int frame_id,
                            const float time_window_ns,
                            const int threshold,
                            std::vector<std::pair<int, float>> &carry_over_hits,
-                           TH1F *h_delta_t_leading_edge,
-                           TH1F *h_delta_t_half_centroid,
-                           TH1F *h_delta_t_half_center_left,
-                           TH1F *h_delta_t_half_center_right,
-                           TH2F *h_sigma_vs_nhits,
-                           TH2F *h_median_vs_window,
-                           TH1F *h_tdc_step_sizes,
-                           TH1F *h_tdc_zero_times,
-                           TH1F *h_tdc_zero_cluster_size,
                            float frame_length_ns);
 
 /**
@@ -259,13 +244,4 @@ bool run_streaming_trigger_weighted(
     const float n_sigma_threshold,
     std::vector<std::tuple<int, float, float>> &carry_over_hits,  // (idx, time_ns, weight)
     TH1F *h_score_for_qa,
-    TH1F *h_delta_t_leading_edge,
-    TH1F *h_delta_t_half_centroid,
-    TH1F *h_delta_t_half_center_left,
-    TH1F *h_delta_t_half_center_right,
-    TH2F *h_sigma_vs_nhits,
-    TH2F *h_median_vs_window,
-    TH1F *h_tdc_step_sizes,
-    TH1F *h_tdc_zero_times,
-    TH1F *h_tdc_zero_cluster_size,
     float frame_length_ns);

@@ -1,8 +1,10 @@
 #include "parallel_streaming_framer.h"
 #include "writers/lightdata.h"
-#include "triggers/streaming.h"
+#include "triggers/streaming/score.h"
+#include "triggers/streaming/hough.h"
 #include "mapping.h"
 #include <mist/ring_finding/hough_transform.h>
+#include "TROOT.h"
 #include "TProfile2D.h"
 #include "TNamed.h"
 #include "TParameter.h"
@@ -60,6 +62,15 @@ void lightdata_writer(
     std::string framer_conf_file,
     std::string streaming_conf_file)
 {
+    //  ROOT thread-safety: protects TROOT/TF1/Fit::Fitter global
+    //  state under the framer's multithreaded stream reads (which
+    //  exercise gROOT lookups via the per-thread WorkerScratch hist
+    //  cloning) and any future frame-level parallelism in this
+    //  writer.  Without it, ROOT's internal mutex effectively
+    //  serializes ROOT calls across workers.  Idempotent; safe to
+    //  call once per lightdata_writer invocation.
+    ROOT::EnableThreadSafety();
+
     //  Do not make ownership of histograms to current directory
     TH1::AddDirectory(false);
 
@@ -182,7 +193,6 @@ void lightdata_writer(
     //  yet consumed by the algorithm (Phase 4 wires it).
     auto streaming_trigger_cfg = streaming_trigger_conf_reader(streaming_conf_file);
     auto streaming_hough_cfg   = streaming_hough_conf_reader(streaming_conf_file);
-    (void)streaming_hough_cfg;   // silences unused-variable until Phase 4
 
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
@@ -376,33 +386,130 @@ void lightdata_writer(
                                            205, -5.5, 199.5);
     //  ---
     //  --- Streaming Trigger
-    RootHist<TH2F> h_streaming_trigger_frames_examples("h_streaming_trigger_frames_examples", ";x (mm);y (mm)", 1000, 0, 1000, framer_cfg.frame_size, 0, framer_cfg.frame_size);
+    //
+    //  The Cherenkov-hit hitmaps cover the score → Hough pipeline:
+    //    full_hitmap     hits flagged by stage 1 (score's cluster mask)
+    //    time_cut_hitmap hits surviving |t − t_streaming| < time_window_ns
+    //    ring_finder_*   hits the Hough tagged as belonging to a ring
     RootHist<TH2F> h_streaming_trigger_full_hitmap("h_streaming_trigger_full_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_streaming_trigger_time_cut_hitmap("h_streaming_trigger_time_cut_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_streaming_trigger_ring_finder_hitmap("h_streaming_trigger_ring_finder_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH1F> h_streaming_trigger_ring_finder_nrings("h_streaming_trigger_ring_finder_nrings", ";timing chip 0 - timing chip 1", 3, -.5, 2.5);
     RootHist<TH2F> h_streaming_trigger_ring_finder_first_hitmap("h_streaming_trigger_ring_finder_first_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_streaming_trigger_ring_finder_second_hitmap("h_streaming_trigger_ring_finder_second_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    RootHist<TH1F> h_streaming_trigger_center_X_first("h_streaming_trigger_center_X_first", ";x (mm)", 100, -25, 25);
-    RootHist<TH1F> h_streaming_trigger_center_Y_first("h_streaming_trigger_center_Y_first", ";y (mm)", 100, -25, 25);
-    RootHist<TH1F> h_streaming_trigger_center_R_first("h_streaming_trigger_center_R_first", ";R (mm)", 200, 20, 120);
-    RootHist<TH1F> h_streaming_trigger_center_X_second("h_streaming_trigger_center_X_second", ";x (mm)", 100, -25, 25);
-    RootHist<TH1F> h_streaming_trigger_center_Y_second("h_streaming_trigger_center_Y_second", ";y (mm)", 100, -25, 25);
-    RootHist<TH1F> h_streaming_trigger_center_R_second("h_streaming_trigger_center_R_second", ";R (mm)", 200, 20, 120);
+    //  Per-ring centre / radius hists.  Binning AND limits are derived
+    //  from streaming_hough_cfg so a TOML edit propagates straight
+    //  through — one QA bin ↔ one Hough accumulator cell.
+    //
+    //    R   : range = [cfg.r_min, cfg.r_max],   bin width = cfg.r_step
+    //    X/Y : range = [-cfg.centre_xy_half_range_mm,
+    //                   +cfg.centre_xy_half_range_mm],
+    //          bin width = cfg.cell_size   (rounded so n_bins × cell_size
+    //          covers the full half-range symmetrically around 0)
+    //
+    //  Note: `centre_xy_half_range_mm` is a writer-side QA knob, not a
+    //  ring-finder bound — the Hough's X/Y space is set by the active
+    //  geometry, not by a user limit.  Set it wider than the expected
+    //  centre spread for your beam line so legitimate rings don't fall
+    //  in overflow; tighter to zoom in once you know where they land.
+    const int   ringXY_nbins =
+        std::max(1, static_cast<int>(std::round(
+                       2.f * streaming_hough_cfg.centre_xy_half_range_mm /
+                       streaming_hough_cfg.cell_size)));
+    const float ringXY_half  = 0.5f * ringXY_nbins * streaming_hough_cfg.cell_size;
+    const int   ringR_nbins =
+        std::max(1, static_cast<int>(std::round(
+                       (streaming_hough_cfg.r_max - streaming_hough_cfg.r_min) /
+                       streaming_hough_cfg.r_step)));
+    const float ringR_lo    = streaming_hough_cfg.r_min;
+    const float ringR_hi    = streaming_hough_cfg.r_min +
+                              ringR_nbins * streaming_hough_cfg.r_step;
+    //  Per-ring **Hough peak** outputs (centre X, Y, radius taken
+    //  straight from `RingResult::{cx, cy, radius}` before the
+    //  fit_circle refinement).  Written first in the output (see the
+    //  `Hough rings/` subfolder below) so the upstream → downstream
+    //  chain is visually obvious.
+    RootHist<TH1F> h_streaming_trigger_ring_X_first_hough("h_streaming_trigger_ring_X_first_hough", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough("h_streaming_trigger_ring_Y_first_hough", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_first_hough("h_streaming_trigger_ring_R_first_hough", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    RootHist<TH1F> h_streaming_trigger_ring_X_second_hough("h_streaming_trigger_ring_X_second_hough", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_second_hough("h_streaming_trigger_ring_Y_second_hough", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_second_hough("h_streaming_trigger_ring_R_second_hough", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    //  (Per-ring `fit_circle` outputs removed 2026-05-26: the lightdata-
+    //  side fit was QA-only and recodata re-fits the mask-tagged hits
+    //  with full LOO + dual/solo splits + CB+pol3 radial fit.  All
+    //  fit-derived observables now live in recodata.root's `Rings/`
+    //  subfolder.  Saves ~5-30 s per run and removes the architectural
+    //  ambiguity of having two simultaneous fit pipelines.)
+
+    //  Hough-knob calibration QA (see § 2.5 in the streaming DISCUSSION).
+    //
+    //  2D `peak_votes` (y) vs `|active|` (x) per ring slot.  Two
+    //  threshold lines overlay on these axes for tuning:
+    //     y = min_hits                    (absolute floor; raise via
+    //                                      hough_threshold_fraction)
+    //     y = threshold_fraction × x      (relative floor)
+    //  Real rings cluster as a band high in y; random-coincidence
+    //  peaks track the diagonal.  Bins are integer-aligned (1 hit /
+    //  1 vote per bin) so the discrete vote counts map cleanly.
+    //
+    //  Axis ranges set from the first calibration run: |active| ≤ 100
+    //  covers all observed events, peak_votes ≤ 50 covers the bulk of
+    //  the population at current settings.  If the diagonal starts
+    //  clipping (population pushes past the upper edge after a knob
+    //  bump), widen these and rebuild.
+    RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first("h_streaming_trigger_ring_peak_votes_vs_active_first", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
+    RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_second("h_streaming_trigger_ring_peak_votes_vs_active_second", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
+    //  1D `|r_hit − R_ring|` per assigned hit, per ring slot.  Range
+    //  bound to [0, 2 × collection_radius] so the threshold line at
+    //  x = cfg.collection_radius sits at the midpoint of the axis.
+    //  Bin width = collection_radius / 30  (~0.25 mm with the default
+    //  7.5 mm collection_radius).
+    constexpr int kArcDistBinsPerSide = 30;
+    const int     ringArc_nbins = 2 * kArcDistBinsPerSide;
+    const float   ringArc_hi    = 2.f * streaming_hough_cfg.collection_radius;
+    RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first("h_streaming_trigger_ring_hit_arc_dist_first", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
+    RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_second("h_streaming_trigger_ring_hit_arc_dist_second", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
+
+    //  Dual-ring sample QA — mirrors of the first-ring hists above
+    //  restricted to events where a second ring was *also* found.
+    //  Lets you A/B the first ring between the full sample and the
+    //  cleaner 2-ring subset (interpretation in `StreamingHoughQA`).
+    //  Same binning / axes as the unsuffixed twins for direct overlay.
+    RootHist<TH2F> h_streaming_trigger_ring_finder_first_hitmap_dual("h_streaming_trigger_ring_finder_first_hitmap_dual", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH1F> h_streaming_trigger_ring_X_first_hough_dual("h_streaming_trigger_ring_X_first_hough_dual", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough_dual("h_streaming_trigger_ring_Y_first_hough_dual", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_first_hough_dual("h_streaming_trigger_ring_R_first_hough_dual", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    //  (Fit-refined dual hists removed 2026-05-26 — see note above.)
+    RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_dual("h_streaming_trigger_ring_peak_votes_vs_active_first_dual", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
+    RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_dual("h_streaming_trigger_ring_hit_arc_dist_first_dual", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
+
+    //  Solo-ring sample QA — complement of the _dual set: same first-ring
+    //  hists restricted to events where *no* second ring was found.
+    //  Together (_solo + _dual) they partition the first-ring sample.
+    RootHist<TH2F> h_streaming_trigger_ring_finder_first_hitmap_solo("h_streaming_trigger_ring_finder_first_hitmap_solo", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    RootHist<TH1F> h_streaming_trigger_ring_X_first_hough_solo("h_streaming_trigger_ring_X_first_hough_solo", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough_solo("h_streaming_trigger_ring_Y_first_hough_solo", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_first_hough_solo("h_streaming_trigger_ring_R_first_hough_solo", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    //  (Fit-refined solo hists removed 2026-05-26 — see note above.)
+    RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_solo("h_streaming_trigger_ring_peak_votes_vs_active_first_solo", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
+    RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_solo("h_streaming_trigger_ring_hit_arc_dist_first_solo", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
     const float time_window_ns = streaming_trigger_cfg.time_window_ns;
     //  D-12 QA score histograms.  Always filled — the noise hist accumulates
     //  during the first-frames window of every spill, the data hist during
     //  the rest of the spill.  Same n_σ axis so the misfire and acceptance
     //  integrals at any threshold are directly comparable.  See
-    //  include/triggers/DISCUSSION.md § 2.3.
+    //  include/triggers/DISCUSSION.md § 2.3.  Binning history: 500 → 250
+    //  (Q2/2026 first pass) → 125 bins / [0,50] (0.4 n_σ/bin) — finer
+    //  binning was just visual noise on the operating-point overlay.
     RootHist<TH1F> h_streaming_score_noise(
         "h_streaming_score_noise",
         ";n_{#sigma} (first-frames sample);entries",
-        500, 0.f, 50.f);
+        125, 0.f, 50.f);
     RootHist<TH1F> h_streaming_score_data(
         "h_streaming_score_data",
         ";n_{#sigma} (data-taking);entries",
-        500, 0.f, 50.f);
+        125, 0.f, 50.f);
     //  Colour scheme for the overlay canvas written further down:
     //  noise (first-frames) = red, data-taking = blue.  Set at hist
     //  creation so the colours stick whether you draw the individual
@@ -411,24 +518,12 @@ void lightdata_writer(
     h_streaming_score_data ->SetLineColor(kBlue);
     h_streaming_score_noise->SetLineWidth(2);
     h_streaming_score_data ->SetLineWidth(2);
-    //  Streaming-trigger Δt QA histograms — 20 bins per ns of axis range
-    //  (50 ps resolution, more than enough for SiPM timing QA).  Capped to
-    //  keep the TH2F well below ROOT's 1 GB-per-object write buffer.  Was
-    //  historically 1000 / ns, which scaled quadratically on the 2D
-    //  histograms and crashed the writer when `time_window_ns` was bumped
-    //  past ~10 ns.
-    constexpr int kBinsPerNs = 20;
-    const int dt_bins_1d = kBinsPerNs * static_cast<int>(time_window_ns);
-    const int dt_bins_2d = kBinsPerNs * static_cast<int>(time_window_ns * 2);
-    RootHist<TH1F> h_streaming_trigger_delta_t_leading_edge("h_streaming_trigger_delta_t_leading_edge", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_1d, 0., time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_delta_t_half_centroid("h_streaming_trigger_delta_t_half_centroid", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_2d, -time_window_ns, time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_delta_t_first_half("h_streaming_trigger_delta_t_first_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_2d, -time_window_ns, time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_delta_t_second_half("h_streaming_trigger_delta_t_second_half", ";#Delta_{t} (t_{Hit} - t_{avg}) ns", dt_bins_2d, -time_window_ns, time_window_ns);
-    RootHist<TH2F> h_streaming_trigger_sigma_vs_nhits("h_streaming_trigger_sigma_vs_nhits", ";n_{hits} in peak window;|odd_median - even_median| ns", 50, 0, 50, dt_bins_2d, -time_window_ns, time_window_ns);
-    RootHist<TH2F> h_streaming_trigger_median_vs_window("h_delta_median_vs_window", ";t_{last} - t_{first} in peak window ns;|odd_median - even_median| ns", dt_bins_2d, -time_window_ns, time_window_ns, dt_bins_2d, -time_window_ns, time_window_ns);
-    RootHist<TH1F> h_streaming_trigger_tdc_step_sizes("h_streaming_trigger_tdc_step_sizes", ";t_{i+1} - t_{i} ns;entries", 1000, 0., 1.);
-    RootHist<TH1F> h_streaming_trigger_tdc_zero_times("h_streaming_trigger_tdc_zero_times", ";t_{Hit} ns;entries", 10000, 0., framer_cfg.frame_length_ns());
-    RootHist<TH1F> h_streaming_trigger_tdc_zero_cluster_size("h_streaming_trigger_tdc_zero_cluster_size", ";n_{hits} in peak;entries", 50, 0., 50.);
+    //  (No timing-QA histograms remain after the 2026-Q2 QA sweep.  The
+    //  full list of dropped hists — delta_t_leading_edge / half_centroid /
+    //  first_half / second_half, h_delta_median_vs_window, the
+    //  h_streaming_trigger_tdc_* trio, and most recently h_sigma_vs_nhits —
+    //  is preserved in DISCUSSION.md § 2.5 alongside the open items that
+    //  may justify reintroducing a focused subset.)
     //  ---
     //  End: Framing data & output definition
     //  --- --- --- --- --- ---
@@ -463,7 +558,16 @@ void lightdata_writer(
                     hit_to_index_xy[*position] = key;
                 }
     }
-    mist::ring_finding::HoughTransform ring_finder(index_to_hit_xy, 20, 120, 1., 3.);
+    //  LUT geometry from streaming_hough_cfg (Phase 4 — was hardcoded
+    //  20/120/1./3.).  build_lut is constructor-side here; the same
+    //  cfg is also passed per-frame to run_streaming_hough_trigger
+    //  for the per-event parameters.
+    mist::ring_finding::HoughTransform ring_finder(index_to_hit_xy,
+                                                   streaming_hough_cfg.r_min,
+                                                   streaming_hough_cfg.r_max,
+                                                   streaming_hough_cfg.r_step,
+                                                   streaming_hough_cfg.cell_size,
+                                                   streaming_hough_cfg.centre_padding_mm);
 
     //  ---
     //  Loop over spills
@@ -560,15 +664,15 @@ void lightdata_writer(
         //  from spill 1) and channels whose rates drift over the fill.
         bool streaming_weights_built_for_spill = false;
 
-        //  Hough ring-finder threshold — a *separate* knob from the streaming
-        //  trigger above (the Hough operates on candidate frames the trigger
-        //  already accepted, and wants a minimum hit count to seed a ring).
-        //  Was historically shared with the streaming-trigger `threshold` int;
-        //  D-12 split the two.  Formula: ceil(0.004 × N_active_Cherenkov),
-        //  floored at 1.
-        const float cherenkov_fraction = 0.004f;
-        const int hough_threshold = std::max(
-            1, static_cast<int>(std::ceil(cherenkov_fraction *
+        //  Hough ring-finder `min_active` — a *separate* knob from the
+        //  streaming trigger above (the Hough operates on candidate
+        //  frames the trigger already accepted, and wants a minimum hit
+        //  count to seed a ring).  Was historically shared with the
+        //  streaming-trigger `threshold` int; D-12 split the two.
+        //  Formula: ceil(cfg.hough_threshold_fraction × N_active_Cherenkov),
+        //  floored at 1.  Phase 4 wired the fraction to the config.
+        const int hough_min_active = std::max(
+            1, static_cast<int>(std::ceil(streaming_hough_cfg.hough_threshold_fraction *
                                           n_active_cherenkov_channels)));
 
         std::vector<std::tuple<int, float, float>> carry_over_hits;
@@ -799,15 +903,6 @@ void lightdata_writer(
                 streaming_trigger_cfg.n_sigma_threshold,
                 carry_over_hits,
                 h_score_for_this_frame,
-                h_streaming_trigger_delta_t_leading_edge.get(),
-                h_streaming_trigger_delta_t_half_centroid.get(),
-                h_streaming_trigger_delta_t_first_half.get(),
-                h_streaming_trigger_delta_t_second_half.get(),
-                h_streaming_trigger_sigma_vs_nhits.get(),
-                h_streaming_trigger_median_vs_window.get(),
-                h_streaming_trigger_tdc_step_sizes.get(),
-                h_streaming_trigger_tdc_zero_times.get(),
-                h_streaming_trigger_tdc_zero_cluster_size.get(),
                 framer_cfg.frame_length_ns());
 
             //  ---
@@ -824,89 +919,52 @@ void lightdata_writer(
                 //  None
 
                 //  ---
-                //  --- Streaming Trigger
-                //  Loop on all triggers
-                std::vector<TriggerEvent> hough_triggers;
-                for (auto current_trigger : triggers_in_frame)
-                    if (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_)
-                    {
-                        auto index = -1;
-                        streaming_trigger++;
-                        std::vector<AlcorFinedata> ring_candidates;
-                        std::vector<int> ring_candidates_index;
-                        for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
-                        {
-                            index++;
-                            AlcorFinedata current_hit(current_cherenkov_hit_struct);
-                            if (current_hit.is_afterpulse())
-                                continue;
-
-                            if (!ispill && streaming_trigger <= 1000)
-                                h_streaming_trigger_frames_examples->Fill(streaming_trigger - 1, current_hit.get_time());
-                            if (current_hit.has_mask_bit(HitmaskStreamingRingTrigger))
-                                h_streaming_trigger_full_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
-                            if (fabs(current_hit.get_time_ns() - current_trigger.fine_time) < 10.)
-                            {
-                                h_streaming_trigger_time_cut_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
-                                ring_candidates.push_back(current_hit);
-                                ring_candidates_index.push_back(index);
-                            }
-                        }
-                        auto found_rings = AlcorFinedata::alcor_find_rings_hough(ring_finder, ring_candidates, 0.33, hough_threshold * 0.75, hough_threshold, 2, 7.5);
-                        h_streaming_trigger_ring_finder_nrings->Fill(found_rings.size());
-                        index = -1;
-                        std::array<int, 2> hough_trigger_hits = {0, 0};
-                        std::array<float, 2> hough_trigger_time = {0.f, 0.f};
-                        std::vector<std::array<float, 2>> hough_triggered_first;
-                        std::vector<std::array<float, 2>> hough_triggered_second;
-                        for (const auto &current_hit : ring_candidates)
-                        {
-                            index++;
-                            if (current_hit.has_mask_bit(HitmaskHoughRingTagFirst) || current_hit.has_mask_bit(HitmaskHoughRingTagSecond))
-                                h_streaming_trigger_ring_finder_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
-                            if (current_hit.has_mask_bit(HitmaskHoughRingTagFirst))
-                            {
-                                h_streaming_trigger_ring_finder_first_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
-                                hough_trigger_hits[0]++;
-                                hough_trigger_time[0] += current_hit.get_time_ns();
-                                hough_triggered_first.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
-                            }
-                            if (current_hit.has_mask_bit(HitmaskHoughRingTagSecond))
-                            {
-                                h_streaming_trigger_ring_finder_second_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
-                                hough_trigger_hits[1]++;
-                                hough_trigger_time[1] += current_hit.get_time_ns();
-                                hough_triggered_second.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
-                            }
-                            cherenkov_hits[ring_candidates_index[index]].HitMask = current_hit.get_mask();
-                        }
-
-                        if (found_rings.size() > 0)
-                        {
-                            hough_triggers.emplace_back(static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
-                                                        static_cast<uint16_t>(found_rings.size()),
-                                                        static_cast<float>(hough_trigger_time[0] / hough_trigger_hits[0]));
-
-                            auto fit_circle_result = fit_circle(hough_triggered_first, {0., 0., 50.}, false);
-                            h_streaming_trigger_center_X_first->Fill(fit_circle_result[0][0]);
-                            h_streaming_trigger_center_Y_first->Fill(fit_circle_result[1][0]);
-                            h_streaming_trigger_center_R_first->Fill(fit_circle_result[2][0]);
-                        }
-                        if (found_rings.size() > 1)
-                        {
-                            hough_triggers.emplace_back(static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
-                                                        static_cast<uint16_t>(found_rings.size()),
-                                                        static_cast<float>(hough_trigger_time[1] / hough_trigger_hits[1]));
-
-                            auto fit_circle_result = fit_circle(hough_triggered_second, {0., 0., 50.}, false);
-                            h_streaming_trigger_center_X_second->Fill(fit_circle_result[0][0]);
-                            h_streaming_trigger_center_Y_second->Fill(fit_circle_result[1][0]);
-                            h_streaming_trigger_center_R_second->Fill(fit_circle_result[2][0]);
-                        }
-                    }
-
-                for (auto &t : hough_triggers)
-                    spilldata.add_trigger_to_frame(frame_id, t);
+                //  --- Streaming Trigger — stage 2 (Hough ring finder).
+                //  Extracted into triggers/streaming/hough.cxx (Phase 3).
+                //  The QA-pointer struct holds raw `.get()`s; any field
+                //  left as nullptr disables that fill.
+                StreamingHoughQA hough_qa;
+                hough_qa.full_hitmap        = h_streaming_trigger_full_hitmap.get();
+                hough_qa.time_cut_hitmap    = h_streaming_trigger_time_cut_hitmap.get();
+                hough_qa.nrings             = h_streaming_trigger_ring_finder_nrings.get();
+                hough_qa.ring_finder_hitmap = h_streaming_trigger_ring_finder_hitmap.get();
+                hough_qa.first_hitmap       = h_streaming_trigger_ring_finder_first_hitmap.get();
+                hough_qa.second_hitmap      = h_streaming_trigger_ring_finder_second_hitmap.get();
+                //  (Per-ring fit_circle QA assignments removed 2026-05-26
+                //   — fit moved fully to recodata.  Hough-seed QA assignments
+                //   below remain.)
+                hough_qa.ring_X_first_hough   = h_streaming_trigger_ring_X_first_hough.get();
+                hough_qa.ring_Y_first_hough   = h_streaming_trigger_ring_Y_first_hough.get();
+                hough_qa.ring_R_first_hough   = h_streaming_trigger_ring_R_first_hough.get();
+                hough_qa.ring_X_second_hough  = h_streaming_trigger_ring_X_second_hough.get();
+                hough_qa.ring_Y_second_hough  = h_streaming_trigger_ring_Y_second_hough.get();
+                hough_qa.ring_R_second_hough  = h_streaming_trigger_ring_R_second_hough.get();
+                hough_qa.ring_peak_votes_vs_active_first  = h_streaming_trigger_ring_peak_votes_vs_active_first.get();
+                hough_qa.ring_peak_votes_vs_active_second = h_streaming_trigger_ring_peak_votes_vs_active_second.get();
+                hough_qa.ring_hit_arc_dist_first          = h_streaming_trigger_ring_hit_arc_dist_first.get();
+                hough_qa.ring_hit_arc_dist_second         = h_streaming_trigger_ring_hit_arc_dist_second.get();
+                //  Dual-ring mirror — gated inside the trigger on found_rings.size() > 1.
+                hough_qa.first_hitmap_dual                    = h_streaming_trigger_ring_finder_first_hitmap_dual.get();
+                hough_qa.ring_X_first_hough_dual              = h_streaming_trigger_ring_X_first_hough_dual.get();
+                hough_qa.ring_Y_first_hough_dual              = h_streaming_trigger_ring_Y_first_hough_dual.get();
+                hough_qa.ring_R_first_hough_dual              = h_streaming_trigger_ring_R_first_hough_dual.get();
+                //  (Fit-refined dual hist assignments removed 2026-05-26.)
+                hough_qa.ring_peak_votes_vs_active_first_dual = h_streaming_trigger_ring_peak_votes_vs_active_first_dual.get();
+                hough_qa.ring_hit_arc_dist_first_dual         = h_streaming_trigger_ring_hit_arc_dist_first_dual.get();
+                //  Solo-ring mirror — gated inside the trigger on found_rings.size() == 1.
+                hough_qa.first_hitmap_solo                    = h_streaming_trigger_ring_finder_first_hitmap_solo.get();
+                hough_qa.ring_X_first_hough_solo              = h_streaming_trigger_ring_X_first_hough_solo.get();
+                hough_qa.ring_Y_first_hough_solo              = h_streaming_trigger_ring_Y_first_hough_solo.get();
+                hough_qa.ring_R_first_hough_solo              = h_streaming_trigger_ring_R_first_hough_solo.get();
+                //  (Fit-refined solo hist assignments removed 2026-05-26.)
+                hough_qa.ring_peak_votes_vs_active_first_solo = h_streaming_trigger_ring_peak_votes_vs_active_first_solo.get();
+                hough_qa.ring_hit_arc_dist_first_solo         = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
+                run_streaming_hough_trigger(
+                    spilldata, frame_id, ring_finder, hough_min_active,
+                    streaming_trigger, ispill,
+                    streaming_trigger_cfg.time_window_ns,
+                    streaming_hough_cfg,
+                    hough_qa);
 
                 //  ---
                 //  --- Trigger QA
@@ -1396,28 +1454,71 @@ void lightdata_writer(
         c_streaming_score_overlay->Write();
         delete c_streaming_score_overlay;   // also deletes overlay clones + legend
     }
-    h_streaming_trigger_frames_examples->Write();
     h_streaming_trigger_full_hitmap->Write();
     h_streaming_trigger_time_cut_hitmap->Write();
     h_streaming_trigger_ring_finder_nrings->Write();
     h_streaming_trigger_ring_finder_hitmap->Write();
     h_streaming_trigger_ring_finder_first_hitmap->Write();
     h_streaming_trigger_ring_finder_second_hitmap->Write();
-    h_streaming_trigger_center_X_first->Write();
-    h_streaming_trigger_center_Y_first->Write();
-    h_streaming_trigger_center_R_first->Write();
-    h_streaming_trigger_center_X_second->Write();
-    h_streaming_trigger_center_Y_second->Write();
-    h_streaming_trigger_center_R_second->Write();
-    h_streaming_trigger_delta_t_leading_edge->Write();
-    h_streaming_trigger_delta_t_half_centroid->Write();
-    h_streaming_trigger_sigma_vs_nhits->Write();
-    h_streaming_trigger_median_vs_window->Write();
-    h_streaming_trigger_tdc_step_sizes->Write();
-    h_streaming_trigger_tdc_zero_times->Write();
-    h_streaming_trigger_tdc_zero_cluster_size->Write();
-    h_streaming_trigger_delta_t_first_half->Write();
-    h_streaming_trigger_delta_t_second_half->Write();
+
+    //  Per-ring centre + radius distributions, split into two subfolders
+    //  so the upstream → downstream chain (Hough seed → fit_circle refine)
+    //  is visually grouped in TBrowser.  Order matters: the Hough seed is
+    //  what the fit climbs from, so any bad tails in `Fit rings/` should
+    //  first be checked against the same hist in `Hough rings/` — if the
+    //  seed is already wrong, the fit was given a bad starting point
+    //  (relevant open items in DISCUSSION.md § 2.5).
+    {
+        TDirectory *hough_rings_dir = streaming_trigger_dir->mkdir("Hough rings");
+        hough_rings_dir->cd();
+        h_streaming_trigger_ring_X_first_hough->Write();
+        h_streaming_trigger_ring_Y_first_hough->Write();
+        h_streaming_trigger_ring_R_first_hough->Write();
+        h_streaming_trigger_ring_X_second_hough->Write();
+        h_streaming_trigger_ring_Y_second_hough->Write();
+        h_streaming_trigger_ring_R_second_hough->Write();
+        //  Knob-calibration QA (see § 2.5 in the streaming DISCUSSION).
+        h_streaming_trigger_ring_peak_votes_vs_active_first->Write();
+        h_streaming_trigger_ring_peak_votes_vs_active_second->Write();
+        h_streaming_trigger_ring_hit_arc_dist_first->Write();
+        h_streaming_trigger_ring_hit_arc_dist_second->Write();
+
+        //  ("Fit rings/" subfolder removed 2026-05-26 — fit_circle work
+        //   moved entirely to recodata.  See recodata.root's `Rings/`
+        //   subfolder for all fit-derived QA.)
+
+        //  Dual-ring mirror — same hists as `Hough rings/`
+        //  above but for the first ring, gated on a second ring also
+        //  being present in the same frame.  Lets you compare ring-1
+        //  properties in the full sample vs the cleaner 2-ring subset.
+        TDirectory *hough_rings_dual_dir = streaming_trigger_dir->mkdir("Hough rings (dual)");
+        hough_rings_dual_dir->cd();
+        h_streaming_trigger_ring_finder_first_hitmap_dual->Write();
+        h_streaming_trigger_ring_X_first_hough_dual->Write();
+        h_streaming_trigger_ring_Y_first_hough_dual->Write();
+        h_streaming_trigger_ring_R_first_hough_dual->Write();
+        h_streaming_trigger_ring_peak_votes_vs_active_first_dual->Write();
+        h_streaming_trigger_ring_hit_arc_dist_first_dual->Write();
+
+        //  ("Fit rings (dual)/" subfolder removed 2026-05-26.)
+
+        //  Solo-ring mirror — complement of (dual). Together they
+        //  partition the full first-ring sample, so any systematic
+        //  difference between (solo) and (dual) flags single-ring
+        //  contamination that the dual requirement filters out.
+        TDirectory *hough_rings_solo_dir = streaming_trigger_dir->mkdir("Hough rings (solo)");
+        hough_rings_solo_dir->cd();
+        h_streaming_trigger_ring_finder_first_hitmap_solo->Write();
+        h_streaming_trigger_ring_X_first_hough_solo->Write();
+        h_streaming_trigger_ring_Y_first_hough_solo->Write();
+        h_streaming_trigger_ring_R_first_hough_solo->Write();
+        h_streaming_trigger_ring_peak_votes_vs_active_first_solo->Write();
+        h_streaming_trigger_ring_hit_arc_dist_first_solo->Write();
+
+        //  ("Fit rings (solo)/" subfolder removed 2026-05-26.)
+
+        streaming_trigger_dir->cd();   // restore parent for any later writes
+    }
     if (h_trigger_frame_population.count(streaming_ring_index))
     {
         h_trigger_frame_population[streaming_ring_index]->Write();

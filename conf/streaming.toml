@@ -14,13 +14,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Fires when the per-window weighted score
-#     S = sum_{hits in window} 1 / lambda_channel
-# crosses `n_sigma_threshold` standardised deviations above its pure-noise
-# expectation.  Channels that haven't accumulated at least `min_noise_hits`
-# in the first-frames noise sample are excluded from the weight bundle —
-# under-measured channels have wildly variable rate estimates that would
-# inflate the noise-score tail (the old `lambda_floor_hz` strategy
-# rewarded rare-fire channels with maximum weight; this gate avoids it).
+#     S = sum_{hits in window} 1 / m_c
+# (m_c = channel's mean hits per trigger window, derived from the
+# first-frames noise sample) crosses `n_sigma_threshold` standardised
+# deviations above its pure-noise expectation.  Channels that haven't
+# accumulated at least `min_noise_hits` in the first-frames sample are
+# excluded from the weight bundle — under-measured channels have wildly
+# variable rate estimates that would inflate the noise-score tail.
 #
 # Tune `n_sigma_threshold` offline from the two QA score histograms
 # (h_streaming_score_noise, h_streaming_score_data) — see § 1.5 in
@@ -28,63 +28,168 @@
 # (e.g. 1000) to disable firing while still accumulating QA hists.
 [streaming_trigger]
 time_window_ns      =   20.0    # sliding-window width (ns)
-n_sigma_threshold   =   15.0    # fire when score >= this many sigma above noise mean
-min_noise_hits      =    5.0    # min noise-sample hits for a channel to enter the weight bundle
+n_sigma_threshold   =   10.0    # fire when score >= this many sigma above noise mean
+min_noise_hits      =   10.0    # min noise-sample hits for a channel to enter the weight bundle
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — Hough ring finder (gated on stage 1)
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Runs on every frame where stage 1 fired.  Selects Cherenkov hits within
-# ±time_cut_ns of the streaming-trigger's fine_time, votes them into a
-# Hough accumulator, extracts up to `max_rings` peak cells, and refines
-# each ring's centre with a least-squares `fit_circle` on the assigned
-# hits.  Emits one `_TRIGGER_HOUGH_RING_FOUND_` event per ring.
+# ±time_window_ns (inherited from [streaming_trigger]) of the streaming-
+# trigger's fine_time, votes them into a Hough accumulator, extracts up
+# to 2 peak cells (hardcoded — two-radiator detector), and refines each
+# ring's centre with a least-squares `fit_circle` on the assigned hits.
+# Emits one `_TRIGGER_HOUGH_RING_FOUND_` event per ring.
 #
-# **Currently the values below are documentation-only** — the algorithm
-# still uses hardcoded constants in src/lightdata_writer.cxx.  Phase 4
-# of the streaming-trigger consolidation (see § 2.5 of
-# include/triggers/streaming/DISCUSSION.md) wires every knob below into
-# the algorithm.  Keep the defaults matching the hardcoded values so
-# that wiring is behaviour-preserving.
+# Every knob below is **live** — Phase 4 of the streaming-trigger
+# consolidation wired them into the algorithm (see DISCUSSION § 2.5).
+# The only Hough-stage parameters that are *not* in this file are
+# `time_window_ns` (inherited from [streaming_trigger]) and `max_rings`
+# (hardcoded to 2); both are intentional non-knobs.
 [streaming_hough]
 
 # Hough accumulator geometry — set once at writer init via
 # mist::ring_finding::HoughTransform's constructor.
-r_min               =   20.0    # minimum ring radius scanned (mm)
-r_max               =  120.0    # maximum ring radius scanned (mm)
-r_step              =    1.0    # radius granularity (mm)
-cell_size           =    3.0    # XY accumulator cell size (mm) — sets the
-                                # discrete centre resolution.  Sub-cell
-                                # refinement is § 2.3 in the DISCUSSION.
+#
+# AGGREGATION RECIPE ACTIVE (2026-Q2 patch landed):
+#   r_step = cell_size = 1.5 mm (half of the original 3 mm grid)
+#   aggregation_window_cells = 2 (set below) → 2×2×2 sub-cell sliding
+#   window in the peak finder, scanning a physical (2·1.5)³ = 3³ mm³
+#   volume per peak position.  Volume-equivalent to the legacy single-
+#   cell finder at 3 mm, so min_hits / threshold_fraction keep their
+#   meaning.  Expected gain vs legacy: ~22 % recovery of peak_votes
+#   that previously fragmented across cell boundaries (measured in the
+#   2026-Q2 calibration run, see DISCUSSION § 2.3.1), plus sub-cell
+#   precision on the recovered ring centres.
+#
+# To revert to legacy single-cell behaviour: set all three to the
+# original values (r_step = cell_size = 3.0, aggregation_window_cells
+# = 1) — they're a coupled triple.
+r_min               =   35.0    # minimum ring radius scanned (mm)
+r_max               =  105.0    # maximum ring radius scanned (mm)
+r_step              =    1.5    # radius granularity (mm) — halved for aggregation
+cell_size           =    1.5    # XY accumulator cell size (mm) — halved
+                                # for aggregation.  Sub-cell refinement
+                                # is § 2.3 in the DISCUSSION.
+
+# LUT padding — half-width (mm) of extra X/Y space added around the
+# hit bounding box at `build_lut` time.  Sets how far outside the
+# detector a ring centre is still findable.
+#
+# Default (commented out / set negative) pads by r_max = 105 mm, the
+# safest setting — but for a Cherenkov detector the radiator plane
+# constrains ring centres to lie close to the detector plane, so the
+# legacy padding is hugely over-conservative.  Cutting the pad shrinks
+# n_cells = nx * ny * n_R linearly in the squared X/Y extent and gives
+# a proportional speedup on voting AND on the SAT peak finder build
+# (DISCUSSION § 2.3.1).
+#
+# Tuning recipe:
+#   1. Look at `ring_X_first_hough` and `ring_Y_first_hough` in the
+#      QA file.  Note the half-width of the populated band.
+#   2. Set this knob to ~1.5–2× that half-width to keep some slack.
+#   3. Re-run; if any cluster lands at the X/Y axis edges of those
+#      hists, the pad is too tight — bump it up.
+#
+# Setting to a very small value (< ring-radius worst case) WILL exclude
+# legitimate rings; sanity-check against the `ring_X/Y_first_hough`
+# distributions every time you change this.
+centre_padding_mm   =   10.0    # mm; -1.0 falls back to r_max (legacy)
 
 # Per-frame ring-finder parameters
 #
-# Note: the time pre-cut around the streaming-trigger's `fine_time`
-# is NOT configurable here — it is **inherited from the streaming
-# trigger's `time_window_ns`** (above).  There's no physical reason
-# the Hough's hit-selection window should differ from the score stage's
-# clustering window, and allowing them to drift only creates confusion.
+# A ring is accepted only if the peak accumulator cell satisfies BOTH:
+#   (1) peak_votes ≥ min_hits                   (absolute floor)
+#   (2) peak_votes ≥ threshold_fraction × |active_hits|   (relative floor)
+# where `active_hits` is the set of hits still in play (= input hits
+# minus hits already assigned to previously-extracted rings).
 #
-# Note: `max_rings` is NOT configurable either — it is **hardcoded to 2**
-# in the algorithm because the detector has two Cherenkov radiators
-# (aerogel + gas) and there is no physical configuration that can
-# produce more than two concentric Cherenkov rings in a single event.
-threshold_fraction       =   0.33    # min fraction of active hits in a peak cell
-min_hits_slack           =   0.75    # min_hits passed to alcor_find_rings_hough =
-                                     # this × min_active (slack below the
-                                     # absolute threshold; tolerates statistical
-                                     # fluctuation)
-hough_threshold_fraction =   0.004   # min_active = ceil(this × N_active_cherenkov)
-                                     # Both min_active and 1× scaling baseline.
-                                     # See open item: re-derive now that stage 1
-                                     # already pre-filters Hough entry.
-collection_radius        =   7.5     # mm — ring band width for hit assignment
+# The three knobs below set those two floors via the chain
+#
+#     min_active = ceil(hough_threshold_fraction × N_active_cherenkov)
+#     min_hits   = floor(min_active × min_hits_slack)
+#
+# and then `min_active` is *also* re-used by MIST as the "abort further
+# rings" gate: if fewer than `min_active` hits remain in the active set
+# after a ring is extracted, the next-ring pass is skipped.  So the
+# three knobs trade off as follows:
+#
+# * `hough_threshold_fraction` — entry gate.  Raise it to suppress
+#     mode A (random-noise rings) and to short-circuit the second-ring
+#     pass on events that only have stage 1's noise pile-up.  Currently
+#     0.004 was tuned **before** stage 1 became selective; with stage 1
+#     gating Hough entry, this floor can almost certainly go up.
+# * `min_hits_slack` — slack below `min_active` for the absolute vote
+#     floor.  0.75 lets a real ring with `min_active × 0.75` votes still
+#     fire (tolerates statistical fluctuation in the per-cell count).
+#     Leave at 0.75 unless you're explicitly studying this lever.
+# * `threshold_fraction` — relative floor.  Adapts per pass because
+#     `|active_hits|` shrinks after each ring is extracted, so raising
+#     this primarily suppresses **mode B** (duplicate-of-real-ring on
+#     pass 2).  0.33 is the historical default; if you see `R_first`
+#     and `R_second` peaked at the same value in `Hough rings/`, raise
+#     to 0.5 or 0.6.  Note: the proper fix for mode B is the
+#     not-yet-implemented merge pass (DISCUSSION § 2.5).
+threshold_fraction       =   0.33    # relative floor: min fraction of currently-
+                                     # active hits required in the peak cell.
+                                     # Raise to suppress a duplicate ring 2
+                                     # (R_first ≈ R_second in `Hough rings/`).
+min_hits_slack           =   0.50    # ring-acceptance slack on the absolute vote
+                                     # floor (0..1).  Leave at 0.75 unless
+                                     # explicitly studying the absolute floor.
+hough_threshold_fraction =   0.0035  # Hough entry gate, as a fraction of active
+                                     # Cherenkov channels.  Raise to suppress
+                                     # random-noise ring candidates and to
+                                     # short-circuit the second-ring pass on
+                                     # stage-1-only noise pile-up events.
+collection_radius        =   2       # mm — ring band width for hit assignment.
+                                     # Too small → ring 1's outer hits stay
+                                     # active and vote for a duplicate ring 2;
+                                     # too large → noise hits absorbed into
+                                     # ring 1.  Watch `ring_finder_first_hitmap`
+                                     # for a clean annulus vs a blob.
 
-# fit_circle initial guess (centre prior).  Currently a fixed
-# centre-at-origin / R=50 mm guess regardless of where the Hough peaked.
-# Open item: pass the Hough's discrete (x_c, y_c, R) instead so the fit
-# refines locally rather than climbing back from a generic starting point.
+# Per-ring centre QA histograms' X/Y half-range (mm).  The Hough algorithm
+# itself doesn't bound X/Y — this is a writer-side knob that sets the axis
+# range of the per-ring centre hists ([-this, +this]).  The bin width is
+# automatically snapped to `cell_size`.  Set wider than the expected
+# centre spread for your beam line so legitimate rings don't fall in
+# overflow; tighter to zoom in once you know where the ring centres land.
+centre_xy_half_range_mm  =  25.0     # mm
+
+# Sub-cell aggregation in MIST's peak finder.  Default 1 = single-cell
+# peak (legacy behaviour, current production).  Set to 2 to enable
+# 2×2×2 sliding-window aggregation — the peak finder sums an 8-cell
+# window at every position and reports the position with the maximum
+# aggregated count.
+#
+# **Recipe to flip it on (recovers ~22 % peak_votes per 2026-Q2
+# measurement, see DISCUSSION § 2.3.1):**
+#
+#   r_step                   =   1.5
+#   cell_size                =   1.5
+#   aggregation_window_cells =   2
+#
+# All three together; halving cell_size / r_step without aggregation
+# loses 15-25 % acceptance, and aggregating at the unhalved grid covers
+# a 6³ mm³ volume which is too coarse for two-ring separation.  Volume
+# equivalence (= legacy single-cell at the original 3 mm) makes
+# `min_hits` and `threshold_fraction` keep their physical meaning, so
+# no threshold re-tuning is needed when flipping the recipe.
+aggregation_window_cells =     2     # 1 = single-cell peak (legacy); 2 = aggregated
+
+# fit_circle initial guess (centre prior).  These values **are** what
+# the fit currently starts from — the same constant `(x_c, y_c, R)`
+# triple every event, regardless of where the Hough actually peaked.
+# That is fine when the Hough seed is sane (the LM minimiser climbs
+# down quickly), but it explains the wandering tails in `Fit rings/`
+# whenever the Hough produces a bad seed: there is no Hough → fit
+# information flow today.
+#
+# Open item (D-04 in DISCUSSION § 2.5): pass the Hough's discrete
+# (cx, cy, radius) per-ring as the initial guess instead, falling back
+# to the values below only when the Hough peak is below quality.
 fit_circle_init_x        =   0.0     # mm
 fit_circle_init_y        =   0.0     # mm
 fit_circle_init_r        =  50.0     # mm

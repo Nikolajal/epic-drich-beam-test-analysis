@@ -20,7 +20,6 @@
  * holding the mutex — @c std::shared_mutex is not reentrant.
  */
 
-#include <mist/ring_finding/hough_transform.h>
 #include <mist/rnd.h>
 #include <sstream>
 #include <cmath>
@@ -684,47 +683,20 @@ public:
     /// @}
 
     // -------------------------------------------------------------------------
-    // Finding rings algorithms
+    // Ring-finding algorithms — removed.
+    //
+    // The former static `alcor_find_rings_hough` adapter lived here as a thin
+    // wrapper around `mist::ring_finding::HoughTransform::find_rings` that
+    // converted ALCOR hits to generic hits and wrote ring-tag mask bits back.
+    // Its only consumer was the streaming-Hough trigger stage, so the logic
+    // moved inline into `src/triggers/streaming/hough.cxx` (Phase 3 of the
+    // streaming-trigger consolidation).  AlcorFinedata is back to being a
+    // pure per-hit value type with no algorithm dependencies on MIST's
+    // ring-finding subsystem.
+    //
+    // See `include/triggers/streaming/DISCUSSION.md` § 2 for the Hough
+    // stage's current home and design.
     // -------------------------------------------------------------------------
-
-    /// @name Ring-finding algorithms
-    /// @{
-
-    /**
-     * @brief Convert a vector of @ref AlcorFinedata hits into @ref hough_hit,
-     *        run the Hough-transform ring finder, write mask bits back onto the
-     *        original hits, and return the ring results.
-     *
-     * All ALCOR-specific knowledge is concentrated here:
-     *  - Afterpulse filtering (`is_afterpulse()`).
-     *  - Device-index guard (device ≥ 200 excluded).
-     *  - LUT key derivation (`get_global_index() / 4`).
-     *  - Mask-bit assignment (`HitmaskHoughRingTagFirst/second`).
-     *
-     * @param ht                  Pre-built @ref HoughTransform instance.
-     *                            @ref HoughTransform::build_lut must have been
-     *                            called with geometry consistent with @p alcor_hits.
-     * @param alcor_hits          Calibrated ALCOR hits for the current event.
-     *                            Mask bits are written back in-place for tagged hits.
-     * @param threshold_fraction  Minimum fraction of active hits required in the
-     *                            peak accumulator cell (range 0–1).
-     * @param min_hits            Minimum absolute vote count for a ring to be accepted.
-     * @param max_rings           Maximum number of rings to extract (default 2).
-     * @param collection_radius   Distance from the ring arc within which a Hit is
-     *                            assigned to the ring [mm] (default 6).
-     * @return                    Vector of @ref hough_ring_result (indices refer to
-     *                            the @p alcor_hits vector), in descending peak-vote order.
-     */
-    static std::vector<mist::ring_finding::RingResult> alcor_find_rings_hough(
-        mist::ring_finding::HoughTransform &ht,
-        std::vector<AlcorFinedata> &alcor_hits,
-        float threshold_fraction,
-        int min_hits,
-        int min_active,
-        int max_rings = 2,
-        float collection_radius = 6.f);
-
-    /// @}
 
 private:
     // -------------------------------------------------------------------------

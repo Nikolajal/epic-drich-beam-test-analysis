@@ -16,7 +16,7 @@
  * | [`triggers/config.h`](triggers/config.h)     | `DeviceTrigger`, `ChannelTrigger`, `TriggerConfigSet`, `trigger_conf_reader`, `pack_channel_key` |
  * | [`triggers/registry.h`](triggers/registry.h) | `TriggerRegistry` (depends on the two above + ROOT TH2) |
  *
- * Algorithm headers in `triggers/` (e.g. [`triggers/streaming.h`](triggers/streaming.h))
+ * Algorithm headers in `triggers/` (e.g. [`triggers/streaming/score.h`](triggers/streaming/score.h))
  * are **not** re-exported by the umbrella — same rationale as `utility.h`
  * not re-exporting algorithm-shaped helpers.  Include them deliberately
  * from the translation units that need them.
