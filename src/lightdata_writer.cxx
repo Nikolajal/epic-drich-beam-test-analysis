@@ -57,7 +57,8 @@ void lightdata_writer(
     std::string readout_config_file,
     std::string mapping_config_file,
     std::string fine_calibration_config_file,
-    std::string framer_conf_file)
+    std::string framer_conf_file,
+    std::string streaming_conf_file)
 {
     //  Do not make ownership of histograms to current directory
     TH1::AddDirectory(false);
@@ -176,7 +177,12 @@ void lightdata_writer(
     //  Load framer + QA configuration (both live in framer_conf_file)
     auto framer_cfg = FramerConfReader(framer_conf_file);
     auto qa_cfg     = qa_conf_reader(framer_conf_file);
-    auto streaming_trigger_cfg = streaming_trigger_conf_reader(framer_conf_file);
+    //  Software trigger pipeline (Phase 2: moved out of framer_conf.toml).
+    //  Both stages share the same file; the Hough struct is loaded but not
+    //  yet consumed by the algorithm (Phase 4 wires it).
+    auto streaming_trigger_cfg = streaming_trigger_conf_reader(streaming_conf_file);
+    auto streaming_hough_cfg   = streaming_hough_conf_reader(streaming_conf_file);
+    (void)streaming_hough_cfg;   // silences unused-variable until Phase 4
 
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
@@ -1483,6 +1489,7 @@ void lightdata_writer(
         write_toml_snapshot("readout_conf_toml", readout_config_file);
         write_toml_snapshot("mapping_conf_toml", mapping_config_file);
         write_toml_snapshot("framer_conf_toml", framer_conf_file);
+        write_toml_snapshot("streaming_conf_toml", streaming_conf_file);
     }
     //  outfile closed automatically by TFilePtr dtor (CODE_REVIEW §4.12).
     //  End: QA plots

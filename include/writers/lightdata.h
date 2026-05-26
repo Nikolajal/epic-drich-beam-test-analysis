@@ -34,6 +34,11 @@
  *                                 string disables fine-time correction.
  * @param framer_conf_file         Path to the framer TOML configuration; missing
  *                                 keys fall back to compile-time macro defaults.
+ * @param streaming_conf_file      Path to the software-trigger-pipeline TOML
+ *                                 configuration (sections `[streaming_trigger]`
+ *                                 and `[streaming_hough]`).  See
+ *                                 `include/triggers/streaming/DISCUSSION.md`
+ *                                 and `conf/streaming.toml`.
  */
 void lightdata_writer(
     const std::string &data_repository,
@@ -45,5 +50,6 @@ void lightdata_writer(
     std::string readout_config_file = "conf/readout_config.toml",
     std::string mapping_config_file = "conf/mapping_conf.toml",
     std::string fine_calibration_config_file = "",
-    std::string framer_conf_file = "conf/framer_conf.toml");
+    std::string framer_conf_file = "conf/framer_conf.toml",
+    std::string streaming_conf_file = "conf/streaming.toml");
 

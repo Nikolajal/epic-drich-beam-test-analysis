@@ -23,21 +23,7 @@ ct_phys_signal_hi             =  10   # physical CT signal window upper edge (cc
 ct_elec_signal_lo             =  -2   # electrical CT signal window lower edge (cc, inclusive)
 ct_elec_signal_hi             =  10   # electrical CT signal window upper edge (cc, inclusive)
 
-# DCR-weighted streaming trigger (D-12).  See include/triggers/DISCUSSION.md.
-#
-# The trigger fires when the per-window weighted score
-#     S = sum_{hits in window} 1 / lambda_channel
-# crosses `n_sigma_threshold` deviations above its pure-noise expectation.
-# Channels that haven't accumulated at least `min_noise_hits` in the
-# first-frames noise sample are excluded from the weight bundle — they
-# don't have a reliable rate estimate, and including them with a clamped
-# weight would inflate the noise-score tail (rare-fire outliers).
-#
-# Tune `n_sigma_threshold` offline from the two QA score histograms
-# (h_streaming_score_noise, h_streaming_score_data) — see § 2.4 in
-# include/triggers/DISCUSSION.md.  Set to a large value (e.g. 1000) to
-# disable firing while still accumulating QA hists for tuning.
-[streaming_trigger]
-time_window_ns      =   20.0    # sliding-window width (ns)
-n_sigma_threshold   =   15.0    # fire when score >= this many sigma above noise mean
-min_noise_hits      =    5.0    # min noise-sample hits for a channel to enter the weight bundle
+# Software trigger pipeline (streaming score + Hough) moved out of this
+# file in Phase 2 of the streaming-trigger consolidation — those knobs
+# are writer-side and don't belong with framer/QA configuration.
+# See conf/streaming.toml and include/triggers/streaming/DISCUSSION.md.

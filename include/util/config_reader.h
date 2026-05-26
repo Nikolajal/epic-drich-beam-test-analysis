@@ -282,15 +282,17 @@ QaConfigStruct qa_conf_reader(std::string config_file = "conf/framer_conf.toml")
 // =========================================================================
 
 /**
- * @brief Tuning knobs for the DCR-weighted streaming trigger (D-12).
+ * @brief Tuning knobs for the DCR-weighted streaming-trigger score stage (D-12).
  *
- * The streaming trigger is a per-frame online pre-filter for Hough ring
- * finding.  See [`include/triggers/DISCUSSION.md`](../triggers/DISCUSSION.md)
- * § 2 for the algorithm and § 2.4 for the threshold-tuning workflow.
+ * The score stage is the first half of the two-stage software trigger
+ * pipeline — a per-frame online pre-filter that gates the Hough
+ * ring-finder downstream.  See
+ * [`include/triggers/streaming/DISCUSSION.md`](../triggers/streaming/DISCUSSION.md)
+ * § 1 for the algorithm and § 1.5 for the threshold-tuning workflow.
  *
- * The TOML loader accepts a `[streaming_trigger]` section in the framer
- * config file; missing keys fall back to the defaults below so an
- * un-configured file is still valid.
+ * The TOML loader accepts a `[streaming_trigger]` section in
+ * [`conf/streaming.toml`](../../conf/streaming.toml); missing keys fall back
+ * to the defaults below so an un-configured file is still valid.
  */
 struct StreamingTriggerConfigStruct
 {
@@ -321,11 +323,91 @@ struct StreamingTriggerConfigStruct
  *
  * Missing keys fall back to the defaults in @ref StreamingTriggerConfigStruct.
  *
- * @param config_file Path to the TOML configuration file.
+ * @param config_file Path to the TOML configuration file
+ *                    (defaults to @c "conf/streaming.toml").
  * @return Populated @ref StreamingTriggerConfigStruct.
  */
 StreamingTriggerConfigStruct
-streaming_trigger_conf_reader(std::string config_file = "conf/framer_conf.toml");
+streaming_trigger_conf_reader(std::string config_file = "conf/streaming.toml");
+
+// =========================================================================
+//  Streaming-Hough configuration
+// =========================================================================
+
+/**
+ * @brief Tuning knobs for the streaming-trigger Hough ring-finder stage.
+ *
+ * Stage 2 of the software trigger pipeline.  Runs on every frame where
+ * the score stage fired (`_TRIGGER_STREAMING_RING_FOUND_` present),
+ * extracts up to `max_rings` ring candidates via Hough voting, then
+ * refines each ring's centre with a least-squares `fit_circle`.
+ *
+ * The TOML loader accepts a `[streaming_hough]` section in
+ * [`conf/streaming.toml`](../../conf/streaming.toml).  Missing keys fall
+ * back to the defaults below.
+ *
+ * See [`include/triggers/streaming/DISCUSSION.md`](../triggers/streaming/DISCUSSION.md)
+ * § 2 for the algorithm, parameter physics, and roadmap.
+ *
+ * @note  Phase 2 of the streaming-trigger consolidation introduces this
+ *        struct + reader.  The algorithm in `src/lightdata_writer.cxx`
+ *        still uses hardcoded constants — defaults here match the
+ *        hardcoded values, and Phase 4 wires them into the algorithm.
+ */
+struct StreamingHoughConfigStruct
+{
+    // ── Hough accumulator geometry ──────────────────────────────────
+    /// @brief Minimum ring radius scanned [mm].
+    float r_min      = 20.f;
+    /// @brief Maximum ring radius scanned [mm].
+    float r_max      = 120.f;
+    /// @brief Radius granularity in the accumulator [mm].
+    float r_step     = 1.f;
+    /// @brief XY accumulator cell size [mm] — sets the discrete centre resolution.
+    float cell_size  = 3.f;
+
+    // ── Per-frame ring-finder parameters ────────────────────────────
+    /// @brief Time pre-cut around streaming-trigger fine_time [ns].
+    /// Hits with `|t_hit - t_streaming| < this` enter the Hough.
+    float time_cut_ns = 10.f;
+
+    /// @brief Minimum fraction of currently-active hits in a peak accumulator cell.
+    float threshold_fraction = 0.33f;
+
+    /// @brief Slack on `min_hits` relative to `min_active`:
+    /// `min_hits = min_active × this`.
+    float min_hits_slack = 0.75f;
+
+    /// @brief `min_active = ceil(this × N_active_cherenkov)`.  Both the
+    /// "Hough may run at all" gate and the baseline for `min_hits_slack`.
+    float hough_threshold_fraction = 0.004f;
+
+    /// @brief Hard cap on number of rings returned per frame.
+    int   max_rings  = 2;
+
+    /// @brief Ring band width [mm] for hit assignment.
+    float collection_radius = 7.5f;
+
+    // ── fit_circle initial guess ────────────────────────────────────
+    /// @brief Initial centre X [mm] for the per-ring circle fit.
+    float fit_circle_init_x = 0.f;
+    /// @brief Initial centre Y [mm] for the per-ring circle fit.
+    float fit_circle_init_y = 0.f;
+    /// @brief Initial radius [mm] for the per-ring circle fit.
+    float fit_circle_init_r = 50.f;
+};
+
+/**
+ * @brief Parse the @c [streaming_hough] table from a TOML configuration file.
+ *
+ * Missing keys fall back to the defaults in @ref StreamingHoughConfigStruct.
+ *
+ * @param config_file Path to the TOML configuration file
+ *                    (defaults to @c "conf/streaming.toml").
+ * @return Populated @ref StreamingHoughConfigStruct.
+ */
+StreamingHoughConfigStruct
+streaming_hough_conf_reader(std::string config_file = "conf/streaming.toml");
 
 // =========================================================================
 //  Run metadata
