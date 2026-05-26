@@ -13,4 +13,6 @@ macros/*.h
 
 # Local design-discussion scratchpad — kept out of git so open questions
 # move to GitHub Issues once they're worth collaborating on.
-DISCUSSION.md
+# Project-root only; in-tree DISCUSSION.md files (e.g. include/triggers/)
+# are community-facing design references and *are* tracked.
+/DISCUSSION.md
