@@ -149,6 +149,37 @@ origin natively.
 
 ---
 
-*Document version: 2026-05-26.*
+## 3. Hardcoded trigger index allocation [20, 99]
+
+The trigger-index space is enumerated by-hand in
+[`include/triggers/events.h`](events.h) (values < 100) and the
+config-merge logic in
+[`src/triggers/config.cxx`](../../src/triggers/config.cxx) uses a
+`bool used_indices[100]` to track which slots are taken.  Range
+[0, 99] is **hardcoded in two places** (the macro values and the
+array dimension) and any future expansion needs both sites updated
+in lockstep.
+
+Worth tracking as a low-priority refactor: either parameterise the
+array bound (`constexpr int kMaxTriggerIndex = 100;` shared between
+the two sites) or move to a dynamic container (`std::bitset<256>`,
+`std::unordered_set<int>`).  Not urgent — current allocations only
+occupy ~10 of the 100 slots.
+
+## 4. `time_window_ns` shared between streaming stages
+
+The Hough stage's hit pre-selection inherits its time window from
+the score stage's config (`time_window_ns`).  There is no separate
+`time_cut_ns` knob — by design, the two stages share the timing
+context of the streaming trigger event they're built around.  See
+[`streaming/DISCUSSION.md`](streaming/DISCUSSION.md) for the
+rationale.  Flagged here because the **coupling is implicit** at
+the call site: a future tuner who edits the score's
+`time_window_ns` silently changes the Hough's behaviour.  Worth a
+single in-code comment at the score-stage knob site (TODO).
+
+---
+
+*Document version: 2026-05-27.*
 *Implements: D-05 (landed) — two-mode config schema.  Streaming pipeline
 design moved to [`streaming/DISCUSSION.md`](streaming/DISCUSSION.md).*

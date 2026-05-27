@@ -296,6 +296,246 @@ struct QaConfigStruct
 QaConfigStruct qa_conf_reader(std::string config_file = "conf/framer_conf.toml");
 
 // =========================================================================
+//  Pulser-calibration configuration
+// =========================================================================
+
+/**
+ * @brief Knobs for the pulser-driven fine-time calibration pipeline.
+ *
+ * Consumed by @ref pulser_calib_writer.  The anchor channel is the
+ * channel that's pulsed and used as the per-pulse coincidence reference;
+ * it must NOT be declared as a `[[trigger]]` in the trigger config used
+ * for the `--calib` lightdata pass (otherwise the framer strips its
+ * fine value when emitting the @c TriggerEvent — see
+ * @c parallel_streaming_framer.cxx).  Anchor flows as a normal hit and
+ * is identified by these (device, chip, eo_channel) fields.
+ *
+ * Defaults reflect the dRICH 2026 test-beam pulser run setup.
+ */
+struct CalibConfigStruct
+{
+    /// @brief Anchor channel — ALCOR device id.  Default 192 (test-beam dRICH).
+    int anchor_device = 192;
+    /// @brief Anchor channel — chip index within the device (0..7).
+    int anchor_chip = 0;
+    /// @brief Anchor channel — even-odd channel index within the chip (0..31).
+    int anchor_eo_channel = 0;
+
+    /// @brief Minimum cumulative hits (across all spills) on a single
+    /// GlobalIndex before its `(a, b)` fit is published.  GlobalIndex's
+    /// below threshold are omitted from `fine_calib.txt` and listed in
+    /// the QA root file's skipped-channel TNamed.  Default 250.
+    int min_hits_per_tdc = 250;
+
+    /// @brief Minimum hits in a single spill before a per-spill fit is
+    /// attempted (the building block for the cross-spill weighted-mean
+    /// aggregation).  Below this, the spill's contribution to that
+    /// TDC's aggregate is skipped (but other spills still contribute).
+    /// Default 4 — the minimum a 2-param fit needs to leave any
+    /// degrees of freedom for a residual-sigma estimate.  Pulser
+    /// runs typically have ~5 hits/TDC/spill (5000 pulses/spill ÷ 4
+    /// TDCs round-robin, often less); raising this floor would
+    /// silently drop most spills from the aggregate.
+    int min_hits_per_tdc_per_spill = 4;
+
+    /// @brief Inclusive lower edge of the valid-fine band.  Hits with
+    /// `fine < fine_min_valid` are discarded at FIFO ingestion in
+    /// @ref pulser_calib_writer and never enter the per-channel
+    /// buckets, the fit, or the slip-correction pass.  ALCOR's fine
+    /// bins typically populate ~[30, 130]; values well outside this
+    /// range are pathological (early-pickup, end-of-cycle wrap, or
+    /// readout noise).  Default 20 gives a safety margin below the
+    /// populated band.
+    ///
+    /// Design note: ideally the fit itself would identify such hits
+    /// as outliers without an explicit filter.  Tracked as a
+    /// follow-up in `include/writers/DISCUSSION.md`.
+    int fine_min_valid = 20;
+    /// @brief Inclusive upper edge of the valid-fine band.  See
+    /// @ref fine_min_valid.  Default 160.
+    int fine_max_valid = 160;
+
+    /// @brief Slope-fit guard: refuse to fit the per-TDC slope when
+    /// the TDC's fine-bin range is narrower than this.  Pulser data
+    /// hits a tight cluster of fine bins per TDC per spill (typically
+    /// 3-4 bins) because the pulser-clock-vs-DAQ-clock phase is
+    /// nearly stable within a spill.  With < this many distinct bins
+    /// the regression has no x-axis lever arm and returns numerical
+    /// noise (often unphysical negative slopes).  When the guard
+    /// fires, fall back to @ref default_slope_cc_per_bin and fit only
+    /// the intercept.  Default 5.
+    int slope_fit_min_fine_span = 5;
+
+    /// @brief Fallback slope (cc per fine bin) when the slope-fit
+    /// guard fires.  Roughly 3.125/256 cc/bin (the uniform
+    /// fine-distribution assumption), nudged toward 0.015 by typical
+    /// ALCOR characterisation.  Default 0.015.
+    double default_slope_cc_per_bin = 0.015;
+
+    /// @brief Physical lower bound on per-TDC slope (cc/bin).  Fitted
+    /// slopes below this are unphysical — typical ALCOR slope sits in
+    /// [0.01, 0.02] centred at the default.  Slopes outside the
+    /// [@ref slope_min, @ref slope_max] band are replaced by
+    /// @ref default_slope_cc_per_bin at publish time.  Default 0.01.
+    double slope_min = 0.01;
+
+    /// @brief Physical upper bound on per-TDC slope (cc/bin).
+    /// Default 0.02.  See @ref slope_min.
+    double slope_max = 0.02;
+
+    /// @brief Optional fixed pulser period in cc.  When > 0, the
+    /// per-channel period fit is SKIPPED and this value is used
+    /// directly across every channel, every spill — the pulser
+    /// produces ONE signal seen by all TDCs simultaneously, so
+    /// fixing the period from external knowledge (e.g. "we set the
+    /// generator to 1 kHz") removes one fit parameter.
+    /// Default 0 = fit per channel.
+    /// Example: for a 1 kHz pulser at 320 MHz clock, set 320000.0.
+    double pulser_period_cc = 0.0;
+
+    /// @brief Physical lower bound on per-TDC intercept b (cc).
+    /// After Stage 2 (cross-channel mod-T) + Stage 3 (mean-subtraction
+    /// centring), published b values are clamped to
+    /// [@ref b_min, @ref b_max] — anything outside is the cross-chip
+    /// clock-start mod-T residue, which is NOT a physical channel
+    /// delay (cabling can't exceed ~20 cc = ~60 ns of propagation
+    /// without making the experiment infeasible).  Default -20.
+    double b_min = -20.0;
+
+    /// @brief Physical upper bound on per-TDC intercept b (cc).
+    /// Default +20.  See @ref b_min.
+    double b_max = +20.0;
+
+    /// @brief Half-width of the "consecutive-pair" tolerance window
+    /// around `pulser_period_cc` (cc).  Hit pairs whose
+    /// `|coarse_diff − pulser_period_cc| > consecutive_pair_tolerance_cc`
+    /// are EXCLUDED from the closed-form chi² — they're either
+    /// missed-pulse jumps (≥2T), spill-boundary leak, or wild outliers.
+    /// Default 10 cc (~31 ps) — tight to reject anything but
+    /// genuine consecutive-pulse pairs.  The `Diagnostics/` QA
+    /// histograms show the actual `c_h − c_p` distribution; consult
+    /// before widening.
+    double consecutive_pair_tolerance_cc = 10.0;
+
+    /// @brief Slip-correction confidence threshold (cc).  After the
+    /// first closed-form fit, each hit's within-pulse phase
+    /// deviation from its (spill, TDC) median is checked: a hit is
+    /// snapped by an integer number of cc only if
+    /// `|deviation − round(deviation)| < slip_confidence_cc`.
+    /// Tight values reject the natural per-hit scatter and only
+    /// catch genuine integer slips; loose values over-snap.
+    /// Default 0.1 cc.
+    double slip_confidence_cc = 0.1;
+
+    /// @brief Slip-correction safety cap (fraction).  If more than
+    /// this fraction of hits in a given (spill, TDC) would be
+    /// snapped, the entire (spill, TDC) is left alone — too many
+    /// candidates means the distribution is too noisy / wide for
+    /// slip detection to be reliable.  Default 0.30 (30%).
+    double slip_max_snap_fraction = 0.30;
+
+    //  Regime-1 (whole-TDC permanent slip) knobs intentionally
+    //  REMOVED 2026-05-27.  Permanent slip is naturally absorbed by
+    //  the fit's per-TDC intercept b — publishing the fitted b
+    //  carries the slip into downstream's get_phase() correction
+    //  exactly.  An earlier regime-1 implementation modified the
+    //  per-hit coarse counter before re-fitting and then published
+    //  the zero-residue b, which silently broke the calibration
+    //  for any channel with a hardware-permanent slip (the
+    //  calibration file then had b≈0 while production hits still
+    //  carried the slip).  The QA hist for h_fit_intercept_b shows
+    //  satellites at the slip lattice points (integer cc for full
+    //  coarse-counter slips, half-integer cc for ALCOR-640 MHz
+    //  slips, etc.) — those satellites are real and reflect the
+    //  calibration honestly.
+
+    // -------- Calibration-file resolution policy (3-tier) ----------
+    //  Both producer (`pulser_calib_writer`) and consumers
+    //  (`recodata_writer`, …) honour the same resolution policy so
+    //  there's one source of truth for "which fine_calib does this
+    //  run use?":
+    //
+    //    1. If `override_path` is non-empty AND exists → use it.
+    //       For analysts who've curated a calibration outside the run
+    //       directory.
+    //
+    //    2. Else `default_path` (compulsory; relative to the run dir
+    //       <data_repository>/<run_name>/) → use it if it exists.
+    //       This is where `pulser_calib_writer` writes its output and
+    //       where the consumers read from in the normal flow.
+    //
+    //    3. Else trigger rebuild — for `pulser_calib_writer` that
+    //       means "run the pipeline".  For consumers it means "error
+    //       out with a clear pointer to pulser_calib_writer".
+    //
+    //  `force_rebuild` short-circuits all of the above for the
+    //  producer (always re-runs, overwrites `default_path`).  No
+    //  effect on consumers (they always need a file to read).
+
+    /// @brief Optional explicit path to a vetted calibration file.
+    /// Takes priority when set and exists.  Default empty = skip.
+    std::string override_path = "";
+
+    /// @brief Compulsory default calibration path, relative to
+    /// `<data_repository>/<run_name>/`.  Where `pulser_calib_writer`
+    /// writes its output and where consumers read from when
+    /// `override_path` is unset.  Default `"fine_calib.txt"`.
+    std::string default_path = "fine_calib.txt";
+
+    /// @brief Force producer (`pulser_calib_writer`) to re-run even
+    /// if a calibration already exists.  No effect on consumers.
+    /// Default `false`; CLI `--force-rebuild` flag overrides this
+    /// to `true` for one invocation.
+    bool force_rebuild = false;
+};
+
+/**
+ * @brief Result of @ref resolve_fine_calib_path: which file (if any) to use.
+ *
+ * Distinguishes the four resolution outcomes so callers can act
+ * differently — e.g. consumers error out on `MissingNeedsRebuild`
+ * with a useful message, while producers just run the pipeline.
+ */
+enum class CalibPathResolution
+{
+    Override,             ///< override_path was set and exists
+    Default,              ///< default_path exists in the run dir
+    MissingNeedsRebuild,  ///< neither exists; producer should rebuild, consumer should error
+    ForceRebuildRequested ///< force_rebuild=true (producer ignores existing files)
+};
+
+/**
+ * @brief Apply the 3-tier resolution policy from @ref CalibConfigStruct.
+ *
+ * Caller usually wants both the resolution kind and the resolved path
+ * (the file the caller should read or write).  When the resolution is
+ * `MissingNeedsRebuild` or `ForceRebuildRequested`, `path` is set to
+ * `<run_dir>/<default_path>` — i.e. where a producer should write,
+ * and where a consumer would have found the file if it had existed.
+ */
+struct CalibPathResult
+{
+    CalibPathResolution kind;
+    std::string path;
+};
+
+CalibPathResult resolve_fine_calib_path(const CalibConfigStruct &cfg,
+                                        const std::string &run_dir);
+
+/**
+ * @brief Parse the @c [calibration] table from a TOML configuration file.
+ *
+ * Missing keys fall back to the defaults in @ref CalibConfigStruct.
+ * The conventional file path is @c conf/calib/calibration_conf.toml;
+ * the lookup is via @ref util::conf_path so writers honour the
+ * `--calib` flag's @c conf/calib/ override.
+ *
+ * @param config_file Path to the TOML configuration file.
+ * @return Populated @ref CalibConfigStruct.
+ */
+CalibConfigStruct calib_conf_reader(std::string config_file = "conf/calib/calibration_conf.toml");
+
+// =========================================================================
 //  Streaming-trigger configuration
 // =========================================================================
 

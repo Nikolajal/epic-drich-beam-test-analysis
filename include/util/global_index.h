@@ -396,13 +396,17 @@ public:
 
     /// @brief Calibration look-up index — legacy-compatible formula.
     ///
-    /// Returns `tdc + 4 * eo_channel + 128 * real_chip`.  Crucially uses
-    /// @ref real_chip (the **physical hardware chip 0–7**), not the logical
-    /// chip after the split-in-two pairing — this preserves bit-exact
-    /// compatibility with calibration tables stored under the legacy
-    /// `(device-192)*1024 + chip*32 + channel*4 + tdc` scheme, where the
-    /// chip component was always the raw hardware chip.
-    [[nodiscard]] constexpr int calib_index() const noexcept
+    /// Returns `tdc + 4 * eo_channel + 128 * real_chip`.
+    ///
+    /// @deprecated 2026-05-28 — this key omits the `device` field, so
+    /// multiple devices collide on the same value in fine_calib.txt.
+    /// Use @ref raw() as the calibration key instead — it encodes
+    /// every component and uniquely identifies a TDC across the whole
+    /// detector.  Kept here only for old-format file detection during
+    /// the migration period; do not use in new code.
+    [[deprecated("Use GlobalIndex::raw() as the calibration key — calib_index() collides across devices.")]]
+    [[nodiscard]] constexpr int
+    calib_index() const noexcept
     {
         return tdc() + 4 * eo_channel() + 128 * real_chip();
     }

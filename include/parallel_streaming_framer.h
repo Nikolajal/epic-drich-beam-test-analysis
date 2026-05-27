@@ -166,10 +166,12 @@ public:
      * @brief Returns the same-channel Δt distribution used to validate the
      *        afterpulse QA windows.
      *
-     * One entry per Hit (after the channel's first Hit), Δt = current global
-     * cc − previous-same-channel global cc.  Range 0..1024 cc — covers both
-     * the near window (default 1–64 cc) and the far sideband (default
-     * 256–319 cc) with comfortable headroom.
+     * One entry per Hit (after the channel's first Hit), Δt = current
+     * global cc − previous-same-channel global cc.  Range 0..32768 cc
+     * (one full rollover period), 1024 bins → 32 cc/bin — covers both
+     * the near afterpulse window (default 1–64 cc) and the far
+     * sideband (default 256–319 cc) plus the entire DCR plateau out
+     * to one rollover.
      */
     TH1F *get_afterpulse_dt_distribution() { return h_afterpulse_dt.get(); }
 

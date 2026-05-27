@@ -54,18 +54,19 @@ int main(int argc, char **argv)
 
         //  Resolve unset --xxx-conf options after parse.  Anything the
         //  user left at default falls through to conf_path(), which
-        //  honours --QA by redirecting to conf/QA/<basename> when the
-        //  override file exists.
+        //  honours --QA by redirecting to `conf/QA/<basename>` when
+        //  the override exists.
+        const std::string mode = qa_mode ? std::string{"QA"} : std::string{};
         if (p_trigger->count() == 0)
-            trigger_config_file = util::conf_path("trigger_conf.toml", qa_mode);
+            trigger_config_file = util::conf_path("trigger_conf.toml", mode);
         if (p_readout->count() == 0)
-            readout_config_file = util::conf_path("readout_config.toml", qa_mode);
+            readout_config_file = util::conf_path("readout_config.toml", mode);
         if (p_mapping->count() == 0)
-            mapping_config_file = util::conf_path("mapping_conf.toml", qa_mode);
+            mapping_config_file = util::conf_path("mapping_conf.toml", mode);
         if (p_framer->count() == 0)
-            framer_config_file = util::conf_path("framer_conf.toml", qa_mode);
+            framer_config_file = util::conf_path("framer_conf.toml", mode);
         if (p_streaming->count() == 0)
-            streaming_config_file = util::conf_path("streaming.toml", qa_mode);
+            streaming_config_file = util::conf_path("streaming.toml", mode);
         if (qa_mode)
             mist::logger::info(TString::Format(
                                    "(lightdata_writer) --QA mode: streaming-conf=%s  framer-conf=%s",

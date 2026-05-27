@@ -5,8 +5,12 @@
 #include "TROOT.h"
 #include <memory>
 
-//  TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression | merge data here
-//  TODO: understand what is the issue with generate calibration
+//  Open design items tracked in DISCUSSION.md:
+//   - Merge AlcorFinedata with AlcorData (compress dual-struct overhead) —
+//     deferred; see DISCUSSION § "merge AlcorFinedata + AlcorData".
+//   - generate_calibration: existing implementation has unresolved
+//     convergence issues; superseded for pulser runs by
+//     pulser_calib_writer.  See DISCUSSION § "generate_calibration".
 
 // =============================================================================
 // AlcorFinedataStruct
@@ -158,7 +162,14 @@ void AlcorFinedata::read_calib_from_file(const std::string &filename, bool clear
     while (std::getline(calib_file, line))
     {
         std::stringstream ss(line);
-        int method_int, key;
+        int method_int;
+        //  Key is parsed as uint32_t — full GlobalIndex::raw().  Legacy
+        //  fine_calib.txt files written before the 2026-05-28 schema
+        //  bump used a 4-component formula `tdc + 4·eo_channel +
+        //  128·real_chip` whose values were < 2200 and didn't encode
+        //  device — those files no longer load correctly.  Regenerate
+        //  via `pulser_calib_writer` or the offline timing macro.
+        uint32_t key;
         float a, b, c;
         ss >> key >> method_int >> a >> b >> c;
         if (calibration_parameters.count(key) && !overwrites)
@@ -168,7 +179,7 @@ void AlcorFinedata::read_calib_from_file(const std::string &filename, bool clear
     }
 }
 
-void AlcorFinedata::switch_to_fit_v2(int GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma)
+void AlcorFinedata::switch_to_fit_v2(uint32_t GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma)
 {
     set_calibration_method(GlobalIndex, CalibrationMethod::AlcorV2FitCalib);
     auto prev_min = get_param0(GlobalIndex) < 1 ? 30 : get_param0(GlobalIndex);

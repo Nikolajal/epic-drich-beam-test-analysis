@@ -273,7 +273,13 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
     {
         const auto &stream_corrections =
             rollover_correction_per_stream_and_spill[stream_index];
-        if (static_cast<size_t>(_current_spill) < stream_corrections.size())
+        //  _current_spill is initialised to -1 and only becomes a valid
+        //  index after the first start_spill — guard explicitly to
+        //  avoid the implicit `static_cast<size_t>(-1) == SIZE_MAX`
+        //  trap that would silently pass any signed/unsigned compare
+        //  against a smaller vector.
+        if (_current_spill >= 0 &&
+            static_cast<size_t>(_current_spill) < stream_corrections.size())
             rollover_correction_cc = stream_corrections[_current_spill];
     }
 

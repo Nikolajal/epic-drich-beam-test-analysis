@@ -11,12 +11,13 @@
  * [`events.h`](events.h) and the config schema in [`config.h`](config.h)).
  */
 
-#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "TH2.h"
+
+#include <mist/logger/logger.h>
 
 #include "triggers/config.h"
 #include "triggers/events.h"
@@ -67,9 +68,10 @@ struct TriggerRegistry
             if (triggers[i].first == trigger_value)
                 return i;
 
-        std::cerr << "[WARN] TriggerRegistry: unknown trigger value "
-                  << static_cast<int>(trigger_value)
-                  << " — falling back to UNKNOWN\n";
+        mist::logger::warning(
+            "(TriggerRegistry::index_of) unknown trigger value " +
+            std::to_string(static_cast<int>(trigger_value)) +
+            " — falling back to UNKNOWN");
 
         // Scan the registry for _TRIGGER_UNKNOWN_ rather than using
         // default_trigger_index(), which returns a position in all_default_triggers[]

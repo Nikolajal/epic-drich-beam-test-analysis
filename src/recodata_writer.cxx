@@ -220,20 +220,9 @@ void recodata_writer(
                 }
     }
 
-    //  (Smallest-r channel diagnostic removed: served its purpose
-    //  during the PDU 99 phantom-position investigation.  The
-    //  underlying Mapping fix in `src/mapping.cxx` is the durable
-    //  fix; the channel set is now correct by construction.  Restore
-    //  this diagnostic via git history if a similar Mapping
-    //  regression is ever suspected.)
-
-    //  Edge rejection window: 25 ns fixed.  Used to be converted to
-    //  clock cycles and compared against `current_trigger.fine_time`,
-    //  but `fine_time` is documented as **ns** across the codebase —
-    //  the comparison was a hidden units mismatch that rejected
-    //  almost all triggers (their fine_time in ns was always greater
-    //  than the ~4-cc threshold flipped against frame_size_cc).  Now
-    //  both sides of the inequality are in ns.  `frame_size` from
+    //  Edge rejection window: 25 ns fixed.  `current_trigger.fine_time`
+    //  is in **ns** across the codebase, so the comparison below is
+    //  ns-vs-ns.  `frame_size` from
     //  framer config is in clock cycles → multiply by CC_TO_NS to
     //  match.
     constexpr float edge_rejection_ns = 25.f;
@@ -560,48 +549,32 @@ void recodata_writer(
             }
         }
     }
+    //  Per-channel mean fine-time offset, averaged over per-spill
+    //  contributions that pass the |value| < 30 outlier filter.
+    //  Both `values_list` and `offset_participants` must independently
+    //  clear 20 samples before the offset is committed — the inner
+    //  check guards the division below from a 0 denominator (all
+    //  samples rejected as outliers) and a low-statistics tail.
+    constexpr float kFineOffsetOutlierCutNs = 30.f;
+    constexpr int   kFineOffsetMinSamples   = 20;
     for (auto &[channel_index, values_list] : map_of_offsets)
     {
-        if (values_list.size() < 20)
+        if (static_cast<int>(values_list.size()) < kFineOffsetMinSamples)
             continue;
-
-        auto offset_value = 0.f;
-        auto offset_participants = 0;
-        for (auto &value : values_list)
+        float offset_sum = 0.f;
+        int   offset_participants = 0;
+        for (const auto &value : values_list)
         {
-            if (fabs(value) > 30)
+            if (std::fabs(value) > kFineOffsetOutlierCutNs)
                 continue;
-            offset_value += value;
-            offset_participants++;
+            offset_sum += value;
+            ++offset_participants;
         }
-        offset_value /= offset_participants;
-
-        if (offset_participants < 20)
+        if (offset_participants < kFineOffsetMinSamples)
             continue;
-
-        if (!channel_index)
-        {
-            AlcorFinedata temy_testt;
-            temy_testt.set_global_index(0);
-            temy_testt.set_rollover(0);
-            temy_testt.set_coarse(0);
-            temy_testt.set_fine(0);
-            mist::logger::debug(TString::Format("channel %i - offset: %f", channel_index, offset_value).Data());
-            mist::logger::debug(TString::Format("channel %i - param0: %f", channel_index, AlcorFinedata::get_param0(channel_index)).Data());
-            mist::logger::debug(TString::Format("channel %i - param1: %f", channel_index, AlcorFinedata::get_param1(channel_index)).Data());
-            mist::logger::debug(TString::Format("channel %i - param2: %f", channel_index, AlcorFinedata::get_param2(channel_index)).Data());
-            mist::logger::debug(TString::Format("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()).Data());
-            AlcorFinedata::set_param2(channel_index, -offset_value / BTANA_ALCOR_CC_TO_NS);
-            mist::logger::debug(TString::Format("channel %i - param0: %f", channel_index, AlcorFinedata::get_param0(channel_index)).Data());
-            mist::logger::debug(TString::Format("channel %i - param1: %f", channel_index, AlcorFinedata::get_param1(channel_index)).Data());
-            mist::logger::debug(TString::Format("channel %i - param2: %f", channel_index, AlcorFinedata::get_param2(channel_index)).Data());
-            mist::logger::debug(TString::Format("channel %i - get_time_ns: %f", channel_index, temy_testt.get_time_ns()).Data());
-        }
+        const float offset_value = offset_sum / static_cast<float>(offset_participants);
         AlcorFinedata::set_param2(channel_index, -offset_value / BTANA_ALCOR_CC_TO_NS);
     }
-    mist::logger::debug("Save face");
-    mist::logger::debug("Save face");
-    mist::logger::debug("Save face");
     for (int i_spill = 0; i_spill < all_spills; ++i_spill)
     {
         //  Per-spill multi-bar reset (skip first iteration — the subtask is

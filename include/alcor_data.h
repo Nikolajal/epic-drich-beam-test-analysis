@@ -181,8 +181,14 @@ public:
     ///@{
     int get_chip() const { return data.fifo / 4; }                                              ///< Chip number on the device (FIFO / 4)
     int get_eo_channel() const { return data.pixel + 4 * data.column + 32 * (get_chip() % 2); } ///< Even/odd channel index within the chip
-    int get_calib_index() const { return data.tdc + 4 * get_eo_channel() + 128 * get_chip(); }  ///< Calibration look-up index (TDC + channel + chip encoding)
-    int get_device_index() const { return get_eo_channel() + 64 * (get_chip() / 2); }           ///< Flat per-device pixel index used for Mapping
+    /// @deprecated 2026-05-28 — collides across devices (no @c device
+    /// field).  Use @ref get_global_index as the calibration key.
+    [[deprecated("Use AlcorData::get_global_index() — get_calib_index() collides across devices.")]]
+    int get_calib_index() const
+    {
+        return data.tdc + 4 * get_eo_channel() + 128 * get_chip();
+    }
+    int get_device_index() const { return get_eo_channel() + 64 * (get_chip() / 2); } ///< Flat per-device pixel index used for Mapping
 
     /// @brief Packed **TDC-level** global index — new-layout `GlobalIndex::raw()`.
     /// Phase 5: switched from the legacy arithmetic packing to
@@ -213,7 +219,19 @@ public:
      * @brief Global coarse time including rollovers.
      * @return Time in coarse clock units
      */
-    uint64_t get_coarse_global_time() const { return get_coarse() + get_rollover() * rollover_to_clock; }
+    /// @brief Within-stream absolute time in cc: `rollover · 32768 + coarse`.
+    ///
+    /// The `static_cast<uint64_t>` on `get_rollover()` is REQUIRED — without
+    /// it the multiplication runs as `int * int = int` and silently overflows
+    /// past rollover ≈ 65536 (≈ 13 s of within-spill data with rollover_to_clock
+    /// = 32768).  The cast moves the multiplication into uint64_t arithmetic
+    /// where the spill-length limit becomes 2^64 / 32768 ≈ 1.7 × 10^18 cc
+    /// = ~17 thousand years.  Never bites again.
+    uint64_t get_coarse_global_time() const
+    {
+        return static_cast<uint64_t>(get_coarse()) +
+               static_cast<uint64_t>(get_rollover()) * rollover_to_clock;
+    }
     ///@}
 
     /** @name Setters */

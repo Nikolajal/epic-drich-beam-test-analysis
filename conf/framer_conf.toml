@@ -23,7 +23,7 @@ ct_phys_signal_hi             =  10   # physical CT signal window upper edge (cc
 ct_elec_signal_lo             =  -2   # electrical CT signal window lower edge (cc, inclusive)
 ct_elec_signal_hi             =  10   # electrical CT signal window upper edge (cc, inclusive)
 
-# Software trigger pipeline (streaming score + Hough) moved out of this
-# file in Phase 2 of the streaming-trigger consolidation — those knobs
-# are writer-side and don't belong with framer/QA configuration.
-# See conf/streaming.toml and include/triggers/streaming/DISCUSSION.md.
+# Software trigger pipeline (streaming score + Hough) lives in
+# conf/streaming.toml — those knobs are writer-side and don't belong
+# with framer / QA configuration here.
+# See include/triggers/streaming/DISCUSSION.md.

@@ -14,16 +14,22 @@
  *      (`mist::ring_finding::HoughTransform`).
  *   3. Extracts up to **2 rings** (hardcoded — the detector has two
  *      Cherenkov radiators, no physical configuration produces more).
- *   4. Refines each ring's centre with a least-squares
- *      [`fit_circle`](../../util/circle_fit.h).
+ *   4. Tags ring-member hits with `HitmaskHoughRingTagFirst` /
+ *      `HitmaskHoughRingTagSecond` for downstream consumption.
  *   5. Emits one `_TRIGGER_HOUGH_RING_FOUND_` event per ring into the
- *      frame's trigger collection.
+ *      frame's trigger collection (mean time of tagged hits).
+ *
+ * Centre/radius refinement is **not** done here.  `recodata_writer`
+ * re-fits the mask-tagged hits with full LOO + dual/solo split +
+ * CB+pol3 radial fit, and all fit-derived observables live in
+ * `recodata.root`'s `Rings/` subfolder.  Keeping the fit out of the
+ * streaming path keeps this stage cheap and removes the architectural
+ * ambiguity of two simultaneous fit pipelines.
  *
  * Configuration lives in [`conf/streaming.toml`](../../../conf/streaming.toml)
  * under `[streaming_hough]` and is consumed via
- * `StreamingHoughConfigStruct`.  Design rationale, sub-cell refinement
- * options, and the `fit_circle` audit are in
- * [`DISCUSSION.md`](DISCUSSION.md) § 2.
+ * `StreamingHoughConfigStruct`.  Design notes and open items are in
+ * [`DISCUSSION.md`](DISCUSSION.md).
  */
 
 #include <cstdint>
@@ -71,26 +77,13 @@ struct StreamingHoughQA
     /// Hitmap of hits tagged with `HitmaskHoughRingTagSecond`.
     TH2F *second_hitmap = nullptr;
 
-    /// fit_circle results for the first ring — centre X, Y, radius.
-    /// **Caveat:** the writer's distributions show long tails to unphysical
-    /// values on background events (the streaming trigger fires, the Hough
-    /// returns a low-quality "ring", `fit_circle` extrapolates nonsense).
-    /// See DISCUSSION.md § 2.5 for the open item on adding per-ring sanity
-    /// cuts on (X, Y, R) and on the Hough peak quality.
-    TH1F *ring_X_first = nullptr;
-    TH1F *ring_Y_first = nullptr;
-    TH1F *ring_R_first = nullptr;
-
-    /// fit_circle results for the second ring — same caveat as the first.
-    TH1F *ring_X_second = nullptr;
-    TH1F *ring_Y_second = nullptr;
-    TH1F *ring_R_second = nullptr;
-
     /// **Hough peak** outputs for the first ring — taken straight from
-    /// `RingResult::{cx, cy, radius}`, before any `fit_circle` refinement.
-    /// Useful for diagnosing fit pull: overlay these with the `ring_*`
-    /// (fit) hists above to see where the fit moves the centre/radius
-    /// most aggressively (or runs away on bad events).
+    /// `RingResult::{cx, cy, radius}`, no refinement applied at this
+    /// stage.  `recodata_writer` re-fits the mask-tagged hits and
+    /// publishes the refined values under `recodata.root`'s `Rings/`
+    /// subdirectory; an earlier in-trigger `fit_circle` step was
+    /// removed (the lightdata-side fit was QA-only and architecturally
+    /// duplicated the recodata fit).
     TH1F *ring_X_first_hough = nullptr;
     TH1F *ring_Y_first_hough = nullptr;
     TH1F *ring_R_first_hough = nullptr;

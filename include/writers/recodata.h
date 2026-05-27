@@ -11,9 +11,6 @@
 
 #include <string>
 
-/// @brief Cross-talk veto window (clock cycles, ~200 ns).
-#define BTANA_CROSS_TALK_DEADTIME 124
-
 /// @brief Minimum separation between two valid same-type triggers (clock cycles, ~25 ns).
 #define BTANA_TRIGGER_MIN_SEPARATION 16
 

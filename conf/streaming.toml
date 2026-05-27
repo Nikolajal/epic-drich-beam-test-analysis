@@ -35,18 +35,19 @@ min_noise_hits      =   10.0    # min noise-sample hits for a channel to enter t
 # Stage 2 — Hough ring finder (gated on stage 1)
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Runs on every frame where stage 1 fired.  Selects Cherenkov hits within
-# ±time_window_ns (inherited from [streaming_trigger]) of the streaming-
-# trigger's fine_time, votes them into a Hough accumulator, extracts up
-# to 2 peak cells (hardcoded — two-radiator detector), and refines each
-# ring's centre with a least-squares `fit_circle` on the assigned hits.
-# Emits one `_TRIGGER_HOUGH_RING_FOUND_` event per ring.
+# Runs on every frame where stage 1 fired.  Selects Cherenkov hits
+# within ±time_window_ns (inherited from [streaming_trigger]) of the
+# streaming-trigger's fine_time, votes them into a Hough accumulator,
+# extracts up to 2 peak cells (hardcoded — two-radiator detector), and
+# tags ring-member hits with HitmaskHoughRingTagFirst / *Second.  Emits
+# one `_TRIGGER_HOUGH_RING_FOUND_` event per ring (mean time of tagged
+# hits).  Centre/radius refinement happens in `recodata_writer` on the
+# mask-tagged hits — not in this stage.
 #
-# Every knob below is **live** — Phase 4 of the streaming-trigger
-# consolidation wired them into the algorithm (see DISCUSSION § 2.5).
-# The only Hough-stage parameters that are *not* in this file are
+# The `fit_circle_init_{x,y,r}` knobs below are retained for backwards
+# compatibility with existing TOMLs but are unused at runtime.
 # `time_window_ns` (inherited from [streaming_trigger]) and `max_rings`
-# (hardcoded to 2); both are intentional non-knobs.
+# (hardcoded to 2) are intentional non-knobs.
 [streaming_hough]
 
 # Hough accumulator geometry — set once at writer init via
