@@ -33,9 +33,8 @@
 // beam-test campaign — a TOML schema bump for a single int per chip is not
 // worth the indirection.  The chip IDs themselves (0 and 2) are NOT
 // hardcoded any more: they are resolved at runtime from the readout config
-// via framer.get_readout_config().find_by_name("timing")  (CODE_REVIEW
-// §D-07).  Update these two constants directly when the dead-channel map
-// changes.
+// via framer.get_readout_config().find_by_name("timing").
+// Update these two constants directly when the dead-channel map changes.
 //
 // Guard: the mean-of-others formula divides by (alive_channels - 1), so
 // both constants must be >= 2.
@@ -205,7 +204,7 @@ void lightdata_writer(
     framer.resolve_rollover_offsets();  // populates the per-stream, per-spill correction table consumed by the Rollover QA fills below
     framer.assign_bar(progress_framer); // framer drives the framer subtask automatically
 
-    // Resolve timing chip IDs from the readout config (CODE_REVIEW §D-07) —
+    // Resolve timing chip IDs from the readout config —
     // previously these were hardcoded as kTimingChip{0,1}Id = {0, 2}, duplicating
     // information already in conf/readout_config.toml.  -1 sentinel = "no such
     // chip configured"; the same-channel-offset calibration loop below skips
@@ -252,11 +251,11 @@ void lightdata_writer(
     AlcorFinedata::read_calib_from_file(fine_calibration_config_file);
     //  Calibration table is now fully loaded; flip the immutability flag so
     //  the per-Hit AlcorFinedata::get_phase() readers can take the lock-free
-    //  fast path inside the framer's worker threads (CODE_REVIEW §3.1).
+    //  fast path inside the framer's worker threads
     AlcorFinedata::freeze_calibration();
     //  Link output tree.  TFilePtr is owning — closes + deletes on function
     //  exit (including early returns and exception unwind) so there is no
-    //  manual outfile->Close() call at the bottom (CODE_REVIEW §4.12).
+    //  manual outfile->Close() call at the bottom
     TFilePtr outfile(TFile::Open(outfile_name.c_str(), "RECREATE"));
     if (!outfile || outfile->IsZombie())
     {
@@ -502,7 +501,7 @@ void lightdata_writer(
     RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_solo("h_streaming_trigger_ring_peak_votes_vs_active_first_solo", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_solo("h_streaming_trigger_ring_hit_arc_dist_first_solo", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
     const float time_window_ns = streaming_trigger_cfg.time_window_ns;
-    //  D-12 QA score histograms.  Always filled — the noise hist accumulates
+    //  QA score histograms.  Always filled — the noise hist accumulates
     //  during the first-frames window of every spill, the data hist during
     //  the rest of the spill.  Same n_σ axis so the misfire and acceptance
     //  integrals at any threshold are directly comparable.  See
@@ -582,7 +581,7 @@ void lightdata_writer(
         mist::logger::info("(ParallelStreamingFramer::next_spill) Requested to stop at spill : " +
                            std::to_string(max_spill));
 
-    // ── Streaming-trigger weights (D-12) ─────────────────────────────────
+    // ── Streaming-trigger weights ─────────────────────────────────
     // The bundle persists across spills (cumulative DCR via h_dcr_per_channel
     // → newer spills supersede older builds, but a freshly-rebuilt-empty
     // bundle would lose spill 0's data when spill 1's noise frames fire).
@@ -662,7 +661,7 @@ void lightdata_writer(
 
         n_active_cherenkov_channels = active_sensors.size();
 
-        //  Streaming-trigger weights (D-12: DCR-weighted, n_σ-thresholded).
+        //  Streaming-trigger weights
         //  The bundle itself is run-scope (declared above the spill loop),
         //  so spill N's noise frames see spill N-1's already-built weights.
         //  We only reset the per-spill "have we rebuilt yet" flag here;
@@ -677,7 +676,7 @@ void lightdata_writer(
         //  streaming trigger above (the Hough operates on candidate
         //  frames the trigger already accepted, and wants a minimum hit
         //  count to seed a ring).  Was historically shared with the
-        //  streaming-trigger `threshold` int; D-12 split the two.
+        //  streaming-trigger `threshold` int; split the two.
         //  Formula: ceil(cfg.hough_threshold_fraction × N_active_Cherenkov),
         //  floored at 1.  Phase 4 wired the fraction to the config.
         const int hough_min_active = std::max(
@@ -781,7 +780,7 @@ void lightdata_writer(
         std::unordered_map<int, uint64_t> trigger_last_global_cc;
 
         //  Per-frame CT scratch buffers — hoisted out of the inner loop
-        //  (CODE_REVIEW §4.8).  Before this change each frame allocated a
+        //   Before this change each frame allocated a
         //  fresh std::vector<CtHit> + std::vector<std::size_t>, even though
         //  the capacities settle quickly after the first few frames.  Now we
         //  reuse the same storage across frames within a spill and .clear()
@@ -862,7 +861,7 @@ void lightdata_writer(
                 }
             }
 
-            //  --- Cherenkov sliding window trigger (D-12: DCR-weighted score).
+            //  --- Cherenkov sliding window trigger
             //  QA score histogram destination depends on which window of the
             //  spill we're in: first-frames → noise sample; rest → data sample.
             const bool is_first_frames_window =
@@ -1358,7 +1357,7 @@ void lightdata_writer(
         write_toml_snapshot("framer_conf_toml", framer_conf_file);
         write_toml_snapshot("streaming_conf_toml", streaming_conf_file);
     }
-    //  outfile closed automatically by TFilePtr dtor (CODE_REVIEW §4.12).
+    //  outfile closed automatically by TFilePtr dtor
     //  End: QA plots
     //  --- --- --- --- --- ---
 }

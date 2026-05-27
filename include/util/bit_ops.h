@@ -16,7 +16,7 @@
  * @brief Encode a single bit into a 32-bit mask.
  * @param active_bit Index of the bit to set (0..31).  Out-of-range input
  *                   triggers a debug-build assert; release builds silently
- *                   return 0 (CODE_REVIEW §5.7).
+ *                   return 0
  * @return 32-bit mask with only that bit set, or 0 if @p active_bit ≥ 32.
  */
 inline uint32_t encode_bit(uint8_t active_bit)
@@ -46,7 +46,7 @@ inline uint32_t encode_bits(const std::vector<uint8_t> &active_bits)
 
 /**
  * @brief Count trailing zeros — uses the compiler intrinsic when available
- *        (constant-time), with a portable fallback (CODE_REVIEW §5.8).
+ *        (constant-time), with a portable fallback
  * @param mask 32-bit mask
  * @return Index of least significant set bit, 32 if mask is 0
  */
@@ -72,7 +72,7 @@ inline uint8_t count_trailing_zeros(uint32_t mask)
  *
  * Uses the `mask &= mask - 1` Kernighan trick to clear the lowest set bit
  * in one operation per iteration — total work is O(popcount(mask)) rather
- * than O(highest-set-bit) (CODE_REVIEW §5.8).
+ * than O(highest-set-bit)
  *
  * @param mask 32-bit mask
  * @return Vector of indices where bits are set

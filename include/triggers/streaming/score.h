@@ -205,7 +205,7 @@ bool run_streaming_trigger(AlcorSpilldata &current_spill,
                            float frame_length_ns);
 
 /**
- * @brief DCR-weighted streaming trigger (v1 — D-12).
+ * @brief DCR-weighted streaming trigger (v1 — ).
  *
  * Replaces the v0 hit-count threshold with a likelihood-weighted score
  * $S = \sum_{\text{hits}} 1/\lambda_c$ thresholded at $n_\sigma^\star$

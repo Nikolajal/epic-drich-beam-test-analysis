@@ -71,7 +71,7 @@ FrameResult process_frame_pure(AlcorLightdata &lightdata,
     if (res.rejected)
         return res;
 
-    //  Per-spill physics check (DISCUSSION § 2.6).
+    //  Per-spill physics check
     for (const auto &[idx, trig] : res.accepted_triggers)
     {
         if (idx == TriggerFirstFrames)

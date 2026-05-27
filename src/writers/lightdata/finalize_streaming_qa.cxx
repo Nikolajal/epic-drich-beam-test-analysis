@@ -25,7 +25,7 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
     TDirectory *streaming_trigger_dir = ctx.outfile->mkdir("Streaming Trigger");
     streaming_trigger_dir->cd();
 
-    //  D-12 QA score histograms — drive the threshold-tuning workflow
+    //  QA score histograms — drive the threshold-tuning workflow
     //  described in include/triggers/DISCUSSION.md § 2.4.  Same n_σ
     //  axis on both so the misfire and acceptance integrals at any
     //  threshold are directly comparable.  Normalised by entry count

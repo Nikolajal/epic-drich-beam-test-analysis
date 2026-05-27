@@ -209,7 +209,7 @@ struct StreamingHoughQA
  *                                fills `frames_examples` when `ispill == 0`.
  * @param time_window_ns          Time pre-cut width — inherited from
  *                                the streaming-score `time_window_ns`
- *                                (NOT a knob in `cfg`; see DISCUSSION § 2.2).
+ *                                (NOT a knob in `cfg`;).
  * @param cfg                     Streaming-Hough config struct.  Supplies
  *                                `threshold_fraction`, `min_hits_slack`,
  *                                `collection_radius`, and the

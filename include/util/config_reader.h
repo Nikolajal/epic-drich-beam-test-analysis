@@ -36,7 +36,7 @@
 /// Named roles that are mutually exclusive per (device, chip) pair.
 /// `inline` (C++17) gives a single shared definition across translation
 /// units — the previous `static` declaration produced one copy per TU
-/// (CODE_REVIEW §5.10).
+///
 inline const std::set<std::string> lightdata_core_tags = {"timing", "tracking", "cherenkov"};
 
 // =========================================================================
@@ -144,7 +144,7 @@ private:
     /// Ordered list of readout role assignments.  Private so external code can
     /// neither `push_back` (which would invalidate previously returned
     /// pointers from `find_*`) nor mutate entries without going through the
-    /// class API (CODE_REVIEW §5.11).  No `.configs.push_back(...)` callers
+    /// class API  No `.configs.push_back(...)` callers
     /// exist today; if a future need arises, add a guarded `add_config(...)`
     /// method here rather than re-exposing the vector.
     std::vector<ReadoutConfigStruct> configs;
@@ -300,13 +300,13 @@ QaConfigStruct qa_conf_reader(std::string config_file = "conf/framer_conf.toml")
 // =========================================================================
 
 /**
- * @brief Tuning knobs for the DCR-weighted streaming-trigger score stage (D-12).
+ * @brief Tuning knobs for the DCR-weighted streaming-trigger score stage
  *
  * The score stage is the first half of the two-stage software trigger
  * pipeline — a per-frame online pre-filter that gates the Hough
  * ring-finder downstream.  See
  * [`include/triggers/streaming/DISCUSSION.md`](../triggers/streaming/DISCUSSION.md)
- * § 1 for the algorithm and § 1.5 for the threshold-tuning workflow.
+ * for the algorithm and § 1.5 for the threshold-tuning workflow.
  *
  * The TOML loader accepts a `[streaming_trigger]` section in
  * [`conf/streaming.toml`](../../conf/streaming.toml); missing keys fall back
@@ -365,7 +365,7 @@ streaming_trigger_conf_reader(std::string config_file = "conf/streaming.toml");
  * back to the defaults below.
  *
  * See [`include/triggers/streaming/DISCUSSION.md`](../triggers/streaming/DISCUSSION.md)
- * § 2 for the algorithm, parameter physics, and roadmap.
+ * for the algorithm, parameter physics, and roadmap.
  *
  * @note  Phase 2 of the streaming-trigger consolidation introduces this
  *        struct + reader.  The algorithm in `src/lightdata_writer.cxx`
@@ -473,7 +473,7 @@ streaming_hough_conf_reader(std::string config_file = "conf/streaming.toml");
  * @brief Knobs for the recodata-side live-QA pipeline.
  *
  * V1 minimum-viable scope (see `include/triggers/streaming/DISCUSSION.md`
- * § 2.6).  Drives the coverage map / `eff(R)` / radial(R) / N_photons
+ * Drives the coverage map / `eff(R)` / radial(R) / N_photons
  * machinery that runs inline in `recodata_writer` so beam-test
  * operators can see Cherenkov physics observables without a separate
  * offline analysis pass.
@@ -485,7 +485,7 @@ streaming_hough_conf_reader(std::string config_file = "conf/streaming.toml");
  * Hough centre** (re-computed by recodata via `fit_circle` on the
  * mask-tagged hits — no `TriggerEvent` schema bump).  The `eff(R)`
  * discrepancy from this mismatch is < 1 % at the ~10–25 mm centre
- * wander observed in `ring_X/Y_first_hough` (DISCUSSION § 2.6).
+ * wander observed in `ring_X/Y_first_hough`
  *
  * φ-gap (in_gap / ex_gap) and sensor-model (k1350 / k1375) splits
  * from the offline `photon_number_new.cpp` macro are **not** in V1.

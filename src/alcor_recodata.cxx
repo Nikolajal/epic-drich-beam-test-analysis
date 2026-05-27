@@ -9,7 +9,7 @@
 std::optional<TriggerEvent> AlcorRecodata::get_trigger_by_index(uint8_t index) const
 {
     // Use the const-ref accessor — get_triggers() returns by reference now
-    // (no per-call deep copy of the trigger vector, CODE_REVIEW §D-08).
+    // (no per-call deep copy of the trigger vector).
     const auto &current_trigger = get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(),
                            [index](const TriggerEvent &t)

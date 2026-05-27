@@ -4,7 +4,7 @@
  * @file ring_compute.h
  * @brief Per-frame, per-ring compute helpers extracted from the
  *        in-function lambdas of `recodata_writer()` (Phase D of the
- *        modularization pass — see DISCUSSION § recodata-modularise).
+ *        modularization pass).
  *
  * The three free functions here form the inner core of the recodata
  * writer's main loop:
@@ -62,7 +62,7 @@ struct RingComputeContext
  * residual RMS, and (optionally) the leave-one-out residual per hit.
  *
  * No shared state is mutated — safe to call from worker threads
- * (DISCUSSION § 2.7).  Caller pairs the returned @ref RingFitResult
+ *  Caller pairs the returned @ref RingFitResult
  * with @ref fill_ring_hists in the drain phase.
  *
  * @param ring_bit  Mask bit selecting which ring's hits to use.

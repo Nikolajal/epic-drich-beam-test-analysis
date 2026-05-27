@@ -74,12 +74,12 @@ TH2F *build_coverage_map(
     // centre lies just outside the pixel boundary even though the
     // bin's *area* overlaps the pixel.  Visible as fine empty
     // dots in the coverage TH2F.  Cosmetic — does not affect
-    // eff(R) once averaged over φ.  See DISCUSSION § 2.6 for the
+    // eff(R) once averaged over φ.  See for the
     // proper-area-integration upgrade path if/when it matters.
     for (const auto &[lut_key, position] : channel_xy)
     {
         //  Per-channel weight (spill-by-spill active-channel
-        //  correction; DISCUSSION § 2.6).  If a `channel_weights`
+        //  correction;).  If a `channel_weights`
         //  map is supplied:
         //    - channel key NOT in the map  → skip entirely
         //      (effective mask of unmapped / always-dead channels)

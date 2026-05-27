@@ -7,10 +7,10 @@
  * `fit_circle` initial guess) into `StreamingHoughConfigStruct`.  The
  * detector-physics constants `max_rings = 2` (two radiators) and the
  * inherited `time_window_ns` (shared with the score stage) remain
- * non-knobs by design — see DISCUSSION § 2.2.
+ * non-knobs by design —.
  *
  * See [`include/triggers/streaming/DISCUSSION.md`](../../../include/triggers/streaming/DISCUSSION.md)
- * § 2 for the algorithm, parameter physics, and open items.
+ * for the algorithm, parameter physics, and open items.
  */
 
 #include "triggers/streaming/hough.h"

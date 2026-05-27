@@ -101,7 +101,7 @@ void recotrackdata_writer(
     TTree *recotrackdata_tree = new TTree("recotrackdata", "Recotrackdata tree");
     // NOTE: *recodata dereference invokes AlcorRecotrackdata(const AlcorRecodata&)
     // which today copies the branch-binding *_ptr members verbatim — a latent
-    // dangle once D-08's no-copy contract lands.  Documented; fix follows in D-08.
+    // dangle once 's no-copy contract lands.  Documented; fix follows in .
     auto recotrackdata = std::make_unique<AlcorRecotrackdata>(*recodata);
     recotrackdata->write_to_tree(recotrackdata_tree);
 

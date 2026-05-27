@@ -12,7 +12,7 @@
  * type definitions without resorting to template metaprogramming or
  * void*.
  *
- * Pipeline overview (DISCUSSION § 2.6 / § 2.7):
+ * Pipeline overview:
  *
  *   per-frame compute (parallel)
  *       │  produces FrameResult { RingFitResult first, second, ... }
@@ -77,7 +77,7 @@ struct RingFitResult
 
 // ─────────────────────────────────────────────────────────────────────
 //  Per-frame compute output — drained in frame order on a single
-//  thread (DISCUSSION § 2.7).
+//  thread
 // ─────────────────────────────────────────────────────────────────────
 struct FrameResult
 {
@@ -105,7 +105,7 @@ struct FrameResult
 };
 
 // ─────────────────────────────────────────────────────────────────────
-//  Result of the Crystal-Ball + pol3 radial fit (DISCUSSION § 2.6).
+//  Result of the Crystal-Ball + pol3 radial fit
 //
 //  Produced by `fit_radial_distribution()` (radial_fit.cxx), collected
 //  by the finalize block into a vector that drives the per-run summary
@@ -150,7 +150,7 @@ struct RingFillHists
     TH1F *h_fcov = nullptr;
     TH1F *h_radial = nullptr;        ///< pixel-centre radii — consistency check
     TH1F *h_R = nullptr;             ///< fitted ring radius
-    TH1F *h_sigma = nullptr;         ///< per-ring RMS of radial residuals (biased — see DISCUSSION § 2.6)
+    TH1F *h_sigma = nullptr;         ///< per-ring RMS of radial residuals (biased)
     TH2F *h_R_vs_nhits = nullptr;    ///< correlation
     TH2F *h_centre_xy = nullptr;     ///< fit centre map
     TH2F *h_residual_vs_n = nullptr; ///< per-hit LOO residual (mm) vs N_hits — pixel-centre

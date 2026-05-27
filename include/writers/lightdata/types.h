@@ -25,7 +25,7 @@ namespace btana::lightdata
  * comparison.  The buffer holding these is hoisted out of the
  * per-frame loop and `clear()`d / `resize()`d each frame — typical
  * capacity stabilises within a spill, eliminating realloc churn on
- * the hot path (CODE_REVIEW §4.8).
+ * the hot path
  */
 struct CtHit
 {
