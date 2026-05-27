@@ -302,6 +302,16 @@ QaConfigStruct qa_conf_reader(std::string config_file)
         if (auto v = (*qa_table)["ct_elec_signal_hi"].value<int64_t>())
             cfg.ct_elec_signal_hi = static_cast<int>(*v);
 
+        // QA-mode behavior toggles.
+        if (auto v = (*qa_table)["per_spill_calibration_update"].value<bool>())
+        {
+            cfg.per_spill_calibration_update = *v;
+            if (cfg.per_spill_calibration_update)
+                mist::logger::info("(qa_conf_reader) per_spill_calibration_update=true — "
+                                   "lightdata_writer will seed each spill's calibration table "
+                                   "from the framer's fine-tune distribution.");
+        }
+
         // Sanity warnings — windows must be non-empty and well-ordered.
         if (cfg.afterpulse_near_hi < cfg.afterpulse_near_lo)
             mist::logger::warning("(qa_conf_reader) afterpulse_near_hi < afterpulse_near_lo "
