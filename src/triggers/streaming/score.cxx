@@ -3,11 +3,11 @@
  * @brief Implementation of the streaming-trigger score stage
  *        (`run_streaming_trigger` v0 and `run_streaming_trigger_weighted` v1).
  *
- * Originally extracted from `src/lightdata_writer.cxx` during the D-12
+ * Originally extracted from `src/lightdata_writer.cxx` during the
  * refactor; relocated into the streaming/ subfolder during Phase 3 of
  * the streaming-trigger consolidation.  See
  * [`include/triggers/streaming/DISCUSSION.md`](../../../include/triggers/streaming/DISCUSSION.md)
- * § 1 for the algorithm.
+ * for the algorithm.
  */
 
 #include "triggers/streaming/score.h"
@@ -149,9 +149,9 @@ bool run_streaming_trigger(AlcorSpilldata &current_spill,
     //  fills, h_delta_median_vs_window, the TDC-step LSB-collision
     //  diagnostics, and most recently h_sigma_vs_nhits — odd/even median
     //  σ residuals) were dropped in the 2026-Q2 QA sweep.  They had
-    //  served their purpose during pre-D-12 trigger commissioning and
+    //  served their purpose during early trigger commissioning and
     //  were eating runtime and disk for histograms nobody was reading.
-    //  DISCUSSION.md § 2.5 has the full list and the open items that may
+    //  See DISCUSSION.md for the full list and the open items that may
     //  justify reintroducing a focused subset.
     auto end_of_cluster = [&]()
     {
@@ -219,7 +219,7 @@ bool run_streaming_trigger(AlcorSpilldata &current_spill,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  v1 — DCR-weighted streaming trigger (D-12)
+//  v1 — DCR-weighted streaming trigger
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool run_streaming_trigger_weighted(

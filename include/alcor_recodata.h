@@ -45,7 +45,7 @@
  * address of those owned vectors; ROOT's `TTree::SetBranchAddress` is bound
  * to the address of the *_ptr slot (`&recodata_ptr`).
  *
- * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * ### Non-copyable, non-movable
  * ROOT branches bind to the address of the wrapper's @c _ptr slots.  Any
  * copy or move of @c AlcorRecodata would either duplicate the slot value
  * (pointing into the source's freed memory after destruction) or relocate
@@ -272,7 +272,7 @@ public:
      *
      * The previous by-value `set_recodata(...)`, `set_triggers(...)`,
      * `set_recodata_link(...)`, `set_triggers_link(...)` methods are
-     * removed (CODE_REVIEW §D-08) — no callers, and they either copy
+     * removed — no callers, and they either copy
      * multi-MB containers per call or invite the F1/F2/F3 branch-address
      * traps now blocked by the non-copyable contract.
      *

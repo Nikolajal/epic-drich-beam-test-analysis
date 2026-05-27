@@ -23,7 +23,7 @@
 inline void draw_circle(std::array<float, 3> parameters, int line_colour = kBlack, int line_style = kSolid, int line_width = 1)
 {
     // Previous version `new TEllipse(...); result->DrawEllipse(...)` was
-    // doubly wrong (CODE_REVIEW §5.6):
+    // doubly wrong:
     //   - `TEllipse::DrawEllipse` constructs a SECOND TEllipse internally
     //     and draws it; the named `result` was never drawn and never freed.
     //   - The heap-allocated `result` leaked on every call.

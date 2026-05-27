@@ -43,7 +43,7 @@ std::optional<std::array<float, 2>> Mapping::get_position_from_pdu_column_row(in
     //  geometrically valid but correspond to no real Cherenkov
     //  channel.  Those phantom positions populated `index_to_hit_xy`
     //  for the timing devices, producing a "low-R bump" in the
-    //  recodata-side coverage map (DISCUSSION § 2.6) and any other
+    //  recodata-side coverage map and any other
     //  geometry-derived product that iterates the map.
     auto it = pdu_xy_position.find(pdu);
     if (it == pdu_xy_position.end())

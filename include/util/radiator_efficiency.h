@@ -96,7 +96,7 @@ namespace util::radiator_efficiency
      *                              max coverage).
      *
      *                              Spill-by-spill active-channel
-     *                              weighting (DISCUSSION § 2.6) uses
+     *                              weighting uses
      *                              this parameter: for each channel,
      *                              `weight = Σ over spills active in
      *                              of (n_physics_spill / n_physics_total)`.

@@ -3,7 +3,7 @@
 /**
  * @file sigma_vs_n_fit.h
  * @brief One-parameter LOO σ(N) fit used by the recodata writer's
- *        finalize-QA stage (DISCUSSION § 2.6).
+ *        finalize-QA stage
  *
  * Model: σ(N) = σ_photon · √(N / (N − 3))
  *

@@ -18,7 +18,7 @@
  *     directory belongs to an input `TFile` (very common after a
  *     `->Clone()` whose source was loaded from disk), closing the input
  *     file frees the clone under the caller's feet
- *     (CODE_REVIEW §6.10).  This wrapper calls `SetDirectory(nullptr)`
+ *      This wrapper calls `SetDirectory(nullptr)`
  *     in its constructor so the wrapped histogram is owned by the
  *     wrapper alone — no ROOT-side surprises.
  *  3. **Copyable raw pointers in containers.** `std::map<K, TH1F*>`

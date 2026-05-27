@@ -5,7 +5,7 @@
  * @brief Per-spill metadata: dead-channel masks, active-participant masks,
  *        and the @ref AlcorLightdataStruct payload for the spill.
  *
- * **Two-layer design (CODE_REVIEW §D-08).**  This header exposes two related
+ * **Two-layer design**  This header exposes two related
  * types with split responsibilities:
  *
  * - @ref AlcorSpilldataStruct — the **POD data side**.  Owns the vectors and

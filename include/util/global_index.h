@@ -205,7 +205,7 @@ public:
     }
 
     // Note: the legacy-format adapters (`from_legacy`, `from_legacy_channel`)
-    // were removed at the end of the D-01 migration.  Storage is the new
+    // were removed at the end of the migration.  Storage is the new
     // layout natively; pre-migration `.root` files must be re-written by
     // re-running the writers on the raw FIFO input.
 
@@ -302,7 +302,7 @@ public:
         // device() is uint16_t; subtracting 192 underflows wildly when the
         // GlobalIndex is default-constructed (device() == 0).  Callers using
         // the return value as a histogram bin would then index huge negative
-        // bins (CODE_REVIEW §5.12).  Guard with an assert (debug) and saturate
+        // bins  Guard with an assert (debug) and saturate
         // to 0 on the invalid case (release) so the bin index stays sensible.
         assert(is_valid() && device() >= 192 &&
                "channel_ordinal: requires is_valid() && device() >= 192");

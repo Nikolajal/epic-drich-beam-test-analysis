@@ -39,7 +39,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
 {
     // Create streams.  Invalid streamers are dropped HERE (in the ctor) so
     // the data_streams indices stay stable for the lifetime of the framer.
-    // The previous per-spill erase in next_spill() (CODE_REVIEW §1.3) would
+    // The previous per-spill erase in next_spill() would
     // have re-indexed streams between spills, which is incompatible with
     // rollover_correction_per_stream_and_spill — that table is built once
     // by resolve_rollover_offsets() against the ORIGINAL ordering.
@@ -63,7 +63,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
     }
 
     // Load trigger configurations (read-only during processing; O(1) lookup via
-    // trigger_config.by_device and trigger_config.by_channel — see D-05).
+    // trigger_config.by_device and trigger_config.by_channel — see ).
     trigger_config = trigger_conf_reader(trigger_config_file);
 
     // Readout configuration
@@ -100,7 +100,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
     // first Hit).  Range chosen to span ~100 µs (32768 cc) so DCR-driven
     // long-Δt entries land in the in-range part of the histogram rather than
     // overflowing the previous narrow [0, 1024] axis (post-migration audit
-    // §10).  Bin width = 32 cc ≈ 100 ns — coarse enough for the long tail,
+    // Bin width = 32 cc ≈ 100 ns — coarse enough for the long tail,
     // fine enough to resolve the QA near (1–64 cc) and far (256–319 cc)
     // windows.
     h_afterpulse_dt = RootHist<TH1F>("h_afterpulse_dt",
@@ -325,7 +325,7 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         if (current_data.is_alcor_hit())
         {
             // Channel-mode trigger: a data-tagged word on a configured channel
-            // is forced into the trigger path (see DISCUSSION.md → D-05).
+            // is forced into the trigger path (see DISCUSSION.md → ).
             // Check this FIRST so the channel never touches the data-hit path
             // (no afterpulse bookkeeping, no readout-tag categorisation).
             {
@@ -428,7 +428,7 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         {
             // Device-mode lookup: the hardware tag is the discriminator —
             // the device alone identifies which configured trigger fired
-            // (see DISCUSSION.md → D-05).  O(1) hash lookup, no scoring.
+            // (see DISCUSSION.md → ).  O(1) hash lookup, no scoring.
             auto it = trigger_config.by_device.find(static_cast<uint16_t>(current_device));
             const bool trigger_known = (it != trigger_config.by_device.end());
 
@@ -437,7 +437,7 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 // Log unrecognised tagged-trigger devices once. Set membership
                 // is the only thing under the mutex — string formatting and
                 // mist::logger::warning() are released to keep other workers
-                // off this lock (CODE_REVIEW §1.6).
+                // off this lock
                 bool first_time = false;
                 {
                     std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
@@ -538,7 +538,7 @@ bool ParallelStreamingFramer::next_spill()
     // so frame_list.end() is always the correct insertion hint → each
     // try_emplace is O(1) amortized instead of operator[]'s O(log N)
     // lookup-or-insert.  Saves ~1-2 ms per spill at the default
-    // first_frames_trigger=5000 (CODE_REVIEW §1.7).
+    // first_frames_trigger=5000
     auto hint = frame_list.end();
     for (auto i_frame = 0; i_frame < _first_frames_trigger; ++i_frame)
     {
@@ -553,7 +553,7 @@ bool ParallelStreamingFramer::next_spill()
     // Invalid streams were already dropped in the constructor, so
     // data_streams here is guaranteed to contain only valid streamers and
     // its indexing is stable across spills (matches the rollover_correction
-    // table; CODE_REVIEW §1.3).
+    // table;).
 
     // Determine worker thread count.  Clamped by three independent factors:
     //
@@ -573,7 +573,7 @@ bool ParallelStreamingFramer::next_spill()
     //    for no gain.  At 192 streams this rarely bites, but at small DCR
     //    configs (4–8 streams) the saving is real.
     //
-    // CODE_REVIEW §D-09 fix: the previous formula `8 * std::min(n_usable, 2u)`
+    // fix: the previous formula `8 * std::min(n_usable, 2u)`
     // is algebraically equivalent to a hard ceiling of 16 on every machine
     // with ≥ 4 cores, regardless of n_usable.  64-core nodes performed
     // identically to 4-core laptops.  Replaced with an explicit
@@ -619,7 +619,7 @@ bool ParallelStreamingFramer::next_spill()
     }
 
     // Per-spill std::async spawn cost was measured at < 0.01% of per-spill
-    // work on a realistic load (CODE_REVIEW §D-09 — resolved); no worker
+    // work on a realistic load; no worker
     // pool needed.  Instrumentation removed.
     std::vector<std::future<void>> thread_pool;
     thread_pool.reserve(n_threads);

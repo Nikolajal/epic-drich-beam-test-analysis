@@ -782,7 +782,7 @@ private:
     inline static std::shared_mutex calibration_mutex{};
 
     /**
-     * @brief Frozen-table fast-path flag (CODE_REVIEW §3.1).
+     * @brief Frozen-table fast-path flag
      *
      * Once calibration loading is complete the table is immutable for the rest
      * of the run.  Setting this flag lets per-Hit readers like @ref get_phase

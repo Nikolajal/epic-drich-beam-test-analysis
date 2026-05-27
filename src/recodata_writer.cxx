@@ -24,7 +24,7 @@
 #include "writers/recodata/sigma_vs_n_fit.h" // fit_sigma_vs_n
 #include "writers/recodata/ring_compute.h"   // compute_ring_fit, fill_ring_hists, refit_and_fill_ring
 #include "writers/recodata/frame_pipeline.h" // process_frame_pure (parallel-dispatch entry point)
-//  Live-QA pipeline (DISCUSSION § 2.6): coverage map + eff(R) helpers
+//  Live-QA pipeline: coverage map + eff(R) helpers
 //  + per-ring fit_circle re-run on mask-tagged hits → N_photons /
 //  radial(R) observables filled inline.
 #include "util/radiator_efficiency.h"
@@ -73,7 +73,7 @@ void recodata_writer(
     gStyle->SetOptStat(0);
 
     //  ROOT thread-safety: required for the within-spill
-    //  multithreading (DISCUSSION § 2.7).  Without this call, ROOT's
+    //  multithreading  Without this call, ROOT's
     //  internal global state (TROOT registries, gROOT->Get*, the
     //  TF1/TFormula bookkeeping touched by every `ROOT::Fit::Fitter`
     //  construction inside `fit_circle`) is protected by a process-
@@ -87,7 +87,7 @@ void recodata_writer(
     auto framer_cfg = FramerConfReader(framer_conf);
 
     //  Input file — open lightdata.root, auto-rebuild via lightdata_writer
-    //  if missing/corrupt or if force_upstream is set (CODE_REVIEW §D-06).
+    //  if missing/corrupt or if force_upstream is set
     //  TFilePtr is owning: closes + deletes on every exit path.
     std::string input_filename = data_repository + "/" + run_name + "/lightdata.root";
     TFilePtr input_file(TFile::Open(input_filename.c_str(), "READ"));
@@ -148,7 +148,7 @@ void recodata_writer(
     AlcorFinedata::generate_calibration(fine_time_calib_th2f, true);
     //  Calibration table is now built; signal immutability so per-Hit
     //  AlcorFinedata::get_phase() readers skip the shared_mutex
-    //  (CODE_REVIEW §3.1).  No worker threads have spawned yet.
+    //   No worker threads have spawned yet.
     AlcorFinedata::freeze_calibration();
 
     //  Progress tracking — multi-bar with one subtask (per-frame post-processing).
@@ -280,7 +280,7 @@ void recodata_writer(
     std::unordered_map<int, RootHist<TH1F>> h_trigger_time_diff_w_cherenkov;
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Live-QA radiator pipeline (DISCUSSION § 2.6)
+    //  Live-QA radiator pipeline
     // ─────────────────────────────────────────────────────────────────────
     //  Per-ring photon counting + radial distributions in recodata, so
     //  beam-test operators see Cherenkov physics observables live (the
@@ -313,8 +313,8 @@ void recodata_writer(
     const FrameProcessContext frame_proc_ctx{framer_cfg, registry, ring_ctx,
                                              BTANA_EDGE_REJECTION_NS};
 
-    //  Coverage map is now built at FINALIZE (DISCUSSION § 2.6, spill-
-    //  by-spill active-channel correction).  During the spill loop we
+    //  Coverage map is now built at FINALIZE
+    //  During the spill loop we
     //  accumulate two pieces of information per spill:
     //
     //    * `n_physics_per_spill[i]` — number of HOUGH_RING_FOUND
@@ -377,7 +377,7 @@ void recodata_writer(
     RootHist<TH1F> h_radial_second("h_radial_second", ";R (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
     //  Dual / solo splits for the first-ring radial distribution.
     //  Same predicate as the vs_n splits (frame has second ring?).
-    //  Used by the Crystal-Ball + pol3 fit at finalize (DISCUSSION § 2.6)
+    //  Used by the Crystal-Ball + pol3 fit at finalize
     //  to extract N_γ separately for clean two-radiator events vs
     //  single-radiator events.  Second ring is dual-by-definition.
     RootHist<TH1F> h_radial_first_dual("h_radial_first_dual", ";R (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
@@ -392,7 +392,7 @@ void recodata_writer(
     RootHist<TH1F> h_radial_first_dual_smeared("h_radial_first_dual_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_radial_first_solo_smeared("h_radial_first_solo_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
 
-    //  Headline physics observables (DISCUSSION § 2.6).  These four
+    //  Headline physics observables  These four
     //  per-ring quantities are what beam-test operators care about:
     //    * fitted ring radius (gives Cherenkov angle / velocity / PID),
     //    * single-photon spatial resolution σ_r = std(|r_hit − R_fit|)
@@ -462,7 +462,7 @@ void recodata_writer(
     //
     //  Cost: ~N extra fits per ring per event.  At N ~ 12 hits and
     //  21k events × 2 rings, ~25 s extra per run.  Acceptable; see
-    //  DISCUSSION § 2.6 for the rationale (replaces the biased
+    // for the rationale (replaces the biased
     //  `h_sigma_*` and the wrong-observable `h_fit_sigma_R_vs_n_*`
     //  that this hist supersedes).
     RootHist<TH2F> h_residual_vs_n_first("h_residual_vs_n_first", ";N hits;r_{hit} - R_{-i} (mm)",
@@ -648,7 +648,7 @@ void recodata_writer(
                             gi.raw(),
                             encode_bit(HitmaskDeadLane));
                         //  Per-spill active-channel mask for the
-                        //  spill-weighted coverage map (DISCUSSION § 2.6).
+                        //  spill-weighted coverage map
                         //  Pulled directly from the same not_dead_participants
                         //  list that's written to the StartOfSpill marker
                         //  frame — matches the offline `photon_number_new.cpp`
@@ -983,7 +983,7 @@ void recodata_writer(
             }
 
             //  ── Per-spill physics counter for the spill-weighted
-            //     coverage map (DISCUSSION § 2.6).  A frame counts as
+            //     coverage map  A frame counts as
             //     "physics" if it carries any accepted trigger except
             //     the bookkeeping / sampling sentinels:
             //
@@ -1021,7 +1021,7 @@ void recodata_writer(
             for (const auto &current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
                 recodata.add_hit(current_cherenkov_hit_struct);
 
-            //  ── Live-QA radiator fills (DISCUSSION § 2.6) ──────────────────────
+            //  ── Live-QA radiator fills ──────────────────────
             //  Gated on the frame carrying a `_TRIGGER_HOUGH_RING_FOUND_`
             //  trigger.  The lightdata-side Hough already mask-tagged
             //  the contributing hits; we re-fit per ring on those tags
@@ -1132,7 +1132,7 @@ void recodata_writer(
         val->Write();
 
     //  ---
-    //  --- Rings QA (DISCUSSION § 2.6: live photon-counting pipeline)
+    //  --- Rings QA
     //
     //  Finalize step:
     //   1. Compute eff(R) from the coverage map using the radial hist's
@@ -1152,9 +1152,9 @@ void recodata_writer(
         // Subfolder name: "Rings/" — contents are per-ring observables
         // from the Hough output, not per-radiator-material splits.  The
         // ring↔radiator mapping (when wired in via `RadiatorInfoStruct`)
-        // is a follow-up to V1; see DISCUSSION § 2.6 "Deferred items".
+        // is a follow-up to V1; "Deferred items".
 
-        //  ── Spill-by-spill active-channel weighting (DISCUSSION § 2.6)
+        //  ── Spill-by-spill active-channel weighting
         //
         //  Build per-channel weights from the per-spill bookkeeping we
         //  accumulated during the spill loop:
@@ -1280,7 +1280,7 @@ void recodata_writer(
         h_radial_first_solo_smeared->Write();
 
         //  ── Crystal-Ball + pol3 fit on the eff-corrected radial
-        //     hist (DISCUSSION § 2.6).  Ported from
+        //     hist  Ported from
         //     `macros/examples/photon_number_new.cpp`'s
         //     `fit_radial_distribution` lambda (lines 952–1037).
         //
@@ -1410,7 +1410,7 @@ void recodata_writer(
         h_centre_xy_first->Write();
         h_centre_xy_second->Write();
 
-        //  vs_n fitting recipe (DISCUSSION § 2.6).
+        //  vs_n fitting recipe
         //
         //  For each h_residual_vs_n_* TH2F:
         //    1. Per-slice Gaussian fit to extract σ(N) — the width of

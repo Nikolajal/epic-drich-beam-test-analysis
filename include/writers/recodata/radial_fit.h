@@ -3,7 +3,7 @@
 /**
  * @file radial_fit.h
  * @brief Crystal-Ball + pol3 radial fit used by the recodata writer's
- *        finalize-QA stage (DISCUSSION § 2.6).
+ *        finalize-QA stage
  *
  * Extracted from the in-function `fit_radial_distribution` lambda so
  * the fit recipe can live in its own translation unit, be unit-tested

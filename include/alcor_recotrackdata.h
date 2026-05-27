@@ -28,7 +28,7 @@
 struct AlcorRecotrackdataStruct
 {
     // Default-initialised to NaN so a silent `resize(idx+1)` in
-    // AlcorRecotrackdata::recotrackdata_at (CODE_REVIEW §2.7) cannot produce
+    // AlcorRecotrackdata::recotrackdata_at cannot produce
     // indeterminate float reads.  Callers that need a real value overwrite
     // these explicitly; downstream consumers can test `std::isnan(...)` to
     // detect uninitialised entries.
@@ -58,7 +58,7 @@ struct AlcorRecotrackdataStruct
  * adds a per-event vector of @ref AlcorRecotrackdataStruct entries, one
  * per telescope track reconstructed by ALTAI.
  *
- * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * ### Non-copyable, non-movable
  * Inherits the non-copyable / non-movable contract from @ref AlcorRecodata,
  * declared explicitly below for clarity.  ROOT branch addresses bound here
  * (recotrackdata_ptr) and inherited (recodata_ptr, triggers_ptr) are stable

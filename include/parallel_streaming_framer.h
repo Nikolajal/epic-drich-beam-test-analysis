@@ -139,7 +139,7 @@ public:
      * @brief Returns a reference to the current spill data.
      *
      * The previous by-value `get_spilldata()` overload was removed when
-     * @ref AlcorSpilldata became non-copyable (CODE_REVIEW §D-08).  All
+     * @ref AlcorSpilldata became non-copyable  All
      * callers should hold a reference / `unique_ptr` to the owning wrapper.
      *
      * @return Reference to the internal @ref AlcorSpilldata object.
@@ -185,7 +185,7 @@ public:
      *
      * Use to query which device/chip pairs are assigned to each sub-detector
      * role (timing / tracking / cherenkov) without re-parsing the TOML.
-     * Added for CODE_REVIEW §D-07 (timing chip IDs are no longer hardcoded
+     * Added for (timing chip IDs are no longer hardcoded
      * in @c lightdata_writer.cxx).
      */
     const ReadoutConfigList &get_readout_config() const { return readout_config; }
@@ -200,9 +200,9 @@ public:
     // Setters
     // -------------------------------------------------------------------------
 
-    // set_spilldata*() removed: AlcorSpilldata is non-copyable and non-movable
-    // (CODE_REVIEW §D-08); replace any future "replace the spill" use case
-    // with `framer.get_spilldata_link().clear()` + repopulate-in-place.
+    // set_spilldata*() removed: AlcorSpilldata is non-copyable and non-movable;
+    // replace any future "replace the spill" use case with
+    // `framer.get_spilldata_link().clear()` + repopulate-in-place.
 
     /**
      * @brief Sets the number of parallel processing threads.
@@ -339,7 +339,7 @@ public:
      *
      * Frame size is read directly from the @c _frame_size member; the
      * previous `int _frame_size` parameter was an unused override (it
-     * just shadowed the member) — dropped per CODE_REVIEW §1.4.
+     * just shadowed the member) — dropped.
      */
     void process(size_t stream_index, WorkerQA *qa = nullptr);
 
@@ -358,7 +358,7 @@ private:
      * `<mist/logger>` are internally mutex-guarded (verified against MIST
      * `dev`: each bar owns a `std::mutex` taken on every state-mutating
      * method).  Concurrent calls from worker threads are safe.
-     * Closes CODE_REVIEW §1.10.
+     *
      */
     void _update_bar(int64_t current, int64_t total);
 

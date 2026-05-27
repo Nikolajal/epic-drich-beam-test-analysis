@@ -33,10 +33,10 @@ struct RootFileDeleter
     }
 };
 
-/// Owning handle for a ROOT `TFile` — closes on destruction (CODE_REVIEW §5.9).
+/// Owning handle for a ROOT `TFile` — closes on destruction
 using TFilePtr = std::unique_ptr<TFile, RootFileDeleter>;
 
-// The previous `open_or_build_rootfile()` helper (CODE_REVIEW §D-06) was
+// The previous `open_or_build_rootfile()` helper was
 // removed: it pretended to be general but carried a 10-arg std::function
 // builder with 7 args hardcoded inside the helper, and had exactly one
 // caller (recodata_writer).  The auto-rebuild logic is now inlined at the

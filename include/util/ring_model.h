@@ -160,7 +160,7 @@ inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double
 
     // Explicit captures: target_histogram by value (it's a pointer, safe to
     // copy), nothing by reference.  Avoids the [&] footgun once the lambda
-    // ever escapes the function (CODE_REVIEW §5.5).
+    // ever escapes the function
     auto chi2_function = [target_histogram](const double *parameters)
     {
         double chi2 = 0;
@@ -226,7 +226,7 @@ inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double
         // result is std::array<…, 6> — valid indices 0..5.  The previous
         // guard `if (iTer > 6) continue` would let iTer == 6 fall through and
         // write past the end of result; with `iTer >= (int)result.size()`
-        // (== 6) we stop the moment we'd OOB (CODE_REVIEW §5.4).
+        // (== 6) we stop the moment we'd OOB
         if (iTer >= static_cast<int>(result.size()))
             break;
         result[iTer][0] = current_parameter;
@@ -244,7 +244,7 @@ inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double
  * @param n_points              Number of points per contour (default: 500).
  * @return                      One owning `unique_ptr<TGraph>` per sigma value.
  *
- * Returning `unique_ptr` makes ownership explicit (CODE_REVIEW §5.3).
+ * Returning `unique_ptr` makes ownership explicit
  * `TGraph` is not adopted by `gDirectory` like `TH1`, so the previous raw
  * `TGraph *` return leaked per call unless every caller remembered to
  * `delete` afterwards.  Callers that need to hand a `TGraph` over to ROOT

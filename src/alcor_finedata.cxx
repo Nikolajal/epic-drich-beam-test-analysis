@@ -48,7 +48,7 @@ float AlcorFinedata::get_phase() const
     //  can skip the std::shared_mutex acquisition entirely.  Per-Hit
     //  shared_lock was a real contention point on the 16-thread framer
     //  even with no contention against writers, because shared_mutex
-    //  still does atomic RMW on its reader count (CODE_REVIEW §3.1).
+    //  still does atomic RMW on its reader count
     //
     //  Slow path: during setup the table is still mutable, so we take
     //  the shared lock as before.
@@ -223,7 +223,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         //  Small set protection.  unique_ptr handles every continue / return
         //  path including the convergence-skip branch below — the previous
         //  raw new + per-path `delete` leaked the TH1D when the convergence
-        //  test failed (CODE_REVIEW §3.2).
+        //  test failed
         std::unique_ptr<TH1D> current_tdc_fine_calib(
             calibration_histogram->ProjectionY(TString::Format("tmp_%i", xbin).Data(), xbin, xbin));
         current_tdc_fine_calib->SetDirectory(nullptr); // don't pollute gDirectory
