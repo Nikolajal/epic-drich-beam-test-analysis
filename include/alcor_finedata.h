@@ -357,6 +357,36 @@ public:
      */
     float get_hit_phi_rnd(std::array<float, 2> v) const;
 
+    /**
+     * @brief Returns the radial distance from a custom centre using the
+     *        bare (non-randomised) pixel-centre position.
+     *
+     * Companion to @ref get_hit_r_rnd that does not jitter inside the
+     * pixel — the discrete pixel-grid quantisation is preserved.  Useful
+     * for fits where the pixel-pitch quantisation needs to be tracked
+     * explicitly (e.g. consistency check against the smeared version of
+     * the same observable, with the variance subtraction
+     * `σ²_intrinsic = σ²_unsmeared − pitch²/12` separating the
+     * intrinsic spread from the pixel-pitch contribution).
+     * @param v Centre coordinates {x, y}.
+     */
+    float get_hit_r(std::array<float, 2> v) const {
+        return std::hypot(internal_data.hit_x - v[0],
+                          internal_data.hit_y - v[1]);
+    }
+
+    /** @brief Returns the azimuthal angle from a custom centre using the bare pixel-centre position [rad]. */
+    float get_hit_phi(std::array<float, 2> v) const {
+        return std::atan2(internal_data.hit_y - v[1],
+                          internal_data.hit_x - v[0]);
+    }
+
+    /** @brief Returns the radial distance from the origin using the bare pixel-centre position. */
+    float get_hit_r() const { return get_hit_r({0.f, 0.f}); }
+
+    /** @brief Returns the azimuthal angle from the origin using the bare pixel-centre position [rad]. */
+    float get_hit_phi() const { return get_hit_phi({0.f, 0.f}); }
+
     /// @}
 
     // -------------------------------------------------------------------------

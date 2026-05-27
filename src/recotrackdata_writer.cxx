@@ -1,6 +1,8 @@
 #include "writers/recotrackdata.h"
+#include "writers/recodata.h"
 #include "alcor_recodata.h"
 #include "alcor_recotrackdata.h"
+#include <filesystem>
 #include <memory>
 // TFilePtr is available via the alcor_recodata.h → utility.h → util/root_io.h chain.
 
@@ -10,20 +12,56 @@ void recotrackdata_writer(
     std::string track_data_repository,
     std::string track_run_name,
     int max_frames,
-    bool force_recodata_rebuild,
-    bool force_lightdata_rebuild)
-//  TODO Add force rebuild for recotrackdata
+    bool force_rebuild,
+    bool force_upstream)
 {
-    //  Input recodata files
-    std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
-
-    //  Load recodata, return if not available.  TFilePtr: closes + deletes on
-    //  scope exit; ROOT objects attached to the TFile are freed by Close().
-    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str()));
-    if (!input_file_recodata || input_file_recodata->IsZombie())
+    //  Output recotrackdata file.  Skip the whole pipeline if it
+    //  exists and the caller didn't ask for a rebuild — the uniform
+    //  flag contract (this writer's --force-rebuild gates output
+    //  overwrite, --force-upstream cascades to upstream writers).
+    const std::string outname = data_repository + "/" + run_name + "/recotrackdata.root";
+    if (std::filesystem::exists(outname) && !force_rebuild)
     {
-        mist::logger::warning("(recotrackdata_writer) Could not find recodata, making it");
+        mist::logger::info(TString::Format(
+            "(recotrackdata_writer) %s exists and --force-rebuild not set — "
+            "skipping (use --force-rebuild to overwrite).",
+            outname.c_str()).Data());
         return;
+    }
+
+    //  Input recodata file — mirror recodata_writer's auto-cascade
+    //  behaviour: if recodata.root is missing/corrupt OR force_upstream
+    //  is set, invoke recodata_writer (which itself cascades into
+    //  lightdata_writer when needed).  Emits a warning when the cascade
+    //  is triggered implicitly (missing file) so the operator notices
+    //  they're rebuilding the chain rather than silently doing nothing.
+    const std::string input_filename_recodata =
+        data_repository + "/" + run_name + "/recodata.root";
+    TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str()));
+    const bool recodata_missing = !input_file_recodata || input_file_recodata->IsZombie();
+    if (recodata_missing || force_upstream)
+    {
+        if (recodata_missing && !force_upstream)
+            mist::logger::warning(
+                "(recotrackdata_writer) " + input_filename_recodata +
+                " missing or corrupt — auto-cascading into recodata_writer.  "
+                "Pass --force-upstream explicitly to skip this implicit cascade "
+                "(or to force a rebuild even when the file is present).");
+        else
+            mist::logger::info(
+                "(recotrackdata_writer) --force-upstream set — rebuilding recodata "
+                "(which itself cascades into lightdata).");
+        recodata_writer(data_repository, run_name, /*max_spill=*/max_frames,
+                        /*force_rebuild=*/true,
+                        /*force_upstream=*/force_upstream);
+        input_file_recodata.reset(TFile::Open(input_filename_recodata.c_str()));
+        if (!input_file_recodata || input_file_recodata->IsZombie())
+        {
+            mist::logger::error(
+                "(recotrackdata_writer) " + input_filename_recodata +
+                " still missing after auto-cascade — aborting.");
+            return;
+        }
     }
 
     //  Link recodata tree locally
@@ -43,10 +81,8 @@ void recotrackdata_writer(
     //  Load recotrackdata
     TrackingAltai current_tracking(input_filename_recotrackdata);
 
-    //  Prepare output file
-    std::string outname = data_repository + "/" + run_name + "/recotrackdata.root";
-
-    //  Link recodata tree locally
+    //  Prepare output file.  `outname` was already declared at the
+    //  top of this function for the --force-rebuild guard; reuse it.
     //  TODO safer implementation: recodata MUST be initialised earlier, may break
     TFilePtr output_file(TFile::Open(outname.c_str(), "RECREATE"));
     if (!output_file || output_file->IsZombie())

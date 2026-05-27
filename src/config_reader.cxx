@@ -693,6 +693,8 @@ recodata_conf_reader(std::string config_file)
                 cfg.min_hits_per_ring = static_cast<int>(*v);
             if (auto v = (*r_table)["min_channel_r_for_coverage_mm"].value<double>())
                 cfg.min_channel_r_for_coverage_mm = static_cast<float>(*v);
+            if (auto v = (*r_table)["skip_loo_residuals"].value<bool>())
+                cfg.skip_loo_residuals = *v;
         }
         else
         {
@@ -732,6 +734,11 @@ recodata_conf_reader(std::string config_file)
             cfg.nominal_centre_x_mm, cfg.nominal_centre_y_mm,
             cfg.delta_r_for_coverage_mm, cfg.min_hits_per_ring,
             cfg.min_channel_r_for_coverage_mm).Data());
+        if (cfg.skip_loo_residuals)
+            mist::logger::info(
+                "(recodata_conf_reader) skip_loo_residuals=true — per-hit "
+                "LOO residual loop disabled; h_residual_vs_n_* will be empty "
+                "and no σ_photon will be measured (QA fast path).");
     }
     catch (const toml::parse_error &err)
     {

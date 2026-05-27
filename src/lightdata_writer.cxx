@@ -1,5 +1,7 @@
 #include "parallel_streaming_framer.h"
 #include "writers/lightdata.h"
+#include "writers/lightdata/types.h"                 // CtHit
+#include "writers/lightdata/dcr_afterpulse_ct_qa.h"  // fill_dcr_afterpulse_ct_qa
 #include "triggers/streaming/score.h"
 #include "triggers/streaming/hough.h"
 #include "mapping.h"
@@ -53,7 +55,7 @@ void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
     int max_spill,
-    bool force_lightdata_rebuild,
+    bool force_rebuild,
     int requested_n_threads,
     std::string trigger_setup_file,
     std::string readout_config_file,
@@ -234,7 +236,7 @@ void lightdata_writer(
     TriggerRegistry registry(config_triggers);
     //  Prepare output file & tree
     std::string outfile_name = data_repository + "/" + run_name + "/lightdata.root";
-    if (std::filesystem::exists(outfile_name) && !force_lightdata_rebuild)
+    if (std::filesystem::exists(outfile_name) && !force_rebuild)
     {
         mist::logger::info("[INFO] Output file already exists, skipping: " + outfile_name);
         return;
@@ -779,14 +781,10 @@ void lightdata_writer(
         //  reuse the same storage across frames within a spill and .clear()
         //  at the top of each frame: typical capacity stabilises within a
         //  spill, eliminating the realloc churn on the hot path.
-        struct CtHit
-        {
-            uint64_t global_t; ///< rollover*32768 + coarse
-            uint32_t channel;  ///< GlobalIndex / 4
-            int device;        ///< 192 + channel/256
-            int fifo;          ///< block of 8 channels within device
-            float x, y;        ///< physical position (-999 if unmapped)
-        };
+        //  `CtHit` was lifted to `include/writers/lightdata/types.h` in
+        //  Phase F (2026-05-27) so the extracted per-frame QA helper
+        //  (`fill_dcr_afterpulse_ct_qa`) can use the same record type.
+        using ::btana::lightdata::CtHit;
         std::vector<CtHit> ct_hits;
         std::vector<std::size_t> sorted_by_time;
 
@@ -1031,193 +1029,35 @@ void lightdata_writer(
                     h_trigger_hit_multiplicity[current_trigger.index][1]->Fill(hit_counter[1]);
                 }
                 //  ---
-                //  --- DCR QA
+                //  --- DCR + afterpulse + cross-talk QA
+                //  Gated on the first-frames trigger.  The fill body was
+                //  lifted to `src/writers/lightdata/dcr_afterpulse_ct_qa.cxx`
+                //  in Phase F of the lightdata modularisation (2026-05-27);
+                //  ~190 lines moved out of this writer.  Behaviour is
+                //  identical, verified against
+                //  `Data/20251111-164951/phaseF_baseline/`.
                 if (fired_trigger_types.count(registry.index_of(static_cast<TriggerNumber>(TriggerFirstFrames))))
                 {
-                    //  Channel by channel Hit counting — start each frame from a clean map
-                    //  so counts cannot accumulate across frames.
-                    //  Phase 5: storage is new-layout raw.  The hit-side key
-                    //  must match the active_sensors key type — channel_ordinal
-                    //  (dense small int), NOT global_channel_raw (sparse packed
-                    //  millions, which would silently mismatch active_sensors
-                    //  entries AND overflow the per-channel TProfile axes).
-                    active_sensors_count.clear();
-                    for (const auto &channel_key : active_sensors)
-                        active_sensors_count[channel_key] = 0;
-                    for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
-                    {
-                        const uint32_t channel_key = static_cast<uint32_t>(::GlobalIndex(
-                            current_cherenkov_hit_struct.GlobalIndex).channel_ordinal());
-                        active_sensors_count[channel_key]++;
-                        //  Smeared DCR hitmap: one fill per Hit at the channel's
-                        //  smeared physical position.  Density ∝ accumulated DCR
-                        //  Hit count; divide by exposure for rate.
-                        AlcorFinedata dcr_hit_fd(current_cherenkov_hit_struct);
-                        const float dx = dcr_hit_fd.get_hit_x_rnd();
-                        if (dx > -990.f)
-                            h_dcr_hitmap->Fill(dx, dcr_hit_fd.get_hit_y_rnd());
-                    }
-                    //  Fill the DCR histogram
-                    for (auto &[GlobalIndex, count] : active_sensors_count)
-                        h_dcr_per_channel->Fill(GlobalIndex, count);
-
-                    //  --- Afterpulse & cross-talk QA
-                    //  Pre-decode per-Hit fields needed for pairwise comparisons.
-                    //  ct_hits + sorted_by_time are hoisted out of this loop
-                    //  (declared above the per-frame loop) — clear() preserves
-                    //  capacity, so per-frame allocations are eliminated once
-                    //  the buffers stabilise (CODE_REVIEW §4.8).
-                    ct_hits.clear();
-                    ct_hits.reserve(cherenkov_hits.size());
-                    for (const auto &s : cherenkov_hits)
-                    {
-                        // Phase 5: derive (channel, device, fifo) from the
-                        // GlobalIndex API instead of the legacy `s.GlobalIndex/4`
-                        // + bit-bashing formulas, which were correct only for
-                        // the pre-Phase-5 packed layout and silently produced
-                        // garbage (huge channels, wrong devices/fifos) under
-                        // the new layout.  channel_ordinal() is dense and
-                        // matches the histogram axes downstream.
-                        const ::GlobalIndex gi(s.GlobalIndex);
-                        ct_hits.push_back({static_cast<uint64_t>(s.rollover) * 32768u + s.coarse,
-                                           static_cast<uint32_t>(gi.channel_ordinal()),
-                                           gi.device(),
-                                           gi.fifo(),
-                                           s.hit_x, s.hit_y});
-                    }
-
-                    //  Build a time-sorted index so the CT inner loop can use
-                    //  binary search to restrict candidates to the [dt_min, dt_max)
-                    //  window — O(N log N + N·k_win) instead of O(N²).
-                    //  resize() reuses the hoisted buffer's capacity.
-                    sorted_by_time.resize(ct_hits.size());
-                    std::iota(sorted_by_time.begin(), sorted_by_time.end(), 0);
-                    std::sort(sorted_by_time.begin(), sorted_by_time.end(),
-                              [&ct_hits](std::size_t a, std::size_t b)
-                              { return ct_hits[a].global_t < ct_hits[b].global_t; });
-
-                    for (std::size_t i = 0; i < cherenkov_hits.size(); ++i)
-                    {
-                        const auto &s = cherenkov_hits[i];
-                        const auto &h = ct_hits[i];
-
-                        const bool is_ap      = (s.HitMask >> HitmaskAfterpulse)      & 1u;
-                        const bool is_ap_near = (s.HitMask >> HitmaskAfterpulseNear) & 1u;
-                        const bool is_ap_far  = (s.HitMask >> HitmaskAfterpulseFar)  & 1u;
-
-                        //  Single AlcorFinedata view of this Hit — shared by the AP and CT
-                        //  smeared-hitmap fills below.  Constructed once per primary Hit.
-                        AlcorFinedata hit_fd(s);
-
-                        //  Afterpulse QA: sideband subtraction.
-                        //  Per-channel profiles: TProfile means represent P(same-channel Hit
-                        //  in window). The "subtracted" one uses signed weight so its mean
-                        //  yields 100 × (P_near − P_far) = true afterpulse probability in %.
-                        h_afterpulse_near_per_channel->Fill(h.channel, is_ap_near ? 100.0 : 0.0);
-                        h_afterpulse_far_per_channel ->Fill(h.channel, is_ap_far  ? 100.0 : 0.0);
-                        h_afterpulse_per_channel->Fill(h.channel,
-                            100.0 * (static_cast<int>(is_ap_near) - static_cast<int>(is_ap_far)));
-                        //  Smeared 2D maps: density ∝ probability (near, far) and
-                        //  ∝ (P_near − P_far) for the DCR-subtracted true-afterpulse map.
-                        //  Statistical content is preserved by a single weighted Fill
-                        //  with weight = 100 (or ±100 for the subtracted map) — the
-                        //  previous 100× loop of unit Fills was bin-variance-equivalent
-                        //  in expectation but ~100× more expensive per Hit.
-                        if (h.x > -990.f)
-                        {
-                            if (is_ap_near)
-                                h_afterpulse_near_hitmap->Fill(
-                                    hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(), 100.0);
-                            if (is_ap_far)
-                                h_afterpulse_far_hitmap->Fill(
-                                    hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(), 100.0);
-                            //  Subtracted: ±100 weighted fills.  Net bin contents =
-                            //  (n_near_fills − n_far_fills) × 100 = density ∝ true AP probability.
-                            if (is_ap_near)
-                                h_afterpulse_hitmap->Fill(
-                                    hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(), +100.0);
-                            if (is_ap_far)
-                                h_afterpulse_hitmap->Fill(
-                                    hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(), -100.0);
-                        }
-
-                        //  Cross-talk: skip afterpulse hits as DUI
-                        if (is_ap)
-                            continue;
-
-                        int n_phys_ct = 0, n_elec_ct = 0;
-                        // hit_fd already constructed above (shared with the AP smeared maps).
-                        //  Binary-search pre-filter: only iterate hits whose global_t falls
-                        //  inside [h.global_t + dt_min, h.global_t + dt_max).
-                        //  This reduces the inner loop from O(N) to O(log N + k_window).
-                        const int64_t t_lo = static_cast<int64_t>(h.global_t) + qa_cfg.ct_scan_dt_min;
-                        const int64_t t_hi = static_cast<int64_t>(h.global_t) + qa_cfg.ct_scan_dt_max;
-                        const auto jt_lo = std::lower_bound(
-                            sorted_by_time.begin(), sorted_by_time.end(), t_lo,
-                            [&ct_hits](std::size_t idx, int64_t t)
-                            { return static_cast<int64_t>(ct_hits[idx].global_t) < t; });
-                        const auto jt_hi = std::lower_bound(
-                            jt_lo, sorted_by_time.end(), t_hi,
-                            [&ct_hits](std::size_t idx, int64_t t)
-                            { return static_cast<int64_t>(ct_hits[idx].global_t) < t; });
-                        for (auto jt = jt_lo; jt != jt_hi; ++jt)
-                        {
-                            const std::size_t j = *jt;
-                            if (j == i || ct_hits[j].channel == h.channel)
-                                continue;
-                            //  dt is guaranteed within [ct_scan_dt_min, ct_scan_dt_max)
-                            //  by the binary-search pre-filter above.
-                            const int64_t dt = static_cast<int64_t>(ct_hits[j].global_t) -
-                                               static_cast<int64_t>(h.global_t);
-                            const bool is_elec = ct_hits[j].device == h.device &&
-                                                 ct_hits[j].fifo == h.fifo;
-                            //  Physical CT requires strictly positive Δt (causal optical/charge coupling)
-                            const bool is_phys = dt >= 0 &&
-                                                 h.x > -990.f && ct_hits[j].x > -990.f &&
-                                                 std::hypot(ct_hits[j].x - h.x, ct_hits[j].y - h.y) <= 3.2f;
-                            //  Fill Δt for all neighbour types — used for DCR sideband estimation
-                            if (is_phys)
-                                h_phys_ct_dt->Fill(static_cast<double>(dt));
-                            if (is_elec)
-                                h_elec_ct_dt->Fill(static_cast<double>(dt));
-                            //  2D diagnostic: (Δchannel, Δt) filtered per neighbour type
-                            const double dchannel = static_cast<double>(ct_hits[j].channel) -
-                                                    static_cast<double>(h.channel);
-                            if (is_elec)
-                                h_elec_ct_dchannel_dt->Fill(dchannel, static_cast<double>(dt));
-                            if (is_phys)
-                                h_phys_ct_dchannel_dt->Fill(dchannel, static_cast<double>(dt));
-                            //  CT signal windows from qa_cfg.  Use the wider of the two
-                            //  upper bounds as the loop's early-exit gate to keep the
-                            //  filtering symmetric for both neighbour types.
-                            const int ct_signal_hi_any =
-                                std::max(qa_cfg.ct_elec_signal_hi, qa_cfg.ct_phys_signal_hi);
-                            if (dt > ct_signal_hi_any)
-                                continue;
-                            if (is_elec &&
-                                dt >= qa_cfg.ct_elec_signal_lo && dt <= qa_cfg.ct_elec_signal_hi)
-                                ++n_elec_ct;
-                            if (is_phys &&
-                                dt >= qa_cfg.ct_phys_signal_lo && dt <= qa_cfg.ct_phys_signal_hi)
-                                ++n_phys_ct;
-                        }
-
-                        //  Per-channel probability profiles (boolean: was there any CT?).
-                        h_phys_ct_per_channel->Fill(h.channel, n_phys_ct > 0 ? 100.0 : 0.0);
-                        h_elec_ct_per_channel->Fill(h.channel, n_elec_ct > 0 ? 100.0 : 0.0);
-                        //  Smeared CT hitmaps — weight = n_ct_neighbours × 100 per primary Hit.
-                        //  See note on the afterpulse hitmap above: statistical content matches
-                        //  the previous n × 100 unit-Fill loop in expectation.
-                        if (h.x > -990.f)
-                        {
-                            if (n_phys_ct > 0)
-                                h_phys_ct_hitmap->Fill(hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(),
-                                                       100.0 * n_phys_ct);
-                            if (n_elec_ct > 0)
-                                h_elec_ct_hitmap->Fill(hit_fd.get_hit_x_rnd(), hit_fd.get_hit_y_rnd(),
-                                                       100.0 * n_elec_ct);
-                        }
-                    }
+                    ::btana::lightdata::DcrAfterpulseCtHists qa_hists;
+                    qa_hists.h_dcr_per_channel             = h_dcr_per_channel.get();
+                    qa_hists.h_dcr_hitmap                  = h_dcr_hitmap.get();
+                    qa_hists.h_afterpulse_near_per_channel = h_afterpulse_near_per_channel.get();
+                    qa_hists.h_afterpulse_far_per_channel  = h_afterpulse_far_per_channel.get();
+                    qa_hists.h_afterpulse_per_channel      = h_afterpulse_per_channel.get();
+                    qa_hists.h_afterpulse_near_hitmap      = h_afterpulse_near_hitmap.get();
+                    qa_hists.h_afterpulse_far_hitmap       = h_afterpulse_far_hitmap.get();
+                    qa_hists.h_afterpulse_hitmap           = h_afterpulse_hitmap.get();
+                    qa_hists.h_phys_ct_per_channel         = h_phys_ct_per_channel.get();
+                    qa_hists.h_elec_ct_per_channel         = h_elec_ct_per_channel.get();
+                    qa_hists.h_phys_ct_hitmap              = h_phys_ct_hitmap.get();
+                    qa_hists.h_elec_ct_hitmap              = h_elec_ct_hitmap.get();
+                    qa_hists.h_phys_ct_dt                  = h_phys_ct_dt.get();
+                    qa_hists.h_elec_ct_dt                  = h_elec_ct_dt.get();
+                    qa_hists.h_elec_ct_dchannel_dt         = h_elec_ct_dchannel_dt.get();
+                    qa_hists.h_phys_ct_dchannel_dt         = h_phys_ct_dchannel_dt.get();
+                    ::btana::lightdata::fill_dcr_afterpulse_ct_qa(
+                        cherenkov_hits, active_sensors, active_sensors_count,
+                        ct_hits, sorted_by_time, qa_cfg, qa_hists);
                 }
             }
         }
