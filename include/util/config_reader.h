@@ -536,6 +536,23 @@ struct RecodataConfigStruct
     /// `recodata_writer` logs the 10 smallest-r channels in
     /// `index_to_hit_xy`.  Cross-check against detector geometry.
     float min_channel_r_for_coverage_mm = 0.f;
+
+    // ── Fast-feedback QA tuning ─────────────────────────────────────
+    /// @brief Skip the leave-one-out residual loop in
+    /// `compute_ring_fit_pure` when @c true.  Saves ~N extra
+    /// `fit_circle` calls per ring per event — the biggest single
+    /// speedup lever for QA mode.
+    ///
+    /// **Consequence:** the per-hit `h_residual_vs_n_*` TH2Fs stay
+    /// empty, so the σ_photon LOO fit (`fit_sigma_vs_n`) skips
+    /// silently and no `_sigma_photon_mm` TNamed scalars are emitted.
+    /// QA-mode output therefore has **no σ_photon measurement** — the
+    /// trade-off matches the rest of the QA path (rough numbers, fast
+    /// feedback).
+    ///
+    /// Default `false` keeps production behaviour intact; set to
+    /// `true` in `conf/QA/recodata.toml` to enable for `--QA` mode.
+    bool skip_loo_residuals = false;
 };
 
 /**

@@ -56,6 +56,13 @@ This repository aims to:
 │   │   │   └── hough.h         #       stage 2: Hough ring finder + fit_circle refinement
 │   │   └── DISCUSSION.md       #   - community-facing design notes
 │   └── writers/                # Independent pipeline-stage entry points (no umbrella by design — see DISCUSSION attention-point)
+│       ├── lightdata.h         #   - lightdata_writer entry point
+│       ├── recodata.h          #   - recodata_writer entry point
+│       ├── recotrackdata.h     #   - recotrackdata_writer entry point
+│       └── recodata/           #   - internal helpers (not in any public umbrella):
+│           ├── types.h         #       per-frame + per-ring result types + RingFillHists
+│           ├── radial_fit.h    #       CB+pol3 radial fit (finalize-QA)
+│           └── sigma_vs_n_fit.h#       one-param LOO σ(N) fit (finalize-QA)
 ├── src/                        # Implementation files (.cxx)
 ├── macros/                     # ROOT macros for analysis
 │   ├── examples/               # Ready-to-run example macros

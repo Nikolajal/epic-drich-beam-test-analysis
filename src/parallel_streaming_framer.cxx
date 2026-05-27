@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <tuple>
 #include <vector>
 #include <string>
 #include <thread>
@@ -657,6 +658,47 @@ bool ParallelStreamingFramer::next_spill()
                 merge_lightdata(it->second, std::move(lightdata));
         }
         qa.frame_map.clear();
+    }
+
+    //  Post-merge canonicalisation pass — guarantees bit-identical
+    //  output across runs regardless of how the work-stealing atomic
+    //  counter (line 622) distributed streams across worker threads.
+    //
+    //  Why this is needed: each worker accumulates hits into its
+    //  per-thread frame_map in source-stream-traversal order; at merge
+    //  time the per-worker frames are concatenated onto the master
+    //  frame's hit vectors via merge_lightdata.  Which streams a given
+    //  worker processed depends on OS scheduling, so the per-worker
+    //  block contents of each frame's final hit vector shuffle from
+    //  run to run.  Downstream consumers that iterate the vector in
+    //  order (notably MIST's `collect_ring_hits`, which assigns
+    //  border-line hits to whichever ring is found first) then produce
+    //  slightly different output.  Sorting the vectors by a stable
+    //  hardware-derived key fixes the order in a way the schedule
+    //  cannot perturb.
+    //
+    //  Cost: O(N log N) per frame on N ≤ ~50 hits / frame — negligible
+    //  vs the per-stream decoding work above.  std::sort is stable
+    //  enough here because the key is strict (no duplicate (device,
+    //  fifo, column, pixel, tdc, rollover, coarse, fine) tuples in a
+    //  spill by construction).
+    auto cmp_finedata = [](const AlcorFinedataStruct &a,
+                           const AlcorFinedataStruct &b)
+    {
+        return std::tie(a.GlobalIndex, a.rollover, a.coarse, a.fine)
+             < std::tie(b.GlobalIndex, b.rollover, b.coarse, b.fine);
+    };
+    auto cmp_trigger = [](const TriggerEvent &a, const TriggerEvent &b)
+    {
+        return std::tie(a.index, a.coarse, a.fine_time)
+             < std::tie(b.index, b.coarse, b.fine_time);
+    };
+    for (auto &[frame_index, ld] : master_frame_map)
+    {
+        std::sort(ld.cherenkov_hits.begin(), ld.cherenkov_hits.end(), cmp_finedata);
+        std::sort(ld.timing_hits.begin(),    ld.timing_hits.end(),    cmp_finedata);
+        std::sort(ld.tracking_hits.begin(),  ld.tracking_hits.end(),  cmp_finedata);
+        std::sort(ld.trigger_hits.begin(),   ld.trigger_hits.end(),   cmp_trigger);
     }
 
     // Merge the per-worker QA clones into the master histograms, then free.

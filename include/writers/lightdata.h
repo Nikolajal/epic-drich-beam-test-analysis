@@ -19,12 +19,17 @@
  * them spill-by-spill using @ref ParallelStreamingFramer, applies the
  * trigger and readout configurations, and writes one lightdata TTree entry per
  * spill.  If an up-to-date lightdata file already exists and
- * @p force_lightdata_rebuild is @c false the function returns immediately.
+ * @p force_rebuild is @c false the function returns immediately.
+ *
+ * Lightdata has no writer upstream of it (its dependency is the raw
+ * ALCOR data on disk, which is never regenerated), so there is no
+ * `force_upstream` parameter — the cascade rule documented on the
+ * other writers terminates here.
  *
  * @param data_repository          Root directory that contains the run folder.
  * @param run_name                 Run identifier (sub-directory name).
  * @param max_spill                Maximum number of spills to process (default 1000).
- * @param force_lightdata_rebuild  If @c true, overwrite any existing lightdata file.
+ * @param force_rebuild            If @c true, overwrite any existing lightdata file.
  * @param requested_n_threads      Number of parallel threads; -1 = auto-detect.
  * @param trigger_setup_file       Path to the trigger TOML configuration.
  * @param readout_config_file      Path to the readout TOML configuration.
@@ -44,7 +49,7 @@ void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
     int max_spill = 1000,
-    bool force_lightdata_rebuild = false,
+    bool force_rebuild = false,
     int requested_n_threads = -1,
     std::string trigger_setup_file = "conf/trigger_conf.toml",
     std::string readout_config_file = "conf/readout_config.toml",
