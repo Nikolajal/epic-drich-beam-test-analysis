@@ -153,6 +153,34 @@ add_library(beam_test_analysis SHARED
     G__beam_test_analysis_dict.cxx
 )
 
+#  Dev-mode lib_loader: source-tree headers + build-tree library.
+#  Used by macros run directly from the project source dir (before any
+#  `cmake --install`).  Lands at `macros/lib_loader.h` so the macros'
+#  `#include "../lib_loader.h"` resolves to this dev flavour.
+#
+#  Why dev-mode points at the source tree:  `ROOT_GENERATE_DICTIONARY`
+#  embeds absolute paths to the source-tree headers in the dict
+#  payload.  If the macro's `#include` search uses any OTHER include
+#  path that also contains those headers (e.g. a stale install at
+#  `~/.local/include`), ROOT parses the same logical header from two
+#  physical paths and triggers a redefinition cascade for every type
+#  the dict autoloads.  Pinning the dev loader to the source tree
+#  guarantees the macro and the dict resolve to identical file paths.
+if(APPLE)
+    set(DYNLIB_EXT ".dylib")
+elseif(WIN32)
+    set(DYNLIB_EXT ".dll")
+else()
+    set(DYNLIB_EXT ".so")
+endif()
+set(BEAM_LOADER_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(BEAM_LOADER_LIB     "${CMAKE_CURRENT_BINARY_DIR}/libbeam_test_analysis${DYNLIB_EXT}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/macros/lib_loader.h"
+    @ONLY
+)
+#  Keep an in-build-tree copy too — some tooling expects `build/lib_loader.h`.
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/lib_loader.h"
@@ -220,29 +248,28 @@ install(FILES
     OPTIONAL
 )
 
-# Determine dynamic library extension
-if(APPLE)
-    set(DYNLIB_EXT ".dylib")
-elseif(WIN32)
-    set(DYNLIB_EXT ".dll")
-else()
-    set(DYNLIB_EXT ".so")
-endif()
+#  DYNLIB_EXT is already defined above (dev-mode lib_loader block).
 
-# Paths
-set(BEAM_DICT_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis_dict${DYNLIB_EXT}")
-set(BEAM_MAIN_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
-
-# Configure the header
+#  Install-mode lib_loader: install-prefix headers + install-prefix
+#  library.  Used by downstream consumers that find the framework via
+#  `find_package` or include against the installed tree.  Generated
+#  with DIFFERENT path substitutions than the dev-mode loader above
+#  (which lives in `macros/lib_loader.h`).
+set(BEAM_LOADER_INCLUDE "${CMAKE_INSTALL_PREFIX}/include")
+set(BEAM_LOADER_LIB     "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
     @ONLY
 )
 
-# Install so macros can include it
+#  Install the install-mode loader into the project's include prefix.
+#  Previous design copied this into `macros/` of the SOURCE tree at
+#  install time — that's what caused the dev-mode macros to silently
+#  pick up the install-prefix paths and clash with the source-tree
+#  dict payload.  Headers now stay in their own tree.
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
-        DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/macros/")
+        DESTINATION include)
 
 # --------------------------------------------------
 # Tests (off by default so downstream consumers skip them)
