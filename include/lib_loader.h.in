@@ -38,4 +38,9 @@ R__ADD_INCLUDE_PATH(@BEAM_LOADER_INCLUDE@)
 //  fetched dep on the dev side; empty on the install side).
 @BEAM_LOADER_DEP_INCLUDES@
 
-#pragma cling load("@BEAM_LOADER_LIB@")
+//  R__LOAD_LIBRARY works in BOTH modes:
+//    - cling (`.x macro.cpp`): loads the library at interpretation time
+//    - ACLiC (`.L macro.cpp+`): links the compiled macro against it
+//  `#pragma cling load` is cling-only and would leave ACLiC's linker
+//  with unresolved symbols for every framework function the macro calls.
+R__LOAD_LIBRARY(@BEAM_LOADER_LIB@)
