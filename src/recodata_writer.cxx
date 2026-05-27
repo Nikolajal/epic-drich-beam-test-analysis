@@ -17,10 +17,10 @@
 #include "alcor_spilldata.h"
 #include "writers/lightdata.h"
 #include "writers/recodata.h"
-#include "writers/recodata/types.h"             // RingFitResult, FrameResult, RingFillHists, RadialFitResult, VsNFitResult
-#include "writers/recodata/radial_fit.h"        // fit_radial_distribution
-#include "writers/recodata/sigma_vs_n_fit.h"    // fit_sigma_vs_n
-#include "writers/recodata/ring_compute.h"      // compute_ring_fit, fill_ring_hists, refit_and_fill_ring
+#include "writers/recodata/types.h"          // RingFitResult, FrameResult, RingFillHists, RadialFitResult, VsNFitResult
+#include "writers/recodata/radial_fit.h"     // fit_radial_distribution
+#include "writers/recodata/sigma_vs_n_fit.h" // fit_sigma_vs_n
+#include "writers/recodata/ring_compute.h"   // compute_ring_fit, fill_ring_hists, refit_and_fill_ring
 //  Live-QA pipeline (DISCUSSION § 2.6): coverage map + eff(R) helpers
 //  + per-ring fit_circle re-run on mask-tagged hits → N_photons /
 //  radial(R) observables filled inline.
@@ -38,17 +38,17 @@
 //  scope struct).  They've been lifted to
 //  `include/writers/recodata/types.h` so the per-frame compute and
 //  finalize-QA split translation units can share the same definitions.
-using ::btana::recodata::RingFitResult;
-using ::btana::recodata::FrameResult;
-using ::btana::recodata::RingFillHists;
-using ::btana::recodata::RadialFitResult;
-using ::btana::recodata::VsNFitResult;
-using ::btana::recodata::RingComputeContext;
-using ::btana::recodata::fit_radial_distribution;
-using ::btana::recodata::fit_sigma_vs_n;
 using ::btana::recodata::compute_ring_fit;
 using ::btana::recodata::fill_ring_hists;
+using ::btana::recodata::fit_radial_distribution;
+using ::btana::recodata::fit_sigma_vs_n;
+using ::btana::recodata::FrameResult;
+using ::btana::recodata::RadialFitResult;
 using ::btana::recodata::refit_and_fill_ring;
+using ::btana::recodata::RingComputeContext;
+using ::btana::recodata::RingFillHists;
+using ::btana::recodata::RingFitResult;
+using ::btana::recodata::VsNFitResult;
 
 void recodata_writer(
     std::string data_repository,
@@ -123,7 +123,8 @@ void recodata_writer(
     if (!lightdata_tree)
     {
         mist::logger::error(TString::Format("(recodata_writer) 'lightdata' tree missing in %s",
-                                 input_filename.c_str()).Data());
+                                            input_filename.c_str())
+                                .Data());
         return;
     }
     AlcorSpilldata *spilldata = new AlcorSpilldata();
@@ -135,7 +136,8 @@ void recodata_writer(
     if (!fine_time_calib_th2f)
     {
         mist::logger::error(TString::Format("(recodata_writer) 'h_fine_calib' histogram missing in %s",
-                                 input_filename.c_str()).Data());
+                                            input_filename.c_str())
+                                .Data());
         return;
     }
     AlcorFinedata::generate_calibration(fine_time_calib_th2f, true);
@@ -194,9 +196,9 @@ void recodata_writer(
     // MIST HoughTransform `lut_key`.
     std::map<int, std::array<float, 2>> index_to_hit_xy;
     {
-        constexpr int kDeviceLo  = 192;
-        constexpr int kDeviceHi  = 224;
-        const int max_chip       = ::gidx::kUsesSplitInTwo ? 4 : 8;
+        constexpr int kDeviceLo = 192;
+        constexpr int kDeviceHi = 224;
+        const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
         constexpr int kChannelHi = 64;
         for (int device = kDeviceLo; device < kDeviceHi; ++device)
             for (int chip = 0; chip < max_chip; ++chip)
@@ -324,33 +326,33 @@ void recodata_writer(
     //
     //  The `RootHist<TH2F>` is constructed empty (no helper call at
     //  init) — we attach the computed TH2F at finalize via assignment.
-    std::vector<int>                  n_physics_per_spill(all_spills, 0);
-    std::vector<std::set<int>>        active_channels_per_spill(all_spills);
+    std::vector<int> n_physics_per_spill(all_spills, 0);
+    std::vector<std::set<int>> active_channels_per_spill(all_spills);
 
     //  Per-ring QA hists.  Same binning as the coverage map's R axis
     //  on radial hists so `eff(R)` can be `Divide`d cleanly at finalize.
-    const int   radial_n_bins = recodata_cfg.n_r_bins_coverage;
-    const float radial_lo_mm  = recodata_cfg.r_min_coverage_mm;
-    const float radial_hi_mm  = recodata_cfg.r_max_coverage_mm;
+    const int radial_n_bins = recodata_cfg.n_r_bins_coverage;
+    const float radial_lo_mm = recodata_cfg.r_min_coverage_mm;
+    const float radial_hi_mm = recodata_cfg.r_max_coverage_mm;
 
     //  N-hits axis range used by every N-hits hist below — 1D and 2D.
     //  Observed beam-test max is ~20 hits/ring; 25 leaves a 5-bin
     //  headroom for outliers without wasting half the axis on empty
     //  bins.  1 hit / bin (integer X).  Tighten to 20 if rings get
     //  trimmed further; widen if a future run sees N > 25.
-    constexpr int   kNHitsBins   = 25;
-    constexpr float kNHitsXLo    = 0.f;
-    constexpr float kNHitsXHi    = 25.f;
+    constexpr int kNHitsBins = 25;
+    constexpr float kNHitsXLo = 0.f;
+    constexpr float kNHitsXHi = 25.f;
 
-    RootHist<TH1F> h_nhits_first ("h_nhits_first",  ";N hits in ring 1;Events",
-                                   kNHitsBins, kNHitsXLo, kNHitsXHi);
+    RootHist<TH1F> h_nhits_first("h_nhits_first", ";N hits in ring 1;Events",
+                                 kNHitsBins, kNHitsXLo, kNHitsXHi);
     RootHist<TH1F> h_nhits_second("h_nhits_second", ";N hits in ring 2;Events",
-                                   kNHitsBins, kNHitsXLo, kNHitsXHi);
+                                  kNHitsBins, kNHitsXLo, kNHitsXHi);
 
-    RootHist<TH1F> h_nphotons_first ("h_nphotons_first",  ";N photons (eff-corrected) ring 1;Events", 100, 0, 100);
+    RootHist<TH1F> h_nphotons_first("h_nphotons_first", ";N photons (eff-corrected) ring 1;Events", 100, 0, 100);
     RootHist<TH1F> h_nphotons_second("h_nphotons_second", ";N photons (eff-corrected) ring 2;Events", 100, 0, 100);
 
-    RootHist<TH1F> h_f_coverage_first ("h_f_coverage_first",  ";f_{coverage} ring 1;Events", 100, 0.f, 1.f);
+    RootHist<TH1F> h_f_coverage_first("h_f_coverage_first", ";f_{coverage} ring 1;Events", 100, 0.f, 1.f);
     RootHist<TH1F> h_f_coverage_second("h_f_coverage_second", ";f_{coverage} ring 2;Events", 100, 0.f, 1.f);
 
     //  Radial-hit distributions — binned 1 mm/bin (NOT the coarser
@@ -358,9 +360,9 @@ void recodata_writer(
     //  CB+pol3 fit: the macro convention quotes σ_peak in mm so a
     //  binning matched to that precision avoids smearing.  Bin count
     //  is computed from the coverage R range.
-    const int   radial_hist_n_bins = static_cast<int>(
+    const int radial_hist_n_bins = static_cast<int>(
         std::round(recodata_cfg.r_max_coverage_mm - recodata_cfg.r_min_coverage_mm));
-    RootHist<TH1F> h_radial_first ("h_radial_first",  ";R (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH1F> h_radial_first("h_radial_first", ";R (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_radial_second("h_radial_second", ";R (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
     //  Dual / solo splits for the first-ring radial distribution.
     //  Same predicate as the vs_n splits (frame has second ring?).
@@ -374,10 +376,10 @@ void recodata_writer(
     //  Same binning as the pixel-centre versions so the two can be
     //  cross-checked bin-for-bin.  Physics observable: σ²_intrinsic =
     //  σ²_smeared − 2·(pitch²/12) = σ²_smeared − 1.5 mm² (at 3 mm pitch).
-    RootHist<TH1F> h_radial_first_smeared       ("h_radial_first_smeared",        ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
-    RootHist<TH1F> h_radial_second_smeared      ("h_radial_second_smeared",       ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
-    RootHist<TH1F> h_radial_first_dual_smeared  ("h_radial_first_dual_smeared",   ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
-    RootHist<TH1F> h_radial_first_solo_smeared  ("h_radial_first_solo_smeared",   ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH1F> h_radial_first_smeared("h_radial_first_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH1F> h_radial_second_smeared("h_radial_second_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH1F> h_radial_first_dual_smeared("h_radial_first_dual_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH1F> h_radial_first_solo_smeared("h_radial_first_solo_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
 
     //  Headline physics observables (DISCUSSION § 2.6).  These four
     //  per-ring quantities are what beam-test operators care about:
@@ -392,7 +394,7 @@ void recodata_writer(
     //  TBrowser.  cx/cy half-range hardcoded to 25 mm (matches the
     //  lightdata-side `centre_xy_half_range_mm` default); tighten if
     //  needed once beam stability is characterised.
-    RootHist<TH1F> h_R_first ("h_R_first",  ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH1F> h_R_first("h_R_first", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_R_second("h_R_second", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     //  Dual / solo splits for the first-ring fitted radius.  Same
     //  predicate as the radial-hist splits (frame has second ring?).
@@ -404,27 +406,27 @@ void recodata_writer(
     RootHist<TH1F> h_R_first_dual("h_R_first_dual", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_R_first_solo("h_R_first_solo", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
 
-    RootHist<TH1F> h_sigma_first ("h_sigma_first",  ";#sigma_{single} (mm);events", 100, 0.f, 5.f);
+    RootHist<TH1F> h_sigma_first("h_sigma_first", ";#sigma_{single} (mm);events", 100, 0.f, 5.f);
     RootHist<TH1F> h_sigma_second("h_sigma_second", ";#sigma_{single} (mm);events", 100, 0.f, 5.f);
 
-    RootHist<TH2F> h_R_vs_nhits_first ("h_R_vs_nhits_first",  ";N hits;R_{fit} (mm)",
-                                        kNHitsBins, kNHitsXLo, kNHitsXHi,
-                                        radial_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH2F> h_R_vs_nhits_first("h_R_vs_nhits_first", ";N hits;R_{fit} (mm)",
+                                      kNHitsBins, kNHitsXLo, kNHitsXHi,
+                                      radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH2F> h_R_vs_nhits_second("h_R_vs_nhits_second", ";N hits;R_{fit} (mm)",
-                                        kNHitsBins, kNHitsXLo, kNHitsXHi,
-                                        radial_n_bins, radial_lo_mm, radial_hi_mm);
+                                       kNHitsBins, kNHitsXLo, kNHitsXHi,
+                                       radial_n_bins, radial_lo_mm, radial_hi_mm);
 
     //  cx / cy half-range: hard-code to 25 mm for now; this is the
     //  same default as the lightdata-side QA's `centre_xy_half_range_mm`.
     //  Bin width 1 mm = generous for visual ring-centre clusters.
     constexpr float kCentreXyHalfRangeMm = 25.f;
-    constexpr int   kCentreXyBins        = 50;
-    RootHist<TH2F> h_centre_xy_first ("h_centre_xy_first",  ";c_{x} (mm);c_{y} (mm)",
-                                       kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
-                                       kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
+    constexpr int kCentreXyBins = 50;
+    RootHist<TH2F> h_centre_xy_first("h_centre_xy_first", ";c_{x} (mm);c_{y} (mm)",
+                                     kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
+                                     kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
     RootHist<TH2F> h_centre_xy_second("h_centre_xy_second", ";c_{x} (mm);c_{y} (mm)",
-                                       kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
-                                       kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
+                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
+                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
 
     //  Per-hit radial residual vs N_hits (LEAVE-ONE-OUT fit).
     //
@@ -452,10 +454,10 @@ void recodata_writer(
     //  DISCUSSION § 2.6 for the rationale (replaces the biased
     //  `h_sigma_*` and the wrong-observable `h_fit_sigma_R_vs_n_*`
     //  that this hist supersedes).
-    RootHist<TH2F> h_residual_vs_n_first ("h_residual_vs_n_first",  ";N hits;r_{hit} - R_{-i} (mm)",
-                                           kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+    RootHist<TH2F> h_residual_vs_n_first("h_residual_vs_n_first", ";N hits;r_{hit} - R_{-i} (mm)",
+                                         kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
     RootHist<TH2F> h_residual_vs_n_second("h_residual_vs_n_second", ";N hits;r_{hit} - R_{-i} (mm)",
-                                           kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+                                          kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
 
     //  Dual/solo splits for the first ring's vs_n observables.  Same
     //  semantics as the lightdata-side `_dual` / `_solo` splits already
@@ -465,16 +467,16 @@ void recodata_writer(
     //  (dual = clean two-radiator events) and where it didn't (solo =
     //  potentially fake-ring-contaminated single-ring sample).  Second
     //  ring is dual-by-definition so needs no _dual/_solo split.
-    RootHist<TH2F> h_R_vs_nhits_first_dual ("h_R_vs_nhits_first_dual",  ";N hits;R_{fit} (mm)",
-                                              kNHitsBins, kNHitsXLo, kNHitsXHi,
-                                              radial_n_bins, radial_lo_mm, radial_hi_mm);
-    RootHist<TH2F> h_R_vs_nhits_first_solo ("h_R_vs_nhits_first_solo",  ";N hits;R_{fit} (mm)",
-                                              kNHitsBins, kNHitsXLo, kNHitsXHi,
-                                              radial_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH2F> h_R_vs_nhits_first_dual("h_R_vs_nhits_first_dual", ";N hits;R_{fit} (mm)",
+                                           kNHitsBins, kNHitsXLo, kNHitsXHi,
+                                           radial_n_bins, radial_lo_mm, radial_hi_mm);
+    RootHist<TH2F> h_R_vs_nhits_first_solo("h_R_vs_nhits_first_solo", ";N hits;R_{fit} (mm)",
+                                           kNHitsBins, kNHitsXLo, kNHitsXHi,
+                                           radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH2F> h_residual_vs_n_first_dual("h_residual_vs_n_first_dual", ";N hits;r_{hit} - R_{-i} (mm)",
-                                                kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+                                              kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
     RootHist<TH2F> h_residual_vs_n_first_solo("h_residual_vs_n_first_solo", ";N hits;r_{hit} - R_{-i} (mm)",
-                                                kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+                                              kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
 
     //  Smeared sibling LOO-residual hists.  Same axis convention as
     //  the pixel-centre versions; fed by `loo_residuals_smeared` in
@@ -482,14 +484,14 @@ void recodata_writer(
     //  populated the radial smeared hists above.  σ_photon recovery
     //  from the smeared hist needs σ²_intrinsic = σ²_smeared − 1.5 mm²
     //  (at 3 mm pitch), versus σ²_smeared − 0.75 mm² for the unsmeared.
-    RootHist<TH2F> h_residual_vs_n_first_smeared       ("h_residual_vs_n_first_smeared",        ";N hits;r_{hit,smeared} - R_{-i} (mm)",
-                                                          kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
-    RootHist<TH2F> h_residual_vs_n_second_smeared      ("h_residual_vs_n_second_smeared",       ";N hits;r_{hit,smeared} - R_{-i} (mm)",
-                                                          kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
-    RootHist<TH2F> h_residual_vs_n_first_dual_smeared  ("h_residual_vs_n_first_dual_smeared",   ";N hits;r_{hit,smeared} - R_{-i} (mm)",
-                                                          kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
-    RootHist<TH2F> h_residual_vs_n_first_solo_smeared  ("h_residual_vs_n_first_solo_smeared",   ";N hits;r_{hit,smeared} - R_{-i} (mm)",
-                                                          kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+    RootHist<TH2F> h_residual_vs_n_first_smeared("h_residual_vs_n_first_smeared", ";N hits;r_{hit,smeared} - R_{-i} (mm)",
+                                                 kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+    RootHist<TH2F> h_residual_vs_n_second_smeared("h_residual_vs_n_second_smeared", ";N hits;r_{hit,smeared} - R_{-i} (mm)",
+                                                  kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+    RootHist<TH2F> h_residual_vs_n_first_dual_smeared("h_residual_vs_n_first_dual_smeared", ";N hits;r_{hit,smeared} - R_{-i} (mm)",
+                                                      kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
+    RootHist<TH2F> h_residual_vs_n_first_solo_smeared("h_residual_vs_n_first_solo_smeared", ";N hits;r_{hit,smeared} - R_{-i} (mm)",
+                                                      kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
 
     //  Per-frame, per-ring compute helpers live in their own
     //  translation unit since 2026-05-27 (Phase D of the recodata
@@ -507,7 +509,6 @@ void recodata_writer(
     //     `skip_loo_residuals` knob.
     //  All three take `ring_ctx` (declared above) for the geometry +
     //  config bundle that used to be captured by reference.
-
 
     //  Enable a 50 MB tree cache before the two GetEntry passes (§4.7 minimum
     //  mitigation): the second full pass over the spill tree (calibration loop
@@ -618,14 +619,14 @@ void recodata_writer(
                         // `4 * channel_ordinal` (the same dense-int key
                         // the position cache was populated with — see the
                         // top-of-function loop and `Mapping.cxx`).
-                        const int chip_raw     = current_lane / 4;
-                        const int channel_raw  = 8 * (current_lane % 4) + i_channel;
+                        const int chip_raw = current_lane / 4;
+                        const int channel_raw = 8 * (current_lane % 4) + i_channel;
                         const int chip_logical = ::gidx::kUsesSplitInTwo
                                                      ? chip_raw / 2
                                                      : chip_raw;
-                        const int channel_log  = ::gidx::kUsesSplitInTwo
-                                                     ? channel_raw + 32 * (chip_raw % 2)
-                                                     : channel_raw;
+                        const int channel_log = ::gidx::kUsesSplitInTwo
+                                                    ? channel_raw + 32 * (chip_raw % 2)
+                                                    : channel_raw;
                         const auto gi = ::GlobalIndex::from_components(
                             device, current_lane, chip_logical, channel_log, 0);
                         const int pos_key = 4 * gi.channel_ordinal();
@@ -688,7 +689,7 @@ void recodata_writer(
                     const auto &prev = it->second;
                     if (std::fabs((float)current_trigger.coarse - (float)prev.coarse) <
                         BTANA_TRIGGER_MIN_SEPARATION)
-                        continue;  // temporal duplicate
+                        continue;                                     // temporal duplicate
                     res.trigger_qa_fills.emplace_back(reg_bin, 2.5f); // duplicate-rejected
                     res.rejected = true;
                     break;
@@ -704,15 +705,20 @@ void recodata_writer(
             }
 
             res.accepted = !res.rejected;
-            if (res.rejected) return res;
+            if (res.rejected)
+                return res;
 
             //  Per-spill physics check (DISCUSSION § 2.6).
             for (const auto &[idx, trig] : res.accepted_triggers)
             {
-                if (idx == TriggerFirstFrames)             continue;
-                if (idx == _TRIGGER_STREAMING_RING_FOUND_) continue;
-                if (idx == TriggerStartOfSpill)            continue;
-                if (idx == _TRIGGER_UNKNOWN_)              continue;
+                if (idx == TriggerFirstFrames)
+                    continue;
+                if (idx == _TRIGGER_STREAMING_RING_FOUND_)
+                    continue;
+                if (idx == TriggerStartOfSpill)
+                    continue;
+                if (idx == _TRIGGER_UNKNOWN_)
+                    continue;
                 res.frame_is_physics = true;
                 break;
             }
@@ -736,8 +742,8 @@ void recodata_writer(
                 //  speedup lever for QA mode at the cost of no
                 //  σ_photon measurement.  See RecodataConfigStruct.
                 const bool do_loo = !ring_ctx.cfg.skip_loo_residuals;
-                res.first  = compute_ring_fit(HitmaskHoughRingTagFirst,
-                                              lightdata, do_loo, ring_ctx);
+                res.first = compute_ring_fit(HitmaskHoughRingTagFirst,
+                                             lightdata, do_loo, ring_ctx);
                 res.second = compute_ring_fit(HitmaskHoughRingTagSecond,
                                               lightdata, do_loo, ring_ctx);
             }
@@ -752,7 +758,7 @@ void recodata_writer(
         //  loop).  Always called serially in frame order.
         //  ───────────────────────────────────────────────────────────────────
         auto drain_frame_result = [&](const FrameResult &res,
-                                       AlcorLightdata &lightdata)
+                                      AlcorLightdata &lightdata)
         {
             h_frames_per_spill->Fill(i_spill, 0.5); // total
 
@@ -768,7 +774,8 @@ void recodata_writer(
                     h_trigger_time_diff_w_cherenkov[idx] =
                         RootHist<TH1F>(
                             TString::Format("h_trigger_time_diff_w_cherenkov_%s",
-                                            registry.name_of(idx).c_str()).Data(),
+                                            registry.name_of(idx).c_str())
+                                .Data(),
                             ";#Delta_{t} (t_{Hit} - t_{trigger}) ns;Normalised entries",
                             5e3, -500, 500);
                 h_trigger_time_diff_w_cherenkov[idx]->Fill(dt);
@@ -802,51 +809,51 @@ void recodata_writer(
             if (res.accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_))
             {
                 RingFillHists first_hists;
-                first_hists.h_nhits         = h_nhits_first.get();
-                first_hists.h_nphotons      = h_nphotons_first.get();
-                first_hists.h_fcov          = h_f_coverage_first.get();
-                first_hists.h_radial        = h_radial_first.get();
-                first_hists.h_R             = h_R_first.get();
-                first_hists.h_sigma         = h_sigma_first.get();
-                first_hists.h_R_vs_nhits    = h_R_vs_nhits_first.get();
-                first_hists.h_centre_xy     = h_centre_xy_first.get();
+                first_hists.h_nhits = h_nhits_first.get();
+                first_hists.h_nphotons = h_nphotons_first.get();
+                first_hists.h_fcov = h_f_coverage_first.get();
+                first_hists.h_radial = h_radial_first.get();
+                first_hists.h_R = h_R_first.get();
+                first_hists.h_sigma = h_sigma_first.get();
+                first_hists.h_R_vs_nhits = h_R_vs_nhits_first.get();
+                first_hists.h_centre_xy = h_centre_xy_first.get();
                 first_hists.h_residual_vs_n = h_residual_vs_n_first.get();
                 first_hists.h_R_vs_nhits_split = res.frame_has_second_ring
-                    ? h_R_vs_nhits_first_dual.get()
-                    : h_R_vs_nhits_first_solo.get();
+                                                     ? h_R_vs_nhits_first_dual.get()
+                                                     : h_R_vs_nhits_first_solo.get();
                 first_hists.h_residual_vs_n_split = res.frame_has_second_ring
-                    ? h_residual_vs_n_first_dual.get()
-                    : h_residual_vs_n_first_solo.get();
+                                                        ? h_residual_vs_n_first_dual.get()
+                                                        : h_residual_vs_n_first_solo.get();
                 first_hists.h_radial_split = res.frame_has_second_ring
-                    ? h_radial_first_dual.get()
-                    : h_radial_first_solo.get();
+                                                 ? h_radial_first_dual.get()
+                                                 : h_radial_first_solo.get();
                 first_hists.h_R_split = res.frame_has_second_ring
-                    ? h_R_first_dual.get()
-                    : h_R_first_solo.get();
+                                            ? h_R_first_dual.get()
+                                            : h_R_first_solo.get();
                 //  Smeared sibling targets — same dual/solo predicate.
-                first_hists.h_radial_smeared           = h_radial_first_smeared.get();
-                first_hists.h_residual_vs_n_smeared    = h_residual_vs_n_first_smeared.get();
-                first_hists.h_radial_split_smeared     = res.frame_has_second_ring
-                    ? h_radial_first_dual_smeared.get()
-                    : h_radial_first_solo_smeared.get();
+                first_hists.h_radial_smeared = h_radial_first_smeared.get();
+                first_hists.h_residual_vs_n_smeared = h_residual_vs_n_first_smeared.get();
+                first_hists.h_radial_split_smeared = res.frame_has_second_ring
+                                                         ? h_radial_first_dual_smeared.get()
+                                                         : h_radial_first_solo_smeared.get();
                 first_hists.h_residual_vs_n_split_smeared = res.frame_has_second_ring
-                    ? h_residual_vs_n_first_dual_smeared.get()
-                    : h_residual_vs_n_first_solo_smeared.get();
+                                                                ? h_residual_vs_n_first_dual_smeared.get()
+                                                                : h_residual_vs_n_first_solo_smeared.get();
                 fill_ring_hists(res.first, first_hists);
 
                 RingFillHists second_hists;
-                second_hists.h_nhits         = h_nhits_second.get();
-                second_hists.h_nphotons      = h_nphotons_second.get();
-                second_hists.h_fcov          = h_f_coverage_second.get();
-                second_hists.h_radial        = h_radial_second.get();
-                second_hists.h_R             = h_R_second.get();
-                second_hists.h_sigma         = h_sigma_second.get();
-                second_hists.h_R_vs_nhits    = h_R_vs_nhits_second.get();
-                second_hists.h_centre_xy     = h_centre_xy_second.get();
+                second_hists.h_nhits = h_nhits_second.get();
+                second_hists.h_nphotons = h_nphotons_second.get();
+                second_hists.h_fcov = h_f_coverage_second.get();
+                second_hists.h_radial = h_radial_second.get();
+                second_hists.h_R = h_R_second.get();
+                second_hists.h_sigma = h_sigma_second.get();
+                second_hists.h_R_vs_nhits = h_R_vs_nhits_second.get();
+                second_hists.h_centre_xy = h_centre_xy_second.get();
                 second_hists.h_residual_vs_n = h_residual_vs_n_second.get();
                 //  Second ring has no dual/solo split (always "dual"
                 //  by definition); just plug the smeared headline hists.
-                second_hists.h_radial_smeared        = h_radial_second_smeared.get();
+                second_hists.h_radial_smeared = h_radial_second_smeared.get();
                 second_hists.h_residual_vs_n_smeared = h_residual_vs_n_second_smeared.get();
                 fill_ring_hists(res.second, second_hists);
             }
@@ -882,10 +889,11 @@ void recodata_writer(
             1, std::min<size_t>(std::thread::hardware_concurrency(), n_frames));
         if (i_spill == 0)
             mist::logger::info(TString::Format(
-                "(recodata_writer) parallel dispatch: hardware_concurrency=%u  "
-                "n_frames_first_spill=%zu  n_threads=%zu",
-                std::thread::hardware_concurrency(),
-                n_frames, n_threads).Data());
+                                   "(recodata_writer) parallel dispatch: hardware_concurrency=%u  "
+                                   "n_frames_first_spill=%zu  n_threads=%zu",
+                                   std::thread::hardware_concurrency(),
+                                   n_frames, n_threads)
+                                   .Data());
 
         std::vector<FrameResult> frame_results(n_frames);
 
@@ -898,25 +906,32 @@ void recodata_writer(
         //  cursor band was fixed in this branch of mist — see the
         //  log_print_guard pattern in mist/logger.cxx).
         std::atomic<size_t> done{0};
-        auto tick_progress = [&](size_t my_completion_idx) {
+        auto tick_progress = [&](size_t my_completion_idx)
+        {
             if ((my_completion_idx & 63) == 0)
                 post_processing.update(done.load(std::memory_order_relaxed),
                                        n_frames);
         };
 
-        if (n_threads <= 1) {
-            for (size_t iframe = 0; iframe < n_frames; ++iframe) {
+        if (n_threads <= 1)
+        {
+            for (size_t iframe = 0; iframe < n_frames; ++iframe)
+            {
                 AlcorLightdata cur(frames_in_spill[iframe]);
                 frame_results[iframe] = process_frame_pure(cur);
                 const size_t now_done = done.fetch_add(1) + 1;
                 tick_progress(now_done);
             }
-        } else {
+        }
+        else
+        {
             std::atomic<size_t> next_frame{0};
             std::vector<std::future<void>> thread_pool;
             thread_pool.reserve(n_threads);
-            for (size_t t = 0; t < n_threads; ++t) {
-                thread_pool.push_back(std::async(std::launch::async, [&]() {
+            for (size_t t = 0; t < n_threads; ++t)
+            {
+                thread_pool.push_back(std::async(std::launch::async, [&]()
+                                                 {
                     while (true) {
                         const size_t my = next_frame.fetch_add(1);
                         if (my >= n_frames) return;
@@ -924,10 +939,10 @@ void recodata_writer(
                         frame_results[my] = process_frame_pure(cur);
                         const size_t now_done = done.fetch_add(1) + 1;
                         tick_progress(now_done);
-                    }
-                }));
+                    } }));
             }
-            for (auto &f : thread_pool) f.get();
+            for (auto &f : thread_pool)
+                f.get();
         }
         //  Snap to 100% so the bar reflects "compute finished" even
         //  when the last ticks fell between mod-64 thresholds.
@@ -937,7 +952,8 @@ void recodata_writer(
         //  add_*, tree Fill, per-spill counter updates happen here.
         //  Bar is already at 100% from the compute snap above; this
         //  loop is fast so no in-loop ticks needed.
-        for (size_t iframe = 0; iframe < n_frames; ++iframe) {
+        for (size_t iframe = 0; iframe < n_frames; ++iframe)
+        {
             AlcorLightdata current_lightdata(frames_in_spill[iframe]);
             drain_frame_result(frame_results[iframe], current_lightdata);
         }
@@ -1160,10 +1176,11 @@ void recodata_writer(
             n_accepted++;
             h_frames_per_spill->Fill(i_spill, 1.5); // accepted
         }
-#endif  // ── end original loop body, replaced by process+drain above ──
+#endif // ── end original loop body, replaced by process+drain above ──
 
         mist::logger::info(TString::Format("Spill %i done — accepted: %i  had-edge: %i  duplicate-rejected: %i  total: %zu",
-                                i_spill, n_accepted, n_edge, n_duplicate, frames_in_spill.size()).Data());
+                                           i_spill, n_accepted, n_edge, n_duplicate, frames_in_spill.size())
+                               .Data());
 
         //  Reflect the just-completed spill on the main bar.
         progress_bars.update(i_spill + 1, all_spills);
@@ -1225,13 +1242,16 @@ void recodata_writer(
         //  delivered acceptance, not the geometric upper bound.
         std::map<int, float> channel_weights;
         long total_physics = 0;
-        for (int n : n_physics_per_spill) total_physics += n;
+        for (int n : n_physics_per_spill)
+            total_physics += n;
         if (total_physics > 0)
         {
             for (int is = 0; is < all_spills; ++is)
             {
-                if (n_physics_per_spill[is] <= 0) continue;
-                if (active_channels_per_spill[is].empty()) continue;
+                if (n_physics_per_spill[is] <= 0)
+                    continue;
+                if (active_channels_per_spill[is].empty())
+                    continue;
                 const float spill_weight =
                     static_cast<float>(n_physics_per_spill[is]) /
                     static_cast<float>(total_physics);
@@ -1239,10 +1259,11 @@ void recodata_writer(
                     channel_weights[channel_key] += spill_weight;
             }
             mist::logger::info(TString::Format(
-                "(recodata_writer) spill-weighted coverage: "
-                "total_physics=%ld  active_channels=%zu / total=%zu",
-                total_physics, channel_weights.size(),
-                index_to_hit_xy.size()).Data());
+                                   "(recodata_writer) spill-weighted coverage: "
+                                   "total_physics=%ld  active_channels=%zu / total=%zu",
+                                   total_physics, channel_weights.size(),
+                                   index_to_hit_xy.size())
+                                   .Data());
         }
         else
         {
@@ -1295,7 +1316,7 @@ void recodata_writer(
                 if (eff_R->GetBinContent(ib) <= 0.0)
                     eff_R->SetBinContent(ib, 0.0);
 
-            h_radial_first ->Divide(eff_R.get());
+            h_radial_first->Divide(eff_R.get());
             h_radial_second->Divide(eff_R.get());
             h_radial_first_dual->Divide(eff_R.get());
             h_radial_first_solo->Divide(eff_R.get());
@@ -1303,10 +1324,10 @@ void recodata_writer(
             //  Same eff(R) correction on the smeared sibling hists —
             //  the smearing acts at the per-hit level so the geometric
             //  acceptance correction is identical.
-            h_radial_first_smeared      ->Divide(eff_R.get());
-            h_radial_second_smeared     ->Divide(eff_R.get());
-            h_radial_first_dual_smeared ->Divide(eff_R.get());
-            h_radial_first_solo_smeared ->Divide(eff_R.get());
+            h_radial_first_smeared->Divide(eff_R.get());
+            h_radial_second_smeared->Divide(eff_R.get());
+            h_radial_first_dual_smeared->Divide(eff_R.get());
+            h_radial_first_solo_smeared->Divide(eff_R.get());
 
             eff_R->Write();
         }
@@ -1316,20 +1337,20 @@ void recodata_writer(
                                   "radial hists are NOT efficiency-corrected.");
         }
 
-        h_nhits_first ->Write();
+        h_nhits_first->Write();
         h_nhits_second->Write();
-        h_nphotons_first ->Write();
+        h_nphotons_first->Write();
         h_nphotons_second->Write();
-        h_f_coverage_first ->Write();
+        h_f_coverage_first->Write();
         h_f_coverage_second->Write();
-        h_radial_first ->Write();
+        h_radial_first->Write();
         h_radial_second->Write();
         h_radial_first_dual->Write();
         h_radial_first_solo->Write();
-        h_radial_first_smeared      ->Write();
-        h_radial_second_smeared     ->Write();
-        h_radial_first_dual_smeared ->Write();
-        h_radial_first_solo_smeared ->Write();
+        h_radial_first_smeared->Write();
+        h_radial_second_smeared->Write();
+        h_radial_first_dual_smeared->Write();
+        h_radial_first_solo_smeared->Write();
 
         //  ── Crystal-Ball + pol3 fit on the eff-corrected radial
         //     hist (DISCUSSION § 2.6).  Ported from
@@ -1384,26 +1405,26 @@ void recodata_writer(
         //  Apply to every eff-corrected radial hist: first, second,
         //  and dual/solo splits for the first ring.  Second ring is
         //  dual-by-definition so no _dual/_solo split.
-        fit_radial_distribution(h_radial_first.get(),       h_R_first.get(),       "h_radial_first",
+        fit_radial_distribution(h_radial_first.get(), h_R_first.get(), "h_radial_first",
                                 recodata_cfg, data_repository, run_name, radial_results);
-        fit_radial_distribution(h_radial_second.get(),      h_R_second.get(),      "h_radial_second",
+        fit_radial_distribution(h_radial_second.get(), h_R_second.get(), "h_radial_second",
                                 recodata_cfg, data_repository, run_name, radial_results);
-        fit_radial_distribution(h_radial_first_dual.get(),  h_R_first_dual.get(),  "h_radial_first_dual",
+        fit_radial_distribution(h_radial_first_dual.get(), h_R_first_dual.get(), "h_radial_first_dual",
                                 recodata_cfg, data_repository, run_name, radial_results);
-        fit_radial_distribution(h_radial_first_solo.get(),  h_R_first_solo.get(),  "h_radial_first_solo",
+        fit_radial_distribution(h_radial_first_solo.get(), h_R_first_solo.get(), "h_radial_first_solo",
                                 recodata_cfg, data_repository, run_name, radial_results);
 
         //  Smeared sibling fits — same recipe.  These will be compared
         //  bin-for-bin to the un-smeared versions; σ_intrinsic is then
         //  recovered via σ²_intrinsic = σ²_observed − k·(pitch²/12)
         //  with k=1 (unsmeared) or k=2 (smeared).
-        fit_radial_distribution(h_radial_first_smeared.get(),      h_R_first.get(),       "h_radial_first_smeared",
+        fit_radial_distribution(h_radial_first_smeared.get(), h_R_first.get(), "h_radial_first_smeared",
                                 recodata_cfg, data_repository, run_name, radial_results);
-        fit_radial_distribution(h_radial_second_smeared.get(),     h_R_second.get(),      "h_radial_second_smeared",
+        fit_radial_distribution(h_radial_second_smeared.get(), h_R_second.get(), "h_radial_second_smeared",
                                 recodata_cfg, data_repository, run_name, radial_results);
-        fit_radial_distribution(h_radial_first_dual_smeared.get(), h_R_first_dual.get(),  "h_radial_first_dual_smeared",
+        fit_radial_distribution(h_radial_first_dual_smeared.get(), h_R_first_dual.get(), "h_radial_first_dual_smeared",
                                 recodata_cfg, data_repository, run_name, radial_results);
-        fit_radial_distribution(h_radial_first_solo_smeared.get(), h_R_first_solo.get(),  "h_radial_first_solo_smeared",
+        fit_radial_distribution(h_radial_first_solo_smeared.get(), h_R_first_solo.get(), "h_radial_first_solo_smeared",
                                 recodata_cfg, data_repository, run_name, radial_results);
 
         //  ── Persistent CB+pol3 summary plots ──────────────────────
@@ -1414,38 +1435,38 @@ void recodata_writer(
         if (!radial_results.empty())
         {
             auto build_radial_summary = [&](const std::string &hname,
-                                             const std::string &ytitle,
-                                             auto value_extractor,
-                                             auto error_extractor)
+                                            const std::string &ytitle,
+                                            auto value_extractor,
+                                            auto error_extractor)
             {
                 TH1F *h = new TH1F(hname.c_str(),
-                                    (";radial source;" + ytitle).c_str(),
-                                    static_cast<int>(radial_results.size()),
-                                    0, static_cast<double>(radial_results.size()));
+                                   (";radial source;" + ytitle).c_str(),
+                                   static_cast<int>(radial_results.size()),
+                                   0, static_cast<double>(radial_results.size()));
                 const std::string prefix = "h_radial_";
-                for (size_t i = 0; i < radial_results.size(); ++i) {
+                for (size_t i = 0; i < radial_results.size(); ++i)
+                {
                     std::string label = radial_results[i].name;
                     if (label.rfind(prefix, 0) == 0)
                         label = label.substr(prefix.size());
                     h->GetXaxis()->SetBinLabel(static_cast<int>(i) + 1, label.c_str());
                     h->SetBinContent(static_cast<int>(i) + 1, value_extractor(radial_results[i]));
-                    h->SetBinError  (static_cast<int>(i) + 1, error_extractor(radial_results[i]));
+                    h->SetBinError(static_cast<int>(i) + 1, error_extractor(radial_results[i]));
                 }
                 h->SetMarkerStyle(20);
                 h->SetMarkerSize(1.0);
                 h->Write();
                 delete h;
             };
-            build_radial_summary("h_N_gamma_per_ring_summary",
-                                  "N_{#gamma} / ring",
-                                  [](const RadialFitResult &r) { return r.n_gamma; },
-                                  [](const RadialFitResult &)   { return 0.0; });
-            build_radial_summary("h_peak_mu_summary", "peak #mu (mm)",
-                                  [](const RadialFitResult &r) { return r.peak_mu; },
-                                  [](const RadialFitResult &r) { return r.peak_mu_err; });
-            build_radial_summary("h_peak_sigma_summary", "peak #sigma (mm)",
-                                  [](const RadialFitResult &r) { return r.peak_sigma; },
-                                  [](const RadialFitResult &r) { return r.peak_sigma_err; });
+            build_radial_summary("h_N_gamma_per_ring_summary", "N_{#gamma} / ring", [](const RadialFitResult &r)
+                                 { return r.n_gamma; }, [](const RadialFitResult &)
+                                 { return 0.0; });
+            build_radial_summary("h_peak_mu_summary", "peak #mu (mm)", [](const RadialFitResult &r)
+                                 { return r.peak_mu; }, [](const RadialFitResult &r)
+                                 { return r.peak_mu_err; });
+            build_radial_summary("h_peak_sigma_summary", "peak #sigma (mm)", [](const RadialFitResult &r)
+                                 { return r.peak_sigma; }, [](const RadialFitResult &r)
+                                 { return r.peak_sigma_err; });
         }
 
         //  Headline physics observables.  Ring radius, single-photon
@@ -1510,10 +1531,10 @@ void recodata_writer(
         h_residual_vs_n_first_dual->Write();
         h_residual_vs_n_first_solo->Write();
         //  Smeared sibling residual hists — written + fitted in parallel.
-        h_residual_vs_n_first_smeared      ->Write();
-        h_residual_vs_n_second_smeared     ->Write();
-        h_residual_vs_n_first_dual_smeared ->Write();
-        h_residual_vs_n_first_solo_smeared ->Write();
+        h_residual_vs_n_first_smeared->Write();
+        h_residual_vs_n_second_smeared->Write();
+        h_residual_vs_n_first_dual_smeared->Write();
+        h_residual_vs_n_first_solo_smeared->Write();
         fit_sigma_vs_n(h_residual_vs_n_first.get(),
                        data_repository, run_name, vs_n_results);
         fit_sigma_vs_n(h_residual_vs_n_second.get(),
@@ -1541,32 +1562,34 @@ void recodata_writer(
         //  resolution with intrinsic ring-radius variation and gives
         //  uninterpretable numbers).
         auto build_summary_hist = [&](const std::string &hname,
-                                       const std::string &ytitle,
-                                       bool want_residual)
+                                      const std::string &ytitle,
+                                      bool want_residual)
         {
             //  Pick the matching set out of the collector.
-            std::vector<const VsNFitResult*> selected;
+            std::vector<const VsNFitResult *> selected;
             for (const auto &r : vs_n_results)
                 if (r.is_residual == want_residual)
                     selected.push_back(&r);
-            if (selected.empty()) return;
+            if (selected.empty())
+                return;
 
             TH1F *h = new TH1F(hname.c_str(),
-                                (";source;" + ytitle).c_str(),
-                                static_cast<int>(selected.size()),
-                                0, static_cast<double>(selected.size()));
-            for (size_t i = 0; i < selected.size(); ++i) {
+                               (";source;" + ytitle).c_str(),
+                               static_cast<int>(selected.size()),
+                               0, static_cast<double>(selected.size()));
+            for (size_t i = 0; i < selected.size(); ++i)
+            {
                 //  Strip the common prefix for a tighter axis label.
                 std::string label = selected[i]->name;
                 const std::string prefix_resid = "h_residual_vs_n_";
-                const std::string prefix_R     = "h_R_vs_nhits_";
+                const std::string prefix_R = "h_R_vs_nhits_";
                 if (label.rfind(prefix_resid, 0) == 0)
                     label = label.substr(prefix_resid.size());
                 else if (label.rfind(prefix_R, 0) == 0)
                     label = label.substr(prefix_R.size());
                 h->GetXaxis()->SetBinLabel(static_cast<int>(i) + 1, label.c_str());
                 h->SetBinContent(static_cast<int>(i) + 1, selected[i]->sigma_photon);
-                h->SetBinError  (static_cast<int>(i) + 1, selected[i]->sigma_photon_err);
+                h->SetBinError(static_cast<int>(i) + 1, selected[i]->sigma_photon_err);
             }
             h->SetMarkerStyle(20);
             h->SetMarkerSize(1.0);
@@ -1574,15 +1597,14 @@ void recodata_writer(
             delete h;
         };
         build_summary_hist("h_sigma_photon_summary",
-                            "#sigma_{photon} (mm)",
-                            /*want_residual=*/true);
+                           "#sigma_{photon} (mm)",
+                           /*want_residual=*/true);
         build_summary_hist("h_sigma_R_intrinsic_summary",
-                            "#sigma_{R, intrinsic} (mm)",
-                            /*want_residual=*/false);
+                           "#sigma_{R, intrinsic} (mm)",
+                           /*want_residual=*/false);
     }
     //
     //  input_file and output_file closed automatically by TFilePtr dtors.
     //  End: QA plots
     //  --- --- --- --- --- ---
 }
-

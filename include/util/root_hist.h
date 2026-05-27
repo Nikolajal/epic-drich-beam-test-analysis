@@ -70,13 +70,17 @@ namespace rh_detail
 /// Trait: does `T` expose `SetDirectory(TDirectory*)`?  TH1/TH2/TH3/TProfile
 /// do; TGraph does not.  Used to conditionally detach in the ctor.
 template <typename U, typename = void>
-struct has_set_directory : std::false_type {};
+struct has_set_directory : std::false_type
+{
+};
 
 template <typename U>
 struct has_set_directory<
     U,
     std::void_t<decltype(std::declval<U &>().SetDirectory(static_cast<TDirectory *>(nullptr)))>>
-    : std::true_type {};
+    : std::true_type
+{
+};
 } // namespace rh_detail
 
 template <typename T>

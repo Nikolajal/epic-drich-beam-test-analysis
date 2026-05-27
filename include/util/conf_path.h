@@ -27,7 +27,8 @@
 #include <filesystem>
 #include <string>
 
-namespace util {
+namespace util
+{
 
 /**
  * @brief Resolve a config-file basename to its actual path.

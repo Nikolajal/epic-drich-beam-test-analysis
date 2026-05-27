@@ -46,7 +46,7 @@ class TH2F;
 namespace util::radiator_efficiency
 {
 
-    /**
+/**
      * @brief Build a `(φ, R)` coverage map from the channel-position map.
      *
      * Each channel at `(xc, yc)` is mapped to its `(R, φ)` centre
@@ -104,19 +104,19 @@ namespace util::radiator_efficiency
      *         `RootHist` wrapper for output).  Title axes:
      *         `";#phi (rad);R (mm)"`.
      */
-    TH2F *build_coverage_map(
-        const std::map<int, std::array<float, 2>> &channel_xy,
-        int   n_phi_bins,
-        float r_min_mm,
-        float r_max_mm,
-        int   n_r_bins,
-        float channel_half_width_mm = 1.5f,
-        float centre_x              = 0.f,
-        float centre_y              = 0.f,
-        float min_channel_r_mm      = 0.f,
-        const std::map<int, float> *channel_weights = nullptr);
+TH2F *build_coverage_map(
+    const std::map<int, std::array<float, 2>> &channel_xy,
+    int n_phi_bins,
+    float r_min_mm,
+    float r_max_mm,
+    int n_r_bins,
+    float channel_half_width_mm = 1.5f,
+    float centre_x = 0.f,
+    float centre_y = 0.f,
+    float min_channel_r_mm = 0.f,
+    const std::map<int, float> *channel_weights = nullptr);
 
-    /**
+/**
      * @brief Collapse a `(φ, R)` coverage map to a 1D `eff(R)` curve.
      *
      * Averages the coverage map over **all** φ bins (no in-gap / ex-gap
@@ -135,11 +135,11 @@ namespace util::radiator_efficiency
      *         standard coverage; >1 only at pixel-tile boundaries
      *         where channels physically overlap (rare).
      */
-    TH1F *radial_efficiency(
-        const TH2F *coverage_map,
-        const TAxis *radial_reference_axis);
+TH1F *radial_efficiency(
+    const TH2F *coverage_map,
+    const TAxis *radial_reference_axis);
 
-    /**
+/**
      * @brief Per-ring azimuthal coverage fraction `f ∈ [0, 1]`.
      *
      * For a ring of radius `R` centred at `(cx, cy)`, returns the
@@ -166,11 +166,11 @@ namespace util::radiator_efficiency
      * @return Coverage fraction in `[0, 1]`.  Returns 0 if `R <= 0`,
      *         `delta_r_mm <= 0`, or no channel intersects the arc.
      */
-    float azimuthal_coverage_fraction(
-        const std::map<int, std::array<float, 2>> &channel_xy,
-        float cx,
-        float cy,
-        float R,
-        float delta_r_mm);
+float azimuthal_coverage_fraction(
+    const std::map<int, std::array<float, 2>> &channel_xy,
+    float cx,
+    float cy,
+    float R,
+    float delta_r_mm);
 
 } // namespace util::radiator_efficiency

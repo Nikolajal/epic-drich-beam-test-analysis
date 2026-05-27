@@ -108,7 +108,7 @@ void AlcorRecodata::find_rings(float distance_length_cut, float distance_time_cu
 }
 
 void AlcorRecodata::build_hough_lut(const std::map<int, std::array<float, 2>> &index_to_hit_xy,
-                                     float r_min, float r_max, float r_step, float cell_size)
+                                    float r_min, float r_max, float r_step, float cell_size)
 {
     hough_cell_size = cell_size;
 
@@ -172,7 +172,8 @@ void AlcorRecodata::build_hough_lut(const std::map<int, std::array<float, 2>> &i
     }
     hough_accum.assign(hough_r_bins.size() * hough_nx * hough_ny, 0);
     mist::logger::info(TString::Format("Hough LUT built: %zu channels, %zu R bins, grid %dx%d",
-                            hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny).Data());
+                                       hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny)
+                           .Data());
 }
 
 void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)

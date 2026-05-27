@@ -25,11 +25,12 @@
 #include <vector>
 
 #include "writers/recodata/types.h"
-#include "util/config_reader.h"   // RecodataConfigStruct
+#include "util/config_reader.h" // RecodataConfigStruct
 
 class TH1F;
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 /**
  * @brief Crystal-Ball + pol3 radial fit on an eff-corrected radial hist.

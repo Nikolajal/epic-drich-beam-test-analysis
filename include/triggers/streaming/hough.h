@@ -29,9 +29,15 @@
 #include <cstdint>
 
 #include "alcor_spilldata.h"
-#include "util/config_reader.h"   // StreamingHoughConfigStruct
+#include "util/config_reader.h" // StreamingHoughConfigStruct
 
-namespace mist { namespace ring_finding { class HoughTransform; } }
+namespace mist
+{
+namespace ring_finding
+{
+class HoughTransform;
+}
+} // namespace mist
 class TH1F;
 class TH2F;
 
@@ -46,24 +52,24 @@ struct StreamingHoughQA
 {
     /// Hitmap of Cherenkov hits flagged with `HitmaskStreamingRingTrigger`
     /// (i.e. hits that contributed to the score stage's cluster).
-    TH2F *full_hitmap               = nullptr;
+    TH2F *full_hitmap = nullptr;
 
     /// Hitmap of Cherenkov hits surviving the `±time_window_ns` time
     /// pre-cut around the streaming trigger's `fine_time`.
-    TH2F *time_cut_hitmap           = nullptr;
+    TH2F *time_cut_hitmap = nullptr;
 
     /// Per-frame count of rings returned by `HoughTransform::find_rings`
     /// (0, 1, or 2 — capped by the hardcoded `max_rings = 2`).
-    TH1F *nrings                    = nullptr;
+    TH1F *nrings = nullptr;
 
     /// Hitmap of Cherenkov hits tagged as belonging to either ring.
-    TH2F *ring_finder_hitmap        = nullptr;
+    TH2F *ring_finder_hitmap = nullptr;
 
     /// Hitmap of hits tagged with `HitmaskHoughRingTagFirst`.
-    TH2F *first_hitmap              = nullptr;
+    TH2F *first_hitmap = nullptr;
 
     /// Hitmap of hits tagged with `HitmaskHoughRingTagSecond`.
-    TH2F *second_hitmap             = nullptr;
+    TH2F *second_hitmap = nullptr;
 
     /// fit_circle results for the first ring — centre X, Y, radius.
     /// **Caveat:** the writer's distributions show long tails to unphysical
@@ -71,28 +77,28 @@ struct StreamingHoughQA
     /// returns a low-quality "ring", `fit_circle` extrapolates nonsense).
     /// See DISCUSSION.md § 2.5 for the open item on adding per-ring sanity
     /// cuts on (X, Y, R) and on the Hough peak quality.
-    TH1F *ring_X_first              = nullptr;
-    TH1F *ring_Y_first              = nullptr;
-    TH1F *ring_R_first              = nullptr;
+    TH1F *ring_X_first = nullptr;
+    TH1F *ring_Y_first = nullptr;
+    TH1F *ring_R_first = nullptr;
 
     /// fit_circle results for the second ring — same caveat as the first.
-    TH1F *ring_X_second             = nullptr;
-    TH1F *ring_Y_second             = nullptr;
-    TH1F *ring_R_second             = nullptr;
+    TH1F *ring_X_second = nullptr;
+    TH1F *ring_Y_second = nullptr;
+    TH1F *ring_R_second = nullptr;
 
     /// **Hough peak** outputs for the first ring — taken straight from
     /// `RingResult::{cx, cy, radius}`, before any `fit_circle` refinement.
     /// Useful for diagnosing fit pull: overlay these with the `ring_*`
     /// (fit) hists above to see where the fit moves the centre/radius
     /// most aggressively (or runs away on bad events).
-    TH1F *ring_X_first_hough        = nullptr;
-    TH1F *ring_Y_first_hough        = nullptr;
-    TH1F *ring_R_first_hough        = nullptr;
+    TH1F *ring_X_first_hough = nullptr;
+    TH1F *ring_Y_first_hough = nullptr;
+    TH1F *ring_R_first_hough = nullptr;
 
     /// Hough peak outputs for the second ring — same role as above.
-    TH1F *ring_X_second_hough       = nullptr;
-    TH1F *ring_Y_second_hough       = nullptr;
-    TH1F *ring_R_second_hough       = nullptr;
+    TH1F *ring_X_second_hough = nullptr;
+    TH1F *ring_Y_second_hough = nullptr;
+    TH1F *ring_R_second_hough = nullptr;
 
     /// **Filter 1 + 2 calibration QA** — `peak_votes` (y) vs `|active|`
     /// (x), one per ring slot.  Two threshold lines map onto the same
@@ -105,7 +111,7 @@ struct StreamingHoughQA
     /// by moving the two lines into the gap between the band and the
     /// diagonal.  Ring 2's `|active|` is reduced by ring 1's assignment
     /// — different denominator than ring 1's plot.
-    TH2F *ring_peak_votes_vs_active_first  = nullptr;
+    TH2F *ring_peak_votes_vs_active_first = nullptr;
     TH2F *ring_peak_votes_vs_active_second = nullptr;
 
     /// **Filter 3 calibration QA** — per-hit distance from each
@@ -114,8 +120,8 @@ struct StreamingHoughQA
     /// vertical reference line at `x = collection_radius`; a clean
     /// ring's band falls to baseline well before that line, a noisy
     /// band extends past it.
-    TH1F *ring_hit_arc_dist_first   = nullptr;
-    TH1F *ring_hit_arc_dist_second  = nullptr;
+    TH1F *ring_hit_arc_dist_first = nullptr;
+    TH1F *ring_hit_arc_dist_second = nullptr;
 
     /// **Dual-ring sample QA** — mirrors of the first-ring QA above,
     /// gated on `found_rings.size() > 1` (i.e. filled only when a
@@ -131,15 +137,15 @@ struct StreamingHoughQA
     ///     in dual-ring events vs first-only events (which would
     ///     hint at the first-ring being a fake in the single-ring
     ///     subset).
-    TH2F *first_hitmap_dual                       = nullptr;
-    TH1F *ring_X_first_dual                       = nullptr;
-    TH1F *ring_Y_first_dual                       = nullptr;
-    TH1F *ring_R_first_dual                       = nullptr;
-    TH1F *ring_X_first_hough_dual                 = nullptr;
-    TH1F *ring_Y_first_hough_dual                 = nullptr;
-    TH1F *ring_R_first_hough_dual                 = nullptr;
-    TH2F *ring_peak_votes_vs_active_first_dual    = nullptr;
-    TH1F *ring_hit_arc_dist_first_dual            = nullptr;
+    TH2F *first_hitmap_dual = nullptr;
+    TH1F *ring_X_first_dual = nullptr;
+    TH1F *ring_Y_first_dual = nullptr;
+    TH1F *ring_R_first_dual = nullptr;
+    TH1F *ring_X_first_hough_dual = nullptr;
+    TH1F *ring_Y_first_hough_dual = nullptr;
+    TH1F *ring_R_first_hough_dual = nullptr;
+    TH2F *ring_peak_votes_vs_active_first_dual = nullptr;
+    TH1F *ring_hit_arc_dist_first_dual = nullptr;
 
     /// **Solo-ring sample QA** — mirrors of the first-ring QA above,
     /// gated on `found_rings.size() == 1` (i.e. filled only when *no*
@@ -153,15 +159,15 @@ struct StreamingHoughQA
     ///     that looks systematically worse than `_dual` (wider arc_dist,
     ///     less localised centre), the 1-ring sample is contaminated
     ///     and you may want to tighten thresholds.
-    TH2F *first_hitmap_solo                       = nullptr;
-    TH1F *ring_X_first_solo                       = nullptr;
-    TH1F *ring_Y_first_solo                       = nullptr;
-    TH1F *ring_R_first_solo                       = nullptr;
-    TH1F *ring_X_first_hough_solo                 = nullptr;
-    TH1F *ring_Y_first_hough_solo                 = nullptr;
-    TH1F *ring_R_first_hough_solo                 = nullptr;
-    TH2F *ring_peak_votes_vs_active_first_solo    = nullptr;
-    TH1F *ring_hit_arc_dist_first_solo            = nullptr;
+    TH2F *first_hitmap_solo = nullptr;
+    TH1F *ring_X_first_solo = nullptr;
+    TH1F *ring_Y_first_solo = nullptr;
+    TH1F *ring_R_first_solo = nullptr;
+    TH1F *ring_X_first_hough_solo = nullptr;
+    TH1F *ring_Y_first_hough_solo = nullptr;
+    TH1F *ring_R_first_hough_solo = nullptr;
+    TH2F *ring_peak_votes_vs_active_first_solo = nullptr;
+    TH1F *ring_hit_arc_dist_first_solo = nullptr;
 };
 
 /**
@@ -214,12 +220,12 @@ struct StreamingHoughQA
  * @param qa                      QA histogram bundle (any field may be `nullptr`).
  */
 void run_streaming_hough_trigger(
-    AlcorSpilldata                       &spilldata,
-    uint32_t                              frame_id,
-    mist::ring_finding::HoughTransform   &ring_finder,
-    int                                   min_active,
-    int                                  &streaming_trigger_count,
-    int                                   ispill,
-    float                                 time_window_ns,
-    const StreamingHoughConfigStruct     &cfg,
-    const StreamingHoughQA               &qa);
+    AlcorSpilldata &spilldata,
+    uint32_t frame_id,
+    mist::ring_finding::HoughTransform &ring_finder,
+    int min_active,
+    int &streaming_trigger_count,
+    int ispill,
+    float time_window_ns,
+    const StreamingHoughConfigStruct &cfg,
+    const StreamingHoughQA &qa);

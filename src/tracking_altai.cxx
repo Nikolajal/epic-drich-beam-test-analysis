@@ -42,7 +42,7 @@ void TrackingAltai::load_tracking_file(const std::string &input_file)
         if (line.find('*') != std::string::npos)
         {
             ss >> event_id;
-            data_map.try_emplace(event_id);  //  event exists, but has no tracks (line is '*')
+            data_map.try_emplace(event_id); //  event exists, but has no tracks (line is '*')
             continue;
         }
 
@@ -53,9 +53,7 @@ void TrackingAltai::load_tracking_file(const std::string &input_file)
         auto &tracks_for_event = data_map[event_id];
         auto &track = tracks_for_event.emplace_back();
 
-        ss >> track.zero_plane_x >> track.zero_plane_y >> track.zero_plane_z
-           >> track.angcoeff_dx  >> track.angcoeff_dy  >> track.angcoeff_dz
-           >> track.chi2 >> track.ndof >> track.chi2ndof >> track.timestamp;
+        ss >> track.zero_plane_x >> track.zero_plane_y >> track.zero_plane_z >> track.angcoeff_dx >> track.angcoeff_dy >> track.angcoeff_dz >> track.chi2 >> track.ndof >> track.chi2ndof >> track.timestamp;
         track.event_id = event_id;
     }
 

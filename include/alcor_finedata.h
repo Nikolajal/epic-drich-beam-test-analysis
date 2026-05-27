@@ -82,12 +82,12 @@ struct AlcorFinedataStruct
      * @brief Constructor from individual values.
      */
     AlcorFinedataStruct(uint32_t rollover_,
-                          uint16_t coarse_,
-                          uint8_t fine_,
-                          float hit_x_,
-                          float hit_y_,
-                          uint32_t global_index_,
-                          uint32_t hit_mask_)
+                        uint16_t coarse_,
+                        uint8_t fine_,
+                        float hit_x_,
+                        float hit_y_,
+                        uint32_t global_index_,
+                        uint32_t hit_mask_)
         : rollover(rollover_),
           coarse(coarse_),
           fine(fine_),
@@ -207,7 +207,7 @@ public:
     AlcorFinedataStruct get_data() const { return internal_data; }
 
     /** @brief Returns a reference of the underlying @ref AlcorFinedataStruct. */
-    AlcorFinedataStruct &get_data_link()  { return internal_data; }
+    AlcorFinedataStruct &get_data_link() { return internal_data; }
 
     /** @brief Returns the calibration index identifying the TDC channel. */
     uint32_t get_global_index() const { return internal_data.GlobalIndex; }
@@ -326,14 +326,16 @@ public:
      *  `std::uniform_real_distribution<float>` per call was measurable in framer-pipeline
      *  runtime.  Hoisting it removes that overhead while keeping the per-thread engine.
      */
-    float get_hit_x_rnd() const {
+    float get_hit_x_rnd() const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return internal_data.hit_x + pixel_jitter(rng.engine());
     }
 
     /** @brief Returns the pixel-randomised y-coordinate, uniform within ±1.5 mm of the Hit position. */
-    float get_hit_y_rnd() const {
+    float get_hit_y_rnd() const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return internal_data.hit_y + pixel_jitter(rng.engine());
@@ -370,13 +372,15 @@ public:
      * intrinsic spread from the pixel-pitch contribution).
      * @param v Centre coordinates {x, y}.
      */
-    float get_hit_r(std::array<float, 2> v) const {
+    float get_hit_r(std::array<float, 2> v) const
+    {
         return std::hypot(internal_data.hit_x - v[0],
                           internal_data.hit_y - v[1]);
     }
 
     /** @brief Returns the azimuthal angle from a custom centre using the bare pixel-centre position [rad]. */
-    float get_hit_phi(std::array<float, 2> v) const {
+    float get_hit_phi(std::array<float, 2> v) const
+    {
         return std::atan2(internal_data.hit_y - v[1],
                           internal_data.hit_x - v[0]);
     }

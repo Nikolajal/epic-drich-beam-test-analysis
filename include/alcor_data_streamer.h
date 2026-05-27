@@ -136,7 +136,7 @@ public:
             //  filename-declared fifo.
             const auto &d = data.get_data();
             const int raw_ch_in_chip = d.pixel + 4 * d.column;
-            const int ch_in_fifo     = raw_ch_in_chip % 8;
+            const int ch_in_fifo = raw_ch_in_chip % 8;
             const int new_ch_in_chip = 8 * (fifo_id % 4) + ch_in_fifo;
             data.set_fifo(fifo_id);
             data.set_pixel(new_ch_in_chip % 4);
@@ -160,7 +160,7 @@ private:
     TTree *tree = nullptr;                        ///< Non-owning pointer into @c file.
     int device_id = -1;                           ///< RDO id parsed from "rdo-NNN" in the path; -1 if not found. Used to overwrite the bogus upstream device branch.
     int fifo_id = -1;                             ///< FIFO id parsed from "fifo_NN" in the filename; -1 if not found. Used to overwrite the fifo branch per-Hit.
-    AlcorData data;                              ///< Buffer filled by each read_next() call.
+    AlcorData data;                               ///< Buffer filled by each read_next() call.
     Long64_t n_entries = 0;                       ///< Total entries cached from the TTree.
     Long64_t cursor = 0;                          ///< Index of the next entry to be read.
     bool valid = false;                           ///< Set @c true only after successful open.

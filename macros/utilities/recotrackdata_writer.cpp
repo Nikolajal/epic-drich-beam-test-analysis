@@ -12,9 +12,9 @@ int main(int argc, char **argv)
     std::string track_data_repository;
     std::string track_run_name;
     int max_spill = 1000;
-    bool force_rebuild  = false;
+    bool force_rebuild = false;
     bool force_upstream = false;
-    bool qa_mode        = false;
+    bool qa_mode = false;
 
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     //    --force-rebuild   → overwrite THIS writer's output (recotrackdata.root).
     //    --force-upstream  → cascade: also rebuild upstream writers
     //                        (recodata, which itself cascades into lightdata).
-    app.add_flag("--force-rebuild",  force_rebuild);
+    app.add_flag("--force-rebuild", force_rebuild);
     app.add_flag("--force-upstream", force_upstream);
     //  --QA accepted for CLI uniformity.  recotrackdata itself reads no
     //  config files; the flag only affects behaviour through the

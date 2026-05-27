@@ -51,7 +51,9 @@ inline double logistic(double variable, double amplitude, double center_1, doubl
 inline double clip_phi(double phi, double low_bound, double high_bound)
 {
     throw std::logic_error("clip_phi: not implemented");
-    (void)phi; (void)low_bound; (void)high_bound;
+    (void)phi;
+    (void)low_bound;
+    (void)high_bound;
     return -1.;
 }
 

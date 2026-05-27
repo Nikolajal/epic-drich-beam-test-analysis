@@ -12,7 +12,8 @@
 
 #include <cstdint>
 
-namespace btana::lightdata {
+namespace btana::lightdata
+{
 
 /**
  * @brief Compact per-Hit record used by the afterpulse + cross-talk
@@ -30,10 +31,10 @@ struct CtHit
 {
     uint64_t global_t; ///< rollover · 32768 + coarse (continuous timeline)
     uint32_t channel;  ///< GlobalIndex::channel_ordinal() (dense small int)
-    int      device;   ///< 192 + channel/256
-    int      fifo;     ///< block of 8 channels within device
-    float    x;        ///< physical X position [mm] (-999 if unmapped)
-    float    y;        ///< physical Y position [mm] (-999 if unmapped)
+    int device;        ///< 192 + channel/256
+    int fifo;          ///< block of 8 channels within device
+    float x;           ///< physical X position [mm] (-999 if unmapped)
+    float y;           ///< physical Y position [mm] (-999 if unmapped)
 };
 
 } // namespace btana::lightdata

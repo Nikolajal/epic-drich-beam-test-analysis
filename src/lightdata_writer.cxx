@@ -1,7 +1,7 @@
 #include "parallel_streaming_framer.h"
 #include "writers/lightdata.h"
-#include "writers/lightdata/types.h"                 // CtHit
-#include "writers/lightdata/dcr_afterpulse_ct_qa.h"  // fill_dcr_afterpulse_ct_qa
+#include "writers/lightdata/types.h"                // CtHit
+#include "writers/lightdata/dcr_afterpulse_ct_qa.h" // fill_dcr_afterpulse_ct_qa
 #include "triggers/streaming/score.h"
 #include "triggers/streaming/hough.h"
 #include "mapping.h"
@@ -182,25 +182,25 @@ void lightdata_writer(
     //  just a running spill count and elapsed time).
     mist::logger::MultiProgressBar progress_bars(mist::logger::BarStyle::Block);
     progress_bars.set_unit("spills");
-    auto &progress_framer         = progress_bars.add_subtask("framer");
+    auto &progress_framer = progress_bars.add_subtask("framer");
     auto &progress_postprocessing = progress_bars.add_subtask("post-processing");
     progress_bars.update(0, max_spill); // arms the main bar in the correct mode
     int streaming_trigger = 0;
 
     //  Load framer + QA configuration (both live in framer_conf_file)
     auto framer_cfg = FramerConfReader(framer_conf_file);
-    auto qa_cfg     = qa_conf_reader(framer_conf_file);
+    auto qa_cfg = qa_conf_reader(framer_conf_file);
     //  Software trigger pipeline (Phase 2: moved out of framer_conf.toml).
     //  Both stages share the same file; the Hough struct is loaded but not
     //  yet consumed by the algorithm (Phase 4 wires it).
     auto streaming_trigger_cfg = streaming_trigger_conf_reader(streaming_conf_file);
-    auto streaming_hough_cfg   = streaming_hough_conf_reader(streaming_conf_file);
+    auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf_file);
 
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
-    framer.set_qa_config(qa_cfg);       // enable afterpulse near/far Hit-mask tagging
+    framer.set_qa_config(qa_cfg); // enable afterpulse near/far Hit-mask tagging
     framer.set_parallel_cores(requested_n_threads);
-    framer.resolve_rollover_offsets();   // populates the per-stream, per-spill correction table consumed by the Rollover QA fills below
+    framer.resolve_rollover_offsets();  // populates the per-stream, per-spill correction table consumed by the Rollover QA fills below
     framer.assign_bar(progress_framer); // framer drives the framer subtask automatically
 
     // Resolve timing chip IDs from the readout config (CODE_REVIEW §D-07) —
@@ -216,14 +216,17 @@ void lightdata_writer(
         // The readout config conventionally lists exactly one timing device
         // (e.g. id=200) with two chips.  Take the first device's chip list.
         const auto &chips = timing_cfg->device_chip.begin()->second;
-        if (chips.size() >= 1) timing_chip_0_id = static_cast<int>(chips[0]);
-        if (chips.size() >= 2) timing_chip_1_id = static_cast<int>(chips[1]);
+        if (chips.size() >= 1)
+            timing_chip_0_id = static_cast<int>(chips[0]);
+        if (chips.size() >= 2)
+            timing_chip_1_id = static_cast<int>(chips[1]);
         if (chips.size() > 2)
             mist::logger::warning(TString::Format(
-                "(lightdata_writer) Timing readout has %zu chips; only the first two "
-                "are used by the same-channel-offset calibration. "
-                "Extend the calibration loop if more timing chips become active.",
-                chips.size()).Data());
+                                      "(lightdata_writer) Timing readout has %zu chips; only the first two "
+                                      "are used by the same-channel-offset calibration. "
+                                      "Extend the calibration loop if more timing chips become active.",
+                                      chips.size())
+                                      .Data());
     }
     else
     {
@@ -274,7 +277,7 @@ void lightdata_writer(
     //  Per-stream, per-spill correction applied during framing, expressed in
     //  rollover ticks (clock cycles / BTANA_ALCOR_ROLLOVER_TO_CC). Bins sized to
     //  accommodate the actual table dimensions at fill time.
-    RootHist<TH2F> h_rollover_correction_ticks_per_stream_and_spill;  // empty until the conditional below builds it
+    RootHist<TH2F> h_rollover_correction_ticks_per_stream_and_spill; // empty until the conditional below builds it
     RootHist<TH1F> h_rollover_correction_ticks_distribution(
         "h_rollover_correction_ticks_distribution",
         ";rollover correction (ticks);(stream,spill) entries",
@@ -315,17 +318,17 @@ void lightdata_writer(
     //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
     //  for a rate.  Density ∝ DCR rate, as in the CT / AP smeared maps.
     RootHist<TH2F> h_dcr_hitmap("h_dcr_hitmap",
-        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     //  --- Afterpulse
     //  Per-channel afterpulse profiles.
     //  Near = afterpulse signal + DCR baseline ; far = DCR sideband only.
     //  Subtracted (true afterpulse) = signed-weight fill on the same Hit set.
     RootHist<TProfile> h_afterpulse_near_per_channel("h_afterpulse_near_per_channel",
-        ";channel;Near-window same-channel probability (%);", 2048, 0, 2048);
+                                                     ";channel;Near-window same-channel probability (%);", 2048, 0, 2048);
     RootHist<TProfile> h_afterpulse_far_per_channel("h_afterpulse_far_per_channel",
-        ";channel;Far-window same-channel probability (%);", 2048, 0, 2048);
+                                                    ";channel;Far-window same-channel probability (%);", 2048, 0, 2048);
     RootHist<TProfile> h_afterpulse_per_channel("h_afterpulse_per_channel",
-        ";channel;Afterpulse probability (DCR-subtracted) (%);", 2048, 0, 2048);
+                                                ";channel;Afterpulse probability (DCR-subtracted) (%);", 2048, 0, 2048);
     //  Smeared 2D hitmaps — per primary Hit we deposit 100 fills at independent
     //  ±1.5 mm smeared positions when the Hit lies in the relevant window.  Density
     //  in the resulting TH2F is therefore proportional to the corresponding
@@ -335,23 +338,23 @@ void lightdata_writer(
     //  i.e. density ∝ true afterpulse probability.  May go negative in DCR-only
     //  bins by Poisson fluctuation — that's the expected zero-bias behaviour.
     RootHist<TH2F> h_afterpulse_near_hitmap("h_afterpulse_near_hitmap",
-        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                            ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_afterpulse_far_hitmap("h_afterpulse_far_hitmap",
-        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                           ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_afterpulse_hitmap("h_afterpulse_hitmap",
-        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    h_afterpulse_hitmap->Sumw2();   // signed-weight fills → needs squared-weight tracking
+                                       ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+    h_afterpulse_hitmap->Sumw2(); // signed-weight fills → needs squared-weight tracking
     //  --- Cross-talk per-channel profiles
     RootHist<TProfile> h_phys_ct_per_channel("h_phys_ct_per_channel",
-        ";channel;Physical CT probability (%);", 2048, 0, 2048);
+                                             ";channel;Physical CT probability (%);", 2048, 0, 2048);
     RootHist<TProfile> h_elec_ct_per_channel("h_elec_ct_per_channel",
-        ";channel;Electrical CT probability (%);", 2048, 0, 2048);
+                                             ";channel;Electrical CT probability (%);", 2048, 0, 2048);
     //  Smeared CT hitmaps — n_ct_neighbours × 100 fills per primary Hit, each at
     //  an independent ±1.5 mm smeared position.  Density ∝ CT rate per spatial bin.
     RootHist<TH2F> h_phys_ct_hitmap("h_phys_ct_hitmap",
-        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                    ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_elec_ct_hitmap("h_elec_ct_hitmap",
-        ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                    ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     //  --- CT neighbour-pair Δt distributions (signal peak + DCR sideband)
     //  Physical CT signal window: [0, 10] cc.
     //  Electrical CT signal window: [-2, 10] cc (small negative allowed for readout-timing jitter).
@@ -379,13 +382,13 @@ void lightdata_writer(
     // from conf/framer_conf.toml).  The previous [-5.5, 20.5] axis dumped
     // ~60% of fills to Y-overflow (dt > 20 cc) — see post-migration audit §10.
     RootHist<TH2F> h_elec_ct_dchannel_dt("h_elec_ct_dchannel_dt",
-                                           ";#Delta channel (j #minus i, same FIFO);#Delta_{t} (cc)",
-                                           63, -31.5, 31.5,
-                                           205, -5.5, 199.5);
+                                         ";#Delta channel (j #minus i, same FIFO);#Delta_{t} (cc)",
+                                         63, -31.5, 31.5,
+                                         205, -5.5, 199.5);
     RootHist<TH2F> h_phys_ct_dchannel_dt("h_phys_ct_dchannel_dt",
-                                           ";#Delta channel (j #minus i, #leq 3.2 mm);#Delta_{t} (cc)",
-                                           255, -127.5, 127.5,
-                                           205, -5.5, 199.5);
+                                         ";#Delta channel (j #minus i, #leq 3.2 mm);#Delta_{t} (cc)",
+                                         255, -127.5, 127.5,
+                                         205, -5.5, 199.5);
     //  ---
     //  --- Streaming Trigger
     //
@@ -414,18 +417,18 @@ void lightdata_writer(
     //  geometry, not by a user limit.  Set it wider than the expected
     //  centre spread for your beam line so legitimate rings don't fall
     //  in overflow; tighter to zoom in once you know where they land.
-    const int   ringXY_nbins =
+    const int ringXY_nbins =
         std::max(1, static_cast<int>(std::round(
-                       2.f * streaming_hough_cfg.centre_xy_half_range_mm /
-                       streaming_hough_cfg.cell_size)));
-    const float ringXY_half  = 0.5f * ringXY_nbins * streaming_hough_cfg.cell_size;
-    const int   ringR_nbins =
+                        2.f * streaming_hough_cfg.centre_xy_half_range_mm /
+                        streaming_hough_cfg.cell_size)));
+    const float ringXY_half = 0.5f * ringXY_nbins * streaming_hough_cfg.cell_size;
+    const int ringR_nbins =
         std::max(1, static_cast<int>(std::round(
-                       (streaming_hough_cfg.r_max - streaming_hough_cfg.r_min) /
-                       streaming_hough_cfg.r_step)));
-    const float ringR_lo    = streaming_hough_cfg.r_min;
-    const float ringR_hi    = streaming_hough_cfg.r_min +
-                              ringR_nbins * streaming_hough_cfg.r_step;
+                        (streaming_hough_cfg.r_max - streaming_hough_cfg.r_min) /
+                        streaming_hough_cfg.r_step)));
+    const float ringR_lo = streaming_hough_cfg.r_min;
+    const float ringR_hi = streaming_hough_cfg.r_min +
+                           ringR_nbins * streaming_hough_cfg.r_step;
     //  Per-ring **Hough peak** outputs (centre X, Y, radius taken
     //  straight from `RingResult::{cx, cy, radius}` before the
     //  fit_circle refinement).  Written first in the output (see the
@@ -468,8 +471,8 @@ void lightdata_writer(
     //  Bin width = collection_radius / 30  (~0.25 mm with the default
     //  7.5 mm collection_radius).
     constexpr int kArcDistBinsPerSide = 30;
-    const int     ringArc_nbins = 2 * kArcDistBinsPerSide;
-    const float   ringArc_hi    = 2.f * streaming_hough_cfg.collection_radius;
+    const int ringArc_nbins = 2 * kArcDistBinsPerSide;
+    const float ringArc_hi = 2.f * streaming_hough_cfg.collection_radius;
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first("h_streaming_trigger_ring_hit_arc_dist_first", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_second("h_streaming_trigger_ring_hit_arc_dist_second", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
 
@@ -517,9 +520,9 @@ void lightdata_writer(
     //  creation so the colours stick whether you draw the individual
     //  hists or the overlay.
     h_streaming_score_noise->SetLineColor(kRed);
-    h_streaming_score_data ->SetLineColor(kBlue);
+    h_streaming_score_data->SetLineColor(kBlue);
     h_streaming_score_noise->SetLineWidth(2);
-    h_streaming_score_data ->SetLineWidth(2);
+    h_streaming_score_data->SetLineWidth(2);
     //  (No timing-QA histograms remain after the 2026-Q2 QA sweep.  The
     //  full list of dropped hists — delta_t_leading_edge / half_centroid /
     //  first_half / second_half, h_delta_median_vs_window, the
@@ -540,9 +543,9 @@ void lightdata_writer(
     std::map<int, std::array<float, 2>> index_to_hit_xy;
     std::map<std::array<float, 2>, int> hit_to_index_xy;
     {
-        constexpr int kDeviceLo  = 192;
-        constexpr int kDeviceHi  = 224;
-        const int max_chip       = ::gidx::kUsesSplitInTwo ? 4 : 8;
+        constexpr int kDeviceLo = 192;
+        constexpr int kDeviceHi = 224;
+        const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
         constexpr int kChannelHi = 64;
         for (int device = kDeviceLo; device < kDeviceHi; ++device)
             for (int chip = 0; chip < max_chip; ++chip)
@@ -637,14 +640,14 @@ void lightdata_writer(
                         // Phase 5: construct the new-layout GlobalIndex
                         // directly from the hardware identifiers; apply the
                         // split-in-two trick at the conversion boundary.
-                        const int chip_raw     = current_lane / 4;
-                        const int channel_raw  = 8 * (current_lane % 4) + i_channel;
+                        const int chip_raw = current_lane / 4;
+                        const int channel_raw = 8 * (current_lane % 4) + i_channel;
                         const int chip_logical = ::gidx::kUsesSplitInTwo
                                                      ? chip_raw / 2
                                                      : chip_raw;
-                        const int channel_log  = ::gidx::kUsesSplitInTwo
-                                                     ? channel_raw + 32 * (chip_raw % 2)
-                                                     : channel_raw;
+                        const int channel_log = ::gidx::kUsesSplitInTwo
+                                                    ? channel_raw + 32 * (chip_raw % 2)
+                                                    : channel_raw;
                         const auto gi = ::GlobalIndex::from_components(
                             device, current_lane, chip_logical, channel_log, 0);
                         // Use channel_ordinal — a dense small integer suitable
@@ -878,7 +881,7 @@ void lightdata_writer(
                     streaming_trigger_cfg.time_window_ns,
                     framer_cfg.frame_length_ns(),
                     streaming_trigger_cfg.min_noise_hits,
-                    &active_sensors);   // restrict to this spill's participants
+                    &active_sensors); // restrict to this spill's participants
                 streaming_weights_built_for_spill = true;
                 //  Sanity log — confirms the active-channel filter is firing:
                 //  n_modelled should equal min(N_active_this_spill, N_measured).
@@ -923,41 +926,41 @@ void lightdata_writer(
                 //  The QA-pointer struct holds raw `.get()`s; any field
                 //  left as nullptr disables that fill.
                 StreamingHoughQA hough_qa;
-                hough_qa.full_hitmap        = h_streaming_trigger_full_hitmap.get();
-                hough_qa.time_cut_hitmap    = h_streaming_trigger_time_cut_hitmap.get();
-                hough_qa.nrings             = h_streaming_trigger_ring_finder_nrings.get();
+                hough_qa.full_hitmap = h_streaming_trigger_full_hitmap.get();
+                hough_qa.time_cut_hitmap = h_streaming_trigger_time_cut_hitmap.get();
+                hough_qa.nrings = h_streaming_trigger_ring_finder_nrings.get();
                 hough_qa.ring_finder_hitmap = h_streaming_trigger_ring_finder_hitmap.get();
-                hough_qa.first_hitmap       = h_streaming_trigger_ring_finder_first_hitmap.get();
-                hough_qa.second_hitmap      = h_streaming_trigger_ring_finder_second_hitmap.get();
+                hough_qa.first_hitmap = h_streaming_trigger_ring_finder_first_hitmap.get();
+                hough_qa.second_hitmap = h_streaming_trigger_ring_finder_second_hitmap.get();
                 //  (Per-ring fit_circle QA assignments removed 2026-05-26
                 //   — fit moved fully to recodata.  Hough-seed QA assignments
                 //   below remain.)
-                hough_qa.ring_X_first_hough   = h_streaming_trigger_ring_X_first_hough.get();
-                hough_qa.ring_Y_first_hough   = h_streaming_trigger_ring_Y_first_hough.get();
-                hough_qa.ring_R_first_hough   = h_streaming_trigger_ring_R_first_hough.get();
-                hough_qa.ring_X_second_hough  = h_streaming_trigger_ring_X_second_hough.get();
-                hough_qa.ring_Y_second_hough  = h_streaming_trigger_ring_Y_second_hough.get();
-                hough_qa.ring_R_second_hough  = h_streaming_trigger_ring_R_second_hough.get();
-                hough_qa.ring_peak_votes_vs_active_first  = h_streaming_trigger_ring_peak_votes_vs_active_first.get();
+                hough_qa.ring_X_first_hough = h_streaming_trigger_ring_X_first_hough.get();
+                hough_qa.ring_Y_first_hough = h_streaming_trigger_ring_Y_first_hough.get();
+                hough_qa.ring_R_first_hough = h_streaming_trigger_ring_R_first_hough.get();
+                hough_qa.ring_X_second_hough = h_streaming_trigger_ring_X_second_hough.get();
+                hough_qa.ring_Y_second_hough = h_streaming_trigger_ring_Y_second_hough.get();
+                hough_qa.ring_R_second_hough = h_streaming_trigger_ring_R_second_hough.get();
+                hough_qa.ring_peak_votes_vs_active_first = h_streaming_trigger_ring_peak_votes_vs_active_first.get();
                 hough_qa.ring_peak_votes_vs_active_second = h_streaming_trigger_ring_peak_votes_vs_active_second.get();
-                hough_qa.ring_hit_arc_dist_first          = h_streaming_trigger_ring_hit_arc_dist_first.get();
-                hough_qa.ring_hit_arc_dist_second         = h_streaming_trigger_ring_hit_arc_dist_second.get();
+                hough_qa.ring_hit_arc_dist_first = h_streaming_trigger_ring_hit_arc_dist_first.get();
+                hough_qa.ring_hit_arc_dist_second = h_streaming_trigger_ring_hit_arc_dist_second.get();
                 //  Dual-ring mirror — gated inside the trigger on found_rings.size() > 1.
-                hough_qa.first_hitmap_dual                    = h_streaming_trigger_ring_finder_first_hitmap_dual.get();
-                hough_qa.ring_X_first_hough_dual              = h_streaming_trigger_ring_X_first_hough_dual.get();
-                hough_qa.ring_Y_first_hough_dual              = h_streaming_trigger_ring_Y_first_hough_dual.get();
-                hough_qa.ring_R_first_hough_dual              = h_streaming_trigger_ring_R_first_hough_dual.get();
+                hough_qa.first_hitmap_dual = h_streaming_trigger_ring_finder_first_hitmap_dual.get();
+                hough_qa.ring_X_first_hough_dual = h_streaming_trigger_ring_X_first_hough_dual.get();
+                hough_qa.ring_Y_first_hough_dual = h_streaming_trigger_ring_Y_first_hough_dual.get();
+                hough_qa.ring_R_first_hough_dual = h_streaming_trigger_ring_R_first_hough_dual.get();
                 //  (Fit-refined dual hist assignments removed 2026-05-26.)
                 hough_qa.ring_peak_votes_vs_active_first_dual = h_streaming_trigger_ring_peak_votes_vs_active_first_dual.get();
-                hough_qa.ring_hit_arc_dist_first_dual         = h_streaming_trigger_ring_hit_arc_dist_first_dual.get();
+                hough_qa.ring_hit_arc_dist_first_dual = h_streaming_trigger_ring_hit_arc_dist_first_dual.get();
                 //  Solo-ring mirror — gated inside the trigger on found_rings.size() == 1.
-                hough_qa.first_hitmap_solo                    = h_streaming_trigger_ring_finder_first_hitmap_solo.get();
-                hough_qa.ring_X_first_hough_solo              = h_streaming_trigger_ring_X_first_hough_solo.get();
-                hough_qa.ring_Y_first_hough_solo              = h_streaming_trigger_ring_Y_first_hough_solo.get();
-                hough_qa.ring_R_first_hough_solo              = h_streaming_trigger_ring_R_first_hough_solo.get();
+                hough_qa.first_hitmap_solo = h_streaming_trigger_ring_finder_first_hitmap_solo.get();
+                hough_qa.ring_X_first_hough_solo = h_streaming_trigger_ring_X_first_hough_solo.get();
+                hough_qa.ring_Y_first_hough_solo = h_streaming_trigger_ring_Y_first_hough_solo.get();
+                hough_qa.ring_R_first_hough_solo = h_streaming_trigger_ring_R_first_hough_solo.get();
                 //  (Fit-refined solo hist assignments removed 2026-05-26.)
                 hough_qa.ring_peak_votes_vs_active_first_solo = h_streaming_trigger_ring_peak_votes_vs_active_first_solo.get();
-                hough_qa.ring_hit_arc_dist_first_solo         = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
+                hough_qa.ring_hit_arc_dist_first_solo = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
                 run_streaming_hough_trigger(
                     spilldata, frame_id, ring_finder, hough_min_active,
                     streaming_trigger, ispill,
@@ -989,7 +992,8 @@ void lightdata_writer(
                         h_trigger_dt[current_trigger.index] = RootHist<TH2F>(
                             TString::Format("h_trigger_dt_%s", registry.name_of(current_trigger.index).c_str()).Data(),
                             TString::Format(";spill index;#Delta_{t} between consecutive %s triggers (ns);entries",
-                                 registry.name_of(current_trigger.index).c_str()).Data(),
+                                            registry.name_of(current_trigger.index).c_str())
+                                .Data(),
                             max_spill + 1, -0.5, max_spill + 0.5,
                             kTriggerDtNBinsY, trigger_dt_log_edges.data());
                     }
@@ -1039,22 +1043,22 @@ void lightdata_writer(
                 if (fired_trigger_types.count(registry.index_of(static_cast<TriggerNumber>(TriggerFirstFrames))))
                 {
                     ::btana::lightdata::DcrAfterpulseCtHists qa_hists;
-                    qa_hists.h_dcr_per_channel             = h_dcr_per_channel.get();
-                    qa_hists.h_dcr_hitmap                  = h_dcr_hitmap.get();
+                    qa_hists.h_dcr_per_channel = h_dcr_per_channel.get();
+                    qa_hists.h_dcr_hitmap = h_dcr_hitmap.get();
                     qa_hists.h_afterpulse_near_per_channel = h_afterpulse_near_per_channel.get();
-                    qa_hists.h_afterpulse_far_per_channel  = h_afterpulse_far_per_channel.get();
-                    qa_hists.h_afterpulse_per_channel      = h_afterpulse_per_channel.get();
-                    qa_hists.h_afterpulse_near_hitmap      = h_afterpulse_near_hitmap.get();
-                    qa_hists.h_afterpulse_far_hitmap       = h_afterpulse_far_hitmap.get();
-                    qa_hists.h_afterpulse_hitmap           = h_afterpulse_hitmap.get();
-                    qa_hists.h_phys_ct_per_channel         = h_phys_ct_per_channel.get();
-                    qa_hists.h_elec_ct_per_channel         = h_elec_ct_per_channel.get();
-                    qa_hists.h_phys_ct_hitmap              = h_phys_ct_hitmap.get();
-                    qa_hists.h_elec_ct_hitmap              = h_elec_ct_hitmap.get();
-                    qa_hists.h_phys_ct_dt                  = h_phys_ct_dt.get();
-                    qa_hists.h_elec_ct_dt                  = h_elec_ct_dt.get();
-                    qa_hists.h_elec_ct_dchannel_dt         = h_elec_ct_dchannel_dt.get();
-                    qa_hists.h_phys_ct_dchannel_dt         = h_phys_ct_dchannel_dt.get();
+                    qa_hists.h_afterpulse_far_per_channel = h_afterpulse_far_per_channel.get();
+                    qa_hists.h_afterpulse_per_channel = h_afterpulse_per_channel.get();
+                    qa_hists.h_afterpulse_near_hitmap = h_afterpulse_near_hitmap.get();
+                    qa_hists.h_afterpulse_far_hitmap = h_afterpulse_far_hitmap.get();
+                    qa_hists.h_afterpulse_hitmap = h_afterpulse_hitmap.get();
+                    qa_hists.h_phys_ct_per_channel = h_phys_ct_per_channel.get();
+                    qa_hists.h_elec_ct_per_channel = h_elec_ct_per_channel.get();
+                    qa_hists.h_phys_ct_hitmap = h_phys_ct_hitmap.get();
+                    qa_hists.h_elec_ct_hitmap = h_elec_ct_hitmap.get();
+                    qa_hists.h_phys_ct_dt = h_phys_ct_dt.get();
+                    qa_hists.h_elec_ct_dt = h_elec_ct_dt.get();
+                    qa_hists.h_elec_ct_dchannel_dt = h_elec_ct_dchannel_dt.get();
+                    qa_hists.h_phys_ct_dchannel_dt = h_phys_ct_dchannel_dt.get();
                     ::btana::lightdata::fill_dcr_afterpulse_ct_qa(
                         cherenkov_hits, active_sensors, active_sensors_count,
                         ct_hits, sorted_by_time, qa_cfg, qa_hists);
@@ -1208,11 +1212,11 @@ void lightdata_writer(
     h_dcr_per_channel->Write();
     h_dcr_hitmap->Write();
     h_afterpulse_near_per_channel->Write();
-    h_afterpulse_near_hitmap     ->Write();
-    h_afterpulse_far_per_channel ->Write();
-    h_afterpulse_far_hitmap      ->Write();
-    h_afterpulse_per_channel     ->Write();
-    h_afterpulse_hitmap          ->Write();
+    h_afterpulse_near_hitmap->Write();
+    h_afterpulse_far_per_channel->Write();
+    h_afterpulse_far_hitmap->Write();
+    h_afterpulse_per_channel->Write();
+    h_afterpulse_hitmap->Write();
     //  Same-channel Δt diagnostic — use it to validate that the near / far
     //  windows defined in qa_cfg actually contain the afterpulse peak and a
     //  flat DCR shelf respectively.
@@ -1242,7 +1246,7 @@ void lightdata_writer(
     if (h_streaming_score_data->GetEntries() > 0)
         h_streaming_score_data->Scale(1.0 / h_streaming_score_data->GetEntries());
     h_streaming_score_noise->GetYaxis()->SetTitle("probability per bin");
-    h_streaming_score_data ->GetYaxis()->SetTitle("probability per bin");
+    h_streaming_score_data->GetYaxis()->SetTitle("probability per bin");
     h_streaming_score_noise->Write();
     h_streaming_score_data->Write();
 
@@ -1285,15 +1289,15 @@ void lightdata_writer(
         TLegend *leg = new TLegend(0.65, 0.75, 0.88, 0.88);
         leg->SetBorderSize(0);
         leg->SetFillStyle(0);
-        leg->AddEntry(h_data_overlay,  "Data-taking (signal + noise)", "l");
-        leg->AddEntry(h_noise_overlay, "First-frames (noise only)",    "l");
+        leg->AddEntry(h_data_overlay, "Data-taking (signal + noise)", "l");
+        leg->AddEntry(h_noise_overlay, "First-frames (noise only)", "l");
         leg->SetBit(TObject::kCanDelete);
         leg->Draw();
 
         c_streaming_score_overlay->Modified();
         c_streaming_score_overlay->Update();
         c_streaming_score_overlay->Write();
-        delete c_streaming_score_overlay;   // also deletes overlay clones + legend
+        delete c_streaming_score_overlay; // also deletes overlay clones + legend
     }
     h_streaming_trigger_full_hitmap->Write();
     h_streaming_trigger_time_cut_hitmap->Write();
@@ -1358,7 +1362,7 @@ void lightdata_writer(
 
         //  ("Fit rings (solo)/" subfolder removed 2026-05-26.)
 
-        streaming_trigger_dir->cd();   // restore parent for any later writes
+        streaming_trigger_dir->cd(); // restore parent for any later writes
     }
     if (h_trigger_frame_population.count(streaming_ring_index))
     {
@@ -1385,15 +1389,15 @@ void lightdata_writer(
         p_frame_length_ns.Write();
 
         //  QA windows used by the afterpulse sideband subtraction and the CT scan.
-        TParameter<int> p_qa_ap_near_lo            ("qa_afterpulse_near_lo",          qa_cfg.afterpulse_near_lo);
-        TParameter<int> p_qa_ap_near_hi            ("qa_afterpulse_near_hi",          qa_cfg.afterpulse_near_hi);
-        TParameter<int> p_qa_ap_sideband_offset    ("qa_afterpulse_sideband_offset",  qa_cfg.afterpulse_sideband_offset);
-        TParameter<int> p_qa_ct_scan_dt_min        ("qa_ct_scan_dt_min",              qa_cfg.ct_scan_dt_min);
-        TParameter<int> p_qa_ct_scan_dt_max        ("qa_ct_scan_dt_max",              qa_cfg.ct_scan_dt_max);
-        TParameter<int> p_qa_ct_phys_signal_lo     ("qa_ct_phys_signal_lo",           qa_cfg.ct_phys_signal_lo);
-        TParameter<int> p_qa_ct_phys_signal_hi     ("qa_ct_phys_signal_hi",           qa_cfg.ct_phys_signal_hi);
-        TParameter<int> p_qa_ct_elec_signal_lo     ("qa_ct_elec_signal_lo",           qa_cfg.ct_elec_signal_lo);
-        TParameter<int> p_qa_ct_elec_signal_hi     ("qa_ct_elec_signal_hi",           qa_cfg.ct_elec_signal_hi);
+        TParameter<int> p_qa_ap_near_lo("qa_afterpulse_near_lo", qa_cfg.afterpulse_near_lo);
+        TParameter<int> p_qa_ap_near_hi("qa_afterpulse_near_hi", qa_cfg.afterpulse_near_hi);
+        TParameter<int> p_qa_ap_sideband_offset("qa_afterpulse_sideband_offset", qa_cfg.afterpulse_sideband_offset);
+        TParameter<int> p_qa_ct_scan_dt_min("qa_ct_scan_dt_min", qa_cfg.ct_scan_dt_min);
+        TParameter<int> p_qa_ct_scan_dt_max("qa_ct_scan_dt_max", qa_cfg.ct_scan_dt_max);
+        TParameter<int> p_qa_ct_phys_signal_lo("qa_ct_phys_signal_lo", qa_cfg.ct_phys_signal_lo);
+        TParameter<int> p_qa_ct_phys_signal_hi("qa_ct_phys_signal_hi", qa_cfg.ct_phys_signal_hi);
+        TParameter<int> p_qa_ct_elec_signal_lo("qa_ct_elec_signal_lo", qa_cfg.ct_elec_signal_lo);
+        TParameter<int> p_qa_ct_elec_signal_hi("qa_ct_elec_signal_hi", qa_cfg.ct_elec_signal_hi);
         p_qa_ap_near_lo.Write();
         p_qa_ap_near_hi.Write();
         p_qa_ap_sideband_offset.Write();

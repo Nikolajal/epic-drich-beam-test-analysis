@@ -36,8 +36,8 @@
 void plot_fine_scan_evolution(
     const std::string &filename,
     std::vector<int> channels = {0},
-    int spill_min             = 0,
-    int spill_max             = -1)
+    int spill_min = 0,
+    int spill_max = -1)
 {
     // -------------------------------------------------------------------------
     // Open file
@@ -62,7 +62,8 @@ void plot_fine_scan_evolution(
         return;
     }
 
-    if (spill_min < 0) spill_min = 0;
+    if (spill_min < 0)
+        spill_min = 0;
     if (spill_max < 0 || spill_max >= n_spills_in_file)
         spill_max = n_spills_in_file - 1;
 
@@ -82,9 +83,9 @@ void plot_fine_scan_evolution(
         std::cerr << "[ERROR] Cannot read prototype histogram.\n";
         return;
     }
-    const int   n_dt_bins = h3_proto->GetNbinsY();
-    const double dt_lo    = h3_proto->GetYaxis()->GetXmin();
-    const double dt_hi    = h3_proto->GetYaxis()->GetXmax();
+    const int n_dt_bins = h3_proto->GetNbinsY();
+    const double dt_lo = h3_proto->GetYaxis()->GetXmin();
+    const double dt_hi = h3_proto->GetYaxis()->GetXmax();
 
     // -------------------------------------------------------------------------
     // Style
@@ -124,8 +125,8 @@ void plot_fine_scan_evolution(
 
             TH1D *h_dt = h3->ProjectionY(
                 TString::Format("hpy_ch%d_s%03d", ch, s).Data(),
-                bx, bx,   // single channel bin
-                0, -1);   // all fine bins
+                bx, bx, // single channel bin
+                0, -1); // all fine bins
             h_dt->SetDirectory(nullptr);
 
             // Fill the evolution histogram column by column
@@ -134,7 +135,7 @@ void plot_fine_scan_evolution(
                 h_evolution->SetBinContent(
                     spill_bin, by,
                     h_evolution->GetBinContent(spill_bin, by) +
-                    h_dt->GetBinContent(by));
+                        h_dt->GetBinContent(by));
 
             delete h_dt;
         }

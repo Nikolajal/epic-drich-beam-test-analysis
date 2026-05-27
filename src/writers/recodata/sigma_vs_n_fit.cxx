@@ -10,8 +10,8 @@
 
 #include "writers/recodata/sigma_vs_n_fit.h"
 
-#include <cmath>      // std::abs, std::isfinite
-#include <algorithm>  // std::max
+#include <cmath>     // std::abs, std::isfinite
+#include <algorithm> // std::max
 #include <memory>
 #include <string>
 
@@ -26,23 +26,27 @@
 
 #include "mist/logger/logger.h"
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 void fit_sigma_vs_n(TH2F *h2,
                     const std::string &data_repository,
                     const std::string &run_name,
                     std::vector<VsNFitResult> &results)
 {
-    if (!h2) {
+    if (!h2)
+    {
         mist::logger::warning(
             "(recodata_writer) fit_sigma_vs_n: null TH2F; skipping.");
         return;
     }
-    if (h2->GetEntries() == 0) {
+    if (h2->GetEntries() == 0)
+    {
         mist::logger::warning(TString::Format(
-            "(recodata_writer) %s: TH2F empty (0 entries) — "
-            "no σ-vs-N PDF emitted.",
-            h2->GetName()).Data());
+                                  "(recodata_writer) %s: TH2F empty (0 entries) — "
+                                  "no σ-vs-N PDF emitted.",
+                                  h2->GetName())
+                                  .Data());
         return;
     }
     // Manual per-slice σ extraction — replaces TH2::FitSlicesY,
@@ -56,22 +60,25 @@ void fit_sigma_vs_n(TH2F *h2,
     TH1F *h_sigma_slice = new TH1F(
         sigma_name.c_str(),
         (std::string(";") + h2->GetXaxis()->GetTitle() +
-         ";#sigma (mm)").c_str(),
+         ";#sigma (mm)")
+            .c_str(),
         h2->GetNbinsX(),
         h2->GetXaxis()->GetXmin(),
         h2->GetXaxis()->GetXmax());
-    h_sigma_slice->SetDirectory(gDirectory);  // persisted in Rings/
+    h_sigma_slice->SetDirectory(gDirectory); // persisted in Rings/
     h_sigma_slice->SetMarkerStyle(20);
     h_sigma_slice->SetMarkerSize(0.8);
 
     constexpr int kMinSliceEntries = 5;
     int n_slices_fit = 0;
-    for (int ix = 1; ix <= h2->GetNbinsX(); ++ix) {
+    for (int ix = 1; ix <= h2->GetNbinsX(); ++ix)
+    {
         std::unique_ptr<TH1D> slice(h2->ProjectionY(
             (sigma_name + "_slice_" + std::to_string(ix)).c_str(),
             ix, ix));
         slice->SetDirectory(nullptr);
-        if (slice->GetEntries() < kMinSliceEntries) continue;
+        if (slice->GetEntries() < kMinSliceEntries)
+            continue;
 
         //  Two-pass Gaussian fit for robustness against fake-ring
         //  outliers contaminating each N-slice:
@@ -93,60 +100,70 @@ void fit_sigma_vs_n(TH2F *h2,
         //  fit range was huge, and the Gaussian width converged to
         //  ~3× the true core width.
         const double mean0 = slice->GetMean();
-        const double rms0  = slice->GetRMS();
+        const double rms0 = slice->GetRMS();
         TF1 gfit("gfit", "gaus",
                  mean0 - 2.0 * rms0,
                  mean0 + 2.0 * rms0);
         gfit.SetParameters(slice->GetMaximum(),
-                            mean0,
-                            std::max(rms0, 0.1));
+                           mean0,
+                           std::max(rms0, 0.1));
         int fit_status = static_cast<int>(slice->Fit(&gfit, "RQ0"));
-        if (fit_status != 0) continue;
+        if (fit_status != 0)
+            continue;
 
         //  Pass 2 refit, seeded from pass-1 result.
-        const double mu1    = gfit.GetParameter(1);
+        const double mu1 = gfit.GetParameter(1);
         const double sigma1 = std::abs(gfit.GetParameter(2));
-        if (sigma1 > 0. && std::isfinite(sigma1)) {
+        if (sigma1 > 0. && std::isfinite(sigma1))
+        {
             gfit.SetRange(mu1 - 2.5 * sigma1, mu1 + 2.5 * sigma1);
             fit_status = static_cast<int>(slice->Fit(&gfit, "RQ0"));
-            if (fit_status != 0) continue;
+            if (fit_status != 0)
+                continue;
         }
-        const double sigma     = std::abs(gfit.GetParameter(2));
+        const double sigma = std::abs(gfit.GetParameter(2));
         const double sigma_err = gfit.GetParError(2);
-        if (sigma <= 0. || !std::isfinite(sigma)) continue;
+        if (sigma <= 0. || !std::isfinite(sigma))
+            continue;
         h_sigma_slice->SetBinContent(ix, sigma);
-        h_sigma_slice->SetBinError  (ix, sigma_err);
+        h_sigma_slice->SetBinError(ix, sigma_err);
         ++n_slices_fit;
     }
-    if (n_slices_fit == 0) {
+    if (n_slices_fit == 0)
+    {
         mist::logger::warning(TString::Format(
-            "(recodata_writer) %s: 0 slices passed per-slice "
-            "Gaussian fit (min entries = %d) — skipping σ-vs-N PDF.",
-            h2->GetName(), kMinSliceEntries).Data());
+                                  "(recodata_writer) %s: 0 slices passed per-slice "
+                                  "Gaussian fit (min entries = %d) — skipping σ-vs-N PDF.",
+                                  h2->GetName(), kMinSliceEntries)
+                                  .Data());
         delete h_sigma_slice;
         return;
     }
     // σ_photon·sqrt(x/(x-3)) is a 1-param fit; need at least 2 σ points.
-    if (n_slices_fit < 2) {
+    if (n_slices_fit < 2)
+    {
         mist::logger::warning(TString::Format(
-            "(recodata_writer) %s: only %d slice yielded σ — "
-            "cannot fit σ_photon·√(N/(N-3)). Skipping PDF.",
-            h2->GetName(), n_slices_fit).Data());
+                                  "(recodata_writer) %s: only %d slice yielded σ — "
+                                  "cannot fit σ_photon·√(N/(N-3)). Skipping PDF.",
+                                  h2->GetName(), n_slices_fit)
+                                  .Data());
         return;
     }
     //  Restrict fit range to bins that actually have content —
     //  empty bins at the edges shouldn't be in [xmin,xmax] for
     //  the fit, or LM will widen the χ² window over zero.
     int first_pop = 0, last_pop = 0;
-    for (int ib = 1; ib <= h_sigma_slice->GetNbinsX(); ++ib) {
-        if (h_sigma_slice->GetBinContent(ib) > 0.) {
-            if (first_pop == 0) first_pop = ib;
+    for (int ib = 1; ib <= h_sigma_slice->GetNbinsX(); ++ib)
+    {
+        if (h_sigma_slice->GetBinContent(ib) > 0.)
+        {
+            if (first_pop == 0)
+                first_pop = ib;
             last_pop = ib;
         }
     }
     const double fit_x_lo = h_sigma_slice->GetBinLowEdge(first_pop);
-    const double fit_x_hi = h_sigma_slice->GetBinLowEdge(last_pop)
-                          + h_sigma_slice->GetBinWidth(last_pop);
+    const double fit_x_hi = h_sigma_slice->GetBinLowEdge(last_pop) + h_sigma_slice->GetBinWidth(last_pop);
 
     //  Exact one-parameter LOO model:
     //      σ(N) = σ_photon · sqrt( N / (N − 3) )
@@ -165,7 +182,7 @@ void fit_sigma_vs_n(TH2F *h2,
     TF1 *f_scaling = new TF1(
         (std::string(h2->GetName()) + "_scaling").c_str(),
         "[0]*sqrt(x/(x-3))", fit_x_lo, fit_x_hi);
-    f_scaling->SetParameter(0, 1.5);   // seed: σ_photon ~ 1.5 mm
+    f_scaling->SetParameter(0, 1.5); // seed: σ_photon ~ 1.5 mm
     f_scaling->SetParName(0, "sigma_photon");
     f_scaling->SetParLimits(0, 0.1, 10.0);
     h_sigma_slice->Fit(f_scaling, "RQS");
@@ -177,7 +194,7 @@ void fit_sigma_vs_n(TH2F *h2,
     //
     //  Model: σ(N) = σ_photon · √(N/(N-3))   [exact LOO, 1 parameter]
     {
-        const double sigma_for_pave     = f_scaling->GetParameter(0);
+        const double sigma_for_pave = f_scaling->GetParameter(0);
         const double sigma_err_for_pave = f_scaling->GetParError(0);
 
         TCanvas c(
@@ -203,12 +220,13 @@ void fit_sigma_vs_n(TH2F *h2,
         pave.SetTextSize(0.034);
         pave.AddText("#sigma(N) = #sigma_{photon} #sqrt{N/(N#minus3)}");
         pave.AddText(TString::Format("#sigma_{photon} = %.3f #pm %.3f mm",
-            sigma_for_pave, sigma_err_for_pave).Data());
+                                     sigma_for_pave, sigma_err_for_pave)
+                         .Data());
         pave.Draw();
 
         c.Update();
         const std::string pdf_path = data_repository + "/" + run_name +
-                                      "/" + h2->GetName() + "_sigma_vs_n.pdf";
+                                     "/" + h2->GetName() + "_sigma_vs_n.pdf";
         c.SaveAs(pdf_path.c_str());
     }
 
@@ -219,21 +237,22 @@ void fit_sigma_vs_n(TH2F *h2,
     //  without re-fitting.  Also echoed to the log so the
     //  operator sees the run's resolution in realtime.
     const double sigma_phot = f_scaling->GetParameter(0);
-    const double sigma_err  = f_scaling->GetParError(0);
+    const double sigma_err = f_scaling->GetParError(0);
     TNamed sigma_named(
         (std::string(h2->GetName()) + "_sigma_photon_mm").c_str(),
         TString::Format("%.4f +/- %.4f", sigma_phot, sigma_err).Data());
     sigma_named.Write();
     mist::logger::info(TString::Format(
-        "(recodata_writer) %s: sigma_photon = %.3f +/- %.3f mm "
-        "[exact LOO fit: σ(N) = σ_photon·√(N/(N-3))]",
-        h2->GetName(), sigma_phot, sigma_err).Data());
+                           "(recodata_writer) %s: sigma_photon = %.3f +/- %.3f mm "
+                           "[exact LOO fit: σ(N) = σ_photon·√(N/(N-3))]",
+                           h2->GetName(), sigma_phot, sigma_err)
+                           .Data());
 
     //  Push into the summary collector.  Tagging by hist-name
     //  prefix is uglier than a separate function arg but keeps
     //  the lambda single-purpose — minor.
     const std::string hname = h2->GetName();
-    const bool is_residual  = hname.find("h_residual_vs_n_") == 0;
+    const bool is_residual = hname.find("h_residual_vs_n_") == 0;
     results.push_back({hname, sigma_phot, sigma_err, is_residual});
 }
 

@@ -169,7 +169,8 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                             requested_chips.push_back(c);
                     else
                         mist::logger::warning(TString::Format("(readout_config_reader) Unknown chips token '%s' for device %d",
-                                                   chips_str->c_str(), device).Data());
+                                                              chips_str->c_str(), device)
+                                                  .Data());
                 }
                 else if (auto *chips_array = chips_node->as_array())
                 {
@@ -192,8 +193,9 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                             if (lightdata_core_tags.count(conflict_name))
                             {
                                 mist::logger::error(TString::Format("(readout_config_reader) Conflict: device %d chip %d already "
-                                                         "assigned to core tag '%s', cannot assign to '%s'",
-                                                         device, chip, conflict_name.c_str(), cfg_name.c_str()).Data());
+                                                                    "assigned to core tag '%s', cannot assign to '%s'",
+                                                                    device, chip, conflict_name.c_str(), cfg_name.c_str())
+                                                        .Data());
                                 conflict_found = true;
                                 break;
                             }
@@ -213,7 +215,8 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format("(readout_config_reader) Failed to parse TOML config '%s': %s",
-                                   config_file.c_str(), std::string(err.description()).c_str()).Data());
+                                              config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
         return readout_config;
     }
 
@@ -250,12 +253,14 @@ FramerConfigStruct FramerConfReader(std::string config_file)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format("(FramerConfReader) TOML parse error in '%s': %s — using defaults.",
-                                   config_file.c_str(), std::string(err.description()).c_str()).Data());
+                                              config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format("(FramerConfReader) Error reading '%s': %s — using defaults.",
-                                   config_file.c_str(), err.what()).Data());
+                                              config_file.c_str(), err.what())
+                                  .Data());
     }
     return cfg;
 }
@@ -312,12 +317,14 @@ QaConfigStruct qa_conf_reader(std::string config_file)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format("(qa_conf_reader) TOML parse error in '%s': %s — using defaults.",
-                                   config_file.c_str(), std::string(err.description()).c_str()).Data());
+                                              config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format("(qa_conf_reader) Error reading '%s': %s — using defaults.",
-                                   config_file.c_str(), err.what()).Data());
+                                              config_file.c_str(), err.what())
+                                  .Data());
     }
     return cfg;
 }
@@ -407,7 +414,8 @@ void RunInfo::read_database(std::string filename)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format("(RunInfo::read_database) Failed to parse '%s': %s",
-                                   filename.c_str(), std::string(err.description()).c_str()).Data());
+                                              filename.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
 }
 
@@ -449,7 +457,8 @@ void RunInfo::read_runslists(std::string runlist_file)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format("(RunInfo::read_runslists) Failed to parse '%s': %s",
-                                   runlist_file.c_str(), std::string(err.description()).c_str()).Data());
+                                              runlist_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
 }
 
@@ -475,8 +484,9 @@ streaming_trigger_conf_reader(std::string config_file)
             return cfg;
         }
         mist::logger::info(TString::Format(
-            "(streaming_trigger_conf_reader) Reading streaming-trigger config: %s",
-            config_file.c_str()).Data());
+                               "(streaming_trigger_conf_reader) Reading streaming-trigger config: %s",
+                               config_file.c_str())
+                               .Data());
 
         if (auto v = (*st_table)["time_window_ns"].value<double>())
             cfg.time_window_ns = static_cast<float>(*v);
@@ -496,14 +506,16 @@ streaming_trigger_conf_reader(std::string config_file)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format(
-            "(streaming_trigger_conf_reader) TOML parse error in '%s': %s — using defaults.",
-            config_file.c_str(), std::string(err.description()).c_str()).Data());
+                                  "(streaming_trigger_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                  config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format(
-            "(streaming_trigger_conf_reader) Error reading '%s': %s — using defaults.",
-            config_file.c_str(), err.what()).Data());
+                                  "(streaming_trigger_conf_reader) Error reading '%s': %s — using defaults.",
+                                  config_file.c_str(), err.what())
+                                  .Data());
     }
     return cfg;
 }
@@ -525,8 +537,9 @@ streaming_hough_conf_reader(std::string config_file)
             return cfg;
         }
         mist::logger::info(TString::Format(
-            "(streaming_hough_conf_reader) Reading streaming-Hough config: %s",
-            config_file.c_str()).Data());
+                               "(streaming_hough_conf_reader) Reading streaming-Hough config: %s",
+                               config_file.c_str())
+                               .Data());
 
         // Hough accumulator geometry
         if (auto v = (*sh_table)["r_min"].value<double>())
@@ -611,41 +624,48 @@ streaming_hough_conf_reader(std::string config_file)
         //  edit actually take effect?" confusion at the start of a run.
         //  One line per logical group, fixed format so it's grep-able.
         mist::logger::info(TString::Format(
-            "(streaming_hough_conf_reader) geom: r_min=%.2f r_max=%.2f r_step=%.2f cell_size=%.2f",
-            cfg.r_min, cfg.r_max, cfg.r_step, cfg.cell_size).Data());
+                               "(streaming_hough_conf_reader) geom: r_min=%.2f r_max=%.2f r_step=%.2f cell_size=%.2f",
+                               cfg.r_min, cfg.r_max, cfg.r_step, cfg.cell_size)
+                               .Data());
         mist::logger::info(TString::Format(
-            "(streaming_hough_conf_reader) thresholds: threshold_fraction=%.3f min_hits_slack=%.3f "
-            "hough_threshold_fraction=%.4f collection_radius=%.2f",
-            cfg.threshold_fraction, cfg.min_hits_slack,
-            cfg.hough_threshold_fraction, cfg.collection_radius).Data());
+                               "(streaming_hough_conf_reader) thresholds: threshold_fraction=%.3f min_hits_slack=%.3f "
+                               "hough_threshold_fraction=%.4f collection_radius=%.2f",
+                               cfg.threshold_fraction, cfg.min_hits_slack,
+                               cfg.hough_threshold_fraction, cfg.collection_radius)
+                               .Data());
         mist::logger::info(TString::Format(
-            "(streaming_hough_conf_reader) peak finder: aggregation_window_cells=%d %s",
-            cfg.aggregation_window_cells,
-            cfg.aggregation_window_cells > 1
-                ? "(SLIDING-WINDOW AGGREGATION ACTIVE)"
-                : "(legacy single-cell)").Data());
+                               "(streaming_hough_conf_reader) peak finder: aggregation_window_cells=%d %s",
+                               cfg.aggregation_window_cells,
+                               cfg.aggregation_window_cells > 1
+                                   ? "(SLIDING-WINDOW AGGREGATION ACTIVE)"
+                                   : "(legacy single-cell)")
+                               .Data());
         mist::logger::info(TString::Format(
-            "(streaming_hough_conf_reader) lut padding: centre_padding_mm=%.2f %s",
-            cfg.centre_padding_mm,
-            cfg.centre_padding_mm < 0.f
-                ? "(default = r_max, full coverage)"
-                : "(tight pad — accumulator shrunk)").Data());
+                               "(streaming_hough_conf_reader) lut padding: centre_padding_mm=%.2f %s",
+                               cfg.centre_padding_mm,
+                               cfg.centre_padding_mm < 0.f
+                                   ? "(default = r_max, full coverage)"
+                                   : "(tight pad — accumulator shrunk)")
+                               .Data());
         mist::logger::info(TString::Format(
-            "(streaming_hough_conf_reader) fit_circle init: x=%.2f y=%.2f r=%.2f; centre_xy_half_range=%.2f",
-            cfg.fit_circle_init_x, cfg.fit_circle_init_y, cfg.fit_circle_init_r,
-            cfg.centre_xy_half_range_mm).Data());
+                               "(streaming_hough_conf_reader) fit_circle init: x=%.2f y=%.2f r=%.2f; centre_xy_half_range=%.2f",
+                               cfg.fit_circle_init_x, cfg.fit_circle_init_y, cfg.fit_circle_init_r,
+                               cfg.centre_xy_half_range_mm)
+                               .Data());
     }
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format(
-            "(streaming_hough_conf_reader) TOML parse error in '%s': %s — using defaults.",
-            config_file.c_str(), std::string(err.description()).c_str()).Data());
+                                  "(streaming_hough_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                  config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format(
-            "(streaming_hough_conf_reader) Error reading '%s': %s — using defaults.",
-            config_file.c_str(), err.what()).Data());
+                                  "(streaming_hough_conf_reader) Error reading '%s': %s — using defaults.",
+                                  config_file.c_str(), err.what())
+                                  .Data());
     }
     return cfg;
 }
@@ -668,8 +688,9 @@ recodata_conf_reader(std::string config_file)
     {
         toml::table tbl = toml::parse_file(config_file);
         mist::logger::info(TString::Format(
-            "(recodata_conf_reader) Reading recodata config: %s",
-            config_file.c_str()).Data());
+                               "(recodata_conf_reader) Reading recodata config: %s",
+                               config_file.c_str())
+                               .Data());
 
         if (auto *r_table = tbl["recodata"].as_table())
         {
@@ -722,18 +743,20 @@ recodata_conf_reader(std::string config_file)
         // Echo loaded values — same diagnostic pattern as
         // streaming_hough_conf_reader.  Grep-friendly fixed format.
         mist::logger::info(TString::Format(
-            "(recodata_conf_reader) coverage map: nphi=%d nR=%d  R=[%.2f, %.2f] mm  "
-            "channel_half_width=%.2f mm",
-            cfg.n_phi_bins_coverage, cfg.n_r_bins_coverage,
-            cfg.r_min_coverage_mm, cfg.r_max_coverage_mm,
-            cfg.channel_half_width_mm).Data());
+                               "(recodata_conf_reader) coverage map: nphi=%d nR=%d  R=[%.2f, %.2f] mm  "
+                               "channel_half_width=%.2f mm",
+                               cfg.n_phi_bins_coverage, cfg.n_r_bins_coverage,
+                               cfg.r_min_coverage_mm, cfg.r_max_coverage_mm,
+                               cfg.channel_half_width_mm)
+                               .Data());
         mist::logger::info(TString::Format(
-            "(recodata_conf_reader) nominal centre: (%.2f, %.2f) mm  "
-            "delta_r_for_coverage=%.2f mm  min_hits_per_ring=%d  "
-            "min_channel_r_for_coverage=%.2f mm",
-            cfg.nominal_centre_x_mm, cfg.nominal_centre_y_mm,
-            cfg.delta_r_for_coverage_mm, cfg.min_hits_per_ring,
-            cfg.min_channel_r_for_coverage_mm).Data());
+                               "(recodata_conf_reader) nominal centre: (%.2f, %.2f) mm  "
+                               "delta_r_for_coverage=%.2f mm  min_hits_per_ring=%d  "
+                               "min_channel_r_for_coverage=%.2f mm",
+                               cfg.nominal_centre_x_mm, cfg.nominal_centre_y_mm,
+                               cfg.delta_r_for_coverage_mm, cfg.min_hits_per_ring,
+                               cfg.min_channel_r_for_coverage_mm)
+                               .Data());
         if (cfg.skip_loo_residuals)
             mist::logger::info(
                 "(recodata_conf_reader) skip_loo_residuals=true — per-hit "
@@ -743,14 +766,16 @@ recodata_conf_reader(std::string config_file)
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format(
-            "(recodata_conf_reader) TOML parse error in '%s': %s — using defaults.",
-            config_file.c_str(), std::string(err.description()).c_str()).Data());
+                                  "(recodata_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                  config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format(
-            "(recodata_conf_reader) Error reading '%s': %s — using defaults.",
-            config_file.c_str(), err.what()).Data());
+                                  "(recodata_conf_reader) Error reading '%s': %s — using defaults.",
+                                  config_file.c_str(), err.what())
+                                  .Data());
     }
     return cfg;
 }

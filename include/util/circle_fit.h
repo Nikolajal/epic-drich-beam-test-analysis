@@ -37,9 +37,9 @@ using CircleFitResults = std::array<std::array<float, 2>, 3>;
  *       function for new physics analyses.
  */
 inline CircleFitResults fit_circle(std::vector<std::array<float, 2>> points,
-                                     std::array<float, 3> initial_values,
-                                     bool fix_XY = true,
-                                     std::vector<int> exclude_points = {})
+                                   std::array<float, 3> initial_values,
+                                   bool fix_XY = true,
+                                   std::vector<int> exclude_points = {})
 {
     // Value-initialised so the result is zeroed even if we hit the
     // failure path below — the caller can also test result[2][0] for
@@ -85,7 +85,11 @@ inline CircleFitResults fit_circle(std::vector<std::array<float, 2>> points,
         // Fit failed — return a NaN-tagged sentinel so the caller cannot
         // silently propagate garbage values.  Test e.g. std::isnan(result[2][0]).
         const float nan = std::numeric_limits<float>::quiet_NaN();
-        for (auto &row : result) { row[0] = nan; row[1] = nan; }
+        for (auto &row : result)
+        {
+            row[0] = nan;
+            row[1] = nan;
+        }
         return result;
     }
     const ROOT::Fit::FitResult &fit_result = fitter.Result();

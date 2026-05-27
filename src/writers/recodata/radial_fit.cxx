@@ -13,8 +13,8 @@
 
 #include "writers/recodata/radial_fit.h"
 
-#include <algorithm>   // std::clamp
-#include <memory>      // std::unique_ptr
+#include <algorithm> // std::clamp
+#include <memory>    // std::unique_ptr
 #include <string>
 
 #include "TCanvas.h"
@@ -25,7 +25,8 @@
 
 #include "mist/logger/logger.h"
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 void fit_radial_distribution(TH1F *h,
                              TH1F *h_R_count,
@@ -35,10 +36,12 @@ void fit_radial_distribution(TH1F *h,
                              const std::string &run_name,
                              std::vector<RadialFitResult> &results)
 {
-    if (!h || h->GetEntries() < 100) {
+    if (!h || h->GetEntries() < 100)
+    {
         mist::logger::warning(TString::Format(
-            "(recodata_writer) %s: too few entries for radial fit (%lld); skipping.",
-            tag.c_str(), (long long)(h ? h->GetEntries() : 0)).Data());
+                                  "(recodata_writer) %s: too few entries for radial fit (%lld); skipping.",
+                                  tag.c_str(), (long long)(h ? h->GetEntries() : 0))
+                                  .Data());
         return;
     }
     //  Normalise the hist to PER-RING so amplitude & integral
@@ -55,16 +58,17 @@ void fit_radial_distribution(TH1F *h,
     //  across all rings" — graceful fallback for hists we
     //  forgot to wire a count hist to.
     const long n_rings = h_R_count
-        ? static_cast<long>(h_R_count->GetEntries())
-        : 0;
-    if (n_rings > 0) {
+                             ? static_cast<long>(h_R_count->GetEntries())
+                             : 0;
+    if (n_rings > 0)
+    {
         h->Scale(1.0 / static_cast<double>(n_rings));
         h->GetYaxis()->SetTitle("photons / ring / bin");
     }
     //  Acceptance band — used for the peak seed search (to avoid
     //  eff(R) corner blow-ups) and as the wide envelope.
-    const float r_band_lo = cfg.r_min_coverage_mm + 5.f;  // ≈ 30 mm
-    const float r_band_hi = cfg.r_max_coverage_mm - 5.f;  // ≈ 120 mm
+    const float r_band_lo = cfg.r_min_coverage_mm + 5.f; // ≈ 30 mm
+    const float r_band_hi = cfg.r_max_coverage_mm - 5.f; // ≈ 120 mm
 
     //  Peak seed: search ONLY the interior of the hist, well
     //  inside the eff(R) acceptance band.  After eff division
@@ -75,22 +79,27 @@ void fit_radial_distribution(TH1F *h,
     //  of TH1::Smooth (3-bin running average) to suppress
     //  single-bin spikes.
     float peak_seed = 0.5f * (r_band_lo + r_band_hi);
-    float amp_seed  = h->GetMaximum();
+    float amp_seed = h->GetMaximum();
     {
-        std::unique_ptr<TH1F> smoothed(static_cast<TH1F*>(
+        std::unique_ptr<TH1F> smoothed(static_cast<TH1F *>(
             h->Clone((tag + "_seed_smoothed").c_str())));
         smoothed->SetDirectory(nullptr);
         smoothed->Smooth(1);
         const int interior_lo = smoothed->FindBin(r_band_lo + 10.f);
         const int interior_hi = smoothed->FindBin(r_band_hi - 10.f);
-        int   best_bin = interior_lo;
+        int best_bin = interior_lo;
         double best_val = -1.;
-        for (int ib = interior_lo; ib <= interior_hi; ++ib) {
+        for (int ib = interior_lo; ib <= interior_hi; ++ib)
+        {
             const double v = smoothed->GetBinContent(ib);
-            if (v > best_val) { best_val = v; best_bin = ib; }
+            if (v > best_val)
+            {
+                best_val = v;
+                best_bin = ib;
+            }
         }
         peak_seed = smoothed->GetBinCenter(best_bin);
-        amp_seed  = h->GetBinContent(best_bin);   // raw amplitude, not smoothed
+        amp_seed = h->GetBinContent(best_bin); // raw amplitude, not smoothed
     }
     const float sigma_seed = std::clamp(
         static_cast<float>(h->GetRMS()) * 0.4f, 1.0f, 4.0f);
@@ -119,15 +128,17 @@ void fit_radial_distribution(TH1F *h,
     TF1 bg_prefit((tag + "_bg_prefit").c_str(),
                   "pol3", fit_lo, fit_hi);
     {
-        std::unique_ptr<TH1F> sideband(static_cast<TH1F*>(
+        std::unique_ptr<TH1F> sideband(static_cast<TH1F *>(
             h->Clone((tag + "_sideband").c_str())));
         sideband->SetDirectory(nullptr);
-        for (int ib = 1; ib <= sideband->GetNbinsX(); ++ib) {
+        for (int ib = 1; ib <= sideband->GetNbinsX(); ++ib)
+        {
             const double bc = sideband->GetBinCenter(ib);
             const bool in_signal =
                 (bc > peak_seed - 4.f * sigma_seed) &&
                 (bc < peak_seed + 4.f * sigma_seed);
-            if (bc < fit_lo || bc > fit_hi || in_signal) {
+            if (bc < fit_lo || bc > fit_hi || in_signal)
+            {
                 sideband->SetBinContent(ib, 0.);
                 sideband->SetBinError(ib, 1e10);
             }
@@ -169,12 +180,13 @@ void fit_radial_distribution(TH1F *h,
     const char *parnames[7] = {
         "peak_amp", "peak_mu", "peak_sigma",
         "bg_c0", "bg_c1", "bg_c2", "bg_c3"};
-    for (int i = 0; i < 7; ++i) cb_fit.SetParName(i, parnames[i]);
+    for (int i = 0; i < 7; ++i)
+        cb_fit.SetParName(i, parnames[i]);
     cb_fit.SetParameters(amp_seed, peak_seed, sigma_seed,
                          bg_prefit.GetParameter(0), bg_prefit.GetParameter(1),
                          bg_prefit.GetParameter(2), bg_prefit.GetParameter(3));
     cb_fit.SetParLimits(0, 0., 1e9);
-    cb_fit.SetParLimits(2, 1.5, 5.0);   // peak σ physically bounded
+    cb_fit.SetParLimits(2, 1.5, 5.0); // peak σ physically bounded
 
     //  Two-stage strategy (no IMPROVE) — same as before.
     //  Stage 1: freeze background to prefit → minimiser finds the
@@ -185,7 +197,8 @@ void fit_radial_distribution(TH1F *h,
     for (int i = 3; i < 7; ++i)
         cb_fit.FixParameter(i, bg_prefit.GetParameter(i - 3));
     h->Fit(&cb_fit, "RQ");
-    for (int i = 3; i < 7; ++i) cb_fit.ReleaseParameter(i);
+    for (int i = 3; i < 7; ++i)
+        cb_fit.ReleaseParameter(i);
     h->Fit(&cb_fit, "RQS");
     //  cb_fit gets auto-attached to h's function list by Fit()
     //  and ships with the hist on h->Write — no separate
@@ -209,15 +222,15 @@ void fit_radial_distribution(TH1F *h,
     //  TF1::Integral's "amplitude × mm" to "amplitude × bins"
     //  = Σ bin contents = photons per ring.
     const double total_int = cb_fit.Integral(fit_lo, fit_hi);
-    const double bg_int    = bg_only.Integral(fit_lo, fit_hi);
+    const double bg_int = bg_only.Integral(fit_lo, fit_hi);
     const double bin_width = h->GetXaxis()->GetBinWidth(1);
-    const double n_gamma   = (total_int - bg_int) / bin_width;
+    const double n_gamma = (total_int - bg_int) / bin_width;
     //  Keep n_gamma_total (= total across run) for legacy log
     //  output: multiply back by N_rings.  Useful for spotting
     //  high-stats anomalies independent of ring count.
     const double n_gamma_total = (n_rings > 0)
-        ? n_gamma * static_cast<double>(n_rings)
-        : n_gamma;
+                                     ? n_gamma * static_cast<double>(n_rings)
+                                     : n_gamma;
 
     //  ── Canvas with hist + fit + values, written as TWO PDFs ──
     //  Same pattern as `macros/examples/photon_number_new.cpp`:
@@ -233,16 +246,16 @@ void fit_radial_distribution(TH1F *h,
                   ("Radial fit: " + tag).c_str(),
                   900, 650);
         c.SetGrid();
-        h->Draw("E1");                  // data + auto fit overlay
+        h->Draw("E1"); // data + auto fit overlay
         bg_only.SetLineColor(kGray + 2);
         bg_only.SetLineStyle(2);
-        bg_only.DrawCopy("same");       // pol3 background dashed
+        bg_only.DrawCopy("same"); // pol3 background dashed
 
         //  Fit-parameter table on the canvas.  Top group: headline
         //  physics (N_γ, χ²/ndf).  Middle: 3-param Gaussian (amp,
         //  μ, σ).  Bottom: 4-param pol3 background (c0..c3).
         const double chi2 = cb_fit.GetChisquare();
-        const int    ndf  = cb_fit.GetNDF();
+        const int ndf = cb_fit.GetNDF();
         const double chi2_per_ndf = (ndf > 0) ? chi2 / ndf : 0.0;
 
         //  NDC corners: upper-right corner (x: 0.65–0.9, y: 0.5–0.9).
@@ -254,15 +267,19 @@ void fit_radial_distribution(TH1F *h,
         pave.AddText(TString::Format("N_{#gamma} / ring = %.2f", n_gamma).Data());
         pave.AddText(TString::Format("over %ld rings", n_rings).Data());
         pave.AddText(TString::Format("#chi^{2}/ndf = %.2f / %d = %.2f",
-                                      chi2, ndf, chi2_per_ndf).Data());
+                                     chi2, ndf, chi2_per_ndf)
+                         .Data());
         pave.AddText(" ");
         pave.AddText("Gaussian peak:");
         pave.AddText(TString::Format("  amp = %.3g #pm %.2g",
-            cb_fit.GetParameter(0), cb_fit.GetParError(0)).Data());
+                                     cb_fit.GetParameter(0), cb_fit.GetParError(0))
+                         .Data());
         pave.AddText(TString::Format("  #mu = %.3f #pm %.3f mm",
-            cb_fit.GetParameter(1), cb_fit.GetParError(1)).Data());
+                                     cb_fit.GetParameter(1), cb_fit.GetParError(1))
+                         .Data());
         pave.AddText(TString::Format("  #sigma = %.3f #pm %.3f mm",
-            cb_fit.GetParameter(2), cb_fit.GetParError(2)).Data());
+                                     cb_fit.GetParameter(2), cb_fit.GetParError(2))
+                         .Data());
         pave.AddText(" ");
         pave.AddText("pol3 background:");
         pave.AddText(TString::Format("  c_{0} = %.3g", cb_fit.GetParameter(3)).Data());
@@ -275,39 +292,42 @@ void fit_radial_distribution(TH1F *h,
         c.SetLogy(0);
         c.Update();
         const std::string pdf_lin = data_repository + "/" + run_name +
-                                     "/" + tag + ".pdf";
+                                    "/" + tag + ".pdf";
         c.SaveAs(pdf_lin.c_str());
 
         //  Log Y — same canvas, just flip the Y scale.
         c.SetLogy(1);
         c.Update();
         const std::string pdf_log = data_repository + "/" + run_name +
-                                     "/" + tag + "_logy.pdf";
+                                    "/" + tag + "_logy.pdf";
         c.SaveAs(pdf_log.c_str());
     }
 
     mist::logger::info(TString::Format(
-        "(recodata_writer) %s: N_gamma/ring=%.2f  (total=%.0f over %ld rings)  "
-        "chi2/ndf=%.2f/%d",
-        tag.c_str(), n_gamma, n_gamma_total, n_rings,
-        cb_fit.GetChisquare(), cb_fit.GetNDF()).Data());
+                           "(recodata_writer) %s: N_gamma/ring=%.2f  (total=%.0f over %ld rings)  "
+                           "chi2/ndf=%.2f/%d",
+                           tag.c_str(), n_gamma, n_gamma_total, n_rings,
+                           cb_fit.GetChisquare(), cb_fit.GetNDF())
+                           .Data());
     mist::logger::info(TString::Format(
-        "(recodata_writer) %s   Gauss: amp=%.3g+/-%.2g  mu=%.3f+/-%.3f mm  "
-        "sigma=%.3f+/-%.3f mm",
-        tag.c_str(),
-        cb_fit.GetParameter(0), cb_fit.GetParError(0),
-        cb_fit.GetParameter(1), cb_fit.GetParError(1),
-        cb_fit.GetParameter(2), cb_fit.GetParError(2)).Data());
+                           "(recodata_writer) %s   Gauss: amp=%.3g+/-%.2g  mu=%.3f+/-%.3f mm  "
+                           "sigma=%.3f+/-%.3f mm",
+                           tag.c_str(),
+                           cb_fit.GetParameter(0), cb_fit.GetParError(0),
+                           cb_fit.GetParameter(1), cb_fit.GetParError(1),
+                           cb_fit.GetParameter(2), cb_fit.GetParError(2))
+                           .Data());
     mist::logger::info(TString::Format(
-        "(recodata_writer) %s   pol3 bg: c0=%.3g  c1=%.3g  c2=%.3g  c3=%.3g",
-        tag.c_str(),
-        cb_fit.GetParameter(3), cb_fit.GetParameter(4),
-        cb_fit.GetParameter(5), cb_fit.GetParameter(6)).Data());
+                           "(recodata_writer) %s   pol3 bg: c0=%.3g  c1=%.3g  c2=%.3g  c3=%.3g",
+                           tag.c_str(),
+                           cb_fit.GetParameter(3), cb_fit.GetParameter(4),
+                           cb_fit.GetParameter(5), cb_fit.GetParameter(6))
+                           .Data());
 
     //  Push into the summary collector.
     results.push_back({tag, n_gamma,
-        cb_fit.GetParameter(1), cb_fit.GetParError(1),
-        cb_fit.GetParameter(2), cb_fit.GetParError(2)});
+                       cb_fit.GetParameter(1), cb_fit.GetParError(1),
+                       cb_fit.GetParameter(2), cb_fit.GetParError(2)});
 }
 
 } // namespace btana::recodata

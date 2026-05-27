@@ -32,11 +32,11 @@ struct AlcorRecotrackdataStruct
     // indeterminate float reads.  Callers that need a real value overwrite
     // these explicitly; downstream consumers can test `std::isnan(...)` to
     // detect uninitialised entries.
-    float det_plane_x     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated X coordinate at the detector plane [mm].
-    float det_plane_y     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated Y coordinate at the detector plane [mm].
+    float det_plane_x = std::numeric_limits<float>::quiet_NaN();     ///< Extrapolated X coordinate at the detector plane [mm].
+    float det_plane_y = std::numeric_limits<float>::quiet_NaN();     ///< Extrapolated Y coordinate at the detector plane [mm].
     float traj_angcoeff_x = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along X (dx/dz).
     float traj_angcoeff_y = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along Y (dy/dz).
-    float chi2ndof        = std::numeric_limits<float>::quiet_NaN(); ///< Fit quality: χ²/NDF.
+    float chi2ndof = std::numeric_limits<float>::quiet_NaN();        ///< Fit quality: χ²/NDF.
 
     AlcorRecotrackdataStruct() = default;
 
