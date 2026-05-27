@@ -1,38 +1,36 @@
 # .github/workflows/clang-format.yml
 #
-# Format-only check.  Runs on every push to main/dev and every PR.
-# Verifies that all C++ sources under `include/`, `src/`, `macros/`
-# would NOT be changed by `clang-format --style=file`.
+# Format guard with two behaviours, depending on event:
 #
-# The style is defined in `.clang-format` at the repo root (LLVM base
-# style, 4-space indent, Allman braces, no column limit).  Naming /
-# structural conventions that clang-format CAN'T enforce live in
-# `docs/coding_conventions.md` (snake_case, PascalCase, etc.) and
-# need human review.
+#   ── pull_request (the primary path) ─────────────────────────────────
+#   Apply `clang-format -i` to every C++ source under include/, src/,
+#   macros/.  If the working tree is dirty after that:
+#     - same-repo PR → commit the fix-up and push it to the PR branch
+#                      (a fresh "style: apply clang-format" commit, not
+#                      a force-push amend — preserves history of WHO
+#                      asked the bot to fix the formatting).  This run
+#                      exits non-zero so the PR shows a red mark and
+#                      the new commit's CI run becomes the green one
+#                      the merge button looks at.
+#     - fork PR        → cannot push to the fork; fail with the diff
+#                      so the author runs the fix locally.
 #
-# ── Failure mode ────────────────────────────────────────────────────
-# If any file would be reformatted, the job:
-#   1. Prints the diff that clang-format wants to apply (so the author
-#      sees exactly what to fix).
-#   2. Lists the offending file paths in the GitHub-Actions summary.
-#   3. Exits non-zero, blocking the PR.
+#   ── push to main/dev (defence-in-depth only) ────────────────────────
+#   Read-only dry-run check, fail on diff.  In practice main/dev are
+#   reached only via merged PRs so this should never trip — kept as a
+#   safety net for direct pushes / merges that bypass the PR review.
 #
-# ── Fix locally ─────────────────────────────────────────────────────
-# Install clang-format (Homebrew: `brew install clang-format`,
-# Ubuntu: `sudo apt-get install clang-format`), then from the repo root:
+# Why PR-only auto-fix and not on every push:  push events on main/dev
+# are too late (the merge has happened or is being force-pushed past
+# review).  PR is the right cut-off — that's where formatting MUST be
+# clean before merge.
 #
-#     find include src macros -type f \
-#         \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
-#         -not -path '*/build/*' -not -path '*/_deps/*' \
-#         -print0 | xargs -0 clang-format -i --style=file
-#
-# ── clang-format version ────────────────────────────────────────────
-# We pin to the Ubuntu-noble default (clang-format-18) on the CI side.
-# The .clang-format config is conservative (LLVM base, no advanced
-# options that drifted between versions), so dev clang-format 18-22
-# all produce identical output for this codebase — verified during
-# the project-wide format pass on 2026-05-27.  If you bump the pinned
-# version, run the full format pass locally first and commit the diff.
+# ── clang-format version pin ────────────────────────────────────────
+# Ubuntu noble's apt clang-format-18 produces output identical to
+# clang-format-22 (Homebrew) for this codebase under our `.clang-format`
+# config — verified during the 2026-05-27 project-wide format pass.
+# If a future bump drifts, pin via the LLVM apt repo and re-run the
+# full format pass locally before pushing.
 
 name: clang-format
 
@@ -48,13 +46,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  clang-format:
-    name: Verify C++ formatting
+  format:
+    name: Verify / fix C++ formatting
     runs-on: ubuntu-latest
+    #  contents: write — required so the workflow can push the
+    #  auto-fix commit back to the PR branch.  No effect on push
+    #  events (we don't push fixes to main/dev).
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          #  For PRs, check out the PR's head ref so we can commit + push
+          #  back to it.  `fetch-depth: 0` is overkill for formatting but
+          #  the `gh pr` helpers below want a full history.
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Install clang-format
         run: |
@@ -62,45 +73,76 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang-format
           clang-format --version
 
-      - name: Check formatting (dry-run, fail on diff)
-        id: format-check
+      - name: Apply clang-format
+        id: apply
         run: |
           set -e
-          # Gather all C++ sources under include/, src/, macros/ — same
-          # set the README + local fix-up command target.
           mapfile -d '' files < <(find include src macros -type f \
               \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
               -not -path '*/build/*' -not -path '*/_deps/*' -print0)
           echo "Found ${#files[@]} source files to check."
 
-          # First pass: --dry-run --Werror.  If clean, exit 0 immediately.
-          if clang-format --dry-run --Werror --style=file "${files[@]}"; then
+          #  In-place format pass.  Generated files (e.g. macros/lib_loader.h)
+          #  carry a `// clang-format off` guard at line 1 so they're skipped
+          #  by clang-format itself even if they slip through this find.
+          clang-format -i --style=file "${files[@]}"
+
+          if git diff --quiet; then
+              echo "result=clean" >> "$GITHUB_OUTPUT"
               echo "All ${#files[@]} files match the project clang-format style. ✓"
               exit 0
           fi
 
-          # Second pass: produce a unified diff so the author can see
-          # exactly what changed.  We re-run clang-format on each
-          # offending file and diff against the original.
+          echo "result=dirty" >> "$GITHUB_OUTPUT"
           echo ""
-          echo "── clang-format diff (paste of all changes that would be applied) ──"
+          echo "── clang-format produced changes ──"
+          git --no-pager diff --stat
           echo ""
-          offenders=()
-          for f in "${files[@]}"; do
-              if ! diff -u --label "a/$f" --label "b/$f" "$f" <(clang-format --style=file "$f"); then
-                  offenders+=("$f")
-              fi
-          done
+          git --no-pager diff | head -300
 
-          # Compact list at the bottom for quick scanning + GH summary.
+      - name: Auto-fix (same-repo PR only)
+        if: |
+          steps.apply.outputs.result == 'dirty' &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "style: apply clang-format" \
+                     -m "Auto-applied by .github/workflows/clang-format.yml on PR #${{ github.event.pull_request.number }}."
+          git push origin HEAD:"${{ github.event.pull_request.head.ref }}"
+
+          #  Surface what happened in the GH Actions summary so the PR
+          #  author isn't left wondering why a bot-authored commit appeared.
           {
-              echo "### Files needing reformatting (${#offenders[@]})"
+              echo "## clang-format auto-fix applied"
               echo ""
-              echo '```'
-              printf '%s\n' "${offenders[@]}"
-              echo '```'
+              echo "Pushed a 'style: apply clang-format' commit to "
+              echo "\`${{ github.event.pull_request.head.ref }}\`."
               echo ""
-              echo "Fix locally:"
+              echo "The new commit will re-trigger CI; that run is the one"
+              echo "to watch for a green check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          #  Exit non-zero so this run is red — the new commit's run is
+          #  what merges off of.
+          exit 1
+
+      - name: Report (fork PR or push event)
+        if: |
+          steps.apply.outputs.result == 'dirty' &&
+          (github.event_name == 'push' ||
+           (github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name != github.repository))
+        run: |
+          {
+              echo "## clang-format check failed"
+              echo ""
+              echo "The auto-fix path is only enabled for same-repo PRs."
+              echo "Run locally and amend / push:"
+              echo ""
               echo '```bash'
               echo "find include src macros -type f \\"
               echo "    \\( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \\) \\"
@@ -108,5 +150,4 @@ jobs:
               echo "    -print0 | xargs -0 clang-format -i --style=file"
               echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
           exit 1

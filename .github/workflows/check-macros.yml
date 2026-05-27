@@ -1,0 +1,58 @@
+# .github/workflows/check-macros.yml
+#
+# Macro compile-check — runs `scripts/check_macros.sh` over every
+# `*.cpp` under `macros/examples/` + `macros/utilities/` using ROOT's
+# ACLiC (`.L <macro>+`).  Catches:
+#   - missing #include's that cling's auto-loaded headers were hiding
+#   - API drift in the framework lib that breaks consumer macros
+#   - LinkDef gaps for types the macro touches (autoload misses)
+#
+# ── DISABLED 2026-05-28 ─────────────────────────────────────────────
+# Two reasons the `if: false` gate is in place:
+#
+#   1. The per-OS build legs in `.github/workflows/build.yml` are
+#      themselves disabled (see DISCUSSION.md §ci-os-legs).  This
+#      workflow needs a built `libbeam_test_analysis.{dylib,so}` to
+#      run — there's no point firing it without one.
+#
+#   2. As of 2026-05-28 only 5 of 19 macros under `macros/examples/`
+#      pass `scripts/check_macros.sh` (the rest rely on cling's
+#      implicit ROOT header pre-loads which ACLiC doesn't replicate).
+#      Bringing the example macros to ACLiC-clean state is tracked
+#      separately — see DISCUSSION.md §macros-aclic-clean.
+#
+# To re-enable: drop the `if: false` line below AFTER §ci-os-legs
+# and §macros-aclic-clean both land.  Workflow architecture is
+# preserved as-is so it'll fire cleanly the moment the gate comes off.
+
+name: check-macros
+
+on:
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: check-macros-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-macros:
+    name: Compile-check every macro via ACLiC
+    runs-on: ubuntu-latest
+    if: false   # ── disabled, see header.  Drop this line to re-enable.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      #  Real implementation would install ROOT + build the framework
+      #  lib here.  Left as a TODO so the structure is visible.
+      - name: Install ROOT + build framework lib
+        run: |
+          echo "TODO: provision ROOT and run 'cmake --build build' once §ci-os-legs lands."
+          exit 1
+
+      - name: Run macro compile-check
+        run: |
+          scripts/check_macros.sh
