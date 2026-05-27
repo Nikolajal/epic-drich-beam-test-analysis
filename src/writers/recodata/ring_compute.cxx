@@ -12,6 +12,7 @@
  */
 
 #include "writers/recodata/ring_compute.h"
+#include "alcor_data.h"
 
 #include <array>
 #include <cmath>

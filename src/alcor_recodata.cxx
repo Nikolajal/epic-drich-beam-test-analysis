@@ -1,4 +1,6 @@
 #include "alcor_recodata.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"
 
 // =============================================================================
 // Trigger search
@@ -291,4 +293,9 @@ void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)
         if (n_rings_found >= 2)
             break;
     }
+}
+//  Out-of-line: uses HitmaskRingTagFirst / Second from alcor_data.h.
+bool AlcorRecodata::is_ring_tagged(int i)
+{
+    return check_hit_mask(i, encode_bits({HitmaskRingTagFirst, HitmaskRingTagSecond}));
 }

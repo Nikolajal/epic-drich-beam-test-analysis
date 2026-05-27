@@ -31,4 +31,11 @@
 #include "Rtypes.h"
 R__ADD_INCLUDE_PATH(@BEAM_LOADER_INCLUDE@)
 
+//  Third-party dependencies fetched at build time (mist + toml++) live
+//  in `build/_deps/.../include` during dev work; for the install
+//  flavour they're already inside the install-prefix include tree.
+//  The block below is populated by CMake (one R__ADD_INCLUDE_PATH per
+//  fetched dep on the dev side; empty on the install side).
+@BEAM_LOADER_DEP_INCLUDES@
+
 #pragma cling load("@BEAM_LOADER_LIB@")

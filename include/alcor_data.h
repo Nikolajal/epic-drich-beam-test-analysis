@@ -91,9 +91,12 @@ enum AlcorHitStruct
  * @enum HitMask
  * @brief Bit positions used inside @c AlcorDataStruct::HitMask.
  *
- * Each enumerator corresponds to a single bit index.
+ * Each enumerator corresponds to a single bit index.  Explicit
+ * underlying type `unsigned int` so the enum is forward-declarable
+ * (`enum HitMask : unsigned int;`) in headers that only need it as a
+ * parameter type, without pulling in this whole header.
  */
-enum HitMask
+enum HitMask : unsigned int
 {
     HitmaskStreamingRingTrigger = 1,
     HitmaskRingTagFirst = 2,

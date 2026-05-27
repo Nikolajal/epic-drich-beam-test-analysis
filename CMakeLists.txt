@@ -175,6 +175,12 @@ else()
 endif()
 set(BEAM_LOADER_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(BEAM_LOADER_LIB     "${CMAKE_CURRENT_BINARY_DIR}/libbeam_test_analysis${DYNLIB_EXT}")
+#  Dev-mode also needs the FetchContent'd dependency includes (mist,
+#  toml++) — they live under `build/_deps/*/include` and aren't
+#  reachable through the source-tree include path.
+set(BEAM_LOADER_DEP_INCLUDES
+"R__ADD_INCLUDE_PATH(${mist_SOURCE_DIR}/include)
+R__ADD_INCLUDE_PATH(${tomlplusplus_SOURCE_DIR}/include)")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
     "${CMAKE_CURRENT_SOURCE_DIR}/macros/lib_loader.h"
@@ -257,6 +263,10 @@ install(FILES
 #  (which lives in `macros/lib_loader.h`).
 set(BEAM_LOADER_INCLUDE "${CMAKE_INSTALL_PREFIX}/include")
 set(BEAM_LOADER_LIB     "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
+#  Install-mode: deps already live under the install prefix (mist is
+#  installed there alongside this project; toml++ is header-only and
+#  bundled).  Empty string → template substitutes nothing.
+set(BEAM_LOADER_DEP_INCLUDES "")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"

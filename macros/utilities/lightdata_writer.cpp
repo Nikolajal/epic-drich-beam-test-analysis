@@ -1,4 +1,5 @@
 #include "writers/lightdata.h"
+#include <mist/logger/logger.h>
 #include "util/config_reader.h"
 #include "util/conf_path.h"
 #include "utility.h"

@@ -1,4 +1,6 @@
 #include "utility.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"
 #include "TH1.h"
 #include "TH2.h"
 #include "TF1.h"

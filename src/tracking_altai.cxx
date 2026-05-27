@@ -1,4 +1,5 @@
 #include "tracking_altai.h"
+#include <mist/logger/logger.h>
 
 std::vector<TrackingAltaiStruct> TrackingAltai::get_event_tracks(uint32_t event_id) const
 {
