@@ -57,16 +57,17 @@ int main(int argc, char **argv)
         CLI11_PARSE(app, argc, argv);
 
         //  Resolve any unset --xxx-conf option through util::conf_path,
-        //  which redirects to conf/QA/<basename> when --QA is set and
-        //  the override exists.
+        //  which redirects to conf/<mode>/<basename> when the override
+        //  exists.  Subdir-string form (the bool form is `[[deprecated]]`).
+        const std::string mode = qa_mode ? std::string{"QA"} : std::string{};
         if (p_trigger->count() == 0)
-            trigger_config_file = util::conf_path("trigger_conf.toml", qa_mode);
+            trigger_config_file = util::conf_path("trigger_conf.toml", mode);
         if (p_framer->count() == 0)
-            framer_config_file = util::conf_path("framer_conf.toml", qa_mode);
+            framer_config_file = util::conf_path("framer_conf.toml", mode);
         if (p_recodata->count() == 0)
-            recodata_config_file = util::conf_path("recodata.toml", qa_mode);
+            recodata_config_file = util::conf_path("recodata.toml", mode);
         if (p_streaming->count() == 0)
-            streaming_config_file = util::conf_path("streaming.toml", qa_mode);
+            streaming_config_file = util::conf_path("streaming.toml", mode);
         if (qa_mode)
             mist::logger::info(TString::Format(
                                    "(recodata_writer) --QA mode: trigger-conf=%s  framer-conf=%s  "

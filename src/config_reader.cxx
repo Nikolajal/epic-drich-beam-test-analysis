@@ -340,6 +340,198 @@ QaConfigStruct qa_conf_reader(std::string config_file)
     return cfg;
 }
 
+// --- CalibConfigStruct --------------------------------------------------
+
+CalibConfigStruct calib_conf_reader(std::string config_file)
+{
+    CalibConfigStruct cfg;
+    try
+    {
+        auto tbl = toml_parse_with_cutoff(config_file);
+        auto *t = tbl["calibration"].as_table();
+        if (!t)
+        {
+            mist::logger::warning(TString::Format(
+                                      "(calib_conf_reader) No [calibration] table in '%s' — using defaults "
+                                      "(anchor = device=%d chip=%d eo_channel=%d).",
+                                      config_file.c_str(),
+                                      cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                                      .Data());
+            return cfg;
+        }
+        mist::logger::info(TString::Format("(calib_conf_reader) Reading calibration config: %s",
+                                           config_file.c_str())
+                               .Data());
+
+        if (auto v = (*t)["anchor_device"].value<int64_t>())
+            cfg.anchor_device = static_cast<int>(*v);
+        if (auto v = (*t)["anchor_chip"].value<int64_t>())
+            cfg.anchor_chip = static_cast<int>(*v);
+        if (auto v = (*t)["anchor_eo_channel"].value<int64_t>())
+            cfg.anchor_eo_channel = static_cast<int>(*v);
+        if (auto v = (*t)["min_hits_per_tdc"].value<int64_t>())
+            cfg.min_hits_per_tdc = static_cast<int>(*v);
+        if (auto v = (*t)["min_hits_per_tdc_per_spill"].value<int64_t>())
+            cfg.min_hits_per_tdc_per_spill = static_cast<int>(*v);
+        if (auto v = (*t)["fine_min_valid"].value<int64_t>())
+            cfg.fine_min_valid = static_cast<int>(*v);
+        if (auto v = (*t)["fine_max_valid"].value<int64_t>())
+            cfg.fine_max_valid = static_cast<int>(*v);
+        if (auto v = (*t)["slope_fit_min_fine_span"].value<int64_t>())
+            cfg.slope_fit_min_fine_span = static_cast<int>(*v);
+        if (auto v = (*t)["default_slope_cc_per_bin"].value<double>())
+            cfg.default_slope_cc_per_bin = *v;
+        if (auto v = (*t)["slope_min"].value<double>())
+            cfg.slope_min = *v;
+        if (auto v = (*t)["slope_max"].value<double>())
+            cfg.slope_max = *v;
+        if (auto v = (*t)["pulser_period_cc"].value<double>())
+            cfg.pulser_period_cc = *v;
+        if (auto v = (*t)["b_min"].value<double>())
+            cfg.b_min = *v;
+        if (auto v = (*t)["b_max"].value<double>())
+            cfg.b_max = *v;
+        if (auto v = (*t)["consecutive_pair_tolerance_cc"].value<double>())
+            cfg.consecutive_pair_tolerance_cc = *v;
+        if (auto v = (*t)["slip_confidence_cc"].value<double>())
+            cfg.slip_confidence_cc = *v;
+        if (auto v = (*t)["slip_max_snap_fraction"].value<double>())
+            cfg.slip_max_snap_fraction = *v;
+        //  regime1_confidence_cc / regime1_slip_unit_cc keys are
+        //  IGNORED if present in the TOML — the regime-1 pass was
+        //  removed (see CalibConfigStruct).  Silently ignore for
+        //  backward compatibility with old config files.
+        //  3-tier calibration-file resolution.
+        if (auto v = (*t)["override_path"].value<std::string>())
+            cfg.override_path = *v;
+        if (auto v = (*t)["default_path"].value<std::string>())
+            cfg.default_path = *v;
+        if (auto v = (*t)["force_rebuild"].value<bool>())
+            cfg.force_rebuild = *v;
+
+        //  Sanity checks — the pulser pipeline tolerates a wide range
+        //  but flag obvious mistakes early.
+        if (cfg.anchor_device < 0 || cfg.anchor_chip < 0 || cfg.anchor_eo_channel < 0 ||
+            cfg.anchor_chip >= 8 || cfg.anchor_eo_channel >= 32)
+            mist::logger::warning(TString::Format(
+                                      "(calib_conf_reader) anchor address (dev=%d chip=%d eo_ch=%d) is out of "
+                                      "the expected ranges (chip 0..7, eo_channel 0..31). Check the TOML.",
+                                      cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                                      .Data());
+        if (cfg.min_hits_per_tdc < cfg.min_hits_per_tdc_per_spill)
+            mist::logger::warning("(calib_conf_reader) min_hits_per_tdc < min_hits_per_tdc_per_spill — "
+                                  "cumulative threshold below per-spill floor will short-circuit the gate.");
+
+        //  Mirror the --QA banner pattern from lightdata/recodata/
+        //  recotrackdata_writer: log every knob the writer will use,
+        //  so the operator sees on stdout what's actually loaded.
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) anchor   : device:%d chip:%d eo_ch:%d",
+                               cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                               .Data());
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) thresholds: cumulative>=%d   per-spill>=%d",
+                               cfg.min_hits_per_tdc, cfg.min_hits_per_tdc_per_spill)
+                               .Data());
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) fine band: [%d, %d] inclusive   (hits outside are discarded at ingest)",
+                               cfg.fine_min_valid, cfg.fine_max_valid)
+                               .Data());
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) slope    : guard=fine_span>=%d   "
+                               "default=%.6f cc/bin   physical=[%.4f, %.4f]",
+                               cfg.slope_fit_min_fine_span, cfg.default_slope_cc_per_bin,
+                               cfg.slope_min, cfg.slope_max)
+                               .Data());
+        if (cfg.pulser_period_cc > 0.0)
+            mist::logger::info(TString::Format(
+                                   "(calib_conf_reader) pulser   : period FIXED at %.3f cc = %.3f ns "
+                                   "(per-channel period fit disabled)",
+                                   cfg.pulser_period_cc, cfg.pulser_period_cc * 3.125)
+                                   .Data());
+        else
+            mist::logger::info("(calib_conf_reader) pulser   : period FIT per channel "
+                               "(set pulser_period_cc > 0 in TOML to fix it)");
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) intercept: physical band b in [%.2f, %.2f] cc "
+                               "(out-of-band values clamped to nearest edge)",
+                               cfg.b_min, cfg.b_max)
+                               .Data());
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) pair tol : |c_h - c_p - T| < %.1f cc (consecutive-pair safety filter)",
+                               cfg.consecutive_pair_tolerance_cc)
+                               .Data());
+        if (cfg.slip_max_snap_fraction > 0.0)
+            mist::logger::info(TString::Format(
+                                   "(calib_conf_reader) slip     : regime-2 confidence=%.3f cc   max_snap_fraction=%.2f   (regime-1 absorbed by fitted b)",
+                                   cfg.slip_confidence_cc, cfg.slip_max_snap_fraction)
+                                   .Data());
+        else
+            mist::logger::info("(calib_conf_reader) slip     : correction DISABLED (slip_max_snap_fraction <= 0)");
+        mist::logger::info(TString::Format(
+                               "(calib_conf_reader) io       : override='%s'   default='%s'   force_rebuild=%s",
+                               cfg.override_path.c_str(), cfg.default_path.c_str(),
+                               cfg.force_rebuild ? "true" : "false")
+                               .Data());
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(TString::Format(
+                                  "(calib_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                  config_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(TString::Format(
+                                  "(calib_conf_reader) Error reading '%s': %s — using defaults.",
+                                  config_file.c_str(), err.what())
+                                  .Data());
+    }
+    return cfg;
+}
+
+// --- Calibration-file resolution ----------------------------------------
+//
+// 3-tier policy (see CalibConfigStruct doc): override > default > rebuild.
+// Centralised here so both pulser_calib_writer (producer) and the
+// downstream consumers (recodata_writer etc.) share one source of truth.
+
+CalibPathResult resolve_fine_calib_path(const CalibConfigStruct &cfg,
+                                        const std::string &run_dir)
+{
+    namespace fs = std::filesystem;
+    CalibPathResult r;
+
+    //  ForceRebuild short-circuits everything (producer-only meaning;
+    //  consumers don't set this flag).
+    if (cfg.force_rebuild)
+    {
+        r.kind = CalibPathResolution::ForceRebuildRequested;
+        r.path = run_dir + "/" + cfg.default_path;
+        return r;
+    }
+    //  Tier 1: explicit override.
+    if (!cfg.override_path.empty() && fs::exists(cfg.override_path))
+    {
+        r.kind = CalibPathResolution::Override;
+        r.path = cfg.override_path;
+        return r;
+    }
+    //  Tier 2: default file in the run dir.
+    const std::string default_full = run_dir + "/" + cfg.default_path;
+    if (fs::exists(default_full))
+    {
+        r.kind = CalibPathResolution::Default;
+        r.path = default_full;
+        return r;
+    }
+    //  Tier 3: nothing — rebuild needed.
+    r.kind = CalibPathResolution::MissingNeedsRebuild;
+    r.path = default_full;
+    return r;
+}
+
 // --- RunInfo ------------------------------------------------------------
 
 void RunInfo::read_database(std::string filename)

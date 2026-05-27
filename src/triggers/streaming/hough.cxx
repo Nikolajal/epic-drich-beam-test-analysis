@@ -2,12 +2,11 @@
  * @file triggers/streaming/hough.cxx
  * @brief Implementation of the streaming-trigger Hough ring-finder stage.
  *
- * Phase 4 wired the formerly-hardcoded constants
- * (`threshold_fraction`, `min_hits_slack`, `collection_radius`, the
- * `fit_circle` initial guess) into `StreamingHoughConfigStruct`.  The
+ * Algorithm parameters (`threshold_fraction`, `min_hits_slack`,
+ * `collection_radius`) come from `StreamingHoughConfigStruct`.  The
  * detector-physics constants `max_rings = 2` (two radiators) and the
- * inherited `time_window_ns` (shared with the score stage) remain
- * non-knobs by design —.
+ * inherited `time_window_ns` (shared with the score stage) are not
+ * knobs by design.
  *
  * See [`include/triggers/streaming/DISCUSSION.md`](../../../include/triggers/streaming/DISCUSSION.md)
  * for the algorithm, parameter physics, and open items.
@@ -27,7 +26,6 @@
 #include "alcor_finedata.h"
 #include "alcor_data.h"      // HitmaskStreamingRingTrigger, HitmaskHoughRingTagFirst/Second
 #include "triggers/events.h" // TriggerEvent, _TRIGGER_STREAMING_RING_FOUND_, _TRIGGER_HOUGH_RING_FOUND_
-#include "util/circle_fit.h"
 
 void run_streaming_hough_trigger(
     AlcorSpilldata &spilldata,
@@ -185,18 +183,13 @@ void run_streaming_hough_trigger(
             cherenkov_hits[ring_candidates_index[index]].HitMask = current_hit.get_mask();
         }
 
-        //  Emit Hough trigger events per ring.  No `fit_circle` here:
-        //  the lightdata-side fit was QA-only (its outputs only fed
-        //  `ring_X/Y/R_first/_second` histograms; never used in
-        //  trigger emission, mask tagging, or any downstream
-        //  computation).  Recodata re-fits the mask-tagged hits with
-        //  full LOO + dual/solo splits + CB+pol3 radial fit, so all
-        //  fit-derived observables live in `recodata.root`'s
-        //  `Rings/` subfolder.  Removing the lightdata-side fit
-        //  saves ~5-30 s per run and clears the architectural
-        //  ambiguity (one fit, one place).  `fit_circle_init_{x,y,r}`
-        //  knobs in `[streaming_hough]` are now unused but kept for
-        //  backwards compatibility with existing configs.
+        //  Emit Hough trigger events per ring.  Centre/radius
+        //  refinement happens in `recodata_writer` on the mask-tagged
+        //  hits (full LOO + dual/solo splits + CB+pol3 radial fit);
+        //  all fit-derived observables live in `recodata.root`'s
+        //  `Rings/` subfolder.  The `fit_circle_init_{x,y,r}` knobs
+        //  in `[streaming_hough]` are unused at runtime but retained
+        //  for backwards compatibility with existing configs.
 
         //  |active| at each Hough pass — full pool for ring 1, pool
         //  minus ring-1 assignment for ring 2.  Used by the new
@@ -224,8 +217,13 @@ void run_streaming_hough_trigger(
             }
         };
 
-        if (found_rings.size() > 0)
+        if (found_rings.size() > 0 && hough_trigger_hits[0] > 0)
         {
+            //  Mean time of hits tagged on the first ring.  Guard on
+            //  hough_trigger_hits[0] > 0 is defensive — MIST's
+            //  find_rings should never return a ring with an empty
+            //  hit_indices, but a 0-divide here would publish NaN
+            //  into the trigger record.
             spilldata.add_trigger_to_frame(
                 frame_id,
                 {static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
@@ -277,7 +275,7 @@ void run_streaming_hough_trigger(
                 fill_arc_dist(found_rings[0], qa.ring_hit_arc_dist_first_solo);
             }
         }
-        if (found_rings.size() > 1)
+        if (found_rings.size() > 1 && hough_trigger_hits[1] > 0)
         {
             spilldata.add_trigger_to_frame(
                 frame_id,

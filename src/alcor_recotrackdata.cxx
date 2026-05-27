@@ -1,5 +1,6 @@
 #include "alcor_recotrackdata.h"
-#include <iostream>
+
+#include <mist/logger/logger.h>
 
 // --- construction --------------------------------------------------------
 
@@ -31,7 +32,7 @@ void AlcorRecotrackdata::link_to_tree(TTree *input_tree)
 {
     if (!input_tree)
     {
-        std::cerr << "[ERROR] link_to_tree: input_tree is null.\n";
+        mist::logger::error("(AlcorRecotrackdata::link_to_tree) input_tree is null.");
         return;
     }
     AlcorRecodata::link_to_tree(input_tree);
@@ -42,7 +43,7 @@ void AlcorRecotrackdata::write_to_tree(TTree *output_tree)
 {
     if (!output_tree)
     {
-        std::cerr << "[ERROR] write_to_tree: output_tree is null.\n";
+        mist::logger::error("(AlcorRecotrackdata::write_to_tree) output_tree is null.");
         return;
     }
     output_tree->Branch("recotrackdata", &recotrackdata);

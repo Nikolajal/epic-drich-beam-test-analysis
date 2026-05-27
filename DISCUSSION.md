@@ -615,4 +615,62 @@ Known caveats in the current codebase that don't need a design discussion but
 
 ---
 
-*Last updated: 2026-05-26 (streaming-trigger subsystem doc consolidation: D-03 / D-04 migrated to `include/triggers/streaming/DISCUSSION.md`; new `include/triggers/streaming/` + parent `include/triggers/README.md` added)*
+## 2026-05-27 — Autonomous repo-wide sweep
+
+Performed while the user was away.  Decisions locked beforehand: full
+repo scope, aggressive comment purge, bugs fixed on the work tree
+(no commits), per-area DISCUSSION.md updates rather than a separate
+findings doc.
+
+### Bugs fixed on the work tree
+
+| File | Line(s) before | What |
+|---|---|---|
+| `src/recodata_writer.cxx` | ~568–604 | **Division by zero** in fine-time offset accumulator (`offset_value /= offset_participants` when all samples failed the |·| > 30 ns outlier cut → 0 participants).  Restructured: compute mean only after the >=20-sample gate.  Also **deleted the dead debug block** (`temy_testt`, three `mist::logger::debug("Save face")` calls, duplicate `set_param2` site) that the agent flagged. |
+| `src/triggers/streaming/hough.cxx` | 233, 286 | **Division by zero** when emitting `_TRIGGER_HOUGH_RING_FOUND_`: `hough_trigger_time[i] / hough_trigger_hits[i]` with no guard on `hough_trigger_hits[i] > 0`.  Guarded.  In practice MIST's `find_rings` should never return a ring with empty `hit_indices`, but a 0-divide would publish NaN into the trigger record. |
+| `src/parallel_streaming_framer.cxx` | 276 | **Signedness trap** — `static_cast<size_t>(_current_spill)` when `_current_spill == -1` produces SIZE_MAX, then compared against vector size.  Current code was de-facto safe (SIZE_MAX > size always false → no correction applied), but the intent was opaque.  Added an explicit `_current_spill >= 0` guard. |
+| `src/alcor_recotrackdata.cxx` | 34, 46 | Replaced `std::cerr` with `mist::logger::error` — inconsistent with the rest of the codebase and not captured by logging infrastructure. |
+| `include/triggers/registry.h` | 70 | Same — replaced `std::cerr` with `mist::logger::warning`. |
+
+### Stale comments / dated breadcrumbs purged
+
+| File | What |
+|---|---|
+| `src/lightdata_writer.cxx` | (a) Garbled comment "Add the plot to dinamically determine the timing cuts > determine the highest bin..." — rewritten as a proper TODO with a DISCUSSION pointer.  (b) Six dated "removed 2026-05-26" / "Phase F (2026-05-27)" / "Phase G1 (2026-05-27)" history-of-removal breadcrumbs deleted; the surrounding facts retained where useful. |
+| `src/recodata_writer.cxx` | "Smallest-r channel diagnostic removed / PDU 99 phantom-position investigation" block deleted.  The Mapping fix is documented elsewhere. |
+| `src/alcor_finedata.cxx` | Garbled `TODO: merge with alcor data, no sense to have this overhead << it no makes perfect sense, data compression` — rewritten as two clean DISCUSSION pointers. |
+| `src/triggers/streaming/hough.cxx` + `include/triggers/streaming/hough.h` | "No `fit_circle` here" lengthy historical note + the dead `ring_X/Y/R_first/_second` struct fields (never referenced after the fit was moved to recodata).  Replaced with a brief factual note pointing at recodata's refinement path. |
+| `include/writers/recodata.h` | Deleted unused `BTANA_CROSS_TALK_DEADTIME` macro (no callers anywhere in the repo). |
+| `src/writers/pulser_calib_writer.cxx` + `include/writers/pulser_calib.h` | **Both top-of-file docs were severely stale** (described the rejected lightdata-coupled architecture, per-spill weighted-mean method, mean-subtraction gauge, etc.).  Rewritten to match the actual implementation: per-channel closed-form Cholesky of a 9-param normal equations system, regime-2 slip correction, fine-band ingest filter. |
+| `include/parallel_streaming_framer.h` | `h_afterpulse_dt` range docstring said "Range 0..1024 cc" but the histogram is 1024 bins on [0, 32768] cc.  Corrected. |
+| `conf/framer_conf.toml`, `conf/streaming.toml` | "Phase 2/4 of the streaming-trigger consolidation" historical breadcrumbs replaced with factual present-tense descriptions.  The streaming.toml comment claiming the Hough stage "refines each ring's centre with a least-squares `fit_circle`" was contradicted by the current code — fixed (refinement now happens in `recodata_writer`). |
+
+### New design notes added to per-area DISCUSSION.md files
+
+| Doc | What |
+|---|---|
+| **`include/writers/DISCUSSION.md`** (new) | Three open items for the pulser pipeline: (1) the ±0.5 cc satellites in published b — origin unknown, possibly coarse-edge quantisation artefacts, possibly real sub-cc-granularity slip; (2) regime-2 slip detection uses `raw mod T` which is sensitive to coarse-edge quantisation and may be over-snapping; (3) the fine-band ingest filter is a pragmatic band-aid — the robust answer is for the fit to identify these as outliers (IRLS / M-estimator).  Also records the regime-1 removal rationale. |
+| `include/triggers/DISCUSSION.md` | §3 hardcoded `[0, 99]` trigger index allocation tracked in two places (`events.h` macros + `config.cxx` array bound).  §4 implicit `time_window_ns` coupling between streaming score and Hough stages. |
+
+### New feature implemented (per user request — task #37)
+
+- `pulser_calib_writer` now discards hits whose `fine` is outside `[fine_min_valid, fine_max_valid]` (default `[20, 160]`) at FIFO ingest.  Knobs added to `CalibConfigStruct`, surfaced in `conf/calib/calibration_conf.toml`, snapshotted into the QA `Config/` directory, and the rejected count is written to `RunSummary/hits_rejected_fine_out_of_band`.  Tracked as a design item in `include/writers/DISCUSSION.md` for follow-up (fit-side outlier rejection is the robust answer).
+
+### Items flagged by agents but NOT actioned (kept as low-priority context)
+
+These are real observations but either too risky to fix blind, well-understood and intentional, or out of sweep scope:
+
+- **Magic numbers in `lightdata_writer.cxx`** — `kTimingChip0AliveChannels=32` / `kTimingChip1AliveChannels=31` (line 41–42, campaign-specific dead-channel layout), `kDeltaTimingCenter/Window/Sigma` (line 51–53, timing calibration), `kArcDistBinsPerSide=30` (line 474), `window_size=50.0ns` for non-ring triggers (line 1015), `-100 ns` sideband offset (line 1028).  All intentional per surrounding comments.  Add config knobs only when a campaign demands re-tuning.
+- **Magic numbers in `recodata_writer.cxx`** — `kCentreXyHalfRangeMm=25.f`, hit-position null-zone `< 5 mm`, radial fit acceptance bands `±5/±10 mm`.  Same story.
+- **Magic detector geometry in `alcor_recotrackdata.h`** (lines 305–316) — plane distances and pixel resolutions.  Will need to move to config when the campaign changes; not now.
+- **`AlcorFinedata::generate_calibration` is known-broken** — superseded for pulser runs by `pulser_calib_writer`.  Tracked.
+- **`Mapping::pdu_rotation[pdu]` unchecked map access** (`src/mapping.cxx:74`) — could segfault on a malformed mapping config.  Defensive guard would cost a `.contains()`.  Filed; not patched.
+- **`include/triggers/streaming/DISCUSSION.md`'s "fit_circle audit"** is now moot (fit_circle removed from this stage).  Worth a follow-up pass to retire the relevant § entries when the user is back; left untouched today because the DISCUSSION is a community-facing reference and the rewrite needs review.
+
+### Verification
+
+After all changes: `cmake --build` clean; `pulser_calib_writer Data 20260527-073111 --force-rebuild` runs to completion with the same headline numbers as the pre-sweep run (`8212` published entries, intra-channel pair |Δ| median `0.4984 cc`, `99.7005%` filter retention).  No numerical regression from the rename / comment / bug-fix pass.
+
+---
+
+*Last updated: 2026-05-27 (autonomous sweep; see § above for the line-by-line changes).*

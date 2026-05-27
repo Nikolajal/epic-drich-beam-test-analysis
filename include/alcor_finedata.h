@@ -550,7 +550,7 @@ public:
      * @brief Returns calibration parameter 0 for a given TDC channel.
      * @param GlobalIndex Global TDC index to query.
      */
-    static float get_param0(int GlobalIndex)
+    static float get_param0(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = calibration_parameters.find(GlobalIndex);
@@ -561,7 +561,7 @@ public:
      * @brief Returns calibration parameter 1 for a given TDC channel.
      * @param GlobalIndex Global TDC index to query.
      */
-    static float get_param1(int GlobalIndex)
+    static float get_param1(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = calibration_parameters.find(GlobalIndex);
@@ -572,7 +572,7 @@ public:
      * @brief Returns calibration parameter 2 for a given TDC channel.
      * @param GlobalIndex Global TDC index to query.
      */
-    static float get_param2(int GlobalIndex)
+    static float get_param2(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = calibration_parameters.find(GlobalIndex);
@@ -593,7 +593,7 @@ public:
      * @param GlobalIndex Global TDC index to update.
      * @param value            New value for parameter 0.
      */
-    static void set_param0(int GlobalIndex, float value)
+    static void set_param0(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         calibration_parameters[GlobalIndex][0] = value;
@@ -604,7 +604,7 @@ public:
      * @param GlobalIndex Global TDC index to update.
      * @param value            New value for parameter 1.
      */
-    static void set_param1(int GlobalIndex, float value)
+    static void set_param1(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         calibration_parameters[GlobalIndex][1] = value;
@@ -615,7 +615,7 @@ public:
      * @param GlobalIndex Global TDC index to update.
      * @param value            New value for parameter 2.
      */
-    static void set_param2(int GlobalIndex, float value)
+    static void set_param2(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         calibration_parameters[GlobalIndex][2] = value;
@@ -692,7 +692,7 @@ public:
      * @param GlobalIndex  Channel to configure.
      * @param method        One of the @ref CalibrationMethod enumerators.
      */
-    static void set_calibration_method(int GlobalIndex, CalibrationMethod method)
+    static void set_calibration_method(uint32_t GlobalIndex, CalibrationMethod method)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         channel_calibration_method[GlobalIndex] = method;
@@ -715,7 +715,7 @@ public:
      *        falling back to the global default if none is set.
      * @param GlobalIndex Channel to query.
      */
-    static CalibrationMethod get_calibration_method(int GlobalIndex)
+    static CalibrationMethod get_calibration_method(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = channel_calibration_method.find(GlobalIndex);
@@ -744,7 +744,7 @@ public:
      * @param offset            Intercept offset applied after the midpoint shift.
      * @param sigma             Width parameter stored as param2 (e.g. for resolution estimates).
      */
-    static void switch_to_fit_v2(int GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma);
+    static void switch_to_fit_v2(uint32_t GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma);
 
     /// @}
 
@@ -783,11 +783,18 @@ private:
      *       take a unique (write) lock.  Load calibration before spawning
      *       worker threads to avoid contention on the hot read path.
      */
-    inline static std::unordered_map<int, std::array<float, 3>> calibration_parameters = {};
+    //  Keyed by `GlobalIndex::raw()` (the full 32-bit packed identifier).
+    //  Was previously keyed by `AlcorData::get_calib_index()` which omitted
+    //  the device field — caused silent collisions between devices in
+    //  fine_calib.txt with last-write-wins behaviour.  Now uses the raw
+    //  GlobalIndex value, which encodes every component (device, fifo,
+    //  chip, channel, tdc) plus the validity bit.
+    inline static std::unordered_map<uint32_t, std::array<float, 3>> calibration_parameters = {};
 
     /** @brief Per-channel phase-correction method override.
      *  @note Protected by @c calibration_mutex. */
-    inline static std::unordered_map<int, CalibrationMethod> channel_calibration_method = {};
+    //  Keyed by `GlobalIndex::raw()`, parallel to @ref calibration_parameters above.
+    inline static std::unordered_map<uint32_t, CalibrationMethod> channel_calibration_method = {};
 
     /** @brief Fallback method for channels absent from channel_calibration_method.
      *  @note Protected by @c calibration_mutex. */

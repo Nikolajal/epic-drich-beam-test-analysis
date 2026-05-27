@@ -23,7 +23,13 @@
 #include "alcor_spilldata.h"
 #include "triggers/events.h"
 
+#include <TDirectory.h>
 #include <TFile.h>
+#include <TH1.h>
+#include <TKey.h>
+#include <TList.h>
+#include <TNamed.h>
+#include <TParameter.h>
 #include <TTree.h>
 
 #include <cstdio>
@@ -31,6 +37,7 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <string>
 
 namespace btana::utilities
 {
@@ -45,6 +52,8 @@ const char *format_name(DumpFormat f)
         return "recodata";
     case DumpFormat::Recotrackdata:
         return "recotrackdata";
+    case DumpFormat::PulserCalibQa:
+        return "pulser_calib_qa";
     default:
         return "unknown";
     }
@@ -63,6 +72,11 @@ DumpFormat detect_format(const std::string &file_path)
         return DumpFormat::Recodata;
     if (f->Get<TTree>("lightdata"))
         return DumpFormat::Lightdata;
+    //  No recognised tree — could still be a metadata-only file like
+    //  pulser_calib_qa.root.  Recognise it by the TDirectory layout
+    //  the producer writes (Config + RunSummary + Fits + Spreads).
+    if (f->Get<TDirectory>("Config") && f->Get<TDirectory>("Spreads"))
+        return DumpFormat::PulserCalibQa;
     return DumpFormat::Unknown;
 }
 
@@ -96,6 +110,131 @@ void print_trigger(const TriggerEvent &t, const std::string &indent = "    ")
               << "\n";
 }
 
+//  ── Metadata walker ──────────────────────────────────────────────
+//  Walk a TDirectory (recursively into sub-TDirectories) and print
+//  every TParameter / TNamed it encounters as `name = value`.
+//  Used by every format-specific dump to surface the embedded Config/
+//  block (and RunSummary, Spreads, etc. on the pulser QA file).
+//  Histograms are summarised in one line (entries / mean / RMS) and
+//  not dumped bin-by-bin.
+
+void print_scalar_for_key(const std::string &dir_label, TKey *key, TDirectory *dir)
+{
+    const std::string cls = key->GetClassName();
+    const std::string name = key->GetName();
+    const std::string prefix = "  " + dir_label + (dir_label.empty() ? "" : "/") + name;
+
+    //  TParameter<T> is templated — try the common instantiations.
+    if (cls == "TParameter<int>")
+    {
+        if (auto *p = dynamic_cast<TParameter<int> *>(dir->Get(name.c_str())))
+            std::cout << prefix << " = " << p->GetVal() << "\n";
+    }
+    else if (cls == "TParameter<double>")
+    {
+        if (auto *p = dynamic_cast<TParameter<double> *>(dir->Get(name.c_str())))
+            std::cout << prefix << " = " << p->GetVal() << "\n";
+    }
+    else if (cls == "TParameter<float>")
+    {
+        if (auto *p = dynamic_cast<TParameter<float> *>(dir->Get(name.c_str())))
+            std::cout << prefix << " = " << p->GetVal() << "\n";
+    }
+    else if (cls == "TParameter<Long64_t>")
+    {
+        if (auto *p = dynamic_cast<TParameter<Long64_t> *>(dir->Get(name.c_str())))
+            std::cout << prefix << " = " << p->GetVal() << "\n";
+    }
+    else if (cls == "TNamed")
+    {
+        if (auto *n = dynamic_cast<TNamed *>(dir->Get(name.c_str())))
+            std::cout << prefix << " = " << n->GetTitle() << "\n";
+    }
+    //  TH* — short one-line summary; full hist dump would flood the terminal.
+    else if (cls.rfind("TH1", 0) == 0 || cls.rfind("TH2", 0) == 0 ||
+             cls.rfind("TH3", 0) == 0)
+    {
+        if (auto *h = dynamic_cast<TH1 *>(dir->Get(name.c_str())))
+            std::cout << prefix
+                      << "   [" << cls << "]"
+                      << "  entries=" << h->GetEntries()
+                      << "  mean=" << h->GetMean()
+                      << "  rms=" << h->GetRMS() << "\n";
+    }
+    //  Sub-directory marker — recursion handled by the caller.
+    //  Other types (TTree, TGraph, …) silently skipped.
+}
+
+void walk_directory(TDirectory *dir, const std::string &dir_label)
+{
+    if (!dir)
+        return;
+    TList *keys = dir->GetListOfKeys();
+    if (!keys)
+        return;
+    //  First pass: print non-directory keys.
+    TIter next(keys);
+    while (auto *obj = next())
+    {
+        auto *key = static_cast<TKey *>(obj);
+        const std::string cls = key->GetClassName();
+        if (cls == "TDirectoryFile" || cls == "TDirectory")
+            continue;
+        print_scalar_for_key(dir_label, key, dir);
+    }
+    //  Second pass: recurse into sub-directories.
+    next.Reset();
+    while (auto *obj = next())
+    {
+        auto *key = static_cast<TKey *>(obj);
+        const std::string cls = key->GetClassName();
+        if (cls != "TDirectoryFile" && cls != "TDirectory")
+            continue;
+        const std::string name = key->GetName();
+        auto *sub = dir->Get<TDirectory>(name.c_str());
+        const std::string label = dir_label.empty() ? name : (dir_label + "/" + name);
+        std::cout << "  " << label << "/\n";
+        walk_directory(sub, label);
+    }
+}
+
+//  Surface a file's TDirectory metadata: Config + RunSummary + any other
+//  scalar block.  Trees and per-entry data are NOT printed here — that's
+//  the job of the format-specific dumpers above.
+void dump_file_metadata(TFile *f)
+{
+    if (!f || f->IsZombie())
+        return;
+    //  Quick check: does the file have anything worth dumping?  Skip
+    //  the header line if there are no scalars to print, to avoid
+    //  cluttering output for files with only trees.
+    bool has_metadata = false;
+    TList *keys = f->GetListOfKeys();
+    if (keys)
+    {
+        TIter next(keys);
+        while (auto *obj = next())
+        {
+            auto *key = static_cast<TKey *>(obj);
+            const std::string cls = key->GetClassName();
+            if (cls == "TDirectoryFile" || cls == "TDirectory" ||
+                cls == "TParameter<int>" || cls == "TParameter<double>" ||
+                cls == "TParameter<float>" || cls == "TParameter<Long64_t>" ||
+                cls == "TNamed" ||
+                cls.rfind("TH1", 0) == 0 || cls.rfind("TH2", 0) == 0)
+            {
+                has_metadata = true;
+                break;
+            }
+        }
+    }
+    if (!has_metadata)
+        return;
+
+    std::cout << "\n=== embedded metadata ===\n";
+    walk_directory(f, "");
+}
+
 } // namespace
 
 int dump_lightdata(const std::string &file_path, long n_entries)
@@ -113,13 +252,17 @@ int dump_lightdata(const std::string &file_path, long n_entries)
         return 1;
     }
 
+    //  Metadata first (Config/, RunSummary/, …) so the operator sees
+    //  the file's provenance before scrolling into the per-entry data.
+    dump_file_metadata(f.get());
+
     AlcorSpilldata spilldata;
     spilldata.link_to_tree(t);
 
     const long total = t->GetEntries();
     const long n = (n_entries < 0) ? total : std::min<long>(n_entries, total);
 
-    std::cout << "lightdata: " << total << " spill(s); printing " << n << "\n";
+    std::cout << "\nlightdata: " << total << " spill(s); printing " << n << "\n";
     std::cout << "──────────────────────────────────────────────────────────\n";
 
     for (long i = 0; i < n; ++i)
@@ -169,6 +312,7 @@ int dump_lightdata(const std::string &file_path, long n_entries)
                           << " more frame(s) (suppressed)\n";
         }
     }
+    dump_file_metadata(f.get());
     return 0;
 }
 
@@ -187,6 +331,8 @@ int dump_recodata(const std::string &file_path, long n_entries)
         return 1;
     }
 
+    dump_file_metadata(f.get());
+
     AlcorRecodata recodata;
     if (!recodata.link_to_tree(t))
     {
@@ -197,7 +343,7 @@ int dump_recodata(const std::string &file_path, long n_entries)
     const long total = t->GetEntries();
     const long n = (n_entries < 0) ? total : std::min<long>(n_entries, total);
 
-    std::cout << "recodata: " << total << " frame(s); printing " << n << "\n";
+    std::cout << "\nrecodata: " << total << " frame(s); printing " << n << "\n";
     std::cout << "──────────────────────────────────────────────────────────\n";
 
     for (long i = 0; i < n; ++i)
@@ -229,13 +375,15 @@ int dump_recotrackdata(const std::string &file_path, long n_entries)
         return 1;
     }
 
+    dump_file_metadata(f.get());
+
     AlcorRecotrackdata rtd;
     rtd.link_to_tree(t);
 
     const long total = t->GetEntries();
     const long n = (n_entries < 0) ? total : std::min<long>(n_entries, total);
 
-    std::cout << "recotrackdata: " << total << " frame(s); printing " << n << "\n";
+    std::cout << "\nrecotrackdata: " << total << " frame(s); printing " << n << "\n";
     std::cout << "──────────────────────────────────────────────────────────\n";
 
     for (long i = 0; i < n; ++i)
@@ -263,13 +411,29 @@ int dump_recotrackdata(const std::string &file_path, long n_entries)
     return 0;
 }
 
+int dump_pulser_calib_qa(const std::string &file_path)
+{
+    std::unique_ptr<TFile> f(TFile::Open(file_path.c_str(), "READ"));
+    if (!f || f->IsZombie())
+    {
+        std::cerr << "btana-dump: cannot open " << file_path << "\n";
+        return 1;
+    }
+    std::cout << "pulser_calib_qa: no per-entry tree; printing embedded metadata.\n";
+    std::cout << "──────────────────────────────────────────────────────────\n";
+    dump_file_metadata(f.get());
+    return 0;
+}
+
 int dump_file(const std::string &file_path, long n_entries)
 {
     const auto fmt = detect_format(file_path);
     if (fmt == DumpFormat::Unknown)
     {
         std::cerr << "btana-dump: " << file_path
-                  << " — no recognised tree (lightdata / recodata / recotrackdata)\n";
+                  << " — no recognised tree (lightdata / recodata / "
+                  << "recotrackdata) and no recognised metadata layout "
+                  << "(pulser_calib_qa)\n";
         return 2;
     }
     std::cout << "file: " << file_path << "  format: " << format_name(fmt) << "\n";
@@ -281,6 +445,8 @@ int dump_file(const std::string &file_path, long n_entries)
         return dump_recodata(file_path, n_entries);
     case DumpFormat::Recotrackdata:
         return dump_recotrackdata(file_path, n_entries);
+    case DumpFormat::PulserCalibQa:
+        return dump_pulser_calib_qa(file_path);
     default:
         return 2;
     }

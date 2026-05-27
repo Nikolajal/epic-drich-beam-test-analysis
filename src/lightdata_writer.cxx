@@ -441,12 +441,11 @@ void lightdata_writer(
     RootHist<TH1F> h_streaming_trigger_ring_X_second_hough("h_streaming_trigger_ring_X_second_hough", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
     RootHist<TH1F> h_streaming_trigger_ring_Y_second_hough("h_streaming_trigger_ring_Y_second_hough", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
     RootHist<TH1F> h_streaming_trigger_ring_R_second_hough("h_streaming_trigger_ring_R_second_hough", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
-    //  (Per-ring `fit_circle` outputs removed 2026-05-26: the lightdata-
-    //  side fit was QA-only and recodata re-fits the mask-tagged hits
-    //  with full LOO + dual/solo splits + CB+pol3 radial fit.  All
-    //  fit-derived observables now live in recodata.root's `Rings/`
-    //  subfolder.  Saves ~5-30 s per run and removes the architectural
-    //  ambiguity of having two simultaneous fit pipelines.)
+    //  Per-ring `fit_circle` outputs intentionally absent here: the
+    //  lightdata-side fit was QA-only and `recodata_writer` re-fits
+    //  the mask-tagged hits with full LOO + dual/solo splits + CB+pol3
+    //  radial fit.  All fit-derived observables live in
+    //  recodata.root's `Rings/` subfolder.
 
     //  Hough-knob calibration QA (see § 2.5 in the streaming DISCUSSION).
     //
@@ -486,7 +485,6 @@ void lightdata_writer(
     RootHist<TH1F> h_streaming_trigger_ring_X_first_hough_dual("h_streaming_trigger_ring_X_first_hough_dual", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
     RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough_dual("h_streaming_trigger_ring_Y_first_hough_dual", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
     RootHist<TH1F> h_streaming_trigger_ring_R_first_hough_dual("h_streaming_trigger_ring_R_first_hough_dual", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
-    //  (Fit-refined dual hists removed 2026-05-26 — see note above.)
     RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_dual("h_streaming_trigger_ring_peak_votes_vs_active_first_dual", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_dual("h_streaming_trigger_ring_hit_arc_dist_first_dual", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
 
@@ -497,7 +495,6 @@ void lightdata_writer(
     RootHist<TH1F> h_streaming_trigger_ring_X_first_hough_solo("h_streaming_trigger_ring_X_first_hough_solo", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
     RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough_solo("h_streaming_trigger_ring_Y_first_hough_solo", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
     RootHist<TH1F> h_streaming_trigger_ring_R_first_hough_solo("h_streaming_trigger_ring_R_first_hough_solo", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
-    //  (Fit-refined solo hists removed 2026-05-26 — see note above.)
     RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_solo("h_streaming_trigger_ring_peak_votes_vs_active_first_solo", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_solo("h_streaming_trigger_ring_hit_arc_dist_first_solo", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
     const float time_window_ns = streaming_trigger_cfg.time_window_ns;
@@ -770,7 +767,11 @@ void lightdata_writer(
             for (auto &[gi, sum] : tdc_offset_sum_1)
                 AlcorFinedata::set_param2(gi, -(sum / tdc_offset_count_1[gi]));
 
-            //  Add the plot to dinamically determine the timing cuts > determine the highest bin excluding zeros, delta times without any further check look for
+            //  TODO: dynamically determine the timing cuts — pick the
+            //  most-populated non-zero bin of the per-TDC delta-time
+            //  distribution and use its position to centre the
+            //  acceptance window.  Tracked in
+            //  include/writers/DISCUSSION.md.
         }
 
         mist::logger::info("(lightdata_writer) Starting processing data streams in frames");
@@ -786,9 +787,10 @@ void lightdata_writer(
         //  reuse the same storage across frames within a spill and .clear()
         //  at the top of each frame: typical capacity stabilises within a
         //  spill, eliminating the realloc churn on the hot path.
-        //  `CtHit` was lifted to `include/writers/lightdata/types.h` in
-        //  Phase F (2026-05-27) so the extracted per-frame QA helper
-        //  (`fill_dcr_afterpulse_ct_qa`) can use the same record type.
+        //  `CtHit` is defined in `include/writers/lightdata/types.h` so
+        //  the per-frame QA helper (`fill_dcr_afterpulse_ct_qa`) can
+        //  use the same record type without dragging the writer's
+        //  internals into its signature.
         using ::btana::lightdata::CtHit;
         std::vector<CtHit> ct_hits;
         std::vector<std::size_t> sorted_by_time;
@@ -934,9 +936,8 @@ void lightdata_writer(
                 hough_qa.ring_finder_hitmap = h_streaming_trigger_ring_finder_hitmap.get();
                 hough_qa.first_hitmap = h_streaming_trigger_ring_finder_first_hitmap.get();
                 hough_qa.second_hitmap = h_streaming_trigger_ring_finder_second_hitmap.get();
-                //  (Per-ring fit_circle QA assignments removed 2026-05-26
-                //   — fit moved fully to recodata.  Hough-seed QA assignments
-                //   below remain.)
+                //  Hough-seed QA assignments only; the per-ring fit
+                //  belongs to recodata_writer (see lines ~430 above).
                 hough_qa.ring_X_first_hough = h_streaming_trigger_ring_X_first_hough.get();
                 hough_qa.ring_Y_first_hough = h_streaming_trigger_ring_Y_first_hough.get();
                 hough_qa.ring_R_first_hough = h_streaming_trigger_ring_R_first_hough.get();
@@ -952,7 +953,6 @@ void lightdata_writer(
                 hough_qa.ring_X_first_hough_dual = h_streaming_trigger_ring_X_first_hough_dual.get();
                 hough_qa.ring_Y_first_hough_dual = h_streaming_trigger_ring_Y_first_hough_dual.get();
                 hough_qa.ring_R_first_hough_dual = h_streaming_trigger_ring_R_first_hough_dual.get();
-                //  (Fit-refined dual hist assignments removed 2026-05-26.)
                 hough_qa.ring_peak_votes_vs_active_first_dual = h_streaming_trigger_ring_peak_votes_vs_active_first_dual.get();
                 hough_qa.ring_hit_arc_dist_first_dual = h_streaming_trigger_ring_hit_arc_dist_first_dual.get();
                 //  Solo-ring mirror — gated inside the trigger on found_rings.size() == 1.
@@ -960,7 +960,6 @@ void lightdata_writer(
                 hough_qa.ring_X_first_hough_solo = h_streaming_trigger_ring_X_first_hough_solo.get();
                 hough_qa.ring_Y_first_hough_solo = h_streaming_trigger_ring_Y_first_hough_solo.get();
                 hough_qa.ring_R_first_hough_solo = h_streaming_trigger_ring_R_first_hough_solo.get();
-                //  (Fit-refined solo hist assignments removed 2026-05-26.)
                 hough_qa.ring_peak_votes_vs_active_first_solo = h_streaming_trigger_ring_peak_votes_vs_active_first_solo.get();
                 hough_qa.ring_hit_arc_dist_first_solo = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
                 run_streaming_hough_trigger(
@@ -1036,12 +1035,10 @@ void lightdata_writer(
                 }
                 //  ---
                 //  --- DCR + afterpulse + cross-talk QA
-                //  Gated on the first-frames trigger.  The fill body was
-                //  lifted to `src/writers/lightdata/dcr_afterpulse_ct_qa.cxx`
-                //  in Phase F of the lightdata modularisation (2026-05-27);
-                //  ~190 lines moved out of this writer.  Behaviour is
-                //  identical, verified against
-                //  `Data/20251111-164951/phaseF_baseline/`.
+                //  Gated on the first-frames trigger.  Fill body lives
+                //  in `src/writers/lightdata/dcr_afterpulse_ct_qa.cxx`
+                //  (the per-frame QA helper) to keep this writer
+                //  focused on orchestration.
                 if (fired_trigger_types.count(registry.index_of(static_cast<TriggerNumber>(TriggerFirstFrames))))
                 {
                     ::btana::lightdata::DcrAfterpulseCtHists qa_hists;
@@ -1234,11 +1231,8 @@ void lightdata_writer(
     h_phys_ct_dchannel_dt->Write();
     //  ---
     //  --- Streaming Trigger
-    //  Lifted to `src/writers/lightdata/finalize_streaming_qa.cxx` in
-    //  Phase G1 (2026-05-27); ~140 lines of overlay-canvas +
-    //  Hough-rings nested-TDirectory writes moved out of this writer.
-    //  Behaviour identical, verified vs
-    //  `Data/20251111-164951/phaseG_baseline/lightdata.root`.
+    //  Finalize body (overlay canvases + Hough-rings TDirectories)
+    //  lives in `src/writers/lightdata/finalize_streaming_qa.cxx`.
     {
         const auto streaming_ring_index =
             registry.index_of(static_cast<TriggerNumber>(_TRIGGER_STREAMING_RING_FOUND_));

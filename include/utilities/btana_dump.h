@@ -37,6 +37,9 @@ enum class DumpFormat
     Lightdata,
     Recodata,
     Recotrackdata,
+    /// Pulser-calibration QA file (no tree; Config/ + Spreads/ + RunSummary/
+    /// + Fits/ TDirectories of scalars and histograms).
+    PulserCalibQa,
 };
 
 /// @return human-readable name of @p f (e.g. "lightdata").
@@ -62,6 +65,10 @@ int dump_recodata(const std::string &file_path, long n_entries = 5);
 /// `tracks=...` line summarising N_tracks with `det_plane_(x,y)`,
 /// `r`, `chi2/ndf`.
 int dump_recotrackdata(const std::string &file_path, long n_entries = 5);
+
+/// Pretty-print embedded metadata from a pulser-calibration QA file
+/// (no tree, just TDirectories of TParameter / TNamed / histograms).
+int dump_pulser_calib_qa(const std::string &file_path);
 
 /// Auto-detect dispatcher.  Wraps the three format-specific functions
 /// above and prints a one-line header identifying which it picked.

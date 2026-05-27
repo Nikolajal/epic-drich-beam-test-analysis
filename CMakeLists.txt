@@ -144,6 +144,7 @@ set(SRC_FILES
     src/analysis_results.cxx
     src/radiator_efficiency.cxx
     src/utilities/btana_dump.cxx
+    src/writers/pulser_calib_writer.cxx
 )
 
 # --------------------------------------------------
@@ -227,11 +228,13 @@ endif()
 add_executable(lightdata_writer      macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
+add_executable(pulser_calib_writer   macros/utilities/pulser_calib_writer.cpp)
 add_executable(btana-dump            macros/utilities/btana_dump.cpp)
 
 target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
 target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
+target_link_libraries(pulser_calib_writer   PRIVATE beam_test_analysis)
 target_link_libraries(btana-dump            PRIVATE beam_test_analysis)
 
 # --------------------------------------------------
@@ -242,6 +245,7 @@ install(TARGETS
     lightdata_writer
     recodata_writer
     recotrackdata_writer
+    pulser_calib_writer
     btana-dump
     EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
