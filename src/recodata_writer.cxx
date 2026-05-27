@@ -653,9 +653,9 @@ void recodata_writer(
 
 
     //  Enable a 50 MB tree cache before the two GetEntry passes (§4.7 minimum
-    //  mitigation): the second full pass over the spill tree at line :275
-    //  re-reads every basket from disk without it.  Proper single-pass
-    //  restructure remains the open item.
+    //  mitigation): the second full pass over the spill tree (calibration loop
+    //  at line 664, compute loop at line 736) re-reads every basket from disk
+    //  without it.  Proper single-pass restructure remains the open item.
     lightdata_tree->SetCacheSize(50 * 1024 * 1024);
     lightdata_tree->AddBranchToCache("*", true);
 
@@ -1617,22 +1617,28 @@ void recodata_writer(
                                  bg_prefit.GetParameter(0), bg_prefit.GetParameter(1),
                                  bg_prefit.GetParameter(2), bg_prefit.GetParameter(3));
             cb_fit.SetParLimits(0, 0., 1e9);
-            cb_fit.SetParLimits(2, 0.3, 5.0);  // peak σ physically bounded
+            cb_fit.SetParLimits(2, 1.5, 5.0);  // peak σ physically bounded; matches offline macro
             cb_fit.SetParLimits(3, 0.5, 5.0);
             cb_fit.SetParLimits(4, 1.1, 20.0);
 
-            //  Stage 1: freeze background to prefit, find the peak.
+            //  Two-stage strategy mirrors the offline macro
+            //  `photon_number_new.cpp` (CODE_REVIEW §6.6):
+            //
+            //  Stage 1: freeze background to prefit → minimiser only
+            //  needs to find (amp, μ, σ, α, n); avoids background
+            //  parameters absorbing the peak signal.
+            //
+            //  Stage 2: release background, full 9-param fit from the
+            //  stage-1 peak/σ starting point.  "S" saves the full
+            //  covariance for downstream error extraction.
+            //
+            //  No Stage 3 / IMPROVE ("M" flag): IMPROVE can kick the
+            //  minimiser away from a good stage-2 minimum.
             for (int i = 5; i < 9; ++i)
                 cb_fit.FixParameter(i, bg_prefit.GetParameter(i - 5));
             h->Fit(&cb_fit, "RQ");
-            //  Stage 2: release background, full fit using stage-1
-            //  refined peak/σ as starting point.
             for (int i = 5; i < 9; ++i) cb_fit.ReleaseParameter(i);
-            h->Fit(&cb_fit, "RQ");
-            //  Stage 3: one more pass with everything free, starting
-            //  from the converged stage-2 result.  Cheap; tightens
-            //  the answer when stage 2 drifted off in a single step.
-            h->Fit(&cb_fit, "RQM");
+            h->Fit(&cb_fit, "RQS");
             //  cb_fit gets auto-attached to h's function list by Fit()
             //  and ships with the hist on h->Write — no separate
             //  cb_fit.Write() needed (and a separate write would leak
@@ -1833,42 +1839,34 @@ void recodata_writer(
 
         //  vs_n fitting recipe (DISCUSSION § 2.6).
         //
-        //  For each vs_n TH2F:
-        //    1. FitSlicesY → Gaussian fit per X (N_hits) slice;
-        //       ROOT auto-creates `<name>_2` containing σ per slice.
-        //    2. Fit that σ(N) hist with sqrt([0]/x + [1]) — the
-        //       canonical statistical-floor model:
-        //          σ²(N) = A/N + B
-        //       where A is the per-hit statistical contribution and
-        //       B is the irreducible floor (σ_photon² for residuals;
-        //       intrinsic ring-radius spread for R hists).
-        //    3. Write both the sliced-σ hist and the fitted TF1 next
-        //       to the parent TH2F.
+        //  For each h_residual_vs_n_* TH2F:
+        //    1. Per-slice Gaussian fit to extract σ(N) — the width of
+        //       the LOO-residual distribution at each hit-count slice.
+        //    2. Fit σ(N) with the EXACT one-parameter LOO model:
         //
-        //  Fit range [5, 40]: 5 = min_hits_per_ring; 40 = X-axis upper
-        //  edge of the vs_n hists.  Slices below 5 hits don't pass the
-        //  refit gate, slices above 40 don't exist.  Initial params:
-        //  A=1, B=0.5 — gentle bias toward a non-zero floor; the LM
-        //  converges in a few iterations for both R and residual hists.
+        //          σ(N) = σ_photon · sqrt( N / (N − 3) )
         //
-        //  Caveats: FitSlicesY uses ROOT's default Gaussian — for
-        //  slices with non-Gaussian tails (e.g. fake-ring outliers in
-        //  h_R_vs_nhits) the σ estimate is biased.  If the locus
-        //  looks pathological, switch to a custom slice-fit (Gaussian
-        //  on linear background, range-limited).  Not done in V1.
+        //       Derivation: the LOO residual Δr_i = r_hit,i − R_{-i}
+        //       has Var(Δr_i) = σ²_photon · N/(N−3) because the three
+        //       free parameters of the circle fit (cx, cy, R) each
+        //       contribute σ²_photon/(N-1) to Var(R_{-i}), and their
+        //       angular projections sum to 3σ²_photon/(N-1) ≈ 3σ²/N.
+        //       The exact expression N/(N−3) replaces the approximate
+        //       A/N + B expansion; it is valid for any N > 3.
+        //
+        //       One free parameter: σ_photon (mm).  The fitted value
+        //       IS σ_photon — no √A vs √B ambiguity.
+        //
+        //  Fit range: populated bins with N > 3 (never an issue since
+        //  min_hits_per_ring ≥ 5 in config).
         //  Collector for durable σ_photon QA — populated by
         //  `fit_sigma_vs_n` below, used at the bottom of this block
-        //  to build the `h_sigma_photon_summary` / `h_sigma_R_summary`
-        //  TH1Fs.  Better QA than the per-hist TNamed scalars because
-        //  it shows all ring slots side-by-side in a single TBrowser
-        //  plot — operators can spot dual/solo or first/second
-        //  asymmetries at a glance.
+        //  to build the `h_sigma_photon_summary` TH1F.
         struct VsNFitResult {
             std::string name;
             double sigma_photon;
             double sigma_photon_err;
-            bool is_residual;   ///< true → goes into σ_photon summary;
-                                ///< false → goes into σ_R summary
+            bool is_residual;   ///< always true (only residual hists fitted)
         };
         std::vector<VsNFitResult> vs_n_results;
 
@@ -1967,12 +1965,11 @@ void recodata_writer(
                 delete h_sigma_slice;
                 return;
             }
-            // sqrt(A/N+B) is a 2-param fit; need at least 3 σ points
-            // to have any constraint.
-            if (n_slices_fit < 3) {
+            // σ_photon·sqrt(x/(x-3)) is a 1-param fit; need at least 2 σ points.
+            if (n_slices_fit < 2) {
                 mist::logger::warning(TString::Format(
-                    "(recodata_writer) %s: only %d slices yielded σ — "
-                    "cannot fit sqrt(A/N+B). Skipping PDF.",
+                    "(recodata_writer) %s: only %d slice yielded σ — "
+                    "cannot fit σ_photon·√(N/(N-3)). Skipping PDF.",
                     h2->GetName(), n_slices_fit).Data());
                 return;
             }
@@ -1990,82 +1987,62 @@ void recodata_writer(
             const double fit_x_hi = h_sigma_slice->GetBinLowEdge(last_pop)
                                   + h_sigma_slice->GetBinWidth(last_pop);
 
+            //  Exact one-parameter LOO model:
+            //      σ(N) = σ_photon · sqrt( N / (N − 3) )
+            //
+            //  Derivation: for a 3-parameter circle fit (cx, cy, R) the
+            //  leave-one-out residual variance is exactly
+            //      Var(Δr_i) = σ²_photon · N / (N − 3)
+            //  (each of the 3 parameters contributes σ²/(N-1) through
+            //  the Gauss-Newton hat matrix; summing gives 3σ²/(N-1),
+            //  then the N/(N-1) Bessel-like correction yields N/(N-3).)
+            //
+            //  The old two-parameter model sqrt(A/N + B) with A=3σ²
+            //  and B=σ² has A=3B always — the parameters are not
+            //  independent, the fit is degenerate, and for small N
+            //  (beam-test rings: N~5–15) the approximation is poor.
             TF1 *f_scaling = new TF1(
                 (std::string(h2->GetName()) + "_scaling").c_str(),
-                "sqrt([0]/x + [1])", fit_x_lo, fit_x_hi);
-            f_scaling->SetParameters(1.0, 0.5);
-            f_scaling->SetParNames("A", "B");
-            //  ParLimits: A ≥ 0 (statistical contribution is positive),
-            //  B ≥ 0 (σ² floor can't be negative — this was the prior
-            //  bug that produced B = -0.484 → σ_photon = √(-0.484) =
-            //  NaN → canvas paint failure).  Upper bounds generous.
-            f_scaling->SetParLimits(0, 0., 1e4);
-            f_scaling->SetParLimits(1, 0., 1e2);
+                "[0]*sqrt(x/(x-3))", fit_x_lo, fit_x_hi);
+            f_scaling->SetParameter(0, 1.5);   // seed: σ_photon ~ 1.5 mm
+            f_scaling->SetParName(0, "sigma_photon");
+            f_scaling->SetParLimits(0, 0.1, 10.0);
             h_sigma_slice->Fit(f_scaling, "RQS");
 
-            //  ── Canvas with σ-per-N hist + fit + values, as PDF ──
+            //  ── Canvas with σ-per-N hist + fit + σ_photon label, as PDF ──
             //  Same pattern as the radial canvas above (and as the
             //  offline `photon_number_new.cpp` macro): in-memory
             //  canvas + SaveAs PDF.  No ROOT-file write.
             //
-            //  σ²(N) = A/N + B is the canonical statistical-floor
-            //  decomposition of a per-sample-averaged measurement:
-            //      • A = σ²_per-sample  → σ_photon = √A
-            //        (the per-hit spatial precision; this is the
-            //        physically meaningful "single-photon resolution"
-            //        operators quote.)
-            //      • B = σ²_floor       → √B = irreducible spread
-            //        (for R_vs_nhits: intrinsic ring-radius variation;
-            //         for residual_vs_n: degenerate with A — both
-            //         should equal σ²_photon for LOO residuals.)
-            //  Previous code reported σ_photon = √B which was only
-            //  correct by coincidence on the residual hist (where A
-            //  and B are degenerate) and outright wrong on R_vs_nhits.
+            //  Model: σ(N) = σ_photon · √(N/(N-3))   [exact LOO, 1 parameter]
             {
-                const double A_for_pave         = f_scaling->GetParameter(0);
-                const double A_err_for_pave     = f_scaling->GetParError(0);
-                const double B_for_pave         = f_scaling->GetParameter(1);
-                const double B_err_for_pave     = f_scaling->GetParError(1);
-                const double sigma_for_pave     = (A_for_pave > 0.) ? std::sqrt(A_for_pave) : 0.;
-                const double sigma_err_for_pave = (A_for_pave > 0.)
-                    ? 0.5 * A_err_for_pave / std::sqrt(A_for_pave)
-                    : 0.;
-                const double floor_for_pave     = (B_for_pave > 0.) ? std::sqrt(B_for_pave) : 0.;
-                const double floor_err_for_pave = (B_for_pave > 0.)
-                    ? 0.5 * B_err_for_pave / std::sqrt(B_for_pave)
-                    : 0.;
+                const double sigma_for_pave     = f_scaling->GetParameter(0);
+                const double sigma_err_for_pave = f_scaling->GetParError(0);
 
                 TCanvas c(
                     (std::string("c_") + h2->GetName() + "_sigma_vs_n").c_str(),
                     (std::string("sigma vs N: ") + h2->GetName()).c_str(),
                     900, 650);
                 c.SetGrid();
-                //  Explicit X/Y range.  X clamped to the populated
-                //  bins so the empty edges (which would otherwise
-                //  drive Y autoranging to [0,10] and trip the
-                //  "wmin==wmax" axis-paint error) don't appear.  Y
-                //  hard-clamped to [0.5, 4.0] mm — operator-facing
-                //  σ_photon comparison plots all use the same scale
-                //  so dual/solo/first/second can be eyeballed
-                //  side-by-side without auto-range zoom drift.
-                h_sigma_slice->GetXaxis()->SetRangeUser(fit_x_lo, fit_x_hi);
-                h_sigma_slice->GetYaxis()->SetRangeUser(0.5, 4.0);
+                //  Explicit X/Y range.  X clamped to [4, 20] so the
+                //  empty low-N bins (N≤3 where the model diverges) and
+                //  the rarely-populated high-N tail don't distort the
+                //  axis.  Y upper bound: h_residual_vs_n_* → [0.5, 2.5]
+                //  mm (σ_photon ≲ 2 mm in beam-test conditions).
+                //  Both choices fixed across dual/solo/first/second so
+                //  operator comparison plots share the same scale.
+                h_sigma_slice->GetXaxis()->SetRangeUser(4., 20.);
+                h_sigma_slice->GetYaxis()->SetRangeUser(0.5, 2.5);
                 h_sigma_slice->Draw("E1");
 
-                TPaveText pave(0.55, 0.60, 0.92, 0.88, "NDC");
+                TPaveText pave(0.55, 0.68, 0.92, 0.88, "NDC");
                 pave.SetFillStyle(0);
                 pave.SetBorderSize(1);
                 pave.SetTextAlign(12);
-                pave.SetTextSize(0.032);
-                pave.AddText("#sigma^{2}(N) = A/N + B");
-                pave.AddText(TString::Format("A = %.4f #pm %.4f mm^{2}",
-                    A_for_pave, A_err_for_pave).Data());
-                pave.AddText(TString::Format("B = %.4f #pm %.4f mm^{2}",
-                    B_for_pave, B_err_for_pave).Data());
-                pave.AddText(TString::Format("#sigma_{photon} = #sqrt{A} = %.3f #pm %.3f mm",
+                pave.SetTextSize(0.034);
+                pave.AddText("#sigma(N) = #sigma_{photon} #sqrt{N/(N#minus3)}");
+                pave.AddText(TString::Format("#sigma_{photon} = %.3f #pm %.3f mm",
                     sigma_for_pave, sigma_err_for_pave).Data());
-                pave.AddText(TString::Format("#sqrt{B} (floor) = %.3f #pm %.3f mm",
-                    floor_for_pave, floor_err_for_pave).Data());
                 pave.Draw();
 
                 c.Update();
@@ -2075,30 +2052,21 @@ void recodata_writer(
             }
 
             //  ── Extract σ_photon as a labeled scalar ──────────────────
-            //  σ²(N) = A/N + B → σ_photon = √A (the per-hit precision
-            //  contribution; this is what averaging over N hits
-            //  reduces as 1/√N).  B is the irreducible floor (a
-            //  different number — for R hists it's the intrinsic
-            //  ring-radius spread, for LOO residuals it's also
-            //  σ²_photon in the degenerate decomposition).  Stored as
-            //  a TNamed alongside the fit so downstream consumers
-            //  (live displays, summary scripts) can read it without
-            //  re-fitting.  Also echoed to the log so the operator
-            //  sees the run's resolution in realtime.
-            const double A          = f_scaling->GetParameter(0);
-            const double A_err      = f_scaling->GetParError(0);
-            const double B          = f_scaling->GetParameter(1);
-            const double sigma_phot = (A > 0.) ? std::sqrt(A) : 0.;
-            const double sigma_err  = (A > 0.) ? 0.5 * A_err / std::sqrt(A) : 0.;
+            //  Exact one-parameter LOO fit: σ_photon is par[0] directly.
+            //  Stored as a TNamed alongside the 2D hist so downstream
+            //  consumers (live displays, summary scripts) can read it
+            //  without re-fitting.  Also echoed to the log so the
+            //  operator sees the run's resolution in realtime.
+            const double sigma_phot = f_scaling->GetParameter(0);
+            const double sigma_err  = f_scaling->GetParError(0);
             TNamed sigma_named(
                 (std::string(h2->GetName()) + "_sigma_photon_mm").c_str(),
                 TString::Format("%.4f +/- %.4f", sigma_phot, sigma_err).Data());
             sigma_named.Write();
             mist::logger::info(TString::Format(
-                "(recodata_writer) %s: sigma_photon = sqrt(A) = %.3f +/- %.3f mm "
-                "(fit: A=%.3f B=%.3f, sqrt(B) floor = %.3f mm)",
-                h2->GetName(), sigma_phot, sigma_err,
-                A, B, (B > 0.) ? std::sqrt(B) : 0.).Data());
+                "(recodata_writer) %s: sigma_photon = %.3f +/- %.3f mm "
+                "[exact LOO fit: σ(N) = σ_photon·√(N/(N-3))]",
+                h2->GetName(), sigma_phot, sigma_err).Data());
 
             //  Push into the summary collector.  Tagging by hist-name
             //  prefix is uglier than a separate function arg but keeps
@@ -2108,8 +2076,12 @@ void recodata_writer(
             vs_n_results.push_back({hname, sigma_phot, sigma_err, is_residual});
         };
 
-        //  Apply to every vs_n hist: top-level (first/second) + dual/solo
-        //  splits for the first ring.  Second ring is dual-by-definition.
+        //  σ(N) fit applied to residual hists only.
+        //  h_R_vs_nhits_*: fit suppressed for all ring slots — the
+        //  A/N + B decomposition on R-vs-nhits conflates per-hit
+        //  resolution with the ring's intrinsic radius variation and
+        //  gives uninterpretable numbers.  The 2D hists are still
+        //  written for visual inspection.
         h_R_vs_nhits_first->Write();
         h_R_vs_nhits_second->Write();
         h_residual_vs_n_first->Write();
@@ -2118,25 +2090,20 @@ void recodata_writer(
         h_R_vs_nhits_first_solo->Write();
         h_residual_vs_n_first_dual->Write();
         h_residual_vs_n_first_solo->Write();
-        fit_sigma_vs_n(h_R_vs_nhits_first.get());
-        fit_sigma_vs_n(h_R_vs_nhits_second.get());
         fit_sigma_vs_n(h_residual_vs_n_first.get());
         fit_sigma_vs_n(h_residual_vs_n_second.get());
-        fit_sigma_vs_n(h_R_vs_nhits_first_dual.get());
-        fit_sigma_vs_n(h_R_vs_nhits_first_solo.get());
         fit_sigma_vs_n(h_residual_vs_n_first_dual.get());
         fit_sigma_vs_n(h_residual_vs_n_first_solo.get());
 
         //  ── Persistent σ summary plots ────────────────────────────
-        //  Two TH1Fs, bin-labeled by source, content = σ ± uncertainty
-        //  from the sqrt(A/N + B) fit's floor (√B).  These are the
-        //  durable QA plots: one glance shows σ_photon (single-hit
-        //  resolution) and σ_R_intrinsic (irreducible ring-radius
-        //  spread) across every ring slot — first / second / dual /
-        //  solo — for at-a-glance dual-ring vs solo-ring comparison.
-        //  Each summary plot has up to 4 bins (residuals → 4
-        //  populations; R hists → same 4 populations) — non-fit-able
-        //  ring slots show as empty bins.
+        //  One TH1F, bin-labeled by source, content = σ_photon ±
+        //  uncertainty from the exact LOO fit σ(N)=σ_photon·√(N/(N-3))
+        //  on residual hists.  4 bins: first / second / first_dual /
+        //  first_solo.
+        //  h_sigma_R_intrinsic_summary is omitted — all h_R_vs_nhits_*
+        //  σ(N) fits are suppressed (the R observable mixes per-hit
+        //  resolution with intrinsic ring-radius variation and gives
+        //  uninterpretable numbers).
         auto build_summary_hist = [&](const std::string &hname,
                                        const std::string &ytitle,
                                        bool want_residual)

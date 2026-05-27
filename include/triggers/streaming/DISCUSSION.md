@@ -243,13 +243,16 @@ Four improvements are explicitly **out of scope** for v1:
 
 ---
 
-## 2.  Hough stage  (`triggers/streaming/hough.{h,cxx}` — pending)
+## 2.  Hough stage  (`triggers/streaming/hough.{h,cxx}`)
 
-> **Status:** code currently lives **inline** in
-> [`src/lightdata_writer.cxx`](../../../src/lightdata_writer.cxx) (lines
-> ~820–900).  Magic constants are scattered.  Phases 2-4 of the
-> consolidation plan extract it into the dedicated translation unit and
-> move every magic value into [`conf/streaming.toml → [streaming_hough]`](../../../conf/streaming.toml).
+> **Status:** ✅ **shipped.**  Phases 2-4 of the consolidation plan
+> completed: the algorithm was extracted out of `src/lightdata_writer.cxx`
+> into [`src/triggers/streaming/hough.cxx`](../../../src/triggers/streaming/hough.cxx)
+> (declared in [`include/triggers/streaming/hough.h`](hough.h)), and
+> every magic value moved into
+> [`conf/streaming.toml → [streaming_hough]`](../../../conf/streaming.toml).
+> Entry point: `run_streaming_hough_trigger(...)`, called per-frame from
+> the writer's main loop.
 
 ### 2.1  Pipeline
 
