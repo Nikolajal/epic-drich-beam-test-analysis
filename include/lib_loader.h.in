@@ -1,3 +1,12 @@
+// clang-format off
+//
+// ^ clang-format must NOT touch this file.  R__LOAD_LIBRARY() and
+//   R__ADD_INCLUDE_PATH() take a raw absolute path as a macro argument;
+//   clang-format treats the `/` characters as division operators and
+//   the `-` characters as subtraction and inserts spaces around them,
+//   turning the path into garbage.  This guard is preserved through
+//   configure_file expansion so the generated `macros/lib_loader.h`
+//   and `<prefix>/include/lib_loader.h` are both protected.
 #pragma once
 
 //  Teach cling where the project's headers + libraries live so macros
