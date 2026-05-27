@@ -612,17 +612,18 @@ void lightdata_writer(
         if (!framer.next_spill())
             break;
 
-        //  --- Disabled: per-spill online calibration update ---
+        //  --- Per-spill online calibration update ---
         //
         //  The canonical calibration path is the offline pass via
-        //  macros/examples/fine_calibration_timing.cpp.  Restoring this call
-        //  would seed each spill's calibration table with the channels that
-        //  became active during the previous spill — useful only for an
-        //  online-only mode where no offline calibration is available.
-        //  Re-enable by uncommenting the line below; otherwise leave it.
-        //
-        //  LINT-OK: documented intentional disable (CODE_REVIEW §D-11 review).
-        //  spilldata.update_calibration(framer.get_fine_tune_distribution());
+        //  macros/examples/fine_calibration_timing.cpp.  When the QA toggle
+        //  `per_spill_calibration_update` is set (typically in
+        //  `conf/QA/framer_conf.toml`), this call seeds each spill's
+        //  calibration table from the channels that became active during the
+        //  previous spill — useful for an online-only mode where no offline
+        //  calibration is available.  Default-off so production runs are
+        //  unaffected.
+        if (qa_cfg.per_spill_calibration_update)
+            spilldata.update_calibration(framer.get_fine_tune_distribution());
 
         //  Calculate participants channel
         // Phase 4 internal cleanup: the "active sensors" set is keyed by
