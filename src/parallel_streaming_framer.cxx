@@ -1,4 +1,6 @@
 #include "parallel_streaming_framer.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"
 #include <algorithm>
 #include <iostream>
 #include <limits>

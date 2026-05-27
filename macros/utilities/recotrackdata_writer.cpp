@@ -1,4 +1,5 @@
 #include "writers/recotrackdata.h"
+#include <mist/logger/logger.h>
 #include <stdio.h>
 #include <CLI/CLI.hpp>
 

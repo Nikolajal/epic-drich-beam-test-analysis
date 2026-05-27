@@ -188,12 +188,9 @@ public:
      * @param gi Validated @ref GlobalIndex identifying the channel.
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
-    std::optional<std::array<float, 2>> get_position_from_global_index(::GlobalIndex gi) const
-    {
-        return get_position_from_device_chip_eoch(gi.device(),
-                                                  gi.real_chip(),
-                                                  gi.eo_channel());
-    }
+    //  Bodies in mapping.cxx — these methods take/use ::GlobalIndex
+    //  whose full definition is heavier than we want in this header.
+    std::optional<std::array<float, 2>> get_position_from_global_index(::GlobalIndex gi) const;
 
     /**
      * @brief Convenience overload — compute the physical position from the
@@ -207,10 +204,7 @@ public:
      * @param stored_raw  Stored new-layout @ref GlobalIndex raw.
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
-    std::optional<std::array<float, 2>> get_position_from_global_index(int stored_raw) const
-    {
-        return get_position_from_global_index(::GlobalIndex(static_cast<uint32_t>(stored_raw)));
-    }
+    std::optional<std::array<float, 2>> get_position_from_global_index(int stored_raw) const;
 
     /**
      * @brief Fill the @c hit_x / @c hit_y fields of a fine-data struct in-place.

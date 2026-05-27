@@ -1,4 +1,7 @@
 #include "alcor_finedata.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"        // HitMask, BTANA_ALCOR_{ROLLOVER_TO_CC,CC_TO_NS}
+#include "util/global_index.h" // ::GlobalIndex full definition
 #include "TROOT.h"
 #include <memory>
 
@@ -291,3 +294,50 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
 // lives inline in `src/triggers/streaming/hough.cxx`, the only consumer.
 // See the header comment block at the top of `alcor_finedata.h` and
 // `include/triggers/streaming/DISCUSSION.md` § 2 for context.
+// =============================================================================
+// AlcorFinedata — methods moved out of the header (Phase G IWYU pass).
+//
+// These methods reference `HitMask` (from alcor_data.h), `BTANA_ALCOR_*`
+// macros (same), or `::GlobalIndex` (from util/global_index.h).  Keeping
+// them in the header would force every consumer of alcor_finedata.h to
+// drag in those headers — and would break ROOT's dict autoparse, which
+// loads alcor_finedata.h in isolation (it can see the forward decls but
+// not the full definitions).  Out-of-line definitions sidestep both.
+// =============================================================================
+
+float AlcorFinedata::get_time() const
+{
+    return static_cast<float>(BTANA_ALCOR_ROLLOVER_TO_CC) *
+               static_cast<float>(get_rollover()) +
+           static_cast<float>(get_coarse()) - get_phase();
+}
+
+float AlcorFinedata::get_time_ns() const
+{
+    return BTANA_ALCOR_CC_TO_NS * get_time();
+}
+
+int AlcorFinedata::get_tdc() const                    { return ::GlobalIndex(get_global_index()).tdc(); }
+int AlcorFinedata::get_device() const                 { return ::GlobalIndex(get_global_index()).device(); }
+int AlcorFinedata::get_fifo() const                   { return ::GlobalIndex(get_global_index()).fifo(); }
+int AlcorFinedata::get_chip() const                   { return ::GlobalIndex(get_global_index()).real_chip(); }
+int AlcorFinedata::get_eo_channel() const             { return ::GlobalIndex(get_global_index()).eo_channel(); }
+int AlcorFinedata::get_column() const                 { return ::GlobalIndex(get_global_index()).column(); }
+int AlcorFinedata::get_pixel() const                  { return ::GlobalIndex(get_global_index()).pixel(); }
+int AlcorFinedata::get_device_index() const           { return ::GlobalIndex(get_global_index()).device_index(); }
+int AlcorFinedata::get_global_channel_index() const   { return ::GlobalIndex(get_global_index()).channel_ordinal(); }
+
+void AlcorFinedata::add_mask_bit(HitMask bit)         { internal_data.HitMask |= (1u << bit); }
+void AlcorFinedata::clear_mask_bit(HitMask bit)       { internal_data.HitMask &= ~(1u << bit); }
+bool AlcorFinedata::has_mask_bit(HitMask bit) const   { return (internal_data.HitMask >> bit) & 1u; }
+bool AlcorFinedata::is_ring_tag_first() const         { return has_mask_bit(HitmaskRingTagFirst); }
+bool AlcorFinedata::is_ring_tag_second() const        { return has_mask_bit(HitmaskRingTagSecond); }
+
+bool AlcorFinedata::is_cross_talk() const      { return has_mask_bit(HitmaskCrossTalk); }
+bool AlcorFinedata::is_afterpulse() const      { return has_mask_bit(HitmaskAfterpulse); }
+bool AlcorFinedata::is_afterpulse_near() const { return has_mask_bit(HitmaskAfterpulseNear); }
+bool AlcorFinedata::is_afterpulse_far() const  { return has_mask_bit(HitmaskAfterpulseFar); }
+bool AlcorFinedata::is_part_lane() const       { return has_mask_bit(_HITMASK_part_lane); }
+bool AlcorFinedata::is_dead_lane() const       { return has_mask_bit(HitmaskDeadLane); }
+
+void AlcorFinedata::set_streaming_ring_trigger_mask() { add_mask_bit(HitmaskStreamingRingTrigger); }

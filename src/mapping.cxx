@@ -1,4 +1,5 @@
 #include "mapping.h"
+#include <mist/logger/logger.h>
 
 // ============================================================================
 //  Constructors
@@ -356,3 +357,22 @@ std::map<int, bool> Mapping::pdu_rotation = {};
 std::map<int, std::array<float, 2>> Mapping::pdu_xy_position = {};
 std::map<std::array<int, 2>, std::array<int, 2>> Mapping::device_chip_to_pdu_matrix = {};
 std::map<int, line_orientation_type> Mapping::hv_line_orientation = {};
+// =============================================================================
+// Out-of-line methods that take ::GlobalIndex — moved here in Phase G
+// to keep mapping.h parseable by ROOT's dict autoparse without
+// requiring the full util/global_index.h definition.
+// =============================================================================
+
+std::optional<std::array<float, 2>>
+Mapping::get_position_from_global_index(::GlobalIndex gi) const
+{
+    return get_position_from_device_chip_eoch(gi.device(),
+                                              gi.real_chip(),
+                                              gi.eo_channel());
+}
+
+std::optional<std::array<float, 2>>
+Mapping::get_position_from_global_index(int stored_raw) const
+{
+    return get_position_from_global_index(::GlobalIndex(static_cast<uint32_t>(stored_raw)));
+}

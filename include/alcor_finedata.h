@@ -30,9 +30,18 @@
 #include <unordered_map>
 #include <array>
 #include "TH2F.h"
+
 #include "TF1.h"
 #include "TCanvas.h"
-#include "alcor_data.h"
+
+//  Forward declarations only.  The class methods that need full
+//  HitMask / BTANA_ALCOR_* / ::GlobalIndex definitions live in
+//  alcor_finedata.cxx so this header stays parseable by ROOT's dict
+//  autoparse without dragging in the full alcor_data.h / global_index.h
+//  payload at autoload time.
+struct AlcorDataStruct;       // defined in alcor_data.h
+enum HitMask : unsigned int;  // defined in alcor_data.h
+class GlobalIndex;            // defined in util/global_index.h
 
 /**
      * @brief Raw decoded Hit data from an ALCOR TDC channel.
@@ -250,13 +259,14 @@ public:
      * Combines rollover, coarse, and the fine-time phase correction.
      * All unsigned fields are promoted to float before arithmetic to avoid
      * unsigned underflow when subtracting the (potentially non-zero) phase.
+     *
+     * Implementation lives in alcor_finedata.cxx because BTANA_ALCOR_*
+     * macros are defined in alcor_data.h.
      */
-    float get_time() const { return static_cast<float>(BTANA_ALCOR_ROLLOVER_TO_CC) * static_cast<float>(get_rollover()) + static_cast<float>(get_coarse()) - get_phase(); }
+    float get_time() const;
 
-    /**
-     * @brief Returns the calibrated Hit time in nanoseconds.
-     */
-    float get_time_ns() const { return BTANA_ALCOR_CC_TO_NS * get_time(); }
+    /// @brief Returns the calibrated Hit time in nanoseconds.
+    float get_time_ns() const;
 
     /// @}
 
@@ -267,47 +277,43 @@ public:
     /// @name Derived Address Getters
     /// @{
 
-    // Phase 5: every derived accessor delegates to the @ref GlobalIndex
-    // value type, decoding the stored new-layout raw via direct construction
-    // (no @c from_legacy — the storage is now the new layout natively).
+    //  Every derived accessor delegates to the ::GlobalIndex value type,
+    //  decoding the stored raw via direct construction.  Bodies live in
+    //  alcor_finedata.cxx so this header doesn't need GlobalIndex's full
+    //  definition (forward declaration above is sufficient for the
+    //  declaration-only signatures here).
 
-    /** @brief Returns the TDC index decoded from the stored global index. */
-    int get_tdc() const { return ::GlobalIndex(get_global_index()).tdc(); }
+    /// @brief Returns the TDC index decoded from the stored global index.
+    int get_tdc() const;
 
-    /** @brief Returns the readout device ID decoded from the stored global index. */
-    int get_device() const { return ::GlobalIndex(get_global_index()).device(); }
+    /// @brief Returns the readout device ID decoded from the stored global index.
+    int get_device() const;
 
-    /** @brief Returns the FIFO number decoded from the stored global index. */
-    int get_fifo() const { return ::GlobalIndex(get_global_index()).fifo(); }
+    /// @brief Returns the FIFO number decoded from the stored global index.
+    int get_fifo() const;
 
-    /** @brief Returns the lane number decoded from the stored global index. */
+    /// @brief Returns the lane number decoded from the stored global index.
     int get_lane() const { return get_fifo(); }
 
-    /** @brief Returns the **physical hardware** chip ID (0–7) decoded from the stored global index. */
-    int get_chip() const { return ::GlobalIndex(get_global_index()).real_chip(); }
+    /// @brief Returns the **physical hardware** chip ID (0–7) decoded from the stored global index.
+    int get_chip() const;
 
-    /** @brief Returns the even/odd channel index (0–63) decoded from the stored global index. */
-    int get_eo_channel() const { return ::GlobalIndex(get_global_index()).eo_channel(); }
+    /// @brief Returns the even/odd channel index (0–63) decoded from the stored global index.
+    int get_eo_channel() const;
 
-    /** @brief Returns the column address decoded from the stored global index. */
-    int get_column() const { return ::GlobalIndex(get_global_index()).column(); }
+    /// @brief Returns the column address decoded from the stored global index.
+    int get_column() const;
 
-    /** @brief Returns the pixel address decoded from the stored global index. */
-    int get_pixel() const { return ::GlobalIndex(get_global_index()).pixel(); }
+    /// @brief Returns the pixel address decoded from the stored global index.
+    int get_pixel() const;
 
-    /** @brief Returns the per-device flat index 0..255. */
-    int get_device_index() const { return ::GlobalIndex(get_global_index()).device_index(); }
+    /// @brief Returns the per-device flat index 0..255.
+    int get_device_index() const;
 
     /** @brief Returns the dense, counter-style channel ordinal — suitable for
      *         histogram axes that bin one channel per bin.  Matches the legacy
-     *         `tdc_raw / 4` value bit-exact for the current detector.
-     *
-     *  @note  This now returns @ref GlobalIndex::channel_ordinal rather than
-     *         the raw `stored / 4` value.  The semantic is identical (dense
-     *         per-channel counter); the integer value matches what the legacy
-     *         `tdc_raw / 4` pattern returned, so existing hitmap histograms
-     *         that bin on this axis carry over unchanged. */
-    int get_global_channel_index() const { return ::GlobalIndex(get_global_index()).channel_ordinal(); }
+     *         `tdc_raw / 4` value bit-exact for the current detector. */
+    int get_global_channel_index() const;
 
     /// @}
 
@@ -404,32 +410,32 @@ public:
      * @brief Sets a single bit in the Hit mask.
      * @param bit Bit position to set (from @ref HitMask enum).
      */
-    void add_mask_bit(HitMask bit) { internal_data.HitMask |= (1u << bit); }
+    void add_mask_bit(HitMask bit);
 
     /**
      * @brief Clears a single bit in the Hit mask.
      * @param bit Bit position to clear (from @ref HitMask enum).
      */
-    void clear_mask_bit(HitMask bit) { internal_data.HitMask &= ~(1u << bit); }
+    void clear_mask_bit(HitMask bit);
 
     /**
      * @brief Checks whether a single bit is set in the Hit mask.
      * @param bit Bit position to check (from @ref HitMask enum).
      * @return true if the bit is set.
      */
-    bool has_mask_bit(HitMask bit) const { return (internal_data.HitMask >> bit) & 1u; }
+    bool has_mask_bit(HitMask bit) const;
 
-    /** @brief Checks whether the Hit is tagged as part of a ring (first pass). */
-    bool is_ring_tag_first() const { return has_mask_bit(HitmaskRingTagFirst); }
+    /// @brief Checks whether the Hit is tagged as part of a ring (first pass).
+    bool is_ring_tag_first() const;
 
-    /** @brief Checks whether the Hit is tagged as part of a ring (second pass). */
-    bool is_ring_tag_second() const { return has_mask_bit(HitmaskRingTagSecond); }
+    /// @brief Checks whether the Hit is tagged as part of a ring (second pass).
+    bool is_ring_tag_second() const;
 
-    /** @brief Checks whether the Hit is flagged as cross-talk. */
-    bool is_cross_talk() const { return has_mask_bit(HitmaskCrossTalk); }
+    /// @brief Checks whether the Hit is flagged as cross-talk.
+    bool is_cross_talk() const;
 
-    /** @brief Checks whether the Hit is flagged as an afterpulse (Δt < framer @c afterpulse_deadtime). */
-    bool is_afterpulse() const { return has_mask_bit(HitmaskAfterpulse); }
+    /// @brief Checks whether the Hit is flagged as an afterpulse (Δt < framer @c afterpulse_deadtime).
+    bool is_afterpulse() const;
 
     /**
      * @brief True if Δt to the previous same-channel Hit lies in the QA near window
@@ -440,7 +446,7 @@ public:
      * (@ref QaConfigStruct::afterpulse_near_lo / @c afterpulse_near_hi) and is meant
      * exclusively for the sideband-subtraction afterpulse probability QA.
      */
-    bool is_afterpulse_near() const { return has_mask_bit(HitmaskAfterpulseNear); }
+    bool is_afterpulse_near() const;
 
     /**
      * @brief True if Δt to the previous same-channel Hit lies in the QA far window
@@ -449,13 +455,13 @@ public:
      * Paired with @ref is_afterpulse_near to subtract the random same-channel
      * coincidence baseline from the apparent afterpulse rate.
      */
-    bool is_afterpulse_far() const { return has_mask_bit(HitmaskAfterpulseFar); }
+    bool is_afterpulse_far() const;
 
-    /** @brief Checks whether the Hit originates from a partially active lane. */
-    bool is_part_lane() const { return has_mask_bit(_HITMASK_part_lane); }
+    /// @brief Checks whether the Hit originates from a partially active lane.
+    bool is_part_lane() const;
 
-    /** @brief Checks whether the Hit originates from a dead lane. */
-    bool is_dead_lane() const { return has_mask_bit(HitmaskDeadLane); }
+    /// @brief Checks whether the Hit originates from a dead lane.
+    bool is_dead_lane() const;
 
     /// @}
 
@@ -502,8 +508,8 @@ public:
      */
     void set_mask(uint32_t mask) { internal_data.HitMask = mask; }
 
-    /** @brief Flags the Hit as a streaming ring trigger participant. */
-    void set_streaming_ring_trigger_mask() { add_mask_bit(HitmaskStreamingRingTrigger); }
+    /// @brief Flags the Hit as a streaming ring trigger participant.
+    void set_streaming_ring_trigger_mask();
 
     /// @}
 

@@ -26,8 +26,6 @@
 #include <TH2.h>
 #include <TMath.h>
 
-#include <mist/logger/logger.h>
-
 /**
  * @brief Difference-of-logistic function used to model azimuthal acceptance gaps.
  * @param variable   Independent variable (e.g. azimuthal angle φ [rad]).
@@ -222,7 +220,9 @@ inline RingFitResults fit_ring_integral(TH2 *target_histogram, std::array<double
     for (auto current_parameter : fit_result.Parameters())
     {
         iTer++;
-        mist::logger::debug("par " + fit_result.GetParameterName(iTer) + " : " + std::to_string(current_parameter) + " +- " + std::to_string(fit_result.Errors()[iTer]));
+        //  Debug print removed (it pulled in `<mist/logger/logger.h>` which
+        //  broke ROOT's dict autoparse on this header-only file); re-add as
+        //  std::cout if needed for local debugging.
         // result is std::array<…, 6> — valid indices 0..5.  The previous
         // guard `if (iTer > 6) continue` would let iTer == 6 fall through and
         // write past the end of result; with `iTer >= (int)result.size()`

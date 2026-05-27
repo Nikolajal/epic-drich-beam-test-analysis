@@ -1,4 +1,5 @@
 #include "util/config_reader.h"
+#include <mist/logger/logger.h>
 
 // --- ReadoutConfigStruct -----------------------------------------------
 

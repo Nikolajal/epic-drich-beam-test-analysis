@@ -1,4 +1,5 @@
 #include "parallel_streaming_framer.h"
+#include <mist/logger/logger.h>
 #include "writers/lightdata.h"
 #include "writers/lightdata/types.h"                 // CtHit
 #include "writers/lightdata/dcr_afterpulse_ct_qa.h"  // fill_dcr_afterpulse_ct_qa

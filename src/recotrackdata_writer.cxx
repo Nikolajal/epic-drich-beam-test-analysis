@@ -1,4 +1,6 @@
 #include "writers/recotrackdata.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"
 #include "writers/recodata.h"
 #include "alcor_recodata.h"
 #include "alcor_recotrackdata.h"

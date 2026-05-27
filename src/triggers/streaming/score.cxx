@@ -11,6 +11,7 @@
  */
 
 #include "triggers/streaming/score.h"
+#include "alcor_data.h"
 
 #include <algorithm>
 #include <cmath>

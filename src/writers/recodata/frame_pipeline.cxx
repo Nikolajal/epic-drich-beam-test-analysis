@@ -11,6 +11,7 @@
  */
 
 #include "writers/recodata/frame_pipeline.h"
+#include "alcor_data.h"
 
 #include <cmath>
 

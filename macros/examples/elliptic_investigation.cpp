@@ -139,7 +139,14 @@ EllipseFit fit_ellipse(const std::vector<std::array<float, 2>> &pts,
 
     ROOT::Math::Functor functor(cost, 5);
     ROOT::Fit::Fitter fitter;
-    fitter.Config().SetFunction(functor);
+    //  ROOT::Fit::Fitter::SetFCN(IMultiGenFunction&, …) — Config() does NOT
+    //  have a SetFunction overload for an objective-only functor; the
+    //  pre-2024 API surface (where this macro was originally written
+    //  against) routed through Config(), but ROOT 6.30+ moved it onto
+    //  the Fitter itself.  SetFCN also initialises ParSettings(0..npar-1)
+    //  from the functor's dimensionality, which the subsequent
+    //  Config().ParSettings(i) calls depend on.
+    fitter.SetFCN(functor);
     fitter.Config().ParSettings(0).Set("cx", cx_seed, 0.5);
     fitter.Config().ParSettings(1).Set("cy", cy_seed, 0.5);
     fitter.Config().ParSettings(2).Set("a", R_seed, 0.5);

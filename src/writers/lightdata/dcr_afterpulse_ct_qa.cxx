@@ -9,6 +9,7 @@
  */
 
 #include "writers/lightdata/dcr_afterpulse_ct_qa.h"
+#include "alcor_data.h"
 
 #include <algorithm>
 #include <cmath>

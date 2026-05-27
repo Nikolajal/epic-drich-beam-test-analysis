@@ -387,7 +387,8 @@ public:
     inline bool is_cross_talk(int i) { return get_finedata(i).is_cross_talk(); }
 
     /// @brief True if Hit @p i has been associated with a reconstructed ring.
-    inline bool is_ring_tagged(int i) { return check_hit_mask(i, encode_bits({HitmaskRingTagFirst, HitmaskRingTagSecond})); }
+    /// Body in alcor_recodata.cxx — uses HitMask enum constants from alcor_data.h.
+    bool is_ring_tagged(int i);
 
     ///@}
 
