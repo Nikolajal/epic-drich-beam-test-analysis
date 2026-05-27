@@ -15,6 +15,11 @@
 #  Default:  all .cpp files under macros/examples + macros/utilities
 #
 #  Exit code: 0 if every macro compiles, 1 if any failed.
+#
+#  Isolation:  every ACLiC build artifact (`*_ACLiC_dict.*`, `*_cpp.d`,
+#  `*_cpp.so`, `*_cpp_ACLiC_*`) lands in a fresh temp dir via ROOT's
+#  `gSystem->SetBuildDir(path, kTRUE)`.  The macros/ source tree is
+#  NEVER written to — the temp dir is removed on exit (even on Ctrl-C).
 
 set -u
 set -o pipefail
@@ -37,6 +42,21 @@ fi
 #  (those are cling-only and ignored by ACLiC).
 export ROOT_INCLUDE_PATH="${repo_root}/include:${repo_root}/build/_deps/mist-src/include:${repo_root}/build/_deps/tomlplusplus-src/include${ROOT_INCLUDE_PATH:+:${ROOT_INCLUDE_PATH}}"
 
+#  Isolated ACLiC scratch dir — wiped on exit (incl. Ctrl-C).  Avoid
+#  writing anywhere near the source tree even mid-run.
+aclic_buildir="$(mktemp -d -t btana-check-macros-XXXXXX)"
+tmp_log="$(mktemp)"
+cleanup() {
+    rm -rf "${aclic_buildir}" "${tmp_log}"
+    #  Belt-and-braces: if a previous interrupted run left artifacts
+    #  in the source tree (older versions of this script wrote them
+    #  there), reap them now.  Cheap; runs on every exit.
+    find "${repo_root}/macros" -maxdepth 2 \
+        \( -name '*_ACLiC_*' -o -name '*_cpp.d' -o -name '*_cpp.so' \) \
+        -delete 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 #  Build the macro list.
 if [[ $# -gt 0 ]]; then
     macros=("$@")
@@ -56,33 +76,22 @@ fi
 pass=0
 fail=0
 failed_list=()
-tmp_log="$(mktemp)"
-
-#  ACLiC leaves a swarm of intermediate files next to each .cpp
-#  (`*_ACLiC_dict.*`, `*_cpp.d`, `*_cpp.so`, `*_cpp_ACLiC_*`).  Wipe
-#  them on exit so the source tree stays clean — the script is meant
-#  to be a QA gate, not a build cache.
-cleanup() {
-    rm -f "${tmp_log}"
-    find "${repo_root}/macros" -maxdepth 2 \
-        \( -name '*_ACLiC_*' -o -name '*_cpp.d' -o -name '*_cpp.so' \) \
-        -delete 2>/dev/null || true
-}
-trap cleanup EXIT
 
 for m in "${macros[@]}"; do
     name="$(basename "${m}")"
     printf '  %-50s ' "${name}"
-    #  `.L file.cpp+` triggers ACLiC compile.  Trailing `.q` exits root
-    #  cleanly so a successful compile doesn't drop us into the prompt.
-    #  AddLinkedLibs prepends our framework dylib to ACLiC's link command
-    #  so symbols like `lightdata_writer(...)` resolve.  R__LOAD_LIBRARY
-    #  in lib_loader.h only handles the runtime dlopen, not the link step.
-    #  AddLinkedLibs       — feeds ACLiC's link command (resolves symbols).
-    #  gSystem->Load       — pre-loads the framework so the macro's .so
-    #                        finds `@rpath/libbeam_test_analysis.dylib`
-    #                        already in the process image at dlopen.
+    #  SetBuildDir(<path>, kTRUE) — redirects ACLiC's intermediate
+    #                               output to <path>; second arg is
+    #                               `isflat`, true = files land flat in
+    #                               the dir rather than mirroring the
+    #                               source-tree subpath.
+    #  gSystem->Load             — pre-loads the framework so the macro's .so
+    #                               finds `@rpath/libbeam_test_analysis.{dylib,so}`
+    #                               already in the process image at dlopen.
+    #  AddLinkedLibs             — feeds ACLiC's link command (resolves
+    #                               symbols like `lightdata_writer(...)`).
     if root -l -b -q \
+            -e "gSystem->SetBuildDir(\"${aclic_buildir}\", kTRUE);" \
             -e "gSystem->Load(\"${framework_lib}\");" \
             -e "gSystem->AddLinkedLibs(\"${framework_lib}\");" \
             -e ".L ${m}+" >"${tmp_log}" 2>&1; then
