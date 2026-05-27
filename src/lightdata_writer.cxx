@@ -619,9 +619,10 @@ void lightdata_writer(
 
         //  Calculate participants channel
         // Phase 4 internal cleanup: the "active sensors" set is keyed by
-        // GlobalIndex::global_channel_raw() instead of the legacy
-        // `legacy_raw / 4` pattern.  The lookup at line ~725 below uses the
-        // same expression, keeping the set ↔ count-map keys in sync.
+        // GlobalIndex::channel_ordinal() instead of the legacy
+        // `legacy_raw / 4` pattern.  The lookup at line ~1044 below (DCR-QA
+        // per-channel count map) uses the same expression, keeping the set
+        // ↔ count-map keys in sync.
         std::set<uint32_t> active_sensors;
         std::unordered_map<uint32_t, uint16_t> active_sensors_count;
         auto lanes_participating = spilldata.get_not_dead_participants();

@@ -51,7 +51,9 @@ This repository aims to:
 │   │   ├── events.h            #   - runtime types: TriggerNumber, TriggerEvent
 │   │   ├── config.h            #   - schema + reader: DeviceTrigger, ChannelTrigger, TriggerConfigSet
 │   │   ├── registry.h          #   - bin-label lookup: TriggerRegistry
-│   │   ├── streaming.h         #   - algorithm: DCR-weighted streaming trigger
+│   │   ├── streaming/          #   - software trigger pipeline (split by stage):
+│   │   │   ├── score.h         #       stage 1: DCR-weighted score + time clustering
+│   │   │   └── hough.h         #       stage 2: Hough ring finder + fit_circle refinement
 │   │   └── DISCUSSION.md       #   - community-facing design notes
 │   └── writers/                # Independent pipeline-stage entry points (no umbrella by design — see DISCUSSION attention-point)
 ├── src/                        # Implementation files (.cxx)
@@ -75,16 +77,18 @@ Three coexisting organisational patterns, each fitting its role:
 | Pattern | Example | When to use |
 |---|---|---|
 | **Umbrella + helpers** | [`utility.h`](include/utility.h) ↔ [`util/`](include/util) | Subsystem of small, low-coupling, header-only helpers.  The umbrella is a pure re-exporter; consumers `#include "utility.h"` to get everything or cherry-pick from `util/`. |
-| **Subsystem types + algorithms** | [`triggers.h`](include/triggers.h) ↔ [`triggers/`](include/triggers) | Subsystem with cross-cutting types **and** algorithms.  Types/config/registry live in sub-headers re-exported by the umbrella; algorithm headers (e.g. [`triggers/streaming.h`](include/triggers/streaming.h)) are **not** re-exported — include them deliberately. |
+| **Subsystem types + algorithms** | [`triggers.h`](include/triggers.h) ↔ [`triggers/`](include/triggers) | Subsystem with cross-cutting types **and** algorithms.  Types/config/registry live in sub-headers re-exported by the umbrella; algorithm headers (e.g. [`triggers/streaming/score.h`](include/triggers/streaming/score.h), [`triggers/streaming/hough.h`](include/triggers/streaming/hough.h)) are **not** re-exported — include them deliberately. |
 | **Category grouping** | [`writers/`](include/writers) | Folder of independent entry points that share no types or interface.  No umbrella; adding one would re-export nothing.  Stays flat on purpose. |
 
-> **Trigger subsystem.**  The two-mode config schema (device / channel) plus
-> the DCR-weighted streaming trigger (D-12) are documented in
-> [`include/triggers/DISCUSSION.md`](include/triggers/DISCUSSION.md).  TOML
-> knobs live in [`conf/framer_conf.toml`](conf/framer_conf.toml) under the
-> `[streaming_trigger]` section; tune `n_sigma_threshold` from the QA score
-> histograms (`Streaming Trigger/h_streaming_score_{noise,data}` in the
-> lightdata output) after a first run.
+> **Trigger subsystem.**  The two-mode config schema (device / channel) is
+> documented in [`include/triggers/DISCUSSION.md`](include/triggers/DISCUSSION.md);
+> the two-stage software trigger pipeline (DCR-weighted score → Hough ring
+> finder, D-12) is in [`include/triggers/streaming/DISCUSSION.md`](include/triggers/streaming/DISCUSSION.md).
+> TOML knobs live in [`conf/streaming.toml`](conf/streaming.toml) under the
+> `[streaming_trigger]` (stage 1) and `[streaming_hough]` (stage 2) sections;
+> tune `n_sigma_threshold` from the QA score histograms
+> (`Streaming Trigger/h_streaming_score_{noise,data}` in the lightdata output)
+> after a first run.
 
 ---
 
@@ -239,9 +243,11 @@ Runtime configuration is handled through TOML files in `conf/`:
 | File                       | Description                                              |
 | -------------------------- | -------------------------------------------------------- |
 | `readout_config.toml`      | Maps (device, chip) pairs to hit categories              |
-| `framer_conf.toml`         | Streaming-framer parameters (frame size, QA windows, …)  |
+| `framer_conf.toml`         | Streaming-framer + QA-window parameters (frame size, afterpulse / cross-talk sidebands) |
 | `mapping_conf.<year>.toml` | Pixel-to-physical-position Mapping for the SiPM plane    |
 | `trigger_conf.<year>.toml` | Trigger logic and channel assignment                     |
+| `streaming.toml`           | Software-trigger pipeline: `[streaming_trigger]` (stage 1 score), `[streaming_hough]` (stage 2 ring finder) |
+| `recodata.toml`            | Recodata live-QA pipeline: coverage-map geometry, per-ring photon counting |
 
 All config files honour the `##` cutoff sentinel (see [include/toml_utils.h](include/toml_utils.h))
 so you can append `## --- disabled ---` and keep scratch entries below without them being parsed.
