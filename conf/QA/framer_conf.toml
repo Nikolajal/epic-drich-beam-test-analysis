@@ -1,0 +1,39 @@
+# conf/QA/framer_conf.toml — fast-feedback QA override for the framer + QA windows.
+#
+# Loaded instead of `conf/framer_conf.toml` when a writer is invoked
+# with `--QA` (the entry-point macro routes `framer_conf.toml` through
+# `util::conf_path(..., qa_mode)` which redirects to this file when present).
+#
+# Mirrors production values for everything that affects framing geometry
+# or QA-window definitions; the only QA-specific knob is the
+# per-spill-calibration toggle at the bottom.  Following the same
+# convention as `conf/QA/recodata.toml` and `conf/QA/streaming.toml`:
+# QA configs are self-contained mirrors of production, with deltas at
+# the end.
+
+[framer]
+frame_size               = 1024
+first_frames_trigger     = 5000
+afterpulse_deadtime      = 64
+trigger_secondary_window = 200
+
+[qa]
+# QA windows — mirror conf/framer_conf.toml exactly.
+afterpulse_near_lo            =   1
+afterpulse_near_hi            =  64
+afterpulse_sideband_offset    = 256
+
+ct_scan_dt_min                =  -5
+ct_scan_dt_max                = 200
+ct_phys_signal_lo             =   0
+ct_phys_signal_hi             =  10
+ct_elec_signal_lo             =  -2
+ct_elec_signal_hi             =  10
+
+# QA-only behavior toggle — DIFFERS from production.
+# Re-seeds the spill calibration table from the framer's fine-tune
+# distribution at the head of every spill.  Useful for an online-only
+# mode where no offline calibration is available; pointless (and a
+# small per-spill cost) when an offline calibration was already loaded.
+# See QaConfigStruct doc in include/util/config_reader.h.
+per_spill_calibration_update = true
