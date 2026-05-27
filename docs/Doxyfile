@@ -1031,7 +1031,15 @@ WARN_LOGFILE           =
 #  repo-root dir under IMPLICIT_DIR_DOCS=YES and silently dropped (the
 #  repo root isn't a scanned dir).  `readme_page.dox` is the wrapper
 #  that pulls README content into a regular page (`@page top_readme`).
-INPUT                  = ../include ../src ../macros mainpage.md readme_page.dox ../DISCUSSION.md
+#
+#  Sub-level READMEs (include/triggers/README.md, include/triggers/
+#  streaming/README.md) are picked up automatically via RECURSIVE=YES
+#  on ../include and serve as the description page for their containing
+#  directory under IMPLICIT_DIR_DOCS=YES — that's the right semantic
+#  for them (they describe a folder, not a topic).  All DISCUSSION.md
+#  files anywhere under ../include / ../src / ../macros are also
+#  picked up automatically and listed under "Related Pages".
+INPUT                  = ../include ../src ../macros mainpage.md readme_page.dox ../DISCUSSION.md coding_conventions.md
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses
