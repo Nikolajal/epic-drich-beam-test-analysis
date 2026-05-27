@@ -262,6 +262,24 @@ struct QaConfigStruct
     int ct_elec_signal_lo = -2;
     /// @brief Electrical-CT signal window upper edge (Δt cc, inclusive).
     int ct_elec_signal_hi = 10;
+
+    // -------- QA-mode behavior toggles --------
+    //  Section holds boolean knobs (not windows) that flip lightdata_writer
+    //  behavior under `--QA`.  Lives in QaConfigStruct rather than its own
+    //  struct because (a) it's read from the same `[qa]` TOML section and
+    //  (b) creating a dedicated struct for a handful of bools doesn't carry
+    //  its weight.  Recodata-side QA toggles use the same pattern via
+    //  @ref RecodataConfigStruct::skip_loo_residuals.
+
+    /// @brief Run `spilldata.update_calibration(framer.get_fine_tune_distribution())`
+    /// at the head of every spill iteration.
+    ///
+    /// Off by default: the canonical calibration path is the offline pass
+    /// via `macros/examples/fine_calibration_timing.cpp`.  Set true in
+    /// `conf/QA/framer_conf.toml` so each spill seeds its calibration table
+    /// from the channels that became active in the previous spill — useful
+    /// only for an online-only mode where no offline calibration is available.
+    bool per_spill_calibration_update = false;
 };
 
 /**

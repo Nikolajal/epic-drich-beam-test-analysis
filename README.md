@@ -351,6 +351,32 @@ clang-format version drifts, pin the CI to a specific version via the
 [LLVM apt repository](https://apt.llvm.org/) and re-run the project-wide
 format pass.
 
+### Macro compile-check
+
+[`scripts/check_macros.sh`](scripts/check_macros.sh) drives every macro under
+`macros/examples/` and `macros/utilities/` through ROOT's ACLiC
+(`.L <macro>+`).  Unlike interpreted `.x` mode, ACLiC shells out to the system
+compiler and links against `libbeam_test_analysis`, so missing `#include`s,
+broken API uses, and stale signatures surface as hard errors instead of being
+papered over by cling's lazy parsing and auto-loaded headers.
+
+```bash
+cmake --build build              # framework lib must exist
+scripts/check_macros.sh          # all macros
+scripts/check_macros.sh macros/examples/dark_count_rate.cpp   # one macro
+```
+
+Exit code is `0` only if every macro compiles + links + dlopens.  The script
+cleans up ACLiC intermediates on exit so the source tree stays tidy.
+
+> **Note:** the macros under `macros/examples/` currently rely on cling's
+> implicit pre-loaded ROOT headers and don't all compile under ACLiC yet.
+> The `macros/utilities/` pipeline entry-points (the ones invoked by the
+> framework binaries) do.  Bringing the example macros to ACLiC-clean state
+> is tracked separately; the CI hook for this script lights up once that
+> work lands (and once the OS build legs are re-enabled — see
+> [`DISCUSSION.md`](DISCUSSION.md) §ci-os-legs).
+
 ---
 
 ## Open design questions
