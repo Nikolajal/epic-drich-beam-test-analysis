@@ -27,7 +27,7 @@
 #include <cstdint>
 #include <utility.h>
 #include <toml++/toml.h>
-#include "util/toml_utils.h"
+#include "utility/toml_utils.h"
 
 // =========================================================================
 //  Core tag set
@@ -554,7 +554,15 @@ CalibConfigStruct calib_conf_reader(std::string config_file = "conf/calib/calibr
  */
 struct StreamingTriggerConfigStruct
 {
-    /// @brief Sliding-window width [ns].  Hits within this Δt window form a cluster.
+    /// @brief Sliding-window width [ns].  Hits within this Δt window
+    /// form a cluster.
+    ///
+    /// @warning This knob is **inherited** by the Hough stage as its
+    /// hit pre-selection window — there is no separate
+    /// `time_cut_ns` knob on the Hough side, by design (see
+    /// @c include/triggers/streaming/DISCUSSION.md § 2.2).  Retuning
+    /// `time_window_ns` here silently changes the Hough's hit pool;
+    /// expect both stages' QA to move when you change this value.
     float time_window_ns = 5.f;
 
     /// @brief Threshold on standardised score $n_\sigma = (S - \mathbb{E}[S])/\sigma_S$.

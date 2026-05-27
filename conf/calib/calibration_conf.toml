@@ -184,5 +184,5 @@ slip_max_snap_fraction    = 0.30
 # overrides this to true for one invocation.
 
 override_path = ""                # optional; leave empty to skip
-default_path  = "fine_calib.txt"  # compulsory, relative to run dir
+default_path  = "fine_calib.toml"  # compulsory, relative to run dir
 force_rebuild = false             # producer-only knob

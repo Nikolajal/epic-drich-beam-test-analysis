@@ -2,7 +2,7 @@
 // commenting/uncommenting lines below; per-line LINT-OK markers would
 // add noise.  Refactor to a proper driver if this stabilises.
 #include "../lib_loader.h"
-#include "util/root_hist.h"
+#include "utility/root_hist.h"
 #include "dark_count_rate.cpp"
 #include "photon_number.cpp"
 

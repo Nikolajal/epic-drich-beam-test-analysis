@@ -41,7 +41,7 @@ independent of the schema material at this level.
 
 - **Subsystem types are umbrella-exported.**  `triggers.h` is a pure
   re-exporter for `events.h`, `config.h`, and `registry.h` — same role
-  `utility.h` plays for `util/`.
+  `utility.h` plays for `utility/`.
 - **Algorithms are not re-exported.**  Each algorithm header is included
   deliberately by its consumer.
 - **TOML files** live in `conf/`, not here.  See the relevant subfolder's

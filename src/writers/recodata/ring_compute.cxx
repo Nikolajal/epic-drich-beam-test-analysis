@@ -23,8 +23,8 @@
 
 #include "alcor_finedata.h"  // AlcorFinedata
 #include "alcor_lightdata.h" // AlcorLightdata
-#include "util/circle_fit.h" // fit_circle
-#include "util/radiator_efficiency.h"
+#include "utility/circle_fit.h" // fit_circle
+#include "utility/radiator_efficiency.h"
 
 namespace btana::recodata
 {

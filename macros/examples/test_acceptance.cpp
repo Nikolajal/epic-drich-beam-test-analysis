@@ -1,5 +1,5 @@
 #include "../lib_loader.h"
-#include "util/root_hist.h"
+#include "utility/root_hist.h"
 
 // ===== Geometry Configuration =====
 // A geometry_config struct encapsulates all detector-specific parameters

@@ -35,7 +35,7 @@
 #include <cstdint>
 
 #include "alcor_spilldata.h"
-#include "util/config_reader.h" // StreamingHoughConfigStruct
+#include "utility/config_reader.h" // StreamingHoughConfigStruct
 
 namespace mist
 {

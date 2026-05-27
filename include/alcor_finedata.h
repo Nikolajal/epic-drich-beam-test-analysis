@@ -67,7 +67,7 @@
 // ============================================================================
 struct AlcorDataStruct;      // defined in alcor_data.h
 enum HitMask : unsigned int; // defined in alcor_data.h
-class GlobalIndex;           // defined in util/global_index.h
+class GlobalIndex;           // defined in utility/global_index.h
 
 /**
      * @brief Raw decoded Hit data from an ALCOR TDC channel.
@@ -673,13 +673,31 @@ public:
     static void update_calibration(TH2F *h) { generate_calibration(h, false); }
 
     /**
-     * @brief Writes the current calibration parameters to a plain-text file.
+     * @brief Writes the current calibration parameters to disk.
+     *
+     * Output format is selected by the file extension:
+     *   - @c .toml — TOML v3 schema (`[[entry]]` tables per GlobalIndex)
+     *   - anything else — legacy whitespace-separated text (v2 schema):
+     *     one line per entry, @c "key method a -b sigma".
+     *
+     * Both formats encode the same values; the TOML form is preferred
+     * for new outputs because it is self-describing and round-trips
+     * through @c toml++ losslessly.
+     *
      * @param filename Path to the output calibration file.
      */
     static void write_calib_to_file(const std::string &filename);
 
     /**
-     * @brief Loads calibration parameters from a plain-text file.
+     * @brief Loads calibration parameters from disk.
+     *
+     * Reader auto-detects the input format:
+     *   - filename ending in @c .toml ⇒ TOML v3 schema reader
+     *   - otherwise ⇒ legacy whitespace-separated text (v2 schema)
+     *
+     * The legacy reader stays so existing @c fine_calib.txt files keep
+     * loading without regeneration.
+     *
      * @param filename     Path to the calibration file to read.
      * @param clear_first  If @c true, clears existing parameters before loading (default: @c true).
      * @param overwrites   If @c true, existing entries are overwritten by file values (default: @c true).

@@ -35,7 +35,7 @@ per-frame Cherenkov hits
     ┌────────────────────────────────────────────────┐
     │ Time pre-cut around streaming-trigger fine_time│
     │ Hough on the surviving xy points (≤ N rings)   │
-    │ Per-ring fit_circle refinement                 │
+    │ Tag ring-member hits with HitmaskHoughRingTag* │
     └────────────────────────────────────────────────┘
         │  TriggerEvent(_TRIGGER_HOUGH_RING_FOUND_)  ×  N
         ▼
@@ -271,10 +271,12 @@ streaming-trigger event with fine_time = t★
         │
         ▼  per ring (up to max_rings)
    mask hits with HitmaskHoughRingTagFirst / Second
-   fit_circle on the masked hits → refined centre + radius
         │
         ▼
    emit TriggerEvent(_TRIGGER_HOUGH_RING_FOUND_)
+        │
+        ▼  (recodata_writer, downstream)
+   re-fit mask-tagged hits → refined centre + radius
 ```
 
 ### 2.2  Parameter inventory (current values)
@@ -290,7 +292,7 @@ streaming-trigger event with fine_time = t★
 | `find_rings` | `min_active = ceil(0.004 · N_active)` | Minimum surviving hits for Hough to run | ✅ `[streaming_hough].hough_threshold_fraction` |
 | `find_rings` | `max_rings = 2` | Hard cap on rings returned per frame | ❌ hardcoded (physical: two radiators ⇒ max two concentric rings) |
 | `find_rings` | `collection_radius = 7.5 mm` | Width of ring band for hit association | ✅ `[streaming_hough].collection_radius` |
-| `fit_circle`          | `init = {0, 0, 50}` | Centre / radius initial guess (centre-at-origin prior) | ✅ `[streaming_hough].fit_circle_init_{x,y,r}` |
+| `fit_circle_init_{x,y,r}` | `init = {0, 0, 50}` | *Legacy* — fit moved to recodata_writer; knob retained for back-compat only | ⚠️ ignored at runtime |
 
 **Non-tunable rationale:**
 
@@ -459,37 +461,15 @@ natural direction:
 - Coordinate with the `fit_circle` audit in §2.4 since the refinement
   step likely calls into the circle fit.
 
-### 2.4  `fit_circle` role and audit  *(was D-04)*
+### 2.4  `fit_circle` role and audit  *(retired here — moved to consumer)*
 
-The per-ring centre refinement currently calls
-[`fit_circle`](../../util/circle_fit.h) (least-squares χ² minimisation
-on radial residuals via `ROOT::Fit::Fitter`).  The function has the
-right shape (ROOT fitter, radial-residual objective, optional `fix_XY`
-parameter, optional `exclude_points` mask) but several things should be
-addressed before it's relied on as the back-end of §2.3 or any new
-physics analysis:
-
-| Concern | Current state |
-|---|---|
-| ~~Error path~~ | ✅ Resolved.  `CircleFitResults result{};` value-init + restored early-return on `!FitFCN()`; failure path returns a NaN-tagged sentinel.  Callers test `std::isnan(result[2][0])`. |
-| ~~`exclude_points` default arg~~ | ✅ Resolved.  `{{}}` → `{}` — default no longer silently drops point 0. |
-| Initial values | Caller supplies `{x0, y0, R}` with no validation.  A degenerate initial guess (e.g. `R = 0`) silently produces nonsense.  Worth at least an assert or a documented contract. |
-| `fix_XY` semantics | When `true` the fit varies only `R`.  Useful for known-centre geometries but masks fit-quality information about the centre.  No way for the caller to ask for "fit X, fix Y" or vice versa — only the joint flag. |
-| `exclude_points` scan cost | Linear scan inside the chi² loop.  Fine for small `exclude_points`, but worth a `std::unordered_set` if it ever grows. |
-| Uncertainty propagation | Returns the `ROOT::Fit::FitResult::Errors()` values verbatim — these assume a properly-normalised chi².  No documentation of what "normalisation" the caller should expect when the points have heterogeneous uncertainties (currently the chi² treats every point with equal weight). |
-| Output structure | `CircleFitResults = std::array<std::array<float, 2>, 3>` — packed `{x0, y0, R}` with errors but no fit-quality fields (chi², ndf, status code).  A small struct with named fields would be clearer; the NaN sentinel for failure is a stopgap. |
-| Test coverage | Zero tests today.  A round-trip test (inject N points on a known circle with Gaussian noise → fit → recover within stat error) is cheap and would catch any future regression. |
-
-**Decision before next use:**
-- Patch `include/util/circle_fit.h` in place — add the remaining
-  initial-value validation, `fix_XY` granularity, fit-quality
-  named-struct return, and the round-trip test.
-- Or migrate to a library implementation (ROOT has `TGraph::Fit("pol2")`
-  workarounds; MIST could absorb a `mist::circle_fit` if it grows into a
-  cross-project need).
-
-Either path should also replace the NaN-sentinel return with a proper
-`std::optional<CircleFitResults>` or a named-struct fit-quality field.
+The Hough trigger stage no longer calls `fit_circle`.  Centre/radius
+refinement happens in `recodata_writer` on the mask-tagged hits — see
+[`include/writers/DISCUSSION.md`](../../writers/DISCUSSION.md) for the
+remaining audit items (initial-value validation, `fix_XY` granularity,
+named-struct return with chi²/ndf/status, round-trip test) which
+follow the consumer.  The util header itself
+([`include/util/circle_fit.h`](../../util/circle_fit.h)) is unchanged.
 
 ### 2.5  Open items (gated on extraction + config)
 
@@ -504,12 +484,12 @@ consolidation plan):
   the detector has two Cherenkov radiators and no physically realisable
   single-event configuration can produce more than two concentric rings.
   See § 2.2.
-- **`fit_circle` init from Hough peak.**  The current `{0, 0, 50}` fixed
-  prior pulls every ring towards origin / R = 50 mm regardless of where
-  the Hough actually peaked.  Pass the Hough's discrete `(x_c, y_c, R)`
-  estimate as the initial guess; the fit then refines locally instead
-  of climbing back from a generic starting point.  Config knobs
-  `fit_circle_init_{x,y,r}` are retained as a fallback / override.
+- **`fit_circle` init from Hough peak.**  *Migrated.* The relevant
+  fit now lives in `recodata_writer`; the init-from-Hough-peak idea
+  applies there.  See
+  [`include/writers/DISCUSSION.md`](../../writers/DISCUSSION.md).
+  The legacy `[streaming_hough].fit_circle_init_{x,y,r}` knobs are
+  unused but retained for back-compat.
 - **Hough threshold formula review.**  `hough_threshold = ceil(0.004 ×
   N_active_cherenkov)` (now `hough_threshold_fraction`) was tuned for
   the era when the streaming trigger didn't gate Hough entry.  Now that
@@ -542,19 +522,6 @@ consolidation plan):
   AND whose radii are within `~2·r_step`, then clamp the result back
   to 2.  The merge thresholds become two more `[streaming_hough]` knobs
   (`merge_dxy_mm`, `merge_dr_mm`).
-- **fit_circle moved from lightdata to recodata only (2026-05-26).**
-  The lightdata-side `fit_circle` calls in `streaming/hough.cxx` were
-  QA-only: their outputs only filled the `ring_X/Y/R_first/_second`
-  (+ dual/solo) histograms in lightdata's `Fit rings/` subfolders.
-  They never fed trigger emission, hit-mask tagging, or any
-  downstream computation.  Recodata already re-fits the mask-tagged
-  hits with full LOO + dual/solo + CB+pol3 radial fit, so all
-  fit-derived observables live in `recodata.root`'s `Rings/`
-  subfolder.  Removing the lightdata-side fit saves ~5–30 s per run
-  and removes the two-pipelines-of-truth ambiguity.  TOML knobs
-  `fit_circle_init_{x,y,r}` in `[streaming_hough]` are now unused
-  but kept for backwards compatibility.
-
 - **Is "ring 2" an elliptic deformation of ring 1?**  MIST's spatial-
   only ring finder will happily place two circles on a single elliptic
   ring if its eccentricity is moderate — the algorithm has no model

@@ -1,5 +1,5 @@
 #include "../lib_loader.h"
-#include "util/root_hist.h"
+#include "utility/root_hist.h"
 #include <TGraphErrors.h>
 #include <TCanvas.h>
 #include <TAxis.h>

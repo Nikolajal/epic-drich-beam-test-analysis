@@ -209,6 +209,68 @@ public:
     // layout natively; pre-migration `.root` files must be re-written by
     // re-running the writers on the raw FIFO input.
 
+    /// @brief Inverse of @ref tdc_ordinal — reconstruct the packed
+    /// `GlobalIndex` from the dense, counter-style integer index used
+    /// in histogram x-axes that bin one TDC sub-cell per bin.
+    ///
+    /// The forward direction is
+    /// @code
+    ///   tdc_ordinal() = channel_ordinal() * 4 + tdc()
+    /// @endcode
+    /// with @ref channel_ordinal layout depending on
+    /// @ref gidx::kUsesSplitInTwo:
+    /// - split-in-two (current 32-ch detector):
+    ///   `(device - 192) * 256 + real_chip * 32 + chip_local_channel`
+    /// - flat (final 64-ch detector):
+    ///   `(device - 192) * 512 + chip * 64 + channel`
+    ///
+    /// This factory inverts the formula and returns @c std::nullopt
+    /// when the recovered components are out-of-range.  Useful for
+    /// downstream code that consumes a per-TDC histogram whose
+    /// x-axis was filled via @ref tdc_ordinal — e.g.
+    /// @c AlcorFinedata::generate_calibration.
+    [[nodiscard]] static constexpr std::optional<GlobalIndex>
+    try_from_tdc_ordinal(int ordinal) noexcept
+    {
+        if (ordinal < 0)
+            return std::nullopt;
+        const int tdc_idx       = ordinal & 0x3;
+        const int channel_ord   = ordinal >> 2;
+        if constexpr (gidx::kUsesSplitInTwo)
+        {
+            constexpr int kChansPerDevice = 256;
+            constexpr int kChansPerChip   = 32;
+            const int device_offset       = channel_ord / kChansPerDevice;
+            const int device_id           = 192 + device_offset;
+            const int channel_in_device   = channel_ord % kChansPerDevice;
+            const int real_chip_id        = channel_in_device / kChansPerChip;
+            const int chip_local_chan     = channel_in_device % kChansPerChip;
+            //  Recover the new-layout (chip_logical, channel_logical)
+            //  pair from (real_chip_id, chip_local_chan).  In the
+            //  split-in-two scheme each pair of hardware chips maps
+            //  to one logical chip with channels [0..63]; the upper
+            //  32 channels come from the odd-indexed real chip.
+            const int chip_logical    = real_chip_id / 2;
+            const int channel_logical = chip_local_chan + (real_chip_id & 1 ? 32 : 0);
+            //  FIFO follows the same packing the writers use
+            //  elsewhere (see pulser_calib_writer).
+            const int fifo_id = 4 * chip_logical + ((channel_logical & 31) >> 3);
+            return try_from_components(device_id, fifo_id, chip_logical, channel_logical, tdc_idx);
+        }
+        else
+        {
+            constexpr int kChansPerDevice = 512;
+            constexpr int kChansPerChip   = 64;
+            const int device_offset     = channel_ord / kChansPerDevice;
+            const int device_id         = 192 + device_offset;
+            const int channel_in_device = channel_ord % kChansPerDevice;
+            const int chip_id           = channel_in_device / kChansPerChip;
+            const int channel_id        = channel_in_device % kChansPerChip;
+            const int fifo_id           = 4 * chip_id + ((channel_id & 31) >> 3);
+            return try_from_components(device_id, fifo_id, chip_id, channel_id, tdc_idx);
+        }
+    }
+
     // ------------------------------------------------------------------
     //  Field accessors
     // ------------------------------------------------------------------

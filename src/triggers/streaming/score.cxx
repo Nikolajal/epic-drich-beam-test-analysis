@@ -24,7 +24,7 @@
 #include "TProfile.h"
 
 #include "alcor_finedata.h"
-#include "util/global_index.h"
+#include "utility/global_index.h"
 #include "triggers/events.h"
 
 StreamingTriggerWeights

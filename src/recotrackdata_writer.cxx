@@ -6,7 +6,7 @@
 #include "alcor_recotrackdata.h"
 #include <filesystem>
 #include <memory>
-// TFilePtr is available via the alcor_recodata.h → utility.h → util/root_io.h chain.
+// TFilePtr is available via the alcor_recodata.h → utility.h → utility/root_io.h chain.
 
 void recotrackdata_writer(
     std::string data_repository,

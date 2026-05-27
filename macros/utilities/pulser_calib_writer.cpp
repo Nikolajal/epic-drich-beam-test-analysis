@@ -17,7 +17,7 @@
  *      the new fine_calib.txt automatically via AlcorFinedata.
  */
 
-#include "util/conf_path.h"
+#include "utility/conf_path.h"
 #include "writers/pulser_calib.h"
 
 #include <CLI/CLI.hpp>

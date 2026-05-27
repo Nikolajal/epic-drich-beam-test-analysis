@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file util/circle_fit.h
+ * @file utility/circle_fit.h
  * @brief Least-squares circle fit minimising radial residuals.
  *
  * Wraps `ROOT::Fit::Fitter` with a chi² that penalises the radial distance

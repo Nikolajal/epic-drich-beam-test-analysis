@@ -59,9 +59,9 @@
  */
 
 #include "../lib_loader.h"
-#include "util/root_io.h"
-#include "util/root_hist.h"
-#include "util/circle_fit.h"
+#include "utility/root_io.h"
+#include "utility/root_hist.h"
+#include "utility/circle_fit.h"
 #include "alcor_data.h"     // HitmaskHoughRingTag*, encode_bit
 #include "alcor_recodata.h" // AlcorRecodata
 #include "alcor_finedata.h" // AlcorFinedata::has_mask_bit
