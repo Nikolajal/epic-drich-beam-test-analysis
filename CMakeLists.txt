@@ -143,6 +143,7 @@ set(SRC_FILES
     src/recotrackdata_writer.cxx
     src/analysis_results.cxx
     src/radiator_efficiency.cxx
+    src/utilities/btana_dump.cxx
 )
 
 # --------------------------------------------------
@@ -226,10 +227,12 @@ endif()
 add_executable(lightdata_writer      macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
+add_executable(btana-dump            macros/utilities/btana_dump.cpp)
 
 target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
 target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
+target_link_libraries(btana-dump            PRIVATE beam_test_analysis)
 
 # --------------------------------------------------
 # Install Rules
@@ -239,6 +242,7 @@ install(TARGETS
     lightdata_writer
     recodata_writer
     recotrackdata_writer
+    btana-dump
     EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
