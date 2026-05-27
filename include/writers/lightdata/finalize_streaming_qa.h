@@ -29,7 +29,8 @@ class TFile;
 class TH1F;
 class TH2F;
 
-namespace btana::lightdata {
+namespace btana::lightdata
+{
 
 /**
  * @brief Pointer-bundle of every hist this finalize block touches.

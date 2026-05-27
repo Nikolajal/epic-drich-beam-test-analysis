@@ -34,14 +34,40 @@
 #include "TF1.h"
 #include "TCanvas.h"
 
-//  Forward declarations only.  The class methods that need full
-//  HitMask / BTANA_ALCOR_* / ::GlobalIndex definitions live in
-//  alcor_finedata.cxx so this header stays parseable by ROOT's dict
-//  autoparse without dragging in the full alcor_data.h / global_index.h
-//  payload at autoload time.
-struct AlcorDataStruct;       // defined in alcor_data.h
-enum HitMask : unsigned int;  // defined in alcor_data.h
-class GlobalIndex;            // defined in util/global_index.h
+// ============================================================================
+//  CONVENTION-BREAK NOTICE — read before re-inlining these methods
+// ============================================================================
+//
+//  The forward decls below + the out-of-line method bodies in
+//  alcor_finedata.cxx (look for the matching "CONVENTION-BREAK" marker)
+//  exist because of a 2026-05-27 IWYU sweep that turned out to be
+//  driven by a misdiagnosis: the macro `.x` failures it was chasing
+//  were a LinkDef / autoload problem, NOT a "framework headers must be
+//  self-sufficient" problem.
+//
+//  The PROJECT CONVENTION is:
+//      macros do `#include "../lib_loader.h"` and rely on cling
+//      autoload (via the dict's rootmap, populated from
+//      `dict/alcor_linkdef.h`) to pull in framework classes on first
+//      reference.  Framework headers may transitively include each
+//      other freely; they are NOT expected to be parseable in
+//      isolation by ROOT's autoparse.
+//
+//  Per that convention, the right place to fix "autoparse can't see
+//  AlcorData / HitMask / ::GlobalIndex" is `dict/alcor_linkdef.h`
+//  (ensure every type a macro might touch is listed there with `+`).
+//  Moving inline methods to .cxx is a workaround for a problem that
+//  shouldn't have existed.
+//
+//  The edits are not actively harmful (smaller TUs, slightly faster
+//  rebuilds of dependents) so they aren't being reverted blindly —
+//  but DO NOT promote this pattern to "the way framework headers
+//  should be written".  If a macro fails to autoload one of these
+//  types again, fix the LinkDef, don't move more methods here.
+// ============================================================================
+struct AlcorDataStruct;      // defined in alcor_data.h
+enum HitMask : unsigned int; // defined in alcor_data.h
+class GlobalIndex;           // defined in util/global_index.h
 
 /**
      * @brief Raw decoded Hit data from an ALCOR TDC channel.

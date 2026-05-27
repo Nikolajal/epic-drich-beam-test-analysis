@@ -15,8 +15,8 @@
 
 #include <cmath>
 
-#include "alcor_finedata.h"   // AlcorFinedata
-#include "alcor_lightdata.h"  // AlcorLightdata
+#include "alcor_finedata.h"  // AlcorFinedata
+#include "alcor_lightdata.h" // AlcorLightdata
 #include "triggers/registry.h"
 #include "writers/recodata.h" // BTANA_TRIGGER_MIN_SEPARATION
 
