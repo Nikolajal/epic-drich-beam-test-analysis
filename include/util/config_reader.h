@@ -193,10 +193,10 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file =
  */
 struct FramerConfigStruct
 {
-    uint16_t frame_size               = 1024; ///< Clock cycles per frame (320 MHz → 3.125 ns/cc).
-    int      first_frames_trigger     = 5000; ///< Start-of-spill frames reserved for noise measurement.
-    uint16_t afterpulse_deadtime      = 64;   ///< Afterpulse suppression deadtime (cc, ~200 ns).
-    uint16_t trigger_secondary_window = 200;  ///< Secondary-trigger detection window (cc, ~625 ns).
+    uint16_t frame_size = 1024;              ///< Clock cycles per frame (320 MHz → 3.125 ns/cc).
+    int first_frames_trigger = 5000;         ///< Start-of-spill frames reserved for noise measurement.
+    uint16_t afterpulse_deadtime = 64;       ///< Afterpulse suppression deadtime (cc, ~200 ns).
+    uint16_t trigger_secondary_window = 200; ///< Secondary-trigger detection window (cc, ~625 ns).
 
     /// @brief Frame duration in nanoseconds.
     float frame_length_ns() const { return frame_size * 3.125f; }
@@ -297,7 +297,7 @@ QaConfigStruct qa_conf_reader(std::string config_file = "conf/framer_conf.toml")
 struct StreamingTriggerConfigStruct
 {
     /// @brief Sliding-window width [ns].  Hits within this Δt window form a cluster.
-    float time_window_ns   = 5.f;
+    float time_window_ns = 5.f;
 
     /// @brief Threshold on standardised score $n_\sigma = (S - \mathbb{E}[S])/\sigma_S$.
     ///        Cluster fires when the score crosses this value.  Initial guess
@@ -315,7 +315,7 @@ struct StreamingTriggerConfigStruct
     ///        gives ~45 % relative error on the rate estimate.  Increase
     ///        for stricter purity, decrease for more channels in early
     ///        spills.
-    double min_noise_hits   = 5.0;
+    double min_noise_hits = 5.0;
 };
 
 /**
@@ -358,13 +358,13 @@ struct StreamingHoughConfigStruct
 {
     // ── Hough accumulator geometry ──────────────────────────────────
     /// @brief Minimum ring radius scanned [mm].
-    float r_min      = 20.f;
+    float r_min = 20.f;
     /// @brief Maximum ring radius scanned [mm].
-    float r_max      = 120.f;
+    float r_max = 120.f;
     /// @brief Radius granularity in the accumulator [mm].
-    float r_step     = 1.f;
+    float r_step = 1.f;
     /// @brief XY accumulator cell size [mm] — sets the discrete centre resolution.
-    float cell_size  = 3.f;
+    float cell_size = 3.f;
 
     // ── Per-frame ring-finder parameters ────────────────────────────
     //
@@ -699,7 +699,7 @@ private:
     /** @name Static databases */
     /// @{
 
-    static std::unordered_map<std::string, RunInfoStruct> run_info_database;          ///< run_id → metadata.
+    static std::unordered_map<std::string, RunInfoStruct> run_info_database;            ///< run_id → metadata.
     static std::unordered_map<std::string, std::vector<std::string>> run_list_database; ///< list_name → run IDs.
 
     /// @}

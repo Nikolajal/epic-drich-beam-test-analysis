@@ -33,13 +33,13 @@
  */
 enum TriggerNumber : uint8_t
 {
-    TriggerFirstFrames = 100,         ///< First frames of a run
-    TriggerTiming = 101,               ///< Timing trigger
-    TriggerTracking = 102,             ///< Tracking trigger
-    TriggerRingFound = 103,           ///< Ring-finding trigger
+    TriggerFirstFrames = 100,             ///< First frames of a run
+    TriggerTiming = 101,                  ///< Timing trigger
+    TriggerTracking = 102,                ///< Tracking trigger
+    TriggerRingFound = 103,               ///< Ring-finding trigger
     _TRIGGER_STREAMING_RING_FOUND_ = 104, ///< Streaming ring-finding trigger
     _TRIGGER_HOUGH_RING_FOUND_ = 105,     ///< Hough-transform ring-finding trigger
-    TriggerStartOfSpill = 200,       ///< Start-of-spill signal
+    TriggerStartOfSpill = 200,            ///< Start-of-spill signal
     _TRIGGER_UNKNOWN_ = 255               ///< Unknown / unmapped trigger
 };
 
@@ -96,10 +96,10 @@ constexpr int default_trigger_index(TriggerNumber t)
  */
 struct TriggerEvent
 {
-    uint8_t  index;        ///< Hardware trigger index
-    uint16_t coarse;       ///< Coarse timestamp (DAQ clock ticks)
-    float    fine_time;    ///< Fine timestamp correction (ns)
-    bool     is_secondary; ///< True if this firing follows another within the secondary window
+    uint8_t index;     ///< Hardware trigger index
+    uint16_t coarse;   ///< Coarse timestamp (DAQ clock ticks)
+    float fine_time;   ///< Fine timestamp correction (ns)
+    bool is_secondary; ///< True if this firing follows another within the secondary window
 
     TriggerEvent() = default;
 

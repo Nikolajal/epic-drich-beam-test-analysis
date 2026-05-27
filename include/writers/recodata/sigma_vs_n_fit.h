@@ -22,7 +22,8 @@
 
 class TH2F;
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 /**
  * @brief Per-slice Gaussian fit → 1-parameter LOO model fit on @p h2.

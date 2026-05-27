@@ -30,15 +30,16 @@
 #include <unordered_map>
 #include <vector>
 
-#include "alcor_finedata.h"                  // AlcorFinedataStruct
-#include "util/config_reader.h"              // QaConfigStruct
-#include "writers/lightdata/types.h"         // CtHit
+#include "alcor_finedata.h"          // AlcorFinedataStruct
+#include "util/config_reader.h"      // QaConfigStruct
+#include "writers/lightdata/types.h" // CtHit
 
 class TH1F;
 class TH2F;
 class TProfile;
 
-namespace btana::lightdata {
+namespace btana::lightdata
+{
 
 /**
  * @brief Pointer-bundle of all 17 histograms touched by the DCR /
@@ -51,34 +52,34 @@ namespace btana::lightdata {
 struct DcrAfterpulseCtHists
 {
     // ── DCR
-    TProfile *h_dcr_per_channel              = nullptr;
-    TH2F     *h_dcr_hitmap                   = nullptr;
+    TProfile *h_dcr_per_channel = nullptr;
+    TH2F *h_dcr_hitmap = nullptr;
 
     // ── Afterpulse per-channel probability profiles
-    TProfile *h_afterpulse_near_per_channel  = nullptr;
-    TProfile *h_afterpulse_far_per_channel   = nullptr;
-    TProfile *h_afterpulse_per_channel       = nullptr;  ///< DCR-subtracted
+    TProfile *h_afterpulse_near_per_channel = nullptr;
+    TProfile *h_afterpulse_far_per_channel = nullptr;
+    TProfile *h_afterpulse_per_channel = nullptr; ///< DCR-subtracted
 
     // ── Afterpulse 2D smeared hitmaps
-    TH2F     *h_afterpulse_near_hitmap       = nullptr;
-    TH2F     *h_afterpulse_far_hitmap        = nullptr;
-    TH2F     *h_afterpulse_hitmap            = nullptr;  ///< DCR-subtracted
+    TH2F *h_afterpulse_near_hitmap = nullptr;
+    TH2F *h_afterpulse_far_hitmap = nullptr;
+    TH2F *h_afterpulse_hitmap = nullptr; ///< DCR-subtracted
 
     // ── Cross-talk per-channel probability profiles
-    TProfile *h_phys_ct_per_channel          = nullptr;
-    TProfile *h_elec_ct_per_channel          = nullptr;
+    TProfile *h_phys_ct_per_channel = nullptr;
+    TProfile *h_elec_ct_per_channel = nullptr;
 
     // ── Cross-talk 2D smeared hitmaps
-    TH2F     *h_phys_ct_hitmap               = nullptr;
-    TH2F     *h_elec_ct_hitmap               = nullptr;
+    TH2F *h_phys_ct_hitmap = nullptr;
+    TH2F *h_elec_ct_hitmap = nullptr;
 
     // ── CT Δt distributions (1D)
-    TH1F     *h_phys_ct_dt                   = nullptr;
-    TH1F     *h_elec_ct_dt                   = nullptr;
+    TH1F *h_phys_ct_dt = nullptr;
+    TH1F *h_elec_ct_dt = nullptr;
 
     // ── CT (Δchannel, Δt) 2D diagnostics
-    TH2F     *h_elec_ct_dchannel_dt          = nullptr;
-    TH2F     *h_phys_ct_dchannel_dt          = nullptr;
+    TH2F *h_elec_ct_dchannel_dt = nullptr;
+    TH2F *h_phys_ct_dchannel_dt = nullptr;
 };
 
 /**
@@ -94,11 +95,11 @@ struct DcrAfterpulseCtHists
  */
 void fill_dcr_afterpulse_ct_qa(
     const std::vector<AlcorFinedataStruct> &cherenkov_hits,
-    const std::set<uint32_t>               &active_sensors,
+    const std::set<uint32_t> &active_sensors,
     std::unordered_map<uint32_t, uint16_t> &active_sensors_count,
-    std::vector<CtHit>                     &ct_hits,
-    std::vector<std::size_t>               &sorted_by_time,
-    const QaConfigStruct                   &qa_cfg,
-    const DcrAfterpulseCtHists             &hists);
+    std::vector<CtHit> &ct_hits,
+    std::vector<std::size_t> &sorted_by_time,
+    const QaConfigStruct &qa_cfg,
+    const DcrAfterpulseCtHists &hists);
 
 } // namespace btana::lightdata

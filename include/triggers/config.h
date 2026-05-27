@@ -43,10 +43,10 @@
  */
 struct DeviceTrigger
 {
-    std::string name;       ///< Human-readable trigger label (e.g. `"luca_and_finger"`).
-    uint8_t  index  = 0;    ///< Trigger index in [0, 99] used in the data stream.
-    uint16_t delay  = 0;    ///< Trigger delay (DAQ clock cycles).
-    uint16_t device = 0;    ///< Hardware device ID that produces this trigger.
+    std::string name;    ///< Human-readable trigger label (e.g. `"luca_and_finger"`).
+    uint8_t index = 0;   ///< Trigger index in [0, 99] used in the data stream.
+    uint16_t delay = 0;  ///< Trigger delay (DAQ clock cycles).
+    uint16_t device = 0; ///< Hardware device ID that produces this trigger.
 };
 
 /**
@@ -67,13 +67,13 @@ struct DeviceTrigger
  */
 struct ChannelTrigger
 {
-    std::string name;        ///< Human-readable trigger label.
-    uint8_t  index  = 0;     ///< Trigger index in [0, 99] used in the data stream.
-    uint16_t delay  = 0;     ///< Trigger delay (DAQ clock cycles).
-    uint16_t device = 0;     ///< Hardware device ID.
-    uint16_t fifo   = 0;     ///< FIFO/lane index.
-    uint8_t  column = 0;     ///< Column address within the chip (0–7).
-    uint8_t  pixel  = 0;     ///< Pixel address within the column (0–3).
+    std::string name;    ///< Human-readable trigger label.
+    uint8_t index = 0;   ///< Trigger index in [0, 99] used in the data stream.
+    uint16_t delay = 0;  ///< Trigger delay (DAQ clock cycles).
+    uint16_t device = 0; ///< Hardware device ID.
+    uint16_t fifo = 0;   ///< FIFO/lane index.
+    uint8_t column = 0;  ///< Column address within the chip (0–7).
+    uint8_t pixel = 0;   ///< Pixel address within the column (0–3).
 
     /// @brief Linear ALCOR channel index `column * 4 + pixel` (0–31).
     [[nodiscard]] constexpr uint8_t eo_channel() const noexcept
@@ -92,10 +92,7 @@ struct ChannelTrigger
 [[nodiscard]] inline constexpr uint64_t
 pack_channel_key(uint16_t device, uint16_t fifo, uint8_t column, uint8_t pixel) noexcept
 {
-    return (uint64_t(device) << 32)
-         | (uint64_t(fifo)   << 16)
-         | (uint64_t(column) <<  8)
-         |  uint64_t(pixel);
+    return (uint64_t(device) << 32) | (uint64_t(fifo) << 16) | (uint64_t(column) << 8) | uint64_t(pixel);
 }
 
 /**
@@ -109,7 +106,7 @@ struct TriggerConfigSet
 {
     /// device → DeviceTrigger.  Duplicate device entries are a config error
     /// (rejected at load time by @ref trigger_conf_reader).
-    std::unordered_map<uint16_t, DeviceTrigger>  by_device;
+    std::unordered_map<uint16_t, DeviceTrigger> by_device;
 
     /// packed `(device, fifo, column, pixel)` key → ChannelTrigger.
     /// Duplicates rejected at load time.

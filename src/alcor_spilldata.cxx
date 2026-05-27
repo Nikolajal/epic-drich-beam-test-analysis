@@ -87,10 +87,10 @@ void AlcorSpilldata::link_to_tree(TTree *input_tree)
     // refers to.  The slots live on the wrapper (this object) and were
     // anchored to spilldata's vectors in sync_ptrs_().  Since the wrapper
     // is non-movable, the addresses below remain valid for its lifetime.
-    input_tree->SetBranchAddress("dead_mask",         &dead_mask_list_ptr_);
+    input_tree->SetBranchAddress("dead_mask", &dead_mask_list_ptr_);
     input_tree->SetBranchAddress("participants_mask", &participants_mask_list_ptr_);
-    input_tree->SetBranchAddress("frame",             &frame_reference_ptr_);
-    input_tree->SetBranchAddress("lightdata",         &lightdata_list_in_frame_ptr_);
+    input_tree->SetBranchAddress("frame", &frame_reference_ptr_);
+    input_tree->SetBranchAddress("lightdata", &lightdata_list_in_frame_ptr_);
 }
 
 void AlcorSpilldata::write_to_tree(TTree *output_tree)
@@ -101,10 +101,10 @@ void AlcorSpilldata::write_to_tree(TTree *output_tree)
     // Branch() takes the address of the std::vector itself; ROOT iterates
     // it on each Fill.  Stable because the wrapper (and therefore
     // spilldata) is non-movable.
-    output_tree->Branch("dead_mask",         &spilldata.dead_mask_list);
+    output_tree->Branch("dead_mask", &spilldata.dead_mask_list);
     output_tree->Branch("participants_mask", &spilldata.participants_mask_list);
-    output_tree->Branch("frame",             &spilldata.frame_reference);
-    output_tree->Branch("lightdata",         &spilldata.lightdata_list_in_frame);
+    output_tree->Branch("frame", &spilldata.frame_reference);
+    output_tree->Branch("lightdata", &spilldata.lightdata_list_in_frame);
 }
 
 void AlcorSpilldata::prepare_tree_fill()

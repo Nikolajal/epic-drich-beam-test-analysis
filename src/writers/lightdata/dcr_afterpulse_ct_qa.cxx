@@ -13,25 +13,26 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <numeric>      // std::iota
+#include <numeric> // std::iota
 
 #include "TH1.h"
 #include "TH2.h"
 #include "TProfile.h"
 
 #include "alcor_finedata.h"
-#include "util/global_index.h"               // GlobalIndex
+#include "util/global_index.h" // GlobalIndex
 
-namespace btana::lightdata {
+namespace btana::lightdata
+{
 
 void fill_dcr_afterpulse_ct_qa(
     const std::vector<AlcorFinedataStruct> &cherenkov_hits,
-    const std::set<uint32_t>               &active_sensors,
+    const std::set<uint32_t> &active_sensors,
     std::unordered_map<uint32_t, uint16_t> &active_sensors_count,
-    std::vector<CtHit>                     &ct_hits,
-    std::vector<std::size_t>               &sorted_by_time,
-    const QaConfigStruct                   &qa_cfg,
-    const DcrAfterpulseCtHists             &h)
+    std::vector<CtHit> &ct_hits,
+    std::vector<std::size_t> &sorted_by_time,
+    const QaConfigStruct &qa_cfg,
+    const DcrAfterpulseCtHists &h)
 {
     //  Channel-by-channel Hit counting — start each frame from a clean
     //  map so counts cannot accumulate across frames.
@@ -46,7 +47,8 @@ void fill_dcr_afterpulse_ct_qa(
     for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
     {
         const uint32_t channel_key = static_cast<uint32_t>(::GlobalIndex(
-            current_cherenkov_hit_struct.GlobalIndex).channel_ordinal());
+                                                               current_cherenkov_hit_struct.GlobalIndex)
+                                                               .channel_ordinal());
         active_sensors_count[channel_key]++;
         //  Smeared DCR hitmap: one fill per Hit at the channel's
         //  smeared physical position.
@@ -87,12 +89,12 @@ void fill_dcr_afterpulse_ct_qa(
 
     for (std::size_t i = 0; i < cherenkov_hits.size(); ++i)
     {
-        const auto &s   = cherenkov_hits[i];
+        const auto &s = cherenkov_hits[i];
         const auto &hit = ct_hits[i];
 
-        const bool is_ap      = (s.HitMask >> HitmaskAfterpulse)      & 1u;
-        const bool is_ap_near = (s.HitMask >> HitmaskAfterpulseNear)  & 1u;
-        const bool is_ap_far  = (s.HitMask >> HitmaskAfterpulseFar)   & 1u;
+        const bool is_ap = (s.HitMask >> HitmaskAfterpulse) & 1u;
+        const bool is_ap_near = (s.HitMask >> HitmaskAfterpulseNear) & 1u;
+        const bool is_ap_far = (s.HitMask >> HitmaskAfterpulseFar) & 1u;
 
         AlcorFinedata hit_fd(s);
 
@@ -103,10 +105,10 @@ void fill_dcr_afterpulse_ct_qa(
         if (h.h_afterpulse_near_per_channel)
             h.h_afterpulse_near_per_channel->Fill(hit.channel, is_ap_near ? 100.0 : 0.0);
         if (h.h_afterpulse_far_per_channel)
-            h.h_afterpulse_far_per_channel ->Fill(hit.channel, is_ap_far  ? 100.0 : 0.0);
+            h.h_afterpulse_far_per_channel->Fill(hit.channel, is_ap_far ? 100.0 : 0.0);
         if (h.h_afterpulse_per_channel)
             h.h_afterpulse_per_channel->Fill(hit.channel,
-                100.0 * (static_cast<int>(is_ap_near) - static_cast<int>(is_ap_far)));
+                                             100.0 * (static_cast<int>(is_ap_near) - static_cast<int>(is_ap_far)));
         //  Smeared 2D maps — weighted Fills (single fill per hit, weight = ±100).
         if (hit.x > -990.f)
         {

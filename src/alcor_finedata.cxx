@@ -17,19 +17,20 @@ AlcorFinedataStruct::AlcorFinedataStruct(const AlcorDataStruct &d)
     // ↦ logical (chip 0–3, channel 0–63) for the current detector;
     // identity transform for the final 64-ch chip (gated by
     // ::gidx::kUsesSplitInTwo).
-    const int chip_raw     = d.fifo / 4;
-    const int channel_raw  = d.pixel + 4 * d.column;
+    const int chip_raw = d.fifo / 4;
+    const int channel_raw = d.pixel + 4 * d.column;
     const int chip_logical = ::gidx::kUsesSplitInTwo ? chip_raw / 2
-                                                    : chip_raw;
-    const int channel_log  = ::gidx::kUsesSplitInTwo
-                                 ? channel_raw + 32 * (chip_raw % 2)
-                                 : channel_raw;
+                                                     : chip_raw;
+    const int channel_log = ::gidx::kUsesSplitInTwo
+                                ? channel_raw + 32 * (chip_raw % 2)
+                                : channel_raw;
     GlobalIndex = ::GlobalIndex::from_components(
-        d.device, d.fifo, chip_logical, channel_log, d.tdc).raw();
+                      d.device, d.fifo, chip_logical, channel_log, d.tdc)
+                      .raw();
 
     rollover = static_cast<uint32_t>(d.rollover);
-    coarse   = static_cast<uint16_t>(d.coarse);
-    fine     = static_cast<uint8_t>(d.fine);
+    coarse = static_cast<uint16_t>(d.coarse);
+    fine = static_cast<uint8_t>(d.fine);
     HitMask = d.HitMask;
 }
 
@@ -261,7 +262,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
             second_parameter = static_cast<float>(fine_dist_fit_function->GetParameter(3));
         }
         if (fabs(second_parameter - first_parameter - 62.5) > 10)
-            continue;   // unique_ptr frees current_tdc_fine_calib here
+            continue; // unique_ptr frees current_tdc_fine_calib here
 
         calibration_parameters[xbin - 1] = {first_parameter, second_parameter, 0.};
         // unique_ptr frees at end of loop iteration; no manual delete needed.

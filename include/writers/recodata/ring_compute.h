@@ -30,7 +30,8 @@
 
 class AlcorLightdata;
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 /**
  * @brief Captured-once state shared across all ring-fit calls.

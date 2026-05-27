@@ -32,59 +32,58 @@
 
 namespace
 {
-    /// @brief Classification of a `[[trigger]]` TOML entry.
-    enum class TriggerMode
-    {
-        Device,    ///< No source selectors → DeviceTrigger.
-        Channel,   ///< fifo + (column+pixel | eo_channel) → ChannelTrigger.
-        Invalid    ///< Partial / mixed / unrecognised — rejected.
-    };
+/// @brief Classification of a `[[trigger]]` TOML entry.
+enum class TriggerMode
+{
+    Device,  ///< No source selectors → DeviceTrigger.
+    Channel, ///< fifo + (column+pixel | eo_channel) → ChannelTrigger.
+    Invalid  ///< Partial / mixed / unrecognised — rejected.
+};
 
-    /// @brief Snapshot of which selector keys are present on a TOML entry.
-    struct EntryShape
-    {
-        bool has_fifo       = false;
-        bool has_column     = false;
-        bool has_pixel      = false;
-        bool has_eo_channel = false;
-        bool has_chip       = false;   ///< Legacy, rejected.
-        bool has_use_hit    = false;   ///< Legacy, rejected.
-    };
+/// @brief Snapshot of which selector keys are present on a TOML entry.
+struct EntryShape
+{
+    bool has_fifo = false;
+    bool has_column = false;
+    bool has_pixel = false;
+    bool has_eo_channel = false;
+    bool has_chip = false;    ///< Legacy, rejected.
+    bool has_use_hit = false; ///< Legacy, rejected.
+};
 
-    EntryShape inspect_entry(const toml::table &entry)
-    {
-        EntryShape s;
-        s.has_fifo       = entry.contains("fifo");
-        s.has_column     = entry.contains("column");
-        s.has_pixel      = entry.contains("pixel");
-        s.has_eo_channel = entry.contains("eo_channel");
-        s.has_chip       = entry.contains("chip");
-        s.has_use_hit    = entry.contains("use_hit");
-        return s;
-    }
-
-    /// @brief Decide which mode an entry belongs to (or that it's malformed).
-    ///
-    /// The classification is purely structural — index/device/delay sanity
-    /// is checked by the caller after the mode is known.
-    TriggerMode classify(const EntryShape &s)
-    {
-        const bool any_channel_selector = s.has_fifo || s.has_column
-                                       || s.has_pixel || s.has_eo_channel;
-        if (!any_channel_selector)
-            return TriggerMode::Device;
-
-        // Channel-mode must have fifo + a channel position.
-        if (!s.has_fifo)
-            return TriggerMode::Invalid;
-
-        const bool has_col_pix = s.has_column && s.has_pixel;
-        if (!has_col_pix && !s.has_eo_channel)
-            return TriggerMode::Invalid;
-
-        return TriggerMode::Channel;
-    }
+EntryShape inspect_entry(const toml::table &entry)
+{
+    EntryShape s;
+    s.has_fifo = entry.contains("fifo");
+    s.has_column = entry.contains("column");
+    s.has_pixel = entry.contains("pixel");
+    s.has_eo_channel = entry.contains("eo_channel");
+    s.has_chip = entry.contains("chip");
+    s.has_use_hit = entry.contains("use_hit");
+    return s;
 }
+
+/// @brief Decide which mode an entry belongs to (or that it's malformed).
+///
+/// The classification is purely structural — index/device/delay sanity
+/// is checked by the caller after the mode is known.
+TriggerMode classify(const EntryShape &s)
+{
+    const bool any_channel_selector = s.has_fifo || s.has_column || s.has_pixel || s.has_eo_channel;
+    if (!any_channel_selector)
+        return TriggerMode::Device;
+
+    // Channel-mode must have fifo + a channel position.
+    if (!s.has_fifo)
+        return TriggerMode::Invalid;
+
+    const bool has_col_pix = s.has_column && s.has_pixel;
+    if (!has_col_pix && !s.has_eo_channel)
+        return TriggerMode::Invalid;
+
+    return TriggerMode::Channel;
+}
+} // namespace
 
 TriggerConfigSet
 trigger_conf_reader(const std::string &config_file)
@@ -129,7 +128,7 @@ trigger_conf_reader(const std::string &config_file)
     auto resolve_index = [&](const std::string &name, uint16_t raw_index) -> int
     {
         const bool out_of_range = raw_index > 99;
-        const bool duplicate    = !out_of_range && used_indices[raw_index];
+        const bool duplicate = !out_of_range && used_indices[raw_index];
 
         if (!out_of_range && !duplicate)
         {
@@ -171,9 +170,9 @@ trigger_conf_reader(const std::string &config_file)
         }
 
         const std::string name = entry->at("name").value_or(std::string{});
-        const auto raw_index   = static_cast<uint16_t>(entry->at("index").value_or(0));
-        const auto device      = static_cast<uint16_t>(entry->at("device").value_or(0));
-        const auto delay       = static_cast<uint16_t>(entry->at("delay").value_or(0));
+        const auto raw_index = static_cast<uint16_t>(entry->at("index").value_or(0));
+        const auto device = static_cast<uint16_t>(entry->at("device").value_or(0));
+        const auto delay = static_cast<uint16_t>(entry->at("delay").value_or(0));
 
         const EntryShape shape = inspect_entry(*entry);
 
@@ -218,9 +217,9 @@ trigger_conf_reader(const std::string &config_file)
             }
 
             DeviceTrigger dt;
-            dt.name   = name;
-            dt.index  = idx;
-            dt.delay  = delay;
+            dt.name = name;
+            dt.index = idx;
+            dt.delay = delay;
             dt.device = device;
             out.by_device.emplace(device, std::move(dt));
             out.ordered_index_name.emplace_back(idx, name);
@@ -236,12 +235,12 @@ trigger_conf_reader(const std::string &config_file)
         const auto fifo = static_cast<uint16_t>(entry->at("fifo").value_or(0));
 
         uint8_t column = 0;
-        uint8_t pixel  = 0;
+        uint8_t pixel = 0;
 
         if (shape.has_column && shape.has_pixel)
         {
             column = static_cast<uint8_t>(entry->at("column").value_or(0));
-            pixel  = static_cast<uint8_t>(entry->at("pixel").value_or(0));
+            pixel = static_cast<uint8_t>(entry->at("pixel").value_or(0));
 
             if (column > 7 || pixel > 3)
             {
@@ -283,7 +282,7 @@ trigger_conf_reader(const std::string &config_file)
                 continue;
             }
             column = static_cast<uint8_t>(eo / 4);
-            pixel  = static_cast<uint8_t>(eo % 4);
+            pixel = static_cast<uint8_t>(eo % 4);
         }
 
         const uint64_t key = pack_channel_key(device, fifo, column, pixel);
@@ -301,13 +300,13 @@ trigger_conf_reader(const std::string &config_file)
         }
 
         ChannelTrigger ct;
-        ct.name   = name;
-        ct.index  = idx;
-        ct.delay  = delay;
+        ct.name = name;
+        ct.index = idx;
+        ct.delay = delay;
         ct.device = device;
-        ct.fifo   = fifo;
+        ct.fifo = fifo;
         ct.column = column;
-        ct.pixel  = pixel;
+        ct.pixel = pixel;
         out.by_channel.emplace(key, std::move(ct));
         out.ordered_index_name.emplace_back(idx, name);
 

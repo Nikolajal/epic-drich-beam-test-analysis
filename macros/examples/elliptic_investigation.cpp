@@ -62,7 +62,7 @@
 #include "util/root_io.h"
 #include "util/root_hist.h"
 #include "util/circle_fit.h"
-#include "alcor_data.h"            // HitmaskHoughRingTag*, encode_bit
+#include "alcor_data.h" // HitmaskHoughRingTag*, encode_bit
 
 #include <TH1F.h>
 #include <TH2F.h>
@@ -77,7 +77,8 @@
 #include <cmath>
 #include <algorithm>
 
-namespace {
+namespace
+{
 
 // ── Inline 5-parameter ellipse fit ─────────────────────────────────
 //
@@ -94,12 +95,13 @@ namespace {
 //
 // Convention enforced: a ≥ b (swap and rotate θ by π/2 if needed).
 
-struct EllipseFit {
-    double cx       = 0, cy       = 0;
-    double a        = 0, b        = 0;   // a ≥ b enforced
-    double theta    = 0;                  // major-axis angle, rad
-    double chi2     = 0;                  // Σ d² at minimum
-    bool   converged = false;
+struct EllipseFit
+{
+    double cx = 0, cy = 0;
+    double a = 0, b = 0; // a ≥ b enforced
+    double theta = 0;    // major-axis angle, rad
+    double chi2 = 0;     // Σ d² at minimum
+    bool converged = false;
 };
 
 EllipseFit fit_ellipse(const std::vector<std::array<float, 2>> &pts,
@@ -107,21 +109,25 @@ EllipseFit fit_ellipse(const std::vector<std::array<float, 2>> &pts,
 {
     EllipseFit out;
     const int N = static_cast<int>(pts.size());
-    if (N < 6) return out;  // 5 params + at least one residual
+    if (N < 6)
+        return out; // 5 params + at least one residual
 
-    auto cost = [&pts](const double *p) -> double {
+    auto cost = [&pts](const double *p) -> double
+    {
         const double cx = p[0], cy = p[1];
-        const double a  = p[2], b  = p[3];
+        const double a = p[2], b = p[3];
         const double th = p[4];
-        if (a <= 0. || b <= 0.) return 1e30;
+        if (a <= 0. || b <= 0.)
+            return 1e30;
         const double ct = std::cos(th), st = std::sin(th);
         double chi2 = 0.;
-        for (const auto &q : pts) {
+        for (const auto &q : pts)
+        {
             const double dx = q[0] - cx;
             const double dy = q[1] - cy;
-            const double xp =  dx * ct + dy * st;
+            const double xp = dx * ct + dy * st;
             const double yp = -dx * st + dy * ct;
-            const double d  = (xp / a) * (xp / a) + (yp / b) * (yp / b) - 1.;
+            const double d = (xp / a) * (xp / a) + (yp / b) * (yp / b) - 1.;
             chi2 += d * d;
         }
         return chi2;
@@ -132,32 +138,36 @@ EllipseFit fit_ellipse(const std::vector<std::array<float, 2>> &pts,
     fitter.Config().SetFunction(functor);
     fitter.Config().ParSettings(0).Set("cx", cx_seed, 0.5);
     fitter.Config().ParSettings(1).Set("cy", cy_seed, 0.5);
-    fitter.Config().ParSettings(2).Set("a",  R_seed,  0.5);
-    fitter.Config().ParSettings(3).Set("b",  R_seed,  0.5);
-    fitter.Config().ParSettings(4).Set("theta", 0.0,  0.05);
+    fitter.Config().ParSettings(2).Set("a", R_seed, 0.5);
+    fitter.Config().ParSettings(3).Set("b", R_seed, 0.5);
+    fitter.Config().ParSettings(4).Set("theta", 0.0, 0.05);
     fitter.Config().ParSettings(2).SetLowerLimit(1.0);
     fitter.Config().ParSettings(3).SetLowerLimit(1.0);
     fitter.Config().ParSettings(4).SetLimits(-TMath::Pi() / 2., TMath::Pi() / 2.);
     fitter.Config().MinimizerOptions().SetPrintLevel(0);
 
-    if (!fitter.FitFCN()) return out;
+    if (!fitter.FitFCN())
+        return out;
     const auto &res = fitter.Result();
-    if (!res.IsValid()) return out;
+    if (!res.IsValid())
+        return out;
 
-    out.cx    = res.Parameter(0);
-    out.cy    = res.Parameter(1);
-    out.a     = res.Parameter(2);
-    out.b     = res.Parameter(3);
+    out.cx = res.Parameter(0);
+    out.cy = res.Parameter(1);
+    out.a = res.Parameter(2);
+    out.b = res.Parameter(3);
     out.theta = res.Parameter(4);
-    out.chi2  = res.MinFcnValue();
+    out.chi2 = res.MinFcnValue();
     out.converged = true;
 
     // Enforce a ≥ b: swap and rotate θ by π/2 if the minimiser
     // landed on the "b is major axis" branch.
-    if (out.a < out.b) {
+    if (out.a < out.b)
+    {
         std::swap(out.a, out.b);
         out.theta += TMath::Pi() / 2.;
-        if (out.theta > TMath::Pi() / 2.) out.theta -= TMath::Pi();
+        if (out.theta > TMath::Pi() / 2.)
+            out.theta -= TMath::Pi();
     }
     return out;
 }
@@ -168,15 +178,17 @@ EllipseFit fit_ellipse(const std::vector<std::array<float, 2>> &pts,
 //     d_circle = (r/R)² - 1  where r = distance from (cx, cy)
 //
 double circle_algebraic_chi2(const std::vector<std::array<float, 2>> &pts,
-                              double cx, double cy, double R)
+                             double cx, double cy, double R)
 {
-    if (R <= 0.) return 1e30;
+    if (R <= 0.)
+        return 1e30;
     double chi2 = 0.;
-    for (const auto &q : pts) {
+    for (const auto &q : pts)
+    {
         const double dx = q[0] - cx;
         const double dy = q[1] - cy;
         const double r2 = dx * dx + dy * dy;
-        const double d  = r2 / (R * R) - 1.;
+        const double d = r2 / (R * R) - 1.;
         chi2 += d * d;
     }
     return chi2;
@@ -189,12 +201,14 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
     // ── Open recodata ──────────────────────────────────────────────
     const std::string filename = data_repository + "/" + run_name + "/recodata.root";
     TFilePtr input_file(TFile::Open(filename.c_str(), "READ"));
-    if (!input_file || input_file->IsZombie()) {
+    if (!input_file || input_file->IsZombie())
+    {
         mist::logger::error("[elliptic_investigation] Could not open " + filename);
         return;
     }
-    TTree *recodata_tree = static_cast<TTree*>(input_file->Get("recodata"));
-    if (!recodata_tree) {
+    TTree *recodata_tree = static_cast<TTree *>(input_file->Get("recodata"));
+    if (!recodata_tree)
+    {
         mist::logger::error("[elliptic_investigation] 'recodata' tree missing in " + filename);
         return;
     }
@@ -206,7 +220,8 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
     // ── Output ─────────────────────────────────────────────────────
     const std::string outname = data_repository + "/" + run_name + "/elliptic_investigation.root";
     TFilePtr output_file(TFile::Open(outname.c_str(), "RECREATE"));
-    if (!output_file || output_file->IsZombie()) {
+    if (!output_file || output_file->IsZombie())
+    {
         mist::logger::error("[elliptic_investigation] Could not create " + outname);
         delete recodata;
         return;
@@ -222,38 +237,38 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
     RootHist<TH2F> h_cy_first_vs_second(
         "h_cy_first_vs_second", ";c_{y,first} (mm);c_{y,second} (mm)",
         50, -25.f, 25.f, 50, -25.f, 25.f);
-    RootHist<TH1F> h_dx (
-        "h_dx_first_minus_second",  ";c_{x,first} - c_{x,second} (mm);events",
+    RootHist<TH1F> h_dx(
+        "h_dx_first_minus_second", ";c_{x,first} - c_{x,second} (mm);events",
         100, -25.f, 25.f);
-    RootHist<TH1F> h_dy (
-        "h_dy_first_minus_second",  ";c_{y,first} - c_{y,second} (mm);events",
+    RootHist<TH1F> h_dy(
+        "h_dy_first_minus_second", ";c_{y,first} - c_{y,second} (mm);events",
         100, -25.f, 25.f);
-    RootHist<TH1F> h_dR (
-        "h_dR_first_minus_second",  ";R_{first} - R_{second} (mm);events",
+    RootHist<TH1F> h_dR(
+        "h_dR_first_minus_second", ";R_{first} - R_{second} (mm);events",
         200, -50.f, 50.f);
-    RootHist<TH1F> h_d_centre (
-        "h_d_centre_first_minus_second",  ";|c_{first} - c_{second}| (mm);events",
+    RootHist<TH1F> h_d_centre(
+        "h_d_centre_first_minus_second", ";|c_{first} - c_{second}| (mm);events",
         100, 0.f, 50.f);
 
     // ── Layer-2 hists: ellipse fit on ring 2 ──────────────────────
-    RootHist<TH1F> h_a (
+    RootHist<TH1F> h_a(
         "h_ellipse_semi_major", ";a (mm);events", 200, 25.f, 125.f);
-    RootHist<TH1F> h_b (
+    RootHist<TH1F> h_b(
         "h_ellipse_semi_minor", ";b (mm);events", 200, 25.f, 125.f);
-    RootHist<TH1F> h_ecc (
+    RootHist<TH1F> h_ecc(
         "h_ellipse_eccentricity",
         ";e = #sqrt{1 - (b/a)^{2}};events", 100, 0.f, 1.f);
-    RootHist<TH1F> h_pa (
+    RootHist<TH1F> h_pa(
         "h_ellipse_position_angle",
         ";#theta (rad) [major-axis tilt];events", 100, -TMath::Pi() / 2., TMath::Pi() / 2.);
-    RootHist<TH2F> h_a_vs_b (
+    RootHist<TH2F> h_a_vs_b(
         "h_ellipse_a_vs_b",
         ";a (mm);b (mm)", 100, 25.f, 125.f, 100, 25.f, 125.f);
-    RootHist<TH2F> h_chi2_circle_vs_ellipse (
+    RootHist<TH2F> h_chi2_circle_vs_ellipse(
         "h_chi2_circle_vs_ellipse",
         ";#chi^{2}_{circle};#chi^{2}_{ellipse}",
         100, 0.f, 5.f, 100, 0.f, 5.f);
-    RootHist<TH1F> h_chi2_improvement (
+    RootHist<TH1F> h_chi2_improvement(
         "h_chi2_relative_improvement",
         ";(#chi^{2}_{circle} - #chi^{2}_{ellipse}) / #chi^{2}_{circle};events",
         100, -0.2f, 1.f);
@@ -262,64 +277,76 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
     long n_dual_frames = 0;
     long n_layer1_ok = 0;
     long n_layer2_ok = 0;
-    const uint32_t mask_first  = encode_bit(HitmaskHoughRingTagFirst);
+    const uint32_t mask_first = encode_bit(HitmaskHoughRingTagFirst);
     const uint32_t mask_second = encode_bit(HitmaskHoughRingTagSecond);
-    constexpr int kMinHitsCircle  = 5;
-    constexpr int kMinHitsEllipse = 8;  // 5 params + small safety margin
+    constexpr int kMinHitsCircle = 5;
+    constexpr int kMinHitsEllipse = 8; // 5 params + small safety margin
 
     for (long iframe = 0; iframe < n_frames; ++iframe)
     {
         recodata_tree->GetEntry(iframe);
-        if (recodata->is_start_of_spill()) continue;
+        if (recodata->is_start_of_spill())
+            continue;
 
         std::vector<std::array<float, 2>> hits_first, hits_second;
         const int nhits = static_cast<int>(recodata->get_recodata().size());
-        for (int i = 0; i < nhits; ++i) {
+        for (int i = 0; i < nhits; ++i)
+        {
             const float x = recodata->get_hit_x(i);
             const float y = recodata->get_hit_y(i);
-            if (recodata->check_hit_mask(i, mask_first))  hits_first.push_back({x, y});
-            if (recodata->check_hit_mask(i, mask_second)) hits_second.push_back({x, y});
+            if (recodata->check_hit_mask(i, mask_first))
+                hits_first.push_back({x, y});
+            if (recodata->check_hit_mask(i, mask_second))
+                hits_second.push_back({x, y});
         }
 
         // Centroid + mean-radial seed for any circle fit.
-        auto centroid_seed = [](const std::vector<std::array<float, 2>> &pts) {
+        auto centroid_seed = [](const std::vector<std::array<float, 2>> &pts)
+        {
             float sx = 0, sy = 0;
-            for (auto &p : pts) { sx += p[0]; sy += p[1]; }
+            for (auto &p : pts)
+            {
+                sx += p[0];
+                sy += p[1];
+            }
             const float cx = sx / pts.size(), cy = sy / pts.size();
             float sr = 0;
-            for (auto &p : pts) sr += std::hypot(p[0] - cx, p[1] - cy);
+            for (auto &p : pts)
+                sr += std::hypot(p[0] - cx, p[1] - cy);
             return std::array<float, 3>{cx, cy, sr / pts.size()};
         };
 
         // ── Layer 1: dual-ring correlations ────────────────────────
         const bool have_both =
-            (int)hits_first.size()  >= kMinHitsCircle &&
+            (int)hits_first.size() >= kMinHitsCircle &&
             (int)hits_second.size() >= kMinHitsCircle;
         float ring2_cx_circle = 0.f, ring2_cy_circle = 0.f, ring2_R_circle = 0.f;
-        bool  ring2_circle_ok = false;
+        bool ring2_circle_ok = false;
         if (have_both)
         {
             ++n_dual_frames;
-            const auto fit1 = fit_circle(hits_first,  centroid_seed(hits_first),  false);
+            const auto fit1 = fit_circle(hits_first, centroid_seed(hits_first), false);
             const auto fit2 = fit_circle(hits_second, centroid_seed(hits_second), false);
             const float cx1 = fit1[0][0], cy1 = fit1[1][0], R1 = fit1[2][0];
             const float cx2 = fit2[0][0], cy2 = fit2[1][0], R2 = fit2[2][0];
             const bool ok1 = std::isfinite(cx1) && std::isfinite(cy1) && std::isfinite(R1) && R1 > 0;
             const bool ok2 = std::isfinite(cx2) && std::isfinite(cy2) && std::isfinite(R2) && R2 > 0;
-            if (ok1 && ok2) {
+            if (ok1 && ok2)
+            {
                 ++n_layer1_ok;
-                h_R_first_vs_second ->Fill(R1, R2);
+                h_R_first_vs_second->Fill(R1, R2);
                 h_cx_first_vs_second->Fill(cx1, cx2);
                 h_cy_first_vs_second->Fill(cy1, cy2);
-                h_dx        ->Fill(cx1 - cx2);
-                h_dy        ->Fill(cy1 - cy2);
-                h_dR        ->Fill(R1 - R2);
-                h_d_centre  ->Fill(std::hypot(cx1 - cx2, cy1 - cy2));
+                h_dx->Fill(cx1 - cx2);
+                h_dy->Fill(cy1 - cy2);
+                h_dR->Fill(R1 - R2);
+                h_d_centre->Fill(std::hypot(cx1 - cx2, cy1 - cy2));
             }
-            if (ok2) {
+            if (ok2)
+            {
                 ring2_cx_circle = cx2;
                 ring2_cy_circle = cy2;
-                ring2_R_circle  = R2;
+                ring2_R_circle = R2;
                 ring2_circle_ok = true;
             }
         }
@@ -331,14 +358,17 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
         //   have a circle fit from Layer 1 we reuse it as the seed
         //   (faster convergence and a fair χ² comparison on the same
         //   hits).  Otherwise we recompute the circle seed here.
-        if ((int)hits_second.size() < kMinHitsEllipse) continue;
-        if (!ring2_circle_ok) {
+        if ((int)hits_second.size() < kMinHitsEllipse)
+            continue;
+        if (!ring2_circle_ok)
+        {
             const auto fit2_only = fit_circle(hits_second,
                                               centroid_seed(hits_second), false);
             ring2_cx_circle = fit2_only[0][0];
             ring2_cy_circle = fit2_only[1][0];
-            ring2_R_circle  = fit2_only[2][0];
-            if (!std::isfinite(ring2_R_circle) || ring2_R_circle <= 0.f) continue;
+            ring2_R_circle = fit2_only[2][0];
+            if (!std::isfinite(ring2_R_circle) || ring2_R_circle <= 0.f)
+                continue;
             ring2_circle_ok = true;
         }
 
@@ -346,23 +376,24 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
                                           ring2_cx_circle,
                                           ring2_cy_circle,
                                           ring2_R_circle);
-        if (!ef.converged) continue;
+        if (!ef.converged)
+            continue;
 
         const double chi2_circle = circle_algebraic_chi2(
             hits_second, ring2_cx_circle, ring2_cy_circle, ring2_R_circle);
         const double rel_imp = (chi2_circle > 0.)
-            ? (chi2_circle - ef.chi2) / chi2_circle
-            : 0.;
+                                   ? (chi2_circle - ef.chi2) / chi2_circle
+                                   : 0.;
         const double ecc = (ef.a > 0. && ef.b <= ef.a)
-            ? std::sqrt(1. - (ef.b / ef.a) * (ef.b / ef.a))
-            : 0.;
+                               ? std::sqrt(1. - (ef.b / ef.a) * (ef.b / ef.a))
+                               : 0.;
 
         ++n_layer2_ok;
-        h_a   ->Fill(ef.a);
-        h_b   ->Fill(ef.b);
-        h_ecc ->Fill(ecc);
-        h_pa  ->Fill(ef.theta);
-        h_a_vs_b ->Fill(ef.a, ef.b);
+        h_a->Fill(ef.a);
+        h_b->Fill(ef.b);
+        h_ecc->Fill(ecc);
+        h_pa->Fill(ef.theta);
+        h_a_vs_b->Fill(ef.a, ef.b);
         h_chi2_circle_vs_ellipse->Fill(chi2_circle, ef.chi2);
         h_chi2_improvement->Fill(rel_imp);
     }
@@ -376,10 +407,11 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
     if (n_layer2_ok > 100)
     {
         mist::logger::info(TString::Format(
-            "[elliptic_investigation] mean a=%.3f b=%.3f mm  "
-            "<eccentricity>=%.3f  <chi2_imp>=%.3f",
-            h_a->GetMean(), h_b->GetMean(),
-            h_ecc->GetMean(), h_chi2_improvement->GetMean()).Data());
+                               "[elliptic_investigation] mean a=%.3f b=%.3f mm  "
+                               "<eccentricity>=%.3f  <chi2_imp>=%.3f",
+                               h_a->GetMean(), h_b->GetMean(),
+                               h_ecc->GetMean(), h_chi2_improvement->GetMean())
+                               .Data());
         mist::logger::info(
             "[elliptic_investigation] Reading: <eccentricity> ~0 AND <chi2_imp> ~0 → "
             "ring 2 is consistent with a circle.  <eccentricity> > 0.2 AND <chi2_imp> > 0.3 → "

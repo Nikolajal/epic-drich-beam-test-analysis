@@ -13,21 +13,22 @@ using namespace std;
 
 //  Constructor (frame_size overload — delegates to the FramerConfigStruct overload)
 ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filenames,
-                                                     std::string trigger_config_file,
-                                                     std::string readout_config_file,
-                                                     uint16_t frame_size)
+                                                 std::string trigger_config_file,
+                                                 std::string readout_config_file,
+                                                 uint16_t frame_size)
     : ParallelStreamingFramer(filenames, trigger_config_file, readout_config_file,
-                                FramerConfigStruct{frame_size,
-                                                     BTANA_FIRST_FRAMES_TRIGGER,
-                                                     BTANA_AFTERPULSE_DEADTIME,
-                                                     BTANA_TRIGGER_SECONDARY_WINDOW})
-{}
+                              FramerConfigStruct{frame_size,
+                                                 BTANA_FIRST_FRAMES_TRIGGER,
+                                                 BTANA_AFTERPULSE_DEADTIME,
+                                                 BTANA_TRIGGER_SECONDARY_WINDOW})
+{
+}
 
 //  Constructor (FramerConfigStruct overload — canonical implementation)
 ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filenames,
-                                                     std::string trigger_config_file,
-                                                     std::string readout_config_file,
-                                                     FramerConfigStruct framer_cfg)
+                                                 std::string trigger_config_file,
+                                                 std::string readout_config_file,
+                                                 FramerConfigStruct framer_cfg)
     : _frame_size(framer_cfg.frame_size),
       _first_frames_trigger(framer_cfg.first_frames_trigger),
       _afterpulse_deadtime(framer_cfg.afterpulse_deadtime),
@@ -55,7 +56,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
         if (!data_streams.back().is_valid())
         {
             mist::logger::warning("Failed to open streamer: " + current_filename);
-            data_streams.pop_back();   // drop invalid streamers up front
+            data_streams.pop_back(); // drop invalid streamers up front
         }
     }
 
@@ -80,7 +81,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
                 "\" targets device=" + std::to_string(ct.device) +
                 " fifo=" + std::to_string(ct.fifo) +
                 " (chip=" + std::to_string(ct.fifo / 4) + ")"
-                " which is not registered in the readout config — trigger will never fire.");
+                                                          " which is not registered in the readout config — trigger will never fire.");
     }
 
     // Initialize spill counter
@@ -220,14 +221,15 @@ void ParallelStreamingFramer::resolve_rollover_offsets()
             if (rollover_offset > 1.)
             {
                 mist::logger::warning(TString::Format(
-                    "(ParallelStreamingFramer::resolve_rollover_offsets) "
-                    "Stream %s spill %zu: rollover offset %.0f exceeds 1 tick "
-                    "(stream = %.0f, reference = %.0f) — skipping correction",
-                    current_stream.get_filename().c_str(),
-                    i_spill,
-                    rollover_offset,
-                    rollover_vector[i_spill],
-                    reference_rollover_per_spill[i_spill]).Data());
+                                          "(ParallelStreamingFramer::resolve_rollover_offsets) "
+                                          "Stream %s spill %zu: rollover offset %.0f exceeds 1 tick "
+                                          "(stream = %.0f, reference = %.0f) — skipping correction",
+                                          current_stream.get_filename().c_str(),
+                                          i_spill,
+                                          rollover_offset,
+                                          rollover_vector[i_spill],
+                                          reference_rollover_per_spill[i_spill])
+                                          .Data());
                 continue;
             }
 
@@ -238,13 +240,14 @@ void ParallelStreamingFramer::resolve_rollover_offsets()
             ++n_corrections_applied;
 
             mist::logger::warning(TString::Format(
-                "(ParallelStreamingFramer::resolve_rollover_offsets) "
-                "Stream %s spill %zu: rollover = %.0f, reference = %.0f, correction = +%.0f ticks",
-                current_stream.get_filename().c_str(),
-                i_spill,
-                rollover_vector[i_spill],
-                reference_rollover_per_spill[i_spill],
-                rollover_offset).Data());
+                                      "(ParallelStreamingFramer::resolve_rollover_offsets) "
+                                      "Stream %s spill %zu: rollover = %.0f, reference = %.0f, correction = +%.0f ticks",
+                                      current_stream.get_filename().c_str(),
+                                      i_spill,
+                                      rollover_vector[i_spill],
+                                      reference_rollover_per_spill[i_spill],
+                                      rollover_offset)
+                                      .Data());
         }
     }
 
@@ -288,11 +291,10 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
 
     // Precompute the QA far-window bounds from _qa_cfg.
     // Far window mirrors the near window's width and starts at the sideband offset.
-    const int64_t qa_near_lo      = _qa_cfg.afterpulse_near_lo;
-    const int64_t qa_near_hi      = _qa_cfg.afterpulse_near_hi;
-    const int64_t qa_far_lo       = _qa_cfg.afterpulse_sideband_offset;
-    const int64_t qa_far_hi       = _qa_cfg.afterpulse_sideband_offset
-                                  + (_qa_cfg.afterpulse_near_hi - _qa_cfg.afterpulse_near_lo);
+    const int64_t qa_near_lo = _qa_cfg.afterpulse_near_lo;
+    const int64_t qa_near_hi = _qa_cfg.afterpulse_near_hi;
+    const int64_t qa_far_lo = _qa_cfg.afterpulse_sideband_offset;
+    const int64_t qa_far_hi = _qa_cfg.afterpulse_sideband_offset + (_qa_cfg.afterpulse_near_hi - _qa_cfg.afterpulse_near_lo);
 
     // Start loop on streamer data
     while (current_stream.read_next())
@@ -339,13 +341,14 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                         sec = hit_frame_coarse_global < sm->second;
                     trigger_secondary_map[ct.index] = hit_frame_coarse_global + _trigger_secondary_window;
 
-                    const uint32_t new_frame_index  =
+                    const uint32_t new_frame_index =
                         (hit_frame_coarse_global - ct.delay) / (_frame_size * 1.);
                     const uint64_t new_frame_coarse =
                         (hit_frame_coarse_global - ct.delay) % static_cast<uint64_t>(_frame_size);
 
                     std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                    if (use_shared_frame_map) map_lock.lock();
+                    if (use_shared_frame_map)
+                        map_lock.lock();
                     auto &ev = frame_map[new_frame_index].trigger_hits.emplace_back(
                         ct.index,
                         static_cast<uint16_t>(new_frame_coarse),
@@ -390,7 +393,8 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             // shared mutex so existing single-threaded callers keep working.
             {
                 std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                if (use_shared_frame_map) map_lock.lock();
+                if (use_shared_frame_map)
+                    map_lock.lock();
                 auto &current_lightdata = frame_map[hit_frame_index];
                 for (auto &tag : current_readout_tag_list)
                 {
@@ -436,12 +440,14 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 {
                     std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
                     first_time = unknown_trigger_devices_seen.insert(
-                        static_cast<uint16_t>(current_device)).second;
+                                                                 static_cast<uint16_t>(current_device))
+                                     .second;
                 }
                 if (first_time)
                     mist::logger::warning(
                         "(ParallelStreamingFramer) Tagged trigger from "
-                        "unconfigured device=" + std::to_string(current_device) +
+                        "unconfigured device=" +
+                        std::to_string(current_device) +
                         " — emitting as _TRIGGER_UNKNOWN_.");
 
                 // Unknown trigger — write to original frame at the original timing.
@@ -453,7 +459,8 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 {
                     // Per-worker frame_map → no lock; fallback test path locks.
                     std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                    if (use_shared_frame_map) map_lock.lock();
+                    if (use_shared_frame_map)
+                        map_lock.lock();
                     auto &ev = frame_map[hit_frame_index].trigger_hits.emplace_back(
                         unknown_idx,
                         static_cast<uint16_t>(current_device),
@@ -470,7 +477,7 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 sec = hit_frame_coarse_global < sm->second;
             trigger_secondary_map[cfg.index] = hit_frame_coarse_global + _trigger_secondary_window;
 
-            const uint32_t new_frame_index  =
+            const uint32_t new_frame_index =
                 (hit_frame_coarse_global - cfg.delay) / (_frame_size * 1.);
             const uint64_t new_frame_coarse =
                 (hit_frame_coarse_global - cfg.delay) % static_cast<uint64_t>(_frame_size);
@@ -478,7 +485,8 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             {
                 // Per-worker frame_map → no lock; fallback test path locks.
                 std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                if (use_shared_frame_map) map_lock.lock();
+                if (use_shared_frame_map)
+                    map_lock.lock();
                 auto &ev = frame_map[new_frame_index].trigger_hits.emplace_back(
                     cfg.index,
                     static_cast<uint16_t>(new_frame_coarse),
@@ -533,10 +541,9 @@ bool ParallelStreamingFramer::next_spill()
     for (auto i_frame = 0; i_frame < _first_frames_trigger; ++i_frame)
     {
         hint = frame_list.try_emplace(hint, i_frame);
-        hint->second.trigger_hits.push_back({
-            TriggerFirstFrames,
-            static_cast<uint16_t>(_frame_size / 2.),
-            static_cast<float>(BTANA_ALCOR_CC_TO_NS * _frame_size / 2.)});
+        hint->second.trigger_hits.push_back({TriggerFirstFrames,
+                                             static_cast<uint16_t>(_frame_size / 2.),
+                                             static_cast<float>(BTANA_ALCOR_CC_TO_NS * _frame_size / 2.)});
         ++hint; // advance past the just-inserted element so the next hint
                 // = end(), keeping the amortized-O(1) insert invariant.
     }
@@ -571,12 +578,12 @@ bool ParallelStreamingFramer::next_spill()
     // `min(n_usable, kMaxWorkers)` so the cap is greppable and the intermediate
     // value scales with hardware up to the cap.
     constexpr unsigned int kMaxWorkers = 16;
-    const unsigned int n_hw      = std::thread::hardware_concurrency();
-    const unsigned int n_usable  = (n_hw > 2) ? (n_hw - 2) : 0;
+    const unsigned int n_hw = std::thread::hardware_concurrency();
+    const unsigned int n_usable = (n_hw > 2) ? (n_hw - 2) : 0;
     const unsigned int n_streams = static_cast<unsigned int>(data_streams.size());
     const unsigned int n_threads = (n_threads_requested > 0)
-        ? std::min({static_cast<unsigned int>(n_threads_requested), kMaxWorkers, n_streams})
-        : std::min({std::max(1u, n_usable),                          kMaxWorkers, n_streams});
+                                       ? std::min({static_cast<unsigned int>(n_threads_requested), kMaxWorkers, n_streams})
+                                       : std::min({std::max(1u, n_usable), kMaxWorkers, n_streams});
 
     std::atomic<size_t> next_streamer_atomic(0);
     std::atomic<size_t> completed(0);
@@ -596,13 +603,15 @@ bool ParallelStreamingFramer::next_spill()
         worker_qas[i].h2_fine_tune = static_cast<TH2F *>(
             h2_fine_tune_distribution->Clone(
                 TString::Format("h2_fine_tune_distribution_worker_%zu_spill_%d",
-                     i, static_cast<int>(_current_spill)).Data()));
+                                i, static_cast<int>(_current_spill))
+                    .Data()));
         worker_qas[i].h2_fine_tune->SetDirectory(nullptr);
         worker_qas[i].h2_fine_tune->Reset();
         worker_qas[i].h_afterpulse = static_cast<TH1F *>(
             h_afterpulse_dt->Clone(
                 TString::Format("h_afterpulse_dt_worker_%zu_spill_%d",
-                     i, static_cast<int>(_current_spill)).Data()));
+                                i, static_cast<int>(_current_spill))
+                    .Data()));
         worker_qas[i].h_afterpulse->SetDirectory(nullptr);
         worker_qas[i].h_afterpulse->Reset();
     }
@@ -685,20 +694,18 @@ bool ParallelStreamingFramer::next_spill()
     auto cmp_finedata = [](const AlcorFinedataStruct &a,
                            const AlcorFinedataStruct &b)
     {
-        return std::tie(a.GlobalIndex, a.rollover, a.coarse, a.fine)
-             < std::tie(b.GlobalIndex, b.rollover, b.coarse, b.fine);
+        return std::tie(a.GlobalIndex, a.rollover, a.coarse, a.fine) < std::tie(b.GlobalIndex, b.rollover, b.coarse, b.fine);
     };
     auto cmp_trigger = [](const TriggerEvent &a, const TriggerEvent &b)
     {
-        return std::tie(a.index, a.coarse, a.fine_time)
-             < std::tie(b.index, b.coarse, b.fine_time);
+        return std::tie(a.index, a.coarse, a.fine_time) < std::tie(b.index, b.coarse, b.fine_time);
     };
     for (auto &[frame_index, ld] : master_frame_map)
     {
         std::sort(ld.cherenkov_hits.begin(), ld.cherenkov_hits.end(), cmp_finedata);
-        std::sort(ld.timing_hits.begin(),    ld.timing_hits.end(),    cmp_finedata);
-        std::sort(ld.tracking_hits.begin(),  ld.tracking_hits.end(),  cmp_finedata);
-        std::sort(ld.trigger_hits.begin(),   ld.trigger_hits.end(),   cmp_trigger);
+        std::sort(ld.timing_hits.begin(), ld.timing_hits.end(), cmp_finedata);
+        std::sort(ld.tracking_hits.begin(), ld.tracking_hits.end(), cmp_finedata);
+        std::sort(ld.trigger_hits.begin(), ld.trigger_hits.end(), cmp_trigger);
     }
 
     // Merge the per-worker QA clones into the master histograms, then free.

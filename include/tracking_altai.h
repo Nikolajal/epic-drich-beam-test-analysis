@@ -20,17 +20,17 @@
  */
 struct TrackingAltaiStruct
 {
-    uint32_t event_id;   ///< Global event ID.
-    float zero_plane_x;  ///< Track extrapolated X at the reference plane [mm].
-    float zero_plane_y;  ///< Track extrapolated Y at the reference plane [mm].
-    float zero_plane_z;  ///< Track extrapolated Z at the reference plane [mm] (always 0).
-    float angcoeff_dx;   ///< Track angular coefficient along X (dx/dz).
-    float angcoeff_dy;   ///< Track angular coefficient along Y (dy/dz).
-    float angcoeff_dz;   ///< Track angular coefficient along Z (always 1).
-    float chi2;          ///< Track χ².
-    float chi2ndof;      ///< Track χ²/NDF.
-    int ndof;            ///< Number of degrees of freedom.
-    double timestamp;    ///< Timestamp of the track.
+    uint32_t event_id;  ///< Global event ID.
+    float zero_plane_x; ///< Track extrapolated X at the reference plane [mm].
+    float zero_plane_y; ///< Track extrapolated Y at the reference plane [mm].
+    float zero_plane_z; ///< Track extrapolated Z at the reference plane [mm] (always 0).
+    float angcoeff_dx;  ///< Track angular coefficient along X (dx/dz).
+    float angcoeff_dy;  ///< Track angular coefficient along Y (dy/dz).
+    float angcoeff_dz;  ///< Track angular coefficient along Z (always 1).
+    float chi2;         ///< Track χ².
+    float chi2ndof;     ///< Track χ²/NDF.
+    int ndof;           ///< Number of degrees of freedom.
+    double timestamp;   ///< Timestamp of the track.
 };
 
 /**

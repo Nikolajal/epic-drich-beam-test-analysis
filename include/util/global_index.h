@@ -86,15 +86,15 @@
 
 namespace gidx
 {
-    /// @brief Build-time flag controlling whether the helper functions
-    /// @ref GlobalIndex::real_chip and @ref GlobalIndex::chip_local_channel
-    /// apply the split-in-two transform.
-    ///
-    /// Set to @c true while the analysis runs on the 32-channel ALCOR
-    /// detector that pairs chip 0+1, 2+3, … into 64-channel logical chips.
-    /// Flip to @c false (and rebuild) when the final 64-channel chip is
-    /// deployed — the two helpers then collapse to the identity.
-    static constexpr bool kUsesSplitInTwo = true;
+/// @brief Build-time flag controlling whether the helper functions
+/// @ref GlobalIndex::real_chip and @ref GlobalIndex::chip_local_channel
+/// apply the split-in-two transform.
+///
+/// Set to @c true while the analysis runs on the 32-channel ALCOR
+/// detector that pairs chip 0+1, 2+3, … into 64-channel logical chips.
+/// Flip to @c false (and rebuild) when the final 64-channel chip is
+/// deployed — the two helpers then collapse to the identity.
+static constexpr bool kUsesSplitInTwo = true;
 } // namespace gidx
 
 /**
@@ -122,31 +122,31 @@ public:
 
     /// @name Field widths and shifts
     /// @{
-    static constexpr int      kTdcBits      = 2;
-    static constexpr int      kChannelBits  = 6;
-    static constexpr int      kChipBits     = 3;
-    static constexpr int      kFifoBits     = 7;
-    static constexpr int      kDeviceBits   = 11;
-    static constexpr int      kReservedBits = 2;
+    static constexpr int kTdcBits = 2;
+    static constexpr int kChannelBits = 6;
+    static constexpr int kChipBits = 3;
+    static constexpr int kFifoBits = 7;
+    static constexpr int kDeviceBits = 11;
+    static constexpr int kReservedBits = 2;
 
-    static constexpr int      kTdcShift     = 0;
-    static constexpr int      kChannelShift = kTdcShift     + kTdcBits;     // 2
-    static constexpr int      kChipShift    = kChannelShift + kChannelBits; // 8
-    static constexpr int      kFifoShift    = kChipShift    + kChipBits;    // 11
-    static constexpr int      kDeviceShift  = kFifoShift    + kFifoBits;    // 18
-    static constexpr int      kReservedShift= kDeviceShift  + kDeviceBits;  // 29
+    static constexpr int kTdcShift = 0;
+    static constexpr int kChannelShift = kTdcShift + kTdcBits;        // 2
+    static constexpr int kChipShift = kChannelShift + kChannelBits;   // 8
+    static constexpr int kFifoShift = kChipShift + kChipBits;         // 11
+    static constexpr int kDeviceShift = kFifoShift + kFifoBits;       // 18
+    static constexpr int kReservedShift = kDeviceShift + kDeviceBits; // 29
 
     /// @brief Bit set by every legitimate constructor; checked by @ref is_valid.
-    static constexpr uint32_t kValidBit     = uint32_t{1} << 31;
+    static constexpr uint32_t kValidBit = uint32_t{1} << 31;
     /// @}
 
     /// @name Field masks (post-shift)
     /// @{
-    static constexpr uint32_t kTdcMask      = (uint32_t{1} << kTdcBits)      - 1; // 0x03
-    static constexpr uint32_t kChannelMask  = (uint32_t{1} << kChannelBits)  - 1; // 0x3F
-    static constexpr uint32_t kChipMask     = (uint32_t{1} << kChipBits)     - 1; // 0x07
-    static constexpr uint32_t kFifoMask     = (uint32_t{1} << kFifoBits)     - 1; // 0x7F
-    static constexpr uint32_t kDeviceMask   = (uint32_t{1} << kDeviceBits)   - 1; // 0x7FF
+    static constexpr uint32_t kTdcMask = (uint32_t{1} << kTdcBits) - 1;           // 0x03
+    static constexpr uint32_t kChannelMask = (uint32_t{1} << kChannelBits) - 1;   // 0x3F
+    static constexpr uint32_t kChipMask = (uint32_t{1} << kChipBits) - 1;         // 0x07
+    static constexpr uint32_t kFifoMask = (uint32_t{1} << kFifoBits) - 1;         // 0x7F
+    static constexpr uint32_t kDeviceMask = (uint32_t{1} << kDeviceBits) - 1;     // 0x7FF
     static constexpr uint32_t kReservedMask = (uint32_t{1} << kReservedBits) - 1; // 0x03
     /// @}
 
@@ -172,18 +172,23 @@ public:
     [[nodiscard]] static constexpr std::optional<GlobalIndex>
     try_from_components(int device, int fifo, int chip, int channel, int tdc) noexcept
     {
-        if (device  < 0 || device  >= (1 << kDeviceBits))  return std::nullopt;
-        if (fifo    < 0 || fifo    >= (1 << kFifoBits))    return std::nullopt;
-        if (chip    < 0 || chip    >= (1 << kChipBits))    return std::nullopt;
-        if (channel < 0 || channel >= (1 << kChannelBits)) return std::nullopt;
-        if (tdc     < 0 || tdc     >= (1 << kTdcBits))     return std::nullopt;
+        if (device < 0 || device >= (1 << kDeviceBits))
+            return std::nullopt;
+        if (fifo < 0 || fifo >= (1 << kFifoBits))
+            return std::nullopt;
+        if (chip < 0 || chip >= (1 << kChipBits))
+            return std::nullopt;
+        if (channel < 0 || channel >= (1 << kChannelBits))
+            return std::nullopt;
+        if (tdc < 0 || tdc >= (1 << kTdcBits))
+            return std::nullopt;
         return GlobalIndex(
-            kValidBit                                |
-            (uint32_t(device)  << kDeviceShift)      |
-            (uint32_t(fifo)    << kFifoShift)        |
-            (uint32_t(chip)    << kChipShift)        |
-            (uint32_t(channel) << kChannelShift)     |
-             uint32_t(tdc)     /* shift 0 */);
+            kValidBit |
+            (uint32_t(device) << kDeviceShift) |
+            (uint32_t(fifo) << kFifoShift) |
+            (uint32_t(chip) << kChipShift) |
+            (uint32_t(channel) << kChannelShift) |
+            uint32_t(tdc) /* shift 0 */);
     }
 
     /// @brief Asserting factory built on @ref try_from_components.
@@ -211,11 +216,11 @@ public:
     /// @brief Raw 32-bit representation — store this in a TTree branch.
     [[nodiscard]] constexpr uint32_t raw() const noexcept { return raw_; }
 
-    [[nodiscard]] constexpr int  tdc()      const noexcept { return static_cast<int>((raw_ >> kTdcShift)     & kTdcMask);     }
-    [[nodiscard]] constexpr int  channel()  const noexcept { return static_cast<int>((raw_ >> kChannelShift) & kChannelMask); }
-    [[nodiscard]] constexpr int  chip()     const noexcept { return static_cast<int>((raw_ >> kChipShift)    & kChipMask);    }
-    [[nodiscard]] constexpr int  fifo()     const noexcept { return static_cast<int>((raw_ >> kFifoShift)    & kFifoMask);    }
-    [[nodiscard]] constexpr int  device()   const noexcept { return static_cast<int>((raw_ >> kDeviceShift)  & kDeviceMask);  }
+    [[nodiscard]] constexpr int tdc() const noexcept { return static_cast<int>((raw_ >> kTdcShift) & kTdcMask); }
+    [[nodiscard]] constexpr int channel() const noexcept { return static_cast<int>((raw_ >> kChannelShift) & kChannelMask); }
+    [[nodiscard]] constexpr int chip() const noexcept { return static_cast<int>((raw_ >> kChipShift) & kChipMask); }
+    [[nodiscard]] constexpr int fifo() const noexcept { return static_cast<int>((raw_ >> kFifoShift) & kFifoMask); }
+    [[nodiscard]] constexpr int device() const noexcept { return static_cast<int>((raw_ >> kDeviceShift) & kDeviceMask); }
 
     /// @brief @c true iff the validity bit (bit 31) is set.
     ///
@@ -306,7 +311,7 @@ public:
         if constexpr (gidx::kUsesSplitInTwo)
             return (device() - 192) * 256 + real_chip() * 32 + chip_local_channel();
         else
-            return (device() - 192) * 512 + chip()      * 64 + channel();
+            return (device() - 192) * 512 + chip() * 64 + channel();
     }
 
     /// @brief Dense, counter-style per-TDC ordinal — `channel_ordinal * 4 + tdc`.
@@ -414,7 +419,7 @@ public:
 
     friend constexpr bool operator==(GlobalIndex a, GlobalIndex b) noexcept { return a.raw_ == b.raw_; }
     friend constexpr bool operator!=(GlobalIndex a, GlobalIndex b) noexcept { return a.raw_ != b.raw_; }
-    friend constexpr bool operator< (GlobalIndex a, GlobalIndex b) noexcept { return a.raw_ <  b.raw_; }
+    friend constexpr bool operator<(GlobalIndex a, GlobalIndex b) noexcept { return a.raw_ < b.raw_; }
 
 private:
     uint32_t raw_ = 0; ///< Default = 0 → @ref is_valid @c false until blessed.

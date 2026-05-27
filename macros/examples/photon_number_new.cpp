@@ -183,7 +183,8 @@ void photon_number_new(std::string data_repository, std::string run_name,
     // automatic attachment; histograms are owned by the local raw pointers
     // and live until the macro returns.  RAII guard restores the flag on
     // every return / exception path.
-    struct AddDirectoryGuard {
+    struct AddDirectoryGuard
+    {
         bool prev;
         AddDirectoryGuard() : prev(TH1::AddDirectoryStatus()) { TH1::AddDirectory(false); }
         ~AddDirectoryGuard() { TH1::AddDirectory(prev); }
@@ -254,24 +255,24 @@ void photon_number_new(std::string data_repository, std::string run_name,
 
     // ── Hit timing distribution ───────────────────────────────────────────────
     RootHist<TH1F> h_delta_time_all_hits("h_delta_time_all_hits",
-                                           ";t_{Hit}-t_{trig} (ns)", 10000, -312.5, 312.5);
+                                         ";t_{Hit}-t_{trig} (ns)", 10000, -312.5, 312.5);
 
     // ── 2D Hit maps ──────────────────────────────────────────────────────────
     RootHist<TH2F> h_hit_map_xy("h_hit_map_xy", ";x (mm);y (mm)",
-                                  396, -99, 99, 396, -99, 99);
+                                396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_hit_map_rphi("h_hit_map_rphi", ";#phi (rad);R (mm)",
-                                    400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
+                                  400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
 
     // ── Persistence maps for early/prompt coincidence frames ─────────────────
     // Only filled in frames where both prompt AND early hits are present.
     RootHist<TH2F> h_persistence_xy_prompt("h_persistence_xy_prompt",
-                                             ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                           ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_persistence_xy_early("h_persistence_xy_early",
-                                            ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                                          ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_persistence_rphi_prompt("h_persistence_rphi_prompt",
-                                               ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
+                                             ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
     RootHist<TH2F> h_persistence_rphi_early("h_persistence_rphi_early",
-                                              ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
+                                            ";#phi (rad);R (mm)", 400, -TMath::Pi(), TMath::Pi(), 75, 25, 125);
 
     // ── Radial distributions — prompt signal ─────────────────────────────────
     RootHist<TH1F> h_radial_prompt_full("h_radial_prompt_full", ";R (mm)", kRadialBins, kRadialLoMm, kRadialHiMm);
@@ -298,17 +299,17 @@ void photon_number_new(std::string data_repository, std::string run_name,
     // ── Coverage maps ─────────────────────────────────────────────────────────
     static constexpr int kRadialFineBins = 100 * kCoverageGranularity;
     RootHist<TH2F> h_coverage_map_xy("h_coverage_map_xy", ";x (mm);y (mm)",
-                                       396 * kCoverageGranularity, -99, 99,
-                                       396 * kCoverageGranularity, -99, 99);
+                                     396 * kCoverageGranularity, -99, 99,
+                                     396 * kCoverageGranularity, -99, 99);
     RootHist<TH2F> h_coverage_map_rphi("h_coverage_map_rphi", ";#phi (rad);R (mm)",
-                                         400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
-                                         kRadialFineBins, kRadialLoMm, kRadialHiMm);
+                                       400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
+                                       kRadialFineBins, kRadialLoMm, kRadialHiMm);
     RootHist<TH2F> h_coverage_map_rphi_1350("h_coverage_map_rphi_1350", ";#phi (rad);R (mm)",
-                                              400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
-                                              kRadialFineBins, kRadialLoMm, kRadialHiMm);
+                                            400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
+                                            kRadialFineBins, kRadialLoMm, kRadialHiMm);
     RootHist<TH2F> h_coverage_map_rphi_1375("h_coverage_map_rphi_1375", ";#phi (rad);R (mm)",
-                                              400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
-                                              kRadialFineBins, kRadialLoMm, kRadialHiMm);
+                                            400 * kCoverageGranularity, -TMath::Pi(), TMath::Pi(),
+                                            kRadialFineBins, kRadialLoMm, kRadialHiMm);
 
     // ── Hit-pair timing vs spatial separation ─────────────────────────────────
     // Hits time-sorted per frame: t_i <= t_j for i < j → dt_ij <= 0 always.
@@ -329,17 +330,17 @@ void photon_number_new(std::string data_repository, std::string run_name,
     static constexpr float kDtSensorLoNs = -5.f;
     static constexpr float kDtSensorHiNs = +5.f;
     RootHist<TH1F> h_dt_1350_full("h_dt_1350_full",
-                                    ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+                                  ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
     RootHist<TH1F> h_dt_1350_in_gap("h_dt_1350_in_gap",
-                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    RootHist<TH1F> h_dt_1350_ex_gap("h_dt_1350_ex_gap",
-                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
-    RootHist<TH1F> h_dt_1375_full("h_dt_1375_full",
                                     ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    RootHist<TH1F> h_dt_1350_ex_gap("h_dt_1350_ex_gap",
+                                    ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+    RootHist<TH1F> h_dt_1375_full("h_dt_1375_full",
+                                  ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
     RootHist<TH1F> h_dt_1375_in_gap("h_dt_1375_in_gap",
-                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+                                    ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
     RootHist<TH1F> h_dt_1375_ex_gap("h_dt_1375_ex_gap",
-                                      ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
+                                    ";t_{Hit}-t_{trig} (ns);hits/frame", kDtSensorBins, kDtSensorLoNs, kDtSensorHiNs);
 
     // ── Early-to-prompt spatial correlation ───────────────────────────────────
     // h_early_to_prompt_nearest_dR: for each early Hit, distance to nearest
@@ -959,7 +960,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
         TF1 background_prefit(TString::Format("background_prefit_%s", radial_histogram->GetName()).Data(),
                               "pol3", kFitRangeLoMm, kFitRangeHiMm);
         {
-            RootHist<TH1F> sideband_clone(static_cast<TH1F*>(radial_histogram->Clone(
+            RootHist<TH1F> sideband_clone(static_cast<TH1F *>(radial_histogram->Clone(
                 TString::Format("sideband_clone_%s", radial_histogram->GetName()).Data())));
             for (int ibin = 1; ibin <= sideband_clone->GetNbinsX(); ++ibin)
             {
@@ -1064,11 +1065,14 @@ void photon_number_new(std::string data_repository, std::string run_name,
             fit_results_pave->SetTextSize(0.035);
             fit_results_pave->SetTextColor(current_fit_line_color);
             fit_results_pave->AddText(TString::Format("N_{#gamma} = %.1f #pm %.1f",
-                                           n_gamma_integrated, n_gamma_error).Data());
+                                                      n_gamma_integrated, n_gamma_error)
+                                          .Data());
             fit_results_pave->AddText(TString::Format("#mu = %.2f mm",
-                                           cb_fit_model.GetParameter(1)).Data());
+                                                      cb_fit_model.GetParameter(1))
+                                          .Data());
             fit_results_pave->AddText(TString::Format("#sigma = %.2f mm",
-                                           cb_fit_model.GetParameter(2)).Data());
+                                                      cb_fit_model.GetParameter(2))
+                                          .Data());
             //fit_results_pave->AddText(Form("#chi^{2}/ndf = %.2f",
             //                               chi2_per_ndf_value));
             fit_results_pave->Draw();
@@ -1221,7 +1225,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
     }
     canvas_sensor_comparison->cd(2);
     {
-        RootHist<TH1F> h_yield_ratio_1375_over_1350(static_cast<TH1F*>(h_radial_prompt_ex_gap_1375->Clone("h_yield_ratio_1375_over_1350")));
+        RootHist<TH1F> h_yield_ratio_1375_over_1350(static_cast<TH1F *>(h_radial_prompt_ex_gap_1375->Clone("h_yield_ratio_1375_over_1350")));
         h_yield_ratio_1375_over_1350->Divide(h_radial_prompt_ex_gap_1350);
         h_yield_ratio_1375_over_1350->SetTitle(";R (mm);yield ratio 1375/1350");
         h_yield_ratio_1375_over_1350->SetLineColor(kBlack);
@@ -1245,7 +1249,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
     // ── c7: Column-normalised pair histograms — P(dt | dR) ───────────────────
     auto column_normalise_2d = [](TH2F *input_histogram) -> TH2F *
     {
-        RootHist<TH2F> normalised(static_cast<TH2F*>(input_histogram->Clone(
+        RootHist<TH2F> normalised(static_cast<TH2F *>(input_histogram->Clone(
             TString::Format("%s_col_normalised", input_histogram->GetName()).Data())));
         normalised->SetTitle(TString::Format("%s  [col-normalised]", input_histogram->GetTitle()).Data());
         for (int ix = 1; ix <= normalised->GetNbinsX(); ++ix)

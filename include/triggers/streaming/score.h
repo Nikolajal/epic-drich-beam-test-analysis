@@ -68,12 +68,12 @@ struct StreamingTriggerWeights
     /// $\sigma_S = \sqrt{\sum 1/m_c}$ over channels in the map.
     /// Precomputed as a sqrt so the per-window n_σ check is one
     /// subtraction + one division.
-    float sigma_score_per_window    = 0.f;
+    float sigma_score_per_window = 0.f;
 
     /// Number of channels in the bundle (= `weight_by_channel.size()`).
     /// Equal to $\mathbb{E}[S]$ by construction; exposed separately as a
     /// diagnostic for logging.
-    int   n_channels_modelled       = 0;
+    int n_channels_modelled = 0;
 
     /// Convert a raw score to its standardised $n_\sigma$ deviation.
     [[nodiscard]] float n_sigma_of(float score) const noexcept
@@ -242,6 +242,6 @@ bool run_streaming_trigger_weighted(
     const float time_window_ns,
     const StreamingTriggerWeights &weights,
     const float n_sigma_threshold,
-    std::vector<std::tuple<int, float, float>> &carry_over_hits,  // (idx, time_ns, weight)
+    std::vector<std::tuple<int, float, float>> &carry_over_hits, // (idx, time_ns, weight)
     TH1F *h_score_for_qa,
     float frame_length_ns);

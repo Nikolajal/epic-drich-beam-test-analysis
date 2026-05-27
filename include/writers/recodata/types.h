@@ -28,12 +28,13 @@
 #include <utility>
 #include <vector>
 
-#include "alcor_recodata.h"   // TriggerEvent
+#include "alcor_recodata.h" // TriggerEvent
 
 class TH1F;
 class TH2F;
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 // ─────────────────────────────────────────────────────────────────────
 //  Per-ring fit result — produced by the pure compute pass.
@@ -44,13 +45,13 @@ namespace btana::recodata {
 // ─────────────────────────────────────────────────────────────────────
 struct RingFitResult
 {
-    bool   fit_ok     = false;
-    int    n_hits     = 0;
-    float  cx         = 0.f;
-    float  cy         = 0.f;
-    float  R          = 0.f;
-    float  sigma_r    = 0.f;             ///< per-ring RMS of radial residuals (un-smeared)
-    float  f_coverage = 0.f;
+    bool fit_ok = false;
+    int n_hits = 0;
+    float cx = 0.f;
+    float cy = 0.f;
+    float R = 0.f;
+    float sigma_r = 0.f; ///< per-ring RMS of radial residuals (un-smeared)
+    float f_coverage = 0.f;
 
     //  Un-smeared (pixel-centre) per-hit observables.
     //  `radial_per_hit[i]`  = |hit_i − fit-centre|     using pixel-centre positions.
@@ -80,23 +81,23 @@ struct RingFitResult
 // ─────────────────────────────────────────────────────────────────────
 struct FrameResult
 {
-    int  i_frame   = -1;       ///< index in frames_in_spill
-    bool accepted  = false;    ///< neither rejected nor edge-only
-    bool rejected  = false;    ///< duplicate trigger detected → drop frame
-    bool had_edge  = false;    ///< at least one edge-rejected trigger
+    int i_frame = -1;      ///< index in frames_in_spill
+    bool accepted = false; ///< neither rejected nor edge-only
+    bool rejected = false; ///< duplicate trigger detected → drop frame
+    bool had_edge = false; ///< at least one edge-rejected trigger
 
     //  Hist-fill payloads — recorded in compute, played back in drain.
     //  `(reg_bin_centre, value)` tuples; the drain just does
     //  `hist->Fill(reg_bin_centre, value)`.
-    std::vector<std::pair<float, float>> edge_fills;        ///< h_edge_trigger_position
-    std::vector<std::pair<float, float>> trigger_qa_fills;  ///< h_trigger_qa (the 1.5 / 2.5 y values)
+    std::vector<std::pair<float, float>> edge_fills;       ///< h_edge_trigger_position
+    std::vector<std::pair<float, float>> trigger_qa_fills; ///< h_trigger_qa (the 1.5 / 2.5 y values)
 
     //  Time-diff fills: (trigger_index, Δt_ns).  Drain looks up /
     //  lazily creates the per-trigger hist before filling.
     std::vector<std::pair<uint8_t, float>> time_diff_fills;
 
     std::map<uint8_t, TriggerEvent> accepted_triggers;
-    bool frame_is_physics      = false;  ///< increments n_physics_per_spill
+    bool frame_is_physics = false; ///< increments n_physics_per_spill
     bool frame_has_second_ring = false;
 
     RingFitResult first;
@@ -114,11 +115,11 @@ struct FrameResult
 struct RadialFitResult
 {
     std::string name;
-    double      n_gamma        = 0.;
-    double      peak_mu        = 0.;
-    double      peak_mu_err    = 0.;
-    double      peak_sigma     = 0.;
-    double      peak_sigma_err = 0.;
+    double n_gamma = 0.;
+    double peak_mu = 0.;
+    double peak_mu_err = 0.;
+    double peak_sigma = 0.;
+    double peak_sigma_err = 0.;
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -131,9 +132,9 @@ struct RadialFitResult
 struct VsNFitResult
 {
     std::string name;
-    double      sigma_photon     = 0.;
-    double      sigma_photon_err = 0.;
-    bool        is_residual      = true;   ///< always true (only residual hists fitted)
+    double sigma_photon = 0.;
+    double sigma_photon_err = 0.;
+    bool is_residual = true; ///< always true (only residual hists fitted)
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -144,23 +145,23 @@ struct VsNFitResult
 // ─────────────────────────────────────────────────────────────────────
 struct RingFillHists
 {
-    TH1F *h_nhits         = nullptr;
-    TH1F *h_nphotons      = nullptr;
-    TH1F *h_fcov          = nullptr;
-    TH1F *h_radial        = nullptr;     ///< pixel-centre radii — consistency check
-    TH1F *h_R             = nullptr;     ///< fitted ring radius
-    TH1F *h_sigma         = nullptr;     ///< per-ring RMS of radial residuals (biased — see DISCUSSION § 2.6)
-    TH2F *h_R_vs_nhits    = nullptr;     ///< correlation
-    TH2F *h_centre_xy     = nullptr;     ///< fit centre map
-    TH2F *h_residual_vs_n = nullptr;     ///< per-hit LOO residual (mm) vs N_hits — pixel-centre
+    TH1F *h_nhits = nullptr;
+    TH1F *h_nphotons = nullptr;
+    TH1F *h_fcov = nullptr;
+    TH1F *h_radial = nullptr;        ///< pixel-centre radii — consistency check
+    TH1F *h_R = nullptr;             ///< fitted ring radius
+    TH1F *h_sigma = nullptr;         ///< per-ring RMS of radial residuals (biased — see DISCUSSION § 2.6)
+    TH2F *h_R_vs_nhits = nullptr;    ///< correlation
+    TH2F *h_centre_xy = nullptr;     ///< fit centre map
+    TH2F *h_residual_vs_n = nullptr; ///< per-hit LOO residual (mm) vs N_hits — pixel-centre
 
     // Optional dual/solo-split twins for vs_n observables.  Caller
     // sets to either the _dual or _solo hist of the appropriate ring
     // slot based on the (frame_has_second_ring) predicate.
-    TH2F *h_R_vs_nhits_split    = nullptr;
+    TH2F *h_R_vs_nhits_split = nullptr;
     TH2F *h_residual_vs_n_split = nullptr;
-    TH1F *h_radial_split        = nullptr;   ///< dual/solo split of h_radial
-    TH1F *h_R_split             = nullptr;   ///< dual/solo split of h_R
+    TH1F *h_radial_split = nullptr; ///< dual/solo split of h_radial
+    TH1F *h_R_split = nullptr;      ///< dual/solo split of h_R
 
     //  Smeared (pixel-jittered) sibling histograms — physics path.
     //  When non-null, the corresponding observable is filled twice per
@@ -168,9 +169,9 @@ struct RingFillHists
     //  smeared sibling (below).  Smeared fills smooth out the discrete
     //  pixel-lattice "comb" in the radial distribution and give the
     //  CB+pol3 / σ-vs-N fits a continuous distribution to converge on.
-    TH1F *h_radial_smeared        = nullptr;
-    TH1F *h_radial_split_smeared  = nullptr;
-    TH2F *h_residual_vs_n_smeared       = nullptr;
+    TH1F *h_radial_smeared = nullptr;
+    TH1F *h_radial_split_smeared = nullptr;
+    TH2F *h_residual_vs_n_smeared = nullptr;
     TH2F *h_residual_vs_n_split_smeared = nullptr;
 };
 

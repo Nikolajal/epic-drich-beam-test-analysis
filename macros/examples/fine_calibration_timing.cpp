@@ -718,9 +718,9 @@ void fine_calibration_timing(
             const double prev = AlcorFinedata::get_param1(global_idx);
 
             AlcorFinedata::set_param1(global_idx,
-                                       static_cast<float>(prev - mean / BTANA_ALCOR_CC_TO_NS));
+                                      static_cast<float>(prev - mean / BTANA_ALCOR_CC_TO_NS));
             AlcorFinedata::set_param2(global_idx,
-                                       static_cast<float>(sigma));
+                                      static_cast<float>(sigma));
             delete h_y;
         }
         delete h_chip_means;
@@ -868,7 +868,7 @@ void fine_calibration_timing(
 
             const float prev = AlcorFinedata::get_param2(global_idx);
             AlcorFinedata::set_param2(global_idx,
-                                       prev + static_cast<float>(-mean / BTANA_ALCOR_CC_TO_NS));
+                                      prev + static_cast<float>(-mean / BTANA_ALCOR_CC_TO_NS));
             delete h_y;
         }
     };
@@ -935,8 +935,7 @@ void fine_calibration_timing(
                                       nullptr,
                                       nullptr,
                                       h_fine_scan_cherenkov_pass0.get(),
-                                      false);
-               });
+                                      false); });
 
     // Self-trigger AFTER Cherenkov calibration
     spill_loop([&](int /*spill*/, auto &frames)

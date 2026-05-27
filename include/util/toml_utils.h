@@ -29,7 +29,7 @@
  * @throws toml::parse_error on file-open failure or TOML syntax error.
  */
 inline toml::table toml_parse_with_cutoff(const std::string &filepath,
-                                           const std::string &cutoff = "##")
+                                          const std::string &cutoff = "##")
 {
     std::ifstream file(filepath);
     if (!file.is_open())

@@ -183,14 +183,16 @@ public:
     /// Distribution is cached `static thread_local` to avoid per-call construction —
     /// this getter sits in hot lightdata_writer loops; see the matching note on
     /// `AlcorFinedata::get_hit_x_rnd`.
-    inline float get_hit_x_rnd(int i) const {
+    inline float get_hit_x_rnd(int i) const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return recodata[i].hit_x + pixel_jitter(rng.engine());
     }
 
     /// @brief Pixel-randomised y-coordinate (uniform ±1.5 mm jitter within the pixel cell).
-    inline float get_hit_y_rnd(int i) const {
+    inline float get_hit_y_rnd(int i) const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return recodata[i].hit_y + pixel_jitter(rng.engine());

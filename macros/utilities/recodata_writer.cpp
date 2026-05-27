@@ -23,18 +23,18 @@ int main(int argc, char **argv)
     std::string RunList;
 
     int max_spill = 1000;
-    bool force_rebuild  = false;
+    bool force_rebuild = false;
     bool force_upstream = false;
-    bool qa_mode        = false;
+    bool qa_mode = false;
 
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
     app.add_option("--run-list", RunList, "Name of run list (required if run_name is a .toml runlist)");
     app.add_option("--max-spill", max_spill);
     app.add_option("--Mapping-conf", mapping_conf);
-    auto *p_trigger   = app.add_option("--trigger-conf",   trigger_config_file);
-    auto *p_framer    = app.add_option("--framer-conf",    framer_config_file);
-    auto *p_recodata  = app.add_option("--recodata-conf",  recodata_config_file);
+    auto *p_trigger = app.add_option("--trigger-conf", trigger_config_file);
+    auto *p_framer = app.add_option("--framer-conf", framer_config_file);
+    auto *p_recodata = app.add_option("--recodata-conf", recodata_config_file);
     //  Recodata never reads this file directly, but it's forwarded into
     //  the lightdata cascade when --force-upstream is set so that --QA
     //  Hough thresholds propagate through the pipeline in one command.
@@ -44,7 +44,7 @@ int main(int argc, char **argv)
     //    --force-rebuild   → overwrite THIS writer's output (recodata.root).
     //    --force-upstream  → cascade: also rebuild upstream writers
     //                        (lightdata, in this case).
-    app.add_flag("--force-rebuild",  force_rebuild);
+    app.add_flag("--force-rebuild", force_rebuild);
     app.add_flag("--force-upstream", force_upstream);
     //  Fast-feedback QA mode.  Reads tuned conf/QA/*.toml overrides
     //  when present (e.g. raised Hough thresholds → biases N_γ up
@@ -58,16 +58,21 @@ int main(int argc, char **argv)
         //  Resolve any unset --xxx-conf option through util::conf_path,
         //  which redirects to conf/QA/<basename> when --QA is set and
         //  the override exists.
-        if (p_trigger  ->count() == 0) trigger_config_file   = util::conf_path("trigger_conf.toml", qa_mode);
-        if (p_framer   ->count() == 0) framer_config_file    = util::conf_path("framer_conf.toml",  qa_mode);
-        if (p_recodata ->count() == 0) recodata_config_file  = util::conf_path("recodata.toml",     qa_mode);
-        if (p_streaming->count() == 0) streaming_config_file = util::conf_path("streaming.toml",    qa_mode);
+        if (p_trigger->count() == 0)
+            trigger_config_file = util::conf_path("trigger_conf.toml", qa_mode);
+        if (p_framer->count() == 0)
+            framer_config_file = util::conf_path("framer_conf.toml", qa_mode);
+        if (p_recodata->count() == 0)
+            recodata_config_file = util::conf_path("recodata.toml", qa_mode);
+        if (p_streaming->count() == 0)
+            streaming_config_file = util::conf_path("streaming.toml", qa_mode);
         if (qa_mode)
             mist::logger::info(TString::Format(
-                "(recodata_writer) --QA mode: trigger-conf=%s  framer-conf=%s  "
-                "recodata-conf=%s  streaming-conf=%s",
-                trigger_config_file.c_str(), framer_config_file.c_str(),
-                recodata_config_file.c_str(), streaming_config_file.c_str()).Data());
+                                   "(recodata_writer) --QA mode: trigger-conf=%s  framer-conf=%s  "
+                                   "recodata-conf=%s  streaming-conf=%s",
+                                   trigger_config_file.c_str(), framer_config_file.c_str(),
+                                   recodata_config_file.c_str(), streaming_config_file.c_str())
+                                   .Data());
 
         bool is_runlist = false;
 

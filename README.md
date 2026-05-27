@@ -296,20 +296,15 @@ header docstring of each script for the full set of options.
 
 ## Testing & CI
 
-The repository runs build + test verification on every push and pull request
-via [`.github/workflows/build.yml`](.github/workflows/build.yml).
-The matrix exercises:
-
-|                | Release                | Debug                  |
-|----------------|------------------------|------------------------|
-| Linux (Ubuntu) | build + ctest, required| build + ctest, required|
-| macOS          | build + ctest, required| build + ctest, required|
-| Windows        | build + ctest, best-effort | —                  |
-
-The Windows leg uses ROOT from `conda-forge` and is currently marked
-`continue-on-error: true` while the configuration stabilises — failures there
-do not block PRs.  Promote it to a required check once it is consistently
-green (remove the `continue-on-error` line).
+The CI workflow [`.github/workflows/build.yml`](.github/workflows/build.yml)
+defines build + test verification across Linux / macOS / Windows, but
+**all three OS jobs are currently gated off** (`if: false`) — the per-platform
+ROOT provisioning has been fragile (Ubuntu noble dropped the apt
+`root-system` package, conda-forge has no Windows `root` recipe, Homebrew
+churns periodically).  The workflow file is kept intact as architectural
+reference; to re-enable a leg, find its job in `build.yml` and drop the
+`if: false` line.  See the header comment in the workflow file for the
+full re-enable checklist.
 
 ### Building & running tests locally
 
@@ -330,15 +325,31 @@ ring-finder regression) are on the roadmap.
 
 ### Formatting
 
-A second workflow ([`.github/workflows/clang-format.yml`](.github/workflows/clang-format.yml))
-runs `clang-format-22` over every `.h`/`.cxx`/`.cpp` under `include/`, `src/`, and `macros/` on each PR.
-It auto-commits any reformatting back to the PR branch and fails the check so the author
-knows to `git pull` before merging.  Format locally to skip the round-trip:
+[`.github/workflows/clang-format.yml`](.github/workflows/clang-format.yml) runs
+on every push to `main`/`dev` and every PR.  It checks that every `.h` / `.cxx`
+/ `.cpp` / `.hpp` under `include/`, `src/`, and `macros/` matches the project
+style defined in [`.clang-format`](.clang-format) (LLVM base, 4-space indent,
+Allman braces, no column limit).  Style rules that clang-format can't enforce
+(naming, file layout) live in [`docs/coding_conventions.md`](docs/coding_conventions.md).
+
+**The check fails the build if any file would be reformatted**, prints the
+exact diff in the job log, and lists the offending paths in the Actions-summary
+panel.  Fix locally before pushing:
 
 ```bash
-find include src macros -type f \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' \) \
-  | xargs clang-format -i --style=file
+find include src macros -type f \
+    \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
+    -not -path '*/build/*' -not -path '*/_deps/*' \
+    -print0 | xargs -0 clang-format -i --style=file
 ```
+
+The CI runner uses the apt `clang-format` shipped with Ubuntu noble (currently
+clang-format-18); the project-wide format pass on 2026-05-27 was applied with
+clang-format-22 (Homebrew).  The `.clang-format` config is conservative enough
+that both versions produce identical output on this codebase.  If a future
+clang-format version drifts, pin the CI to a specific version via the
+[LLVM apt repository](https://apt.llvm.org/) and re-run the project-wide
+format pass.
 
 ---
 

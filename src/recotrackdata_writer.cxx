@@ -23,9 +23,10 @@ void recotrackdata_writer(
     if (std::filesystem::exists(outname) && !force_rebuild)
     {
         mist::logger::info(TString::Format(
-            "(recotrackdata_writer) %s exists and --force-rebuild not set — "
-            "skipping (use --force-rebuild to overwrite).",
-            outname.c_str()).Data());
+                               "(recotrackdata_writer) %s exists and --force-rebuild not set — "
+                               "skipping (use --force-rebuild to overwrite).",
+                               outname.c_str())
+                               .Data());
         return;
     }
 
@@ -69,7 +70,8 @@ void recotrackdata_writer(
     if (!recodata_tree)
     {
         mist::logger::error(TString::Format("(recotrackdata_writer) 'recodata' tree missing in %s",
-                                 input_filename_recodata.c_str()).Data());
+                                            input_filename_recodata.c_str())
+                                .Data());
         return;
     }
     auto recodata = std::make_unique<AlcorRecodata>();

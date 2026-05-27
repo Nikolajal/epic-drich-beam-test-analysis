@@ -25,22 +25,22 @@
 #include <mist/ring_finding/hough_transform.h>
 
 #include "alcor_finedata.h"
-#include "alcor_data.h"             // HitmaskStreamingRingTrigger, HitmaskHoughRingTagFirst/Second
-#include "triggers/events.h"        // TriggerEvent, _TRIGGER_STREAMING_RING_FOUND_, _TRIGGER_HOUGH_RING_FOUND_
+#include "alcor_data.h"      // HitmaskStreamingRingTrigger, HitmaskHoughRingTagFirst/Second
+#include "triggers/events.h" // TriggerEvent, _TRIGGER_STREAMING_RING_FOUND_, _TRIGGER_HOUGH_RING_FOUND_
 #include "util/circle_fit.h"
 
 void run_streaming_hough_trigger(
-    AlcorSpilldata                       &spilldata,
-    uint32_t                              frame_id,
-    mist::ring_finding::HoughTransform   &ring_finder,
-    int                                   min_active,
-    int                                  &streaming_trigger_count,
-    int                                   ispill,
-    float                                 time_window_ns,
-    const StreamingHoughConfigStruct     &cfg,
-    const StreamingHoughQA               &qa)
+    AlcorSpilldata &spilldata,
+    uint32_t frame_id,
+    mist::ring_finding::HoughTransform &ring_finder,
+    int min_active,
+    int &streaming_trigger_count,
+    int ispill,
+    float time_window_ns,
+    const StreamingHoughConfigStruct &cfg,
+    const StreamingHoughQA &qa)
 {
-    auto &cherenkov_hits   = spilldata.get_frame_cherenkov_hits(frame_id);
+    auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
     auto &triggers_in_frame = spilldata.get_frame_trigger_hits(frame_id);
 
     //  Loop on all triggers; process the streaming-ring-found ones.
@@ -53,7 +53,7 @@ void run_streaming_hough_trigger(
         streaming_trigger_count++;
 
         std::vector<AlcorFinedata> ring_candidates;
-        std::vector<int>           ring_candidates_index;
+        std::vector<int> ring_candidates_index;
 
         for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
         {
@@ -89,7 +89,7 @@ void run_streaming_hough_trigger(
         //  generic_to_alcor[i] maps generic_hits[i] back to its ring_candidates
         //  index for the mask write-back below.
         std::vector<mist::ring_finding::Hit> generic_hits;
-        std::vector<int>                     generic_to_alcor;
+        std::vector<int> generic_to_alcor;
         generic_hits.reserve(ring_candidates.size());
         generic_to_alcor.reserve(ring_candidates.size());
         for (int i = 0; i < static_cast<int>(ring_candidates.size()); ++i)
@@ -115,11 +115,11 @@ void run_streaming_hough_trigger(
             static_cast<int>(min_active * cfg.min_hits_slack);
         auto found_rings = ring_finder.find_rings(
             generic_hits,
-            /*threshold_fraction*/      cfg.threshold_fraction,
-            /*min_hits*/                min_hits_per_ring,
-            /*min_active*/              min_active,
-            /*max_rings*/               2,
-            /*collection_radius*/       cfg.collection_radius,
+            /*threshold_fraction*/ cfg.threshold_fraction,
+            /*min_hits*/ min_hits_per_ring,
+            /*min_active*/ min_active,
+            /*max_rings*/ 2,
+            /*collection_radius*/ cfg.collection_radius,
             /*aggregation_window_cells*/ cfg.aggregation_window_cells);
 
         //  Write the per-ring mask bits back onto ring_candidates so the
@@ -141,7 +141,7 @@ void run_streaming_hough_trigger(
             qa.nrings->Fill(found_rings.size());
 
         index = -1;
-        std::array<int,   2> hough_trigger_hits = {0, 0};
+        std::array<int, 2> hough_trigger_hits = {0, 0};
         std::array<float, 2> hough_trigger_time = {0.f, 0.f};
         std::vector<std::array<float, 2>> hough_triggered_first;
         std::vector<std::array<float, 2>> hough_triggered_second;
@@ -149,7 +149,7 @@ void run_streaming_hough_trigger(
         for (const auto &current_hit : ring_candidates)
         {
             index++;
-            const bool is_first  = current_hit.has_mask_bit(HitmaskHoughRingTagFirst);
+            const bool is_first = current_hit.has_mask_bit(HitmaskHoughRingTagFirst);
             const bool is_second = current_hit.has_mask_bit(HitmaskHoughRingTagSecond);
 
             if ((is_first || is_second) && qa.ring_finder_hitmap)
@@ -205,14 +205,15 @@ void run_streaming_hough_trigger(
         //  on the same axes.
         const int active_at_pass_1 = static_cast<int>(generic_hits.size());
         const int active_at_pass_2 = active_at_pass_1 -
-            (found_rings.empty() ? 0
-                                 : static_cast<int>(found_rings[0].hit_indices.size()));
+                                     (found_rings.empty() ? 0
+                                                          : static_cast<int>(found_rings[0].hit_indices.size()));
 
         //  Lambda: fill the per-hit |r_hit − R_ring| arc-distance hist.
         //  Caller's `hist` may be nullptr.
         auto fill_arc_dist = [&](const mist::ring_finding::RingResult &ring, TH1F *hist)
         {
-            if (!hist) return;
+            if (!hist)
+                return;
             for (int gi : ring.hit_indices)
             {
                 const auto &h = generic_hits[gi];
@@ -233,9 +234,12 @@ void run_streaming_hough_trigger(
 
             //  Hough peak (pre-fit) — RingResult is sorted descending by
             //  peak_votes so found_rings[0] is the strongest candidate.
-            if (qa.ring_X_first_hough) qa.ring_X_first_hough->Fill(found_rings[0].cx);
-            if (qa.ring_Y_first_hough) qa.ring_Y_first_hough->Fill(found_rings[0].cy);
-            if (qa.ring_R_first_hough) qa.ring_R_first_hough->Fill(found_rings[0].radius);
+            if (qa.ring_X_first_hough)
+                qa.ring_X_first_hough->Fill(found_rings[0].cx);
+            if (qa.ring_Y_first_hough)
+                qa.ring_Y_first_hough->Fill(found_rings[0].cy);
+            if (qa.ring_R_first_hough)
+                qa.ring_R_first_hough->Fill(found_rings[0].radius);
 
             //  Filter 1+2 + 3 calibration QA.
             if (qa.ring_peak_votes_vs_active_first)
@@ -247,9 +251,12 @@ void run_streaming_hough_trigger(
             //  only when a second ring is also present.
             if (found_rings.size() > 1)
             {
-                if (qa.ring_X_first_hough_dual) qa.ring_X_first_hough_dual->Fill(found_rings[0].cx);
-                if (qa.ring_Y_first_hough_dual) qa.ring_Y_first_hough_dual->Fill(found_rings[0].cy);
-                if (qa.ring_R_first_hough_dual) qa.ring_R_first_hough_dual->Fill(found_rings[0].radius);
+                if (qa.ring_X_first_hough_dual)
+                    qa.ring_X_first_hough_dual->Fill(found_rings[0].cx);
+                if (qa.ring_Y_first_hough_dual)
+                    qa.ring_Y_first_hough_dual->Fill(found_rings[0].cy);
+                if (qa.ring_R_first_hough_dual)
+                    qa.ring_R_first_hough_dual->Fill(found_rings[0].radius);
                 if (qa.ring_peak_votes_vs_active_first_dual)
                     qa.ring_peak_votes_vs_active_first_dual->Fill(
                         active_at_pass_1, found_rings[0].peak_votes);
@@ -258,9 +265,12 @@ void run_streaming_hough_trigger(
             //  Solo-ring sample — complement of (dual).
             if (found_rings.size() == 1)
             {
-                if (qa.ring_X_first_hough_solo) qa.ring_X_first_hough_solo->Fill(found_rings[0].cx);
-                if (qa.ring_Y_first_hough_solo) qa.ring_Y_first_hough_solo->Fill(found_rings[0].cy);
-                if (qa.ring_R_first_hough_solo) qa.ring_R_first_hough_solo->Fill(found_rings[0].radius);
+                if (qa.ring_X_first_hough_solo)
+                    qa.ring_X_first_hough_solo->Fill(found_rings[0].cx);
+                if (qa.ring_Y_first_hough_solo)
+                    qa.ring_Y_first_hough_solo->Fill(found_rings[0].cy);
+                if (qa.ring_R_first_hough_solo)
+                    qa.ring_R_first_hough_solo->Fill(found_rings[0].radius);
                 if (qa.ring_peak_votes_vs_active_first_solo)
                     qa.ring_peak_votes_vs_active_first_solo->Fill(
                         active_at_pass_1, found_rings[0].peak_votes);
@@ -275,9 +285,12 @@ void run_streaming_hough_trigger(
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[1] / hough_trigger_hits[1])});
 
-            if (qa.ring_X_second_hough) qa.ring_X_second_hough->Fill(found_rings[1].cx);
-            if (qa.ring_Y_second_hough) qa.ring_Y_second_hough->Fill(found_rings[1].cy);
-            if (qa.ring_R_second_hough) qa.ring_R_second_hough->Fill(found_rings[1].radius);
+            if (qa.ring_X_second_hough)
+                qa.ring_X_second_hough->Fill(found_rings[1].cx);
+            if (qa.ring_Y_second_hough)
+                qa.ring_Y_second_hough->Fill(found_rings[1].cy);
+            if (qa.ring_R_second_hough)
+                qa.ring_R_second_hough->Fill(found_rings[1].radius);
 
             if (qa.ring_peak_votes_vs_active_second)
                 qa.ring_peak_votes_vs_active_second->Fill(

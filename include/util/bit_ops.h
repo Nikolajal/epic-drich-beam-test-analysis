@@ -84,7 +84,7 @@ inline std::vector<uint8_t> decode_bits(uint32_t mask)
     while (mask)
     {
         result.push_back(count_trailing_zeros(mask));
-        mask &= mask - 1;   // clear lowest set bit
+        mask &= mask - 1; // clear lowest set bit
     }
     return result;
 }

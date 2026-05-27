@@ -120,8 +120,8 @@ std::optional<HvChannelAddress> Mapping::get_hv_channel_from_global_index(int st
     // Direct construction (no @c from_legacy); the wrapper that used the
     // legacy decoder is gone.
     const auto gi = ::GlobalIndex(static_cast<uint32_t>(stored_raw));
-    const int device     = gi.device();
-    const int chip       = gi.real_chip();
+    const int device = gi.device();
+    const int chip = gi.real_chip();
     const int eo_channel = gi.eo_channel();
 
     auto pdu_matrix_optional = get_pdu_matrix(device, chip);
@@ -176,7 +176,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
                     static_cast<float>((*arr)[1].value_or(0.0))};
         }
         mist::logger::info(TString::Format("(Mapping::load_calib) pdu_xy_position size: %zu",
-                                pdu_xy_position.size()).Data());
+                                           pdu_xy_position.size())
+                               .Data());
     }
 
     // --- pdu_rotation -----------------------------------------------------------
@@ -192,7 +193,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
                 pdu_rotation[pdu_index] = rotation_flag;
         }
         mist::logger::info(TString::Format("(Mapping::load_calib) pdu_rotation size: %zu",
-                                pdu_rotation.size()).Data());
+                                           pdu_rotation.size())
+                               .Data());
     }
 
     // --- device_chip_to_pdu_matrix ----------------------------------------------
@@ -207,7 +209,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
             if (separator == std::string::npos)
             {
                 mist::logger::info(TString::Format("(Mapping::load_calib) Skipping invalid key: %s",
-                                        key_string.c_str()).Data());
+                                                   key_string.c_str())
+                                       .Data());
                 continue;
             }
 
@@ -222,7 +225,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
             }
         }
         mist::logger::info(TString::Format("(Mapping::load_calib) device_chip_to_pdu_matrix size: %zu",
-                                device_chip_to_pdu_matrix.size()).Data());
+                                           device_chip_to_pdu_matrix.size())
+                               .Data());
     }
 
     // --- hv_line_orientation ----------------------------------------------------
@@ -239,7 +243,8 @@ void Mapping::load_calib(std::string filename, bool verbose)
                                             : line_orientation_type::Vertical;
         }
         mist::logger::info(TString::Format("(Mapping::load_calib) hv_line_orientation size: %zu",
-                                hv_line_orientation.size()).Data());
+                                           hv_line_orientation.size())
+                               .Data());
     }
 }
 
@@ -260,9 +265,9 @@ void Mapping::build_index_to_position_cache(float origin_cut)
     // get_position_from_global_index.  The cache key remains
     // `4 * channel_ordinal` — a small dense int that doubles as the
     // MIST HoughTransform `lut_key` plumbed through `index_to_hit_xy`.
-    constexpr int kDeviceLo  = 192;
-    constexpr int kDeviceHi  = 224;   // generous upper bound; Mapping filters unmapped
-    const int max_chip       = ::gidx::kUsesSplitInTwo ? 4 : 8;
+    constexpr int kDeviceLo = 192;
+    constexpr int kDeviceHi = 224; // generous upper bound; Mapping filters unmapped
+    const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
     constexpr int kChannelHi = 64;
 
     for (int device = kDeviceLo; device < kDeviceHi; ++device)
@@ -289,8 +294,9 @@ void Mapping::build_index_to_position_cache(float origin_cut)
 
     cache_index_to_xy_built = true;
     mist::logger::info(TString::Format("(Mapping::build_index_to_position_cache) "
-                            "Built cache with %d entries (origin_cut = %.1f mm).",
-                            number_of_mapped_channels, origin_cut).Data());
+                                       "Built cache with %d entries (origin_cut = %.1f mm).",
+                                       number_of_mapped_channels, origin_cut)
+                           .Data());
 }
 
 void Mapping::build_position_to_index_cache(std::string collision_policy)
@@ -317,21 +323,23 @@ void Mapping::build_position_to_index_cache(std::string collision_policy)
                 it->second = GlobalIndex;
             else if (collision_policy == "warn")
                 mist::logger::info(TString::Format("(Mapping::build_position_to_index_cache) "
-                                        "Collision at (%.3f, %.3f): keeping index %d, "
-                                        "ignoring index %d.",
-                                        position[0], position[1],
-                                        it->second, GlobalIndex).Data());
+                                                   "Collision at (%.3f, %.3f): keeping index %d, "
+                                                   "ignoring index %d.",
+                                                   position[0], position[1],
+                                                   it->second, GlobalIndex)
+                                       .Data());
             // "first" (default): keep already-stored entry, do nothing
         }
     }
 
     cache_xy_to_index_built = true;
     mist::logger::info(TString::Format("(Mapping::build_position_to_index_cache) "
-                            "Built reverse cache with %zu entries "
-                            "(%d collision(s), policy = '%s').",
-                            hit_xy_to_index.size(),
-                            number_of_collisions,
-                            collision_policy.c_str()).Data());
+                                       "Built reverse cache with %zu entries "
+                                       "(%d collision(s), policy = '%s').",
+                                       hit_xy_to_index.size(),
+                                       number_of_collisions,
+                                       collision_policy.c_str())
+                           .Data());
 }
 
 // ============================================================================

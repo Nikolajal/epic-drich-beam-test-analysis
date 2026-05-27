@@ -60,7 +60,7 @@ ResultMap AnalysisResults::load() const
     if (!f || f->IsZombie())
     {
         // Silently return empty map — file may not exist yet on the first run.
-        return out;  // TFilePtr dtor handles cleanup of zombie files
+        return out; // TFilePtr dtor handles cleanup of zombie files
     }
 
     TTree *t = dynamic_cast<TTree *>(f->Get(kTreeName));
@@ -70,7 +70,7 @@ ResultMap AnalysisResults::load() const
                             std::string(kTreeName) +
                             "' tree in " +
                             fPath);
-        return out;  // TFilePtr dtor closes f
+        return out; // TFilePtr dtor closes f
     }
 
     // ── Branch wiring ────────────────────────────────────────────────────────
@@ -95,7 +95,7 @@ ResultMap AnalysisResults::load() const
              std::string(qty_buf)}] = {val, err};
     }
 
-    return out;  // TFilePtr dtor closes f
+    return out; // TFilePtr dtor closes f
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

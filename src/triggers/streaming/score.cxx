@@ -50,14 +50,14 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
 
     // E[S | H_0]   = Σ_c m_c · w_c = N_measured       (count of channels)
     // Var[S | H_0] = Σ_c m_c · w_c² = Σ_c 1/m_c       (accumulator below)
-    double sum_inv_m  = 0.0;
-    int    n_modelled = 0;
+    double sum_inv_m = 0.0;
+    int n_modelled = 0;
 
     for (int b = 1; b <= n_bins; ++b)
     {
         const double mu_per_frame = h_dcr_per_channel_pre_scale->GetBinContent(b);
         if (mu_per_frame <= 0.0)
-            continue;                              // skip unmeasured / missing channels
+            continue; // skip unmeasured / missing channels
 
         // Statistical reliability gate — require enough total noise hits for
         // the rate estimate to be meaningful.  Replaces the old `lambda_floor`
@@ -65,7 +65,7 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
         // weight (1/m_floor), producing 20+ σ outliers in the noise QA hist.
         // The min-hits filter EXCLUDES under-measured channels instead.  For
         // a TProfile, total hits = mean(y) × number of fills.
-        const double n_fills    = h_dcr_per_channel_pre_scale->GetBinEntries(b);
+        const double n_fills = h_dcr_per_channel_pre_scale->GetBinEntries(b);
         const double total_hits = mu_per_frame * n_fills;
         if (total_hits < min_noise_hits)
             continue;
@@ -79,7 +79,7 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
             active_channels->find(static_cast<uint32_t>(channel_ord)) == active_channels->end())
             continue;
 
-        const float m_c    = static_cast<float>(mu_per_frame) * k;   // expected hits/window
+        const float m_c = static_cast<float>(mu_per_frame) * k; // expected hits/window
         const float weight = 1.f / m_c;
         out.weight_by_channel.emplace(channel_ord, weight);
         sum_inv_m += static_cast<double>(weight);
@@ -92,8 +92,8 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
     // and produce a delta-function spike in the QA hist.
 
     out.expected_score_per_window = static_cast<float>(n_modelled);
-    out.sigma_score_per_window    = std::sqrt(static_cast<float>(sum_inv_m));
-    out.n_channels_modelled       = n_modelled;
+    out.sigma_score_per_window = std::sqrt(static_cast<float>(sum_inv_m));
+    out.n_channels_modelled = n_modelled;
 
     return out;
 }
@@ -253,10 +253,10 @@ bool run_streaming_trigger_weighted(
     }
 
     std::vector<float> peak_times;
-    bool   in_cluster  = false;
-    float  peak_score  = 0.f;
-    int    peak_count  = 0;     // kept for QA histograms that bin on hit count
-    bool   has_fired   = false;
+    bool in_cluster = false;
+    float peak_score = 0.f;
+    int peak_count = 0; // kept for QA histograms that bin on hit count
+    bool has_fired = false;
 
     // ── Helpers (verbatim from v0 — algorithmic shape is unchanged) ──
     auto median_of = [](std::vector<float> times) -> float

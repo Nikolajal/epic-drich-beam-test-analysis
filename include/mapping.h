@@ -44,7 +44,11 @@
  * HORIZONTAL lines share the same y coordinate (constant row index).
  * Used both for geometry analysis and HV bias-line identification.
  */
-enum class line_orientation_type { Vertical, Horizontal };
+enum class line_orientation_type
+{
+    Vertical,
+    Horizontal
+};
 
 /**
  * @brief Fully-qualified identifier of the HV bias line powering one pixel.
@@ -54,9 +58,9 @@ enum class line_orientation_type { Vertical, Horizontal };
  */
 struct HvChannelAddress
 {
-    int pdu_index;               ///< PDU index [1–8].
-    int matrix_index;            ///< Matrix quadrant index [1–4].
-    int hv_line_index;           ///< HV line index within the matrix [0–7].
+    int pdu_index;                     ///< PDU index [1–8].
+    int matrix_index;                  ///< Matrix quadrant index [1–4].
+    int hv_line_index;                 ///< HV line index within the matrix [0–7].
     line_orientation_type orientation; ///< VERTICAL (column lines) or HORIZONTAL (row lines).
 };
 
@@ -170,7 +174,9 @@ public:
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
     std::optional<std::array<float, 2>> get_position_from_finedata(AlcorFinedata entry) const
-    { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
+    {
+        return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel());
+    }
 
     /**
      * @brief Compute the physical position from a @ref GlobalIndex.
@@ -183,9 +189,11 @@ public:
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
     std::optional<std::array<float, 2>> get_position_from_global_index(::GlobalIndex gi) const
-    { return get_position_from_device_chip_eoch(gi.device(),
-                                                 gi.real_chip(),
-                                                 gi.eo_channel()); }
+    {
+        return get_position_from_device_chip_eoch(gi.device(),
+                                                  gi.real_chip(),
+                                                  gi.eo_channel());
+    }
 
     /**
      * @brief Convenience overload — compute the physical position from the
@@ -200,7 +208,9 @@ public:
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
     std::optional<std::array<float, 2>> get_position_from_global_index(int stored_raw) const
-    { return get_position_from_global_index(::GlobalIndex(static_cast<uint32_t>(stored_raw))); }
+    {
+        return get_position_from_global_index(::GlobalIndex(static_cast<uint32_t>(stored_raw)));
+    }
 
     /**
      * @brief Fill the @c hit_x / @c hit_y fields of a fine-data struct in-place.
@@ -293,7 +303,10 @@ public:
      * @return Cached {x, y} in mm, or @c std::nullopt if not in cache.
      */
     std::optional<std::array<float, 2>> get_cached_position(int GlobalIndex) const
-    { auto it = index_to_hit_xy.find(GlobalIndex); return (it != index_to_hit_xy.end()) ? std::optional{it->second} : std::nullopt; }
+    {
+        auto it = index_to_hit_xy.find(GlobalIndex);
+        return (it != index_to_hit_xy.end()) ? std::optional{it->second} : std::nullopt;
+    }
 
     /**
      * @brief Query the position → index reverse cache.
@@ -302,7 +315,10 @@ public:
      * @return Cached global TDC index, or @c std::nullopt if not in cache.
      */
     std::optional<int> get_cached_index(float x, float y) const
-    { auto it = hit_xy_to_index.find({x, y}); return (it != hit_xy_to_index.end()) ? std::optional{it->second} : std::nullopt; }
+    {
+        auto it = hit_xy_to_index.find({x, y});
+        return (it != hit_xy_to_index.end()) ? std::optional{it->second} : std::nullopt;
+    }
 
     /**
      * @brief Read-only access to the full index → position cache.
@@ -370,8 +386,8 @@ private:
     /** @name Position caches */
     /// @{
 
-    std::map<int, std::array<float, 2>> index_to_hit_xy;   ///< global index → {x, y} mm.
-    std::map<std::array<float, 2>, int> hit_xy_to_index;   ///< {x, y} mm → global index.
+    std::map<int, std::array<float, 2>> index_to_hit_xy; ///< global index → {x, y} mm.
+    std::map<std::array<float, 2>, int> hit_xy_to_index; ///< {x, y} mm → global index.
     bool cache_index_to_xy_built{false};
     bool cache_xy_to_index_built{false};
 

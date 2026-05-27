@@ -41,7 +41,6 @@ geometry_config create_default_geometry(const Mapping &current_mapping)
     return geom;
 }
 
-
 // ===== Electronics Line Map =====
 //
 // Concept: each ALCOR matrix reads an 8×8 block of the 16×16 PDU pixel grid.
@@ -54,16 +53,20 @@ geometry_config create_default_geometry(const Mapping &current_mapping)
 // eo_channels (the raw electronics channel index from ALCOR) belong to each
 // physical line of 8 adjacent sensors.
 
-enum class line_orientation_type { VERTICAL, HORIZONTAL };
+enum class line_orientation_type
+{
+    VERTICAL,
+    HORIZONTAL
+};
 
 struct electronics_line
 {
     int pdu_index;
     int matrix_index;
-    int local_line_index;                    // 0–7: column (VERTICAL) or row (HORIZONTAL) within the 8×8 block
+    int local_line_index; // 0–7: column (VERTICAL) or row (HORIZONTAL) within the 8×8 block
     line_orientation_type orientation;
-    std::vector<int> eo_channel_list;        // always 8 entries: the eo_channels forming this line
-    float physical_constant_coordinate_mm;   // x (VERTICAL) or y (HORIZONTAL) in mm, from representative eo_channel
+    std::vector<int> eo_channel_list;      // always 8 entries: the eo_channels forming this line
+    float physical_constant_coordinate_mm; // x (VERTICAL) or y (HORIZONTAL) in mm, from representative eo_channel
 };
 
 // Build the full list of electronics lines for all (pdu, matrix) pairs
@@ -80,7 +83,7 @@ std::vector<electronics_line> build_electronics_line_list(const Mapping &current
 
     for (auto const &pdu_matrix_pair : unique_pdu_matrix_set)
     {
-        int current_pdu_index    = pdu_matrix_pair[0];
+        int current_pdu_index = pdu_matrix_pair[0];
         int current_matrix_index = pdu_matrix_pair[1];
 
         // For this (pdu, matrix), group all 64 eo_channels by their local column and row
@@ -93,9 +96,9 @@ std::vector<electronics_line> build_electronics_line_list(const Mapping &current
             if (!do_channel_optional)
                 continue;
 
-            int do_channel         = *do_channel_optional;
-            int local_column_index = do_channel / 8;  // which of the 8 vertical lines
-            int local_row_index    = do_channel % 8;  // which of the 8 horizontal lines
+            int do_channel = *do_channel_optional;
+            int local_column_index = do_channel / 8; // which of the 8 vertical lines
+            int local_row_index = do_channel % 8;    // which of the 8 horizontal lines
 
             column_index_to_eo_channels[local_column_index].push_back(eo_channel);
             row_index_to_eo_channels[local_row_index].push_back(eo_channel);
@@ -105,18 +108,18 @@ std::vector<electronics_line> build_electronics_line_list(const Mapping &current
         for (int local_column_index = 0; local_column_index < 8; ++local_column_index)
         {
             electronics_line current_line;
-            current_line.pdu_index        = current_pdu_index;
-            current_line.matrix_index     = current_matrix_index;
+            current_line.pdu_index = current_pdu_index;
+            current_line.matrix_index = current_matrix_index;
             current_line.local_line_index = local_column_index;
-            current_line.orientation      = line_orientation_type::Vertical;
-            current_line.eo_channel_list  = column_index_to_eo_channels[local_column_index];
+            current_line.orientation = line_orientation_type::Vertical;
+            current_line.eo_channel_list = column_index_to_eo_channels[local_column_index];
 
             // Physical x: query via representative eo_channel (all 8 share the same x)
             current_line.physical_constant_coordinate_mm = -999.f;
             if (!current_line.eo_channel_list.empty())
             {
                 int representative_eo_channel = current_line.eo_channel_list[0];
-                auto representative_position  = current_mapping.get_position_from_pdu_matrix_eoch(
+                auto representative_position = current_mapping.get_position_from_pdu_matrix_eoch(
                     current_pdu_index, current_matrix_index, representative_eo_channel);
                 if (representative_position)
                     current_line.physical_constant_coordinate_mm = (*representative_position)[0];
@@ -129,18 +132,18 @@ std::vector<electronics_line> build_electronics_line_list(const Mapping &current
         for (int local_row_index = 0; local_row_index < 8; ++local_row_index)
         {
             electronics_line current_line;
-            current_line.pdu_index        = current_pdu_index;
-            current_line.matrix_index     = current_matrix_index;
+            current_line.pdu_index = current_pdu_index;
+            current_line.matrix_index = current_matrix_index;
             current_line.local_line_index = local_row_index;
-            current_line.orientation      = line_orientation_type::Horizontal;
-            current_line.eo_channel_list  = row_index_to_eo_channels[local_row_index];
+            current_line.orientation = line_orientation_type::Horizontal;
+            current_line.eo_channel_list = row_index_to_eo_channels[local_row_index];
 
             // Physical y: query via representative eo_channel (all 8 share the same y)
             current_line.physical_constant_coordinate_mm = -999.f;
             if (!current_line.eo_channel_list.empty())
             {
                 int representative_eo_channel = current_line.eo_channel_list[0];
-                auto representative_position  = current_mapping.get_position_from_pdu_matrix_eoch(
+                auto representative_position = current_mapping.get_position_from_pdu_matrix_eoch(
                     current_pdu_index, current_matrix_index, representative_eo_channel);
                 if (representative_position)
                     current_line.physical_constant_coordinate_mm = (*representative_position)[1];
@@ -157,8 +160,8 @@ void print_electronics_line_list(const std::vector<electronics_line> &electronic
 {
     std::cout << "\n=== Electronics Line Map ===" << std::endl;
     std::cout << std::left
-              << std::setw(6)  << "PDU"
-              << std::setw(8)  << "Matrix"
+              << std::setw(6) << "PDU"
+              << std::setw(8) << "Matrix"
               << std::setw(12) << "Orient."
               << std::setw(10) << "LineIdx"
               << std::setw(14) << "Coord[mm]"
@@ -172,8 +175,8 @@ void print_electronics_line_list(const std::vector<electronics_line> &electronic
             (current_line.orientation == line_orientation_type::Vertical) ? "VERTICAL" : "HORIZONTAL";
 
         std::cout << std::left
-                  << std::setw(6)  << current_line.pdu_index
-                  << std::setw(8)  << current_line.matrix_index
+                  << std::setw(6) << current_line.pdu_index
+                  << std::setw(8) << current_line.matrix_index
                   << std::setw(12) << orientation_label
                   << std::setw(10) << current_line.local_line_index
                   << std::setw(14) << std::fixed << std::setprecision(2)
@@ -195,5 +198,4 @@ void test_acceptance2()
     // Inspect electronics line structure before running acceptance
     auto electronics_line_list = build_electronics_line_list(current_mapping);
     print_electronics_line_list(electronics_line_list);
-
 }

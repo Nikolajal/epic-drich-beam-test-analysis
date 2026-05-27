@@ -85,15 +85,15 @@ struct DataMaskStruct
 struct AlcorSpilldataStruct
 {
     // --- Working maps (random-access processing) ------------------------
-    std::map<uint8_t, uint32_t> dead_mask;                          ///< device → dead-channel bitmask.
-    std::map<uint8_t, uint32_t> participants_mask;                  ///< device → participating-channel bitmask.
-    std::map<uint32_t, AlcorLightdataStruct> frame_and_lightdata;   ///< frame_id → light-data payload.
+    std::map<uint8_t, uint32_t> dead_mask;                        ///< device → dead-channel bitmask.
+    std::map<uint8_t, uint32_t> participants_mask;                ///< device → participating-channel bitmask.
+    std::map<uint32_t, AlcorLightdataStruct> frame_and_lightdata; ///< frame_id → light-data payload.
 
     // --- Flat vectors (ROOT TTree serialisation) -------------------------
-    std::vector<DataMaskStruct> dead_mask_list;                     ///< Flat copy of @c dead_mask for TTree output.
-    std::vector<DataMaskStruct> participants_mask_list;             ///< Flat copy of @c participants_mask for TTree output.
-    std::vector<uint32_t> frame_reference;                          ///< Ordered list of frame IDs written to the TTree.
-    std::vector<AlcorLightdataStruct> lightdata_list_in_frame;      ///< Light-data entries parallel to @c frame_reference.
+    std::vector<DataMaskStruct> dead_mask_list;                ///< Flat copy of @c dead_mask for TTree output.
+    std::vector<DataMaskStruct> participants_mask_list;        ///< Flat copy of @c participants_mask for TTree output.
+    std::vector<uint32_t> frame_reference;                     ///< Ordered list of frame IDs written to the TTree.
+    std::vector<AlcorLightdataStruct> lightdata_list_in_frame; ///< Light-data entries parallel to @c frame_reference.
 
     // --- Special members: move-only --------------------------------------
     AlcorSpilldataStruct() noexcept = default;
@@ -256,10 +256,10 @@ private:
     /// non-movable, so the addresses are stable for its lifetime.
     void sync_ptrs_() noexcept
     {
-        dead_mask_list_ptr_         = &spilldata.dead_mask_list;
+        dead_mask_list_ptr_ = &spilldata.dead_mask_list;
         participants_mask_list_ptr_ = &spilldata.participants_mask_list;
-        frame_reference_ptr_        = &spilldata.frame_reference;
-        lightdata_list_in_frame_ptr_= &spilldata.lightdata_list_in_frame;
+        frame_reference_ptr_ = &spilldata.frame_reference;
+        lightdata_list_in_frame_ptr_ = &spilldata.lightdata_list_in_frame;
     }
 
     AlcorSpilldataStruct spilldata;                                  ///< Owned spill-data payload.
@@ -267,9 +267,9 @@ private:
 
     // Branch-address pointer slots — live HERE (not in the POD struct).
     // Stable for the wrapper's lifetime since the class is non-movable.
-    std::vector<DataMaskStruct> *dead_mask_list_ptr_         = nullptr;
+    std::vector<DataMaskStruct> *dead_mask_list_ptr_ = nullptr;
     std::vector<DataMaskStruct> *participants_mask_list_ptr_ = nullptr;
-    std::vector<uint32_t>       *frame_reference_ptr_        = nullptr;
+    std::vector<uint32_t> *frame_reference_ptr_ = nullptr;
     std::vector<AlcorLightdataStruct> *lightdata_list_in_frame_ptr_ = nullptr;
 };
 

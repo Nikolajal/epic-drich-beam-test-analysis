@@ -1,0 +1,112 @@
+# .github/workflows/clang-format.yml
+#
+# Format-only check.  Runs on every push to main/dev and every PR.
+# Verifies that all C++ sources under `include/`, `src/`, `macros/`
+# would NOT be changed by `clang-format --style=file`.
+#
+# The style is defined in `.clang-format` at the repo root (LLVM base
+# style, 4-space indent, Allman braces, no column limit).  Naming /
+# structural conventions that clang-format CAN'T enforce live in
+# `docs/coding_conventions.md` (snake_case, PascalCase, etc.) and
+# need human review.
+#
+# ── Failure mode ────────────────────────────────────────────────────
+# If any file would be reformatted, the job:
+#   1. Prints the diff that clang-format wants to apply (so the author
+#      sees exactly what to fix).
+#   2. Lists the offending file paths in the GitHub-Actions summary.
+#   3. Exits non-zero, blocking the PR.
+#
+# ── Fix locally ─────────────────────────────────────────────────────
+# Install clang-format (Homebrew: `brew install clang-format`,
+# Ubuntu: `sudo apt-get install clang-format`), then from the repo root:
+#
+#     find include src macros -type f \
+#         \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
+#         -not -path '*/build/*' -not -path '*/_deps/*' \
+#         -print0 | xargs -0 clang-format -i --style=file
+#
+# ── clang-format version ────────────────────────────────────────────
+# We pin to the Ubuntu-noble default (clang-format-18) on the CI side.
+# The .clang-format config is conservative (LLVM base, no advanced
+# options that drifted between versions), so dev clang-format 18-22
+# all produce identical output for this codebase — verified during
+# the project-wide format pass on 2026-05-27.  If you bump the pinned
+# version, run the full format pass locally first and commit the diff.
+
+name: clang-format
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: clang-format-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    name: Verify C++ formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format
+          clang-format --version
+
+      - name: Check formatting (dry-run, fail on diff)
+        id: format-check
+        run: |
+          set -e
+          # Gather all C++ sources under include/, src/, macros/ — same
+          # set the README + local fix-up command target.
+          mapfile -d '' files < <(find include src macros -type f \
+              \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
+              -not -path '*/build/*' -not -path '*/_deps/*' -print0)
+          echo "Found ${#files[@]} source files to check."
+
+          # First pass: --dry-run --Werror.  If clean, exit 0 immediately.
+          if clang-format --dry-run --Werror --style=file "${files[@]}"; then
+              echo "All ${#files[@]} files match the project clang-format style. ✓"
+              exit 0
+          fi
+
+          # Second pass: produce a unified diff so the author can see
+          # exactly what changed.  We re-run clang-format on each
+          # offending file and diff against the original.
+          echo ""
+          echo "── clang-format diff (paste of all changes that would be applied) ──"
+          echo ""
+          offenders=()
+          for f in "${files[@]}"; do
+              if ! diff -u --label "a/$f" --label "b/$f" "$f" <(clang-format --style=file "$f"); then
+                  offenders+=("$f")
+              fi
+          done
+
+          # Compact list at the bottom for quick scanning + GH summary.
+          {
+              echo "### Files needing reformatting (${#offenders[@]})"
+              echo ""
+              echo '```'
+              printf '%s\n' "${offenders[@]}"
+              echo '```'
+              echo ""
+              echo "Fix locally:"
+              echo '```bash'
+              echo "find include src macros -type f \\"
+              echo "    \\( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \\) \\"
+              echo "    -not -path '*/build/*' -not -path '*/_deps/*' \\"
+              echo "    -print0 | xargs -0 clang-format -i --style=file"
+              echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit 1
