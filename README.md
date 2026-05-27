@@ -184,6 +184,23 @@ recotrackdata.root   ← track-matched recodata with ALTAI telescope information
 
 Each step is invoked via the corresponding macro in `macros/utilities/` or the matching free function declared in `include/`.
 
+#### Inspecting on-disk files: `btana-dump`
+
+```bash
+btana-dump <file.root>                   # prints first 5 entries
+btana-dump <file.root> -n 20             # prints first 20 entries
+btana-dump <file.root> -n -1             # prints every entry
+```
+
+`btana-dump` auto-detects the format (`lightdata`, `recodata`, or
+`recotrackdata`) by the tree name and pretty-prints a per-entry summary
+to stdout — useful for quickly inspecting a freshly produced file or
+diff-checking the same file at two pipeline stages.  Lives at
+`bin/btana-dump` after `cmake --build`; the decoder functions
+(`btana::utilities::dump_{lightdata,recodata,recotrackdata,file}`) are
+also exposed via `include/utilities/btana_dump.h` for use inside
+macros.
+
 ### In development
 
 The `lightdata_writer` step implements a streaming Hough-transform ring finder
