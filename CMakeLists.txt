@@ -134,10 +134,12 @@ set(SRC_FILES
     src/triggers/streaming/hough.cxx
     src/lightdata_writer.cxx
     src/writers/lightdata/dcr_afterpulse_ct_qa.cxx
+    src/writers/lightdata/finalize_streaming_qa.cxx
     src/recodata_writer.cxx
     src/writers/recodata/radial_fit.cxx
     src/writers/recodata/sigma_vs_n_fit.cxx
     src/writers/recodata/ring_compute.cxx
+    src/writers/recodata/frame_pipeline.cxx
     src/recotrackdata_writer.cxx
     src/analysis_results.cxx
     src/radiator_efficiency.cxx

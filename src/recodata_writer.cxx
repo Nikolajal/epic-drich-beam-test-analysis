@@ -21,6 +21,7 @@
 #include "writers/recodata/radial_fit.h"     // fit_radial_distribution
 #include "writers/recodata/sigma_vs_n_fit.h" // fit_sigma_vs_n
 #include "writers/recodata/ring_compute.h"   // compute_ring_fit, fill_ring_hists, refit_and_fill_ring
+#include "writers/recodata/frame_pipeline.h" // process_frame_pure (parallel-dispatch entry point)
 //  Live-QA pipeline (DISCUSSION § 2.6): coverage map + eff(R) helpers
 //  + per-ring fit_circle re-run on mask-tagged hits → N_photons /
 //  radial(R) observables filled inline.
@@ -42,7 +43,9 @@ using ::btana::recodata::compute_ring_fit;
 using ::btana::recodata::fill_ring_hists;
 using ::btana::recodata::fit_radial_distribution;
 using ::btana::recodata::fit_sigma_vs_n;
+using ::btana::recodata::FrameProcessContext;
 using ::btana::recodata::FrameResult;
+using ::btana::recodata::process_frame_pure;
 using ::btana::recodata::RadialFitResult;
 using ::btana::recodata::refit_and_fill_ring;
 using ::btana::recodata::RingComputeContext;
@@ -301,6 +304,12 @@ void recodata_writer(
     //  config knobs that don't change during the loop.  See
     //  `include/writers/recodata/ring_compute.h`.
     const RingComputeContext ring_ctx{index_to_hit_xy, recodata_cfg};
+
+    //  Captured-once state for the parallel per-frame compute pass
+    //  (`process_frame_pure`).  Lives in `frame_pipeline.{h,cxx}`.
+    //  All members `const &` — safe to share across worker threads.
+    const FrameProcessContext frame_proc_ctx{framer_cfg, registry, ring_ctx,
+                                             BTANA_EDGE_REJECTION_NS};
 
     //  Coverage map is now built at FINALIZE (DISCUSSION § 2.6, spill-
     //  by-spill active-channel correction).  During the spill loop we
@@ -655,100 +664,16 @@ void recodata_writer(
         int n_accepted = 0, n_edge = 0, n_duplicate = 0;
 
         //  ───────────────────────────────────────────────────────────────────
-        //  process_frame_pure (Stage 1B): pure-compute per-frame producer.
+        //  process_frame_pure (Stage 1A): pure-compute per-frame producer.
         //  Reads `lightdata`, produces a `FrameResult`.  No histogram
         //  fills, no `recodata.add_*`, no tree Fill, no per-spill
         //  counter mutation.  Thread-safe (only reads from shared
-        //  refs; writes only to its local FrameResult).
+        //  refs in `FrameProcessContext`; writes only to its local
+        //  FrameResult).  Body lifted to
+        //  `src/writers/recodata/frame_pipeline.cxx` in Phase G2
+        //  (2026-05-27) — the function signature now makes the
+        //  parallel contract visible at the call site.
         //  ───────────────────────────────────────────────────────────────────
-        auto process_frame_pure = [&](AlcorLightdata &lightdata) -> FrameResult
-        {
-            FrameResult res;
-            const float frame_size_ns = framer_cfg.frame_size * BTANA_ALCOR_CC_TO_NS;
-
-            for (const auto &current_trigger : lightdata.get_triggers())
-            {
-                if (current_trigger.index == _TRIGGER_UNKNOWN_)
-                    continue;
-                const float reg_bin = registry.index_of(current_trigger.index) + 0.5f;
-
-                const bool is_edge =
-                    (current_trigger.fine_time < edge_rejection_ns) ||
-                    (current_trigger.fine_time > frame_size_ns - edge_rejection_ns);
-                if (is_edge)
-                {
-                    res.edge_fills.emplace_back(reg_bin, current_trigger.fine_time);
-                    res.trigger_qa_fills.emplace_back(reg_bin, 1.5f); // edge-rejected
-                    res.had_edge = true;
-                    continue;
-                }
-
-                if (auto it = res.accepted_triggers.find(current_trigger.index);
-                    it != res.accepted_triggers.end())
-                {
-                    const auto &prev = it->second;
-                    if (std::fabs((float)current_trigger.coarse - (float)prev.coarse) <
-                        BTANA_TRIGGER_MIN_SEPARATION)
-                        continue;                                     // temporal duplicate
-                    res.trigger_qa_fills.emplace_back(reg_bin, 2.5f); // duplicate-rejected
-                    res.rejected = true;
-                    break;
-                }
-
-                // First time seeing this trigger — accept.
-                res.accepted_triggers[current_trigger.index] = current_trigger;
-                for (const auto &chrk : lightdata.get_cherenkov_hits_link())
-                {
-                    const float dt = AlcorFinedata(chrk).get_time_ns() - current_trigger.fine_time;
-                    res.time_diff_fills.emplace_back(current_trigger.index, dt);
-                }
-            }
-
-            res.accepted = !res.rejected;
-            if (res.rejected)
-                return res;
-
-            //  Per-spill physics check (DISCUSSION § 2.6).
-            for (const auto &[idx, trig] : res.accepted_triggers)
-            {
-                if (idx == TriggerFirstFrames)
-                    continue;
-                if (idx == _TRIGGER_STREAMING_RING_FOUND_)
-                    continue;
-                if (idx == TriggerStartOfSpill)
-                    continue;
-                if (idx == _TRIGGER_UNKNOWN_)
-                    continue;
-                res.frame_is_physics = true;
-                break;
-            }
-
-            //  Ring detection + fits (only if frame carries the Hough trigger).
-            if (res.accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_))
-            {
-                for (const auto &hit_struct : lightdata.get_cherenkov_hits_link())
-                {
-                    AlcorFinedata fh(hit_struct);
-                    if (fh.has_mask_bit(HitmaskHoughRingTagSecond))
-                    {
-                        res.frame_has_second_ring = true;
-                        break;
-                    }
-                }
-                //  do_loo gated by the recodata config knob.
-                //  `skip_loo_residuals = true` (typically in
-                //  conf/QA/recodata.toml) disables the per-hit
-                //  leave-one-out fit loop — the biggest single
-                //  speedup lever for QA mode at the cost of no
-                //  σ_photon measurement.  See RecodataConfigStruct.
-                const bool do_loo = !ring_ctx.cfg.skip_loo_residuals;
-                res.first = compute_ring_fit(HitmaskHoughRingTagFirst,
-                                             lightdata, do_loo, ring_ctx);
-                res.second = compute_ring_fit(HitmaskHoughRingTagSecond,
-                                              lightdata, do_loo, ring_ctx);
-            }
-            return res;
-        };
 
         //  ───────────────────────────────────────────────────────────────────
         //  drain_frame_result (Stage 1B): serial consumer.  Plays back
@@ -918,7 +843,7 @@ void recodata_writer(
             for (size_t iframe = 0; iframe < n_frames; ++iframe)
             {
                 AlcorLightdata cur(frames_in_spill[iframe]);
-                frame_results[iframe] = process_frame_pure(cur);
+                frame_results[iframe] = process_frame_pure(cur, frame_proc_ctx);
                 const size_t now_done = done.fetch_add(1) + 1;
                 tick_progress(now_done);
             }
@@ -936,7 +861,7 @@ void recodata_writer(
                         const size_t my = next_frame.fetch_add(1);
                         if (my >= n_frames) return;
                         AlcorLightdata cur(frames_in_spill[my]);
-                        frame_results[my] = process_frame_pure(cur);
+                        frame_results[my] = process_frame_pure(cur, frame_proc_ctx);
                         const size_t now_done = done.fetch_add(1) + 1;
                         tick_progress(now_done);
                     } }));
