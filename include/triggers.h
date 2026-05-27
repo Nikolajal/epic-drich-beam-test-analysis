@@ -6,7 +6,7 @@
  *
  * Re-exports the cross-cutting types and config schema that every consumer
  * of the trigger subsystem needs.  Plays the same role for `triggers/` that
- * [`utility.h`](utility.h) plays for `util/`.
+ * [`utility.h`](utility.h) plays for `utility/`.
  *
  * Subsystem layout:
  *

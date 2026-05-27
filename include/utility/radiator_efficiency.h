@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file include/util/radiator_efficiency.h
+ * @file include/utility/radiator_efficiency.h
  * @brief Geometric coverage map + radial efficiency helpers for the
  *        Cherenkov-radiator photon-counting pipeline.
  *

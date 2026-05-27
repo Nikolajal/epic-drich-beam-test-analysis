@@ -78,8 +78,8 @@ find_package(ROOT REQUIRED COMPONENTS RIO Tree Hist Graf Gui)
 # Dictionary Headers
 # --------------------------------------------------
 set(DICT_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/util/global_index.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/util/config_reader.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/utility/global_index.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/utility/config_reader.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/triggers.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_finedata.h

@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file util/ring_model.h
+ * @file utility/ring_model.h
  * @brief Analytical ring-signal model + histogram-based ring fitter.
  *
  * Models a Cherenkov ring as a Gaussian-in-radius signal on a flat

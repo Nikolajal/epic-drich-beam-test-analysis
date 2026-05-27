@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file util/root_io.h
+ * @file utility/root_io.h
  * @brief ROOT file open-or-build helper.
  *
  * Convenience wrapper for the "open this `.root` file, or run a builder

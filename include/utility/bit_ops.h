@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file util/bit_ops.h
+ * @file utility/bit_ops.h
  * @brief 32-bit mask manipulation helpers — encode/decode individual bits.
  *
  * Pure standard-library code, no ROOT dependency.  Used throughout the

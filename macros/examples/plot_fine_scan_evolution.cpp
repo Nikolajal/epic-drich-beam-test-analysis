@@ -20,8 +20,8 @@
  */
 
 #include "../lib_loader.h"
-#include "util/root_io.h"
-#include "util/root_hist.h"
+#include "utility/root_io.h"
+#include "utility/root_hist.h"
 #include <TFile.h>
 #include <TH1D.h>
 #include <TH2D.h>

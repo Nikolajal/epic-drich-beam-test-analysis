@@ -25,7 +25,7 @@
  */
 
 #include "alcor_data.h"                    // TriggerNumber, HitMask
-#include "util/config_reader.h"            // FramerConfigStruct
+#include "utility/config_reader.h"            // FramerConfigStruct
 #include "writers/recodata/ring_compute.h" // RingComputeContext
 #include "writers/recodata/types.h"        // FrameResult
 

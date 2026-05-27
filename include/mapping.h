@@ -3,7 +3,8 @@
 #include "utility.h"
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
-#include "util/toml_utils.h"
+#include <unordered_map>
+#include "utility/toml_utils.h"
 
 /**
  * @file Mapping.h
@@ -320,7 +321,7 @@ public:
      * Useful for iterating over all active channels, e.g. when filling
      * occupancy histograms or building detector response matrices.
      */
-    const std::map<int, std::array<float, 2>> &get_index_to_position_map() const { return index_to_hit_xy; }
+    const std::unordered_map<int, std::array<float, 2>> &get_index_to_position_map() const { return index_to_hit_xy; }
 
     /**
      * @brief Read-only access to the full position → index reverse cache.
@@ -346,33 +347,45 @@ public:
 
 private:
     // -------------------------------------------------------------------------
-    /** @name Static channel-routing tables (compile-time constants) */
+    /** @name Channel-routing tables (compile-time constants) */
     /// @{
 
     /// EO→DO channel permutation for each of the four matrix quadrants.
-    /// Indexed by matrix [1–4]; inner vector has 64 entries (one per EO channel).
-    static std::map<int, std::vector<int>> matrix_to_do_channel;
+    /// Indexed by matrix [1–4]; inner vector has 64 entries (one per
+    /// EO channel).  Kept @c static because the EO→DO permutation is
+    /// a fixed ALCOR hardware property — not mutated by load_calib —
+    /// and sharing the table across instances has no concurrency
+    /// downside (read-only after initialisation).
+    static const std::map<int, std::vector<int>> matrix_to_do_channel;
 
     /// @}
 
     // -------------------------------------------------------------------------
-    /** @name Calibration data (loaded at runtime) */
+    /** @name Calibration data (loaded at runtime, per-instance) */
     /// @{
 
+    //  These four maps are populated by load_calib at construction
+    //  time from the mapping TOML.  They are PER-INSTANCE rather than
+    //  static because (a) closes D-10's "two Mapping instances
+    //  silently share state" trap and (b) supports any future
+    //  reload-mid-run feature without racing against framer workers.
+    //  No API change for callers — Mapping is already constructed
+    //  per-instance everywhere (`Mapping current_mapping(conf)`).
+
     /// Physical centre position {x, y} in mm for each PDU, keyed by PDU index.
-    static std::map<int, std::array<float, 2>> pdu_xy_position;
+    std::map<int, std::array<float, 2>> pdu_xy_position;
 
     /// 180° rotation flag per PDU. @c true means column/row are mirrored as
     /// (15 − col, 15 − row) before the position lookup.
-    static std::map<int, bool> pdu_rotation;
+    std::map<int, bool> pdu_rotation;
 
     /// Maps (device, chip) pairs to their (PDU, matrix) assignment.
-    static std::map<std::array<int, 2>, std::array<int, 2>> device_chip_to_pdu_matrix;
+    std::map<std::array<int, 2>, std::array<int, 2>> device_chip_to_pdu_matrix;
 
     /// HV bias line orientation per matrix quadrant [1–4].
     /// VERTICAL  → bias lines run along columns (do_channel / 8).
     /// HORIZONTAL → bias lines run along rows    (do_channel % 8).
-    static std::map<int, line_orientation_type> hv_line_orientation;
+    std::map<int, line_orientation_type> hv_line_orientation;
 
     /// @}
 
@@ -380,7 +393,14 @@ private:
     /** @name Position caches */
     /// @{
 
-    std::map<int, std::array<float, 2>> index_to_hit_xy; ///< global index → {x, y} mm.
+    //  index_to_hit_xy is `std::unordered_map` for O(1) hot-path
+    //  lookups — the framer workers hit `get_position_from_*` on
+    //  every Hit, and the ~2k-entry table was log-N tree walks
+    //  under `std::map`.  The reverse `hit_xy_to_index` keeps
+    //  `std::map` because the float-pair key would need a custom
+    //  hasher; see D-10 option D (rounded-integer-mm key) for the
+    //  proper fix.
+    std::unordered_map<int, std::array<float, 2>> index_to_hit_xy; ///< global index → {x, y} mm.
     std::map<std::array<float, 2>, int> hit_xy_to_index; ///< {x, y} mm → global index.
     bool cache_index_to_xy_built{false};
     bool cache_xy_to_index_built{false};

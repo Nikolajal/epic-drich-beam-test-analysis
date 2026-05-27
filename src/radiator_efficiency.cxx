@@ -15,7 +15,7 @@
  * counts at each (φ, R) cell — a pure geometric quantity.
  */
 
-#include "util/radiator_efficiency.h"
+#include "utility/radiator_efficiency.h"
 
 #include <TAxis.h>
 #include <TH1.h>

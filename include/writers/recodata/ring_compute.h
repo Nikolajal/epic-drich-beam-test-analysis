@@ -26,7 +26,7 @@
 
 #include "alcor_data.h"             // HitMask
 #include "writers/recodata/types.h" // RingFitResult, RingFillHists
-#include "util/config_reader.h"     // RecodataConfigStruct
+#include "utility/config_reader.h"     // RecodataConfigStruct
 
 class AlcorLightdata;
 

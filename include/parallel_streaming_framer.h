@@ -36,7 +36,7 @@
 #include <filesystem>
 #include "alcor_spilldata.h"
 #include "alcor_data_streamer.h"
-#include "util/config_reader.h"
+#include "utility/config_reader.h"
 #include <mist/logger/progress_bar.h>
 #include <mist/logger/multi_progress_bar.h>
 

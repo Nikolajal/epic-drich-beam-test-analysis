@@ -14,7 +14,7 @@
 #include <algorithm>
 #include "alcor_finedata.h"
 #include "triggers.h"
-#include "util/config_reader.h"
+#include "utility/config_reader.h"
 
 /**
  * @brief Structure holding all types of light detector hits for a spill.

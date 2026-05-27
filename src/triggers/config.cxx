@@ -27,7 +27,7 @@
 #include "triggers/config.h"
 
 #include <toml++/toml.h>
-#include "util/toml_utils.h"
+#include "utility/toml_utils.h"
 #include <mist/logger/logger.h>
 
 namespace

@@ -1,7 +1,7 @@
 #include "writers/recodata.h"
 #include <mist/logger/logger.h>
-#include "util/config_reader.h"
-#include "util/conf_path.h"
+#include "utility/config_reader.h"
+#include "utility/conf_path.h"
 #include "utility.h"
 #include <stdio.h>
 #include <CLI/CLI.hpp>

@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file util/root_draw.h
+ * @file utility/root_draw.h
  * @brief ROOT canvas-drawing helpers (currently just @ref draw_circle).
  *
  * Thin wrappers around the ROOT graphics primitives so macros and the

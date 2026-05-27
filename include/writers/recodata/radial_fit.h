@@ -25,7 +25,7 @@
 #include <vector>
 
 #include "writers/recodata/types.h"
-#include "util/config_reader.h" // RecodataConfigStruct
+#include "utility/config_reader.h" // RecodataConfigStruct
 
 class TH1F;
 

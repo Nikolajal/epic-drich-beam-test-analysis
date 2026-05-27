@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @file util/root_hist.h
+ * @file utility/root_hist.h
  * @brief Owning RAII wrapper for ROOT histograms.
  *
  * `RootHist<T>` is a `unique_ptr`-style wrapper for `TH1F`, `TH2F`,

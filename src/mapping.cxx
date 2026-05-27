@@ -70,8 +70,13 @@ std::optional<std::array<float, 2>> Mapping::get_position_from_pdu_matrix_eoch(i
     int column = do_channel / 8 + (matrix > 2 ? 8 : 0);
     int row = do_channel % 8 + (matrix % 2 == 0 ? 8 : 0);
 
-    //  Apply optional 180° PDU rotation
-    if (pdu_rotation[pdu])
+    //  Apply optional 180° PDU rotation.  Use .find() rather than the
+    //  unchecked operator[] — a missing PDU should not silently insert
+    //  a default-false entry into the static map, which would mask a
+    //  malformed mapping config (and is a write to shared state).
+    const auto rotation_it = pdu_rotation.find(pdu);
+    const bool rotated = (rotation_it != pdu_rotation.end()) ? rotation_it->second : false;
+    if (rotated)
         return get_position_from_pdu_column_row(pdu, 15 - column, 15 - row);
     return get_position_from_pdu_column_row(pdu, column, row);
 }
@@ -344,19 +349,16 @@ void Mapping::build_position_to_index_cache(std::string collision_policy)
 }
 
 // ============================================================================
-//  Static member definitions
+//  Static member definitions (only the immutable EO→DO routing table
+//  remains static; the four calibration maps are now per-instance and
+//  default-initialised to empty by the in-class declarations).
 // ============================================================================
 
-std::map<int, std::vector<int>> Mapping::matrix_to_do_channel = {
+const std::map<int, std::vector<int>> Mapping::matrix_to_do_channel = {
     {1, {3, 2, 1, 0, 8, 9, 10, 11, 17, 16, 12, 4, 18, 19, 5, 13, 25, 24, 21, 20, 26, 27, 28, 29, 30, 22, 14, 6, 7, 15, 23, 31, 35, 34, 33, 32, 36, 37, 38, 39, 43, 42, 41, 40, 44, 45, 46, 47, 51, 50, 49, 48, 52, 53, 54, 55, 59, 58, 57, 56, 60, 61, 62, 63}},
     {2, {59, 58, 57, 56, 60, 61, 62, 63, 51, 50, 49, 48, 52, 53, 54, 55, 43, 42, 41, 40, 44, 45, 46, 47, 35, 34, 33, 32, 36, 37, 38, 39, 0, 8, 16, 24, 25, 17, 26, 27, 29, 28, 1, 9, 30, 31, 18, 19, 21, 20, 2, 10, 22, 23, 11, 12, 3, 15, 14, 13, 4, 5, 6, 7}},
     {3, {4, 5, 6, 7, 3, 2, 1, 0, 12, 13, 14, 15, 11, 10, 9, 8, 20, 21, 22, 23, 19, 18, 17, 16, 28, 29, 30, 31, 27, 26, 25, 24, 46, 63, 55, 47, 54, 62, 39, 38, 34, 35, 36, 37, 33, 32, 45, 44, 42, 43, 61, 53, 41, 40, 52, 60, 48, 49, 50, 51, 59, 58, 57, 56}},
     {4, {60, 61, 62, 63, 55, 54, 53, 52, 46, 47, 51, 59, 45, 44, 58, 50, 38, 39, 42, 43, 37, 36, 35, 34, 33, 41, 49, 57, 56, 48, 40, 32, 28, 29, 30, 31, 27, 26, 25, 24, 20, 21, 22, 23, 19, 18, 17, 16, 12, 13, 14, 15, 11, 10, 9, 8, 4, 5, 6, 7, 3, 2, 1, 0}}};
-
-std::map<int, bool> Mapping::pdu_rotation = {};
-std::map<int, std::array<float, 2>> Mapping::pdu_xy_position = {};
-std::map<std::array<int, 2>, std::array<int, 2>> Mapping::device_chip_to_pdu_matrix = {};
-std::map<int, line_orientation_type> Mapping::hv_line_orientation = {};
 // =============================================================================
 // CONVENTION-BREAK NOTICE — see same notice in src/alcor_finedata.cxx
 // =============================================================================

@@ -27,9 +27,9 @@
 //  Live-QA pipeline: coverage map + eff(R) helpers
 //  + per-ring fit_circle re-run on mask-tagged hits → N_photons /
 //  radial(R) observables filled inline.
-#include "util/radiator_efficiency.h"
-#include "util/circle_fit.h"
-#include "util/config_reader.h"
+#include "utility/radiator_efficiency.h"
+#include "utility/circle_fit.h"
+#include "utility/config_reader.h"
 #include <set>
 #include <memory>
 #include <atomic>
@@ -135,7 +135,20 @@ void recodata_writer(
     AlcorSpilldata *spilldata = new AlcorSpilldata();
     spilldata->link_to_tree(lightdata_tree);
 
-    AlcorFinedata::read_calib_from_file(data_repository + "/" + run_name + "/fine_calib.txt");
+    //  Calibration file: prefer the TOML form if present, fall back to
+    //  the legacy text file.  Both are produced by `pulser_calib_writer`
+    //  depending on the `default_path` extension in
+    //  conf/calib/calibration_conf.toml; one or the other is canonical
+    //  per run.  AlcorFinedata::read_calib_from_file auto-detects on
+    //  the file extension.
+    {
+        namespace fs = std::filesystem;
+        const fs::path run_dir   = fs::path(data_repository) / run_name;
+        const fs::path toml_path = run_dir / "fine_calib.toml";
+        const fs::path txt_path  = run_dir / "fine_calib.txt";
+        const fs::path picked    = fs::exists(toml_path) ? toml_path : txt_path;
+        AlcorFinedata::read_calib_from_file(picked.string());
+    }
 
     auto fine_time_calib_th2f = input_file->Get<TH2F>("h_fine_calib");
     if (!fine_time_calib_th2f)

@@ -21,7 +21,7 @@
 #include "TProfile.h"
 
 #include "alcor_finedata.h"
-#include "util/global_index.h" // GlobalIndex
+#include "utility/global_index.h" // GlobalIndex
 
 namespace btana::lightdata
 {
