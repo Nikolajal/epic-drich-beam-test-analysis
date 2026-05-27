@@ -295,14 +295,27 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
 // See the header comment block at the top of `alcor_finedata.h` and
 // `include/triggers/streaming/DISCUSSION.md` § 2 for context.
 // =============================================================================
-// AlcorFinedata — methods moved out of the header (Phase G IWYU pass).
+// CONVENTION-BREAK NOTICE — these methods belong inline in the header
+// =============================================================================
 //
-// These methods reference `HitMask` (from alcor_data.h), `BTANA_ALCOR_*`
-// macros (same), or `::GlobalIndex` (from util/global_index.h).  Keeping
-// them in the header would force every consumer of alcor_finedata.h to
-// drag in those headers — and would break ROOT's dict autoparse, which
-// loads alcor_finedata.h in isolation (it can see the forward decls but
-// not the full definitions).  Out-of-line definitions sidestep both.
+// Method bodies below were moved out of `include/alcor_finedata.h` during
+// the 2026-05-27 IWYU sweep on the theory that ROOT's dict autoparse
+// needed the header to be self-sufficient.  That theory was a
+// misdiagnosis: the actual failures it chased (`HitMask` /
+// `BTANA_ALCOR_*` / `::GlobalIndex` unknown when a macro loads via
+// `#include "../lib_loader.h"`) were a `dict/alcor_linkdef.h` autoload
+// problem, not a header self-sufficiency problem.
+//
+// PROJECT CONVENTION: framework headers may include each other freely;
+// macros rely on cling autoload via the dict's rootmap to pull in types
+// on first reference.  Per that convention, the canonical home for
+// these short one-liners is the header (where the original inline
+// definitions lived).
+//
+// These bodies are not being moved back blindly — see the matching
+// notice in `include/alcor_finedata.h`.  If you re-inline them, do it
+// only after also confirming the LinkDef covers `HitMask` / `AlcorData`
+// / `GlobalIndex` so `.x macro.cpp` mode keeps working.
 // =============================================================================
 
 float AlcorFinedata::get_time() const
@@ -317,27 +330,27 @@ float AlcorFinedata::get_time_ns() const
     return BTANA_ALCOR_CC_TO_NS * get_time();
 }
 
-int AlcorFinedata::get_tdc() const                    { return ::GlobalIndex(get_global_index()).tdc(); }
-int AlcorFinedata::get_device() const                 { return ::GlobalIndex(get_global_index()).device(); }
-int AlcorFinedata::get_fifo() const                   { return ::GlobalIndex(get_global_index()).fifo(); }
-int AlcorFinedata::get_chip() const                   { return ::GlobalIndex(get_global_index()).real_chip(); }
-int AlcorFinedata::get_eo_channel() const             { return ::GlobalIndex(get_global_index()).eo_channel(); }
-int AlcorFinedata::get_column() const                 { return ::GlobalIndex(get_global_index()).column(); }
-int AlcorFinedata::get_pixel() const                  { return ::GlobalIndex(get_global_index()).pixel(); }
-int AlcorFinedata::get_device_index() const           { return ::GlobalIndex(get_global_index()).device_index(); }
-int AlcorFinedata::get_global_channel_index() const   { return ::GlobalIndex(get_global_index()).channel_ordinal(); }
+int AlcorFinedata::get_tdc() const { return ::GlobalIndex(get_global_index()).tdc(); }
+int AlcorFinedata::get_device() const { return ::GlobalIndex(get_global_index()).device(); }
+int AlcorFinedata::get_fifo() const { return ::GlobalIndex(get_global_index()).fifo(); }
+int AlcorFinedata::get_chip() const { return ::GlobalIndex(get_global_index()).real_chip(); }
+int AlcorFinedata::get_eo_channel() const { return ::GlobalIndex(get_global_index()).eo_channel(); }
+int AlcorFinedata::get_column() const { return ::GlobalIndex(get_global_index()).column(); }
+int AlcorFinedata::get_pixel() const { return ::GlobalIndex(get_global_index()).pixel(); }
+int AlcorFinedata::get_device_index() const { return ::GlobalIndex(get_global_index()).device_index(); }
+int AlcorFinedata::get_global_channel_index() const { return ::GlobalIndex(get_global_index()).channel_ordinal(); }
 
-void AlcorFinedata::add_mask_bit(HitMask bit)         { internal_data.HitMask |= (1u << bit); }
-void AlcorFinedata::clear_mask_bit(HitMask bit)       { internal_data.HitMask &= ~(1u << bit); }
-bool AlcorFinedata::has_mask_bit(HitMask bit) const   { return (internal_data.HitMask >> bit) & 1u; }
-bool AlcorFinedata::is_ring_tag_first() const         { return has_mask_bit(HitmaskRingTagFirst); }
-bool AlcorFinedata::is_ring_tag_second() const        { return has_mask_bit(HitmaskRingTagSecond); }
+void AlcorFinedata::add_mask_bit(HitMask bit) { internal_data.HitMask |= (1u << bit); }
+void AlcorFinedata::clear_mask_bit(HitMask bit) { internal_data.HitMask &= ~(1u << bit); }
+bool AlcorFinedata::has_mask_bit(HitMask bit) const { return (internal_data.HitMask >> bit) & 1u; }
+bool AlcorFinedata::is_ring_tag_first() const { return has_mask_bit(HitmaskRingTagFirst); }
+bool AlcorFinedata::is_ring_tag_second() const { return has_mask_bit(HitmaskRingTagSecond); }
 
-bool AlcorFinedata::is_cross_talk() const      { return has_mask_bit(HitmaskCrossTalk); }
-bool AlcorFinedata::is_afterpulse() const      { return has_mask_bit(HitmaskAfterpulse); }
+bool AlcorFinedata::is_cross_talk() const { return has_mask_bit(HitmaskCrossTalk); }
+bool AlcorFinedata::is_afterpulse() const { return has_mask_bit(HitmaskAfterpulse); }
 bool AlcorFinedata::is_afterpulse_near() const { return has_mask_bit(HitmaskAfterpulseNear); }
-bool AlcorFinedata::is_afterpulse_far() const  { return has_mask_bit(HitmaskAfterpulseFar); }
-bool AlcorFinedata::is_part_lane() const       { return has_mask_bit(_HITMASK_part_lane); }
-bool AlcorFinedata::is_dead_lane() const       { return has_mask_bit(HitmaskDeadLane); }
+bool AlcorFinedata::is_afterpulse_far() const { return has_mask_bit(HitmaskAfterpulseFar); }
+bool AlcorFinedata::is_part_lane() const { return has_mask_bit(_HITMASK_part_lane); }
+bool AlcorFinedata::is_dead_lane() const { return has_mask_bit(HitmaskDeadLane); }
 
 void AlcorFinedata::set_streaming_ring_trigger_mask() { add_mask_bit(HitmaskStreamingRingTrigger); }

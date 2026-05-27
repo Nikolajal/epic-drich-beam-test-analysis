@@ -24,15 +24,16 @@
  * context-struct overhead exceeds the readability gain.
  */
 
-#include "alcor_data.h"                       // TriggerNumber, HitMask
-#include "util/config_reader.h"               // FramerConfigStruct
-#include "writers/recodata/ring_compute.h"    // RingComputeContext
-#include "writers/recodata/types.h"           // FrameResult
+#include "alcor_data.h"                    // TriggerNumber, HitMask
+#include "util/config_reader.h"            // FramerConfigStruct
+#include "writers/recodata/ring_compute.h" // RingComputeContext
+#include "writers/recodata/types.h"        // FrameResult
 
 struct TriggerRegistry;
 class AlcorLightdata;
 
-namespace btana::recodata {
+namespace btana::recodata
+{
 
 /**
  * @brief Captured-once state for the parallel per-frame compute.
@@ -44,7 +45,7 @@ namespace btana::recodata {
 struct FrameProcessContext
 {
     const FramerConfigStruct &framer_cfg;
-    const TriggerRegistry    &registry;
+    const TriggerRegistry &registry;
     const RingComputeContext &ring_ctx;
 
     /// Edge-rejection guard window applied at spill boundaries [ns].

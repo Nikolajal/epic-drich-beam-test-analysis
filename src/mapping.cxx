@@ -358,9 +358,16 @@ std::map<int, std::array<float, 2>> Mapping::pdu_xy_position = {};
 std::map<std::array<int, 2>, std::array<int, 2>> Mapping::device_chip_to_pdu_matrix = {};
 std::map<int, line_orientation_type> Mapping::hv_line_orientation = {};
 // =============================================================================
-// Out-of-line methods that take ::GlobalIndex — moved here in Phase G
-// to keep mapping.h parseable by ROOT's dict autoparse without
-// requiring the full util/global_index.h definition.
+// CONVENTION-BREAK NOTICE — see same notice in src/alcor_finedata.cxx
+// =============================================================================
+//
+// `get_position_from_global_index(::GlobalIndex)` and its int-overload
+// were inline in `include/mapping.h` until the 2026-05-27 IWYU sweep.
+// They were moved out under a misdiagnosis — the autoparse failures
+// were a LinkDef problem, not a header-self-sufficiency problem.  The
+// canonical home for these short forwarders is the header.
+//
+// Not being reverted blindly; do not generalise the pattern.
 // =============================================================================
 
 std::optional<std::array<float, 2>>
