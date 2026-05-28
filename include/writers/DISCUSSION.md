@@ -1,5 +1,9 @@
 # Writers — design discussion & open questions
 
+> 🧭 **Hub:** project-wide design log + index of satellites lives at
+> [`../../DISCUSSION.md`](../../DISCUSSION.md).  Open items here
+> also show up in the top-level [`BACKLOG.md`](../../BACKLOG.md).
+
 Per-area discussion log for the writers (`pulser_calib_writer`,
 `lightdata_writer`, `recodata_writer`, `recotrackdata_writer`).  Use
 this file for design hot points, open hypotheses, and follow-up items

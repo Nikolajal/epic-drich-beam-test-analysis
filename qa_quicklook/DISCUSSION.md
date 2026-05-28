@@ -1,5 +1,9 @@
 # qa_quicklook — longer-term roadmap
 
+> 🧭 **Hub:** project-wide design log + index of satellites lives at
+> [`../DISCUSSION.md`](../DISCUSSION.md).  Open items here also show
+> up in the top-level [`BACKLOG.md`](../BACKLOG.md).
+
 Items the dashboard *should* do eventually but that aren't pressing.
 This file is intentionally short — only entries that have made it
 through "would this actually be used during a shift?".
