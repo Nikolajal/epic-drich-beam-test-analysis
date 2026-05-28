@@ -10,3 +10,4 @@ extData
 build/
 macros/*.h
 .claude
+*.pyc

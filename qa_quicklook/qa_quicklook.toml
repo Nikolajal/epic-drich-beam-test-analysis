@@ -1,0 +1,28 @@
+# qa_quicklook.toml — local-machine configuration for the QA dashboard.
+#
+# This file is read at GUI startup.  It lives next to the package on the
+# *operator's* machine, not in the run database — none of the values
+# here describe physics, they describe how this workstation reaches the
+# DAQ host and where the analysis data sits on disk.
+#
+# Edit values in place.  Empty strings disable the corresponding feature
+# (e.g. an empty rsync source disables the Download button, with a
+# tooltip explaining why).
+
+[rsync]
+# Remote source for the "Download new runs" button.  Format:
+#
+#     "<user>@<host>:/absolute/path/to/Data/"
+#
+# Trailing slash matters: with one, rsync copies the *contents* of the
+# remote directory into the local Data/.  Without one it would nest
+# another Data/ underneath, which is never what we want here.
+#
+# Example:
+#     source = "drich@daqhost.lab:/data/2025_beamtest/Data/"
+source = ""
+
+# Extra flags appended after the standard `-av --info=progress2`.  Use
+# e.g. `["--dry-run"]` while testing connectivity, or `["--bwlimit=20M"]`
+# to throttle.  Most shifts can leave this empty.
+extra_flags = []
