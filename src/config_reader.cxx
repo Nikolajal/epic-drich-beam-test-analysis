@@ -532,39 +532,19 @@ CalibPathResult resolve_fine_calib_path(const CalibConfigStruct &cfg,
     }
     //  Tier 2: default file in the run dir.
     //
-    //  Accept either the configured ``default_path`` (v3 schema:
-    //  fine_calib.toml) or the legacy sibling with the swapped
-    //  extension (.txt ↔ .toml).  Downstream consumers
-    //  (recodata_writer's AlcorFinedata::read_calib_from_file) already
-    //  treat both as valid — see recodata_writer.cxx ~line 150 — so
-    //  it'd be inconsistent for the rebuild guard to ignore one of
-    //  them.  Without this fallback, a run that has the legacy .txt
-    //  but not the new .toml triggers an unwanted rebuild every time
-    //  pulser_calib_writer is launched (the user-reported bug).
+    //  Only the configured ``default_path`` (TOML v3 schema:
+    //  fine_calib.toml) counts as a valid existing calibration.  The
+    //  earlier ``.txt ↔ .toml`` sibling-extension fallback is gone
+    //  along with the legacy text reader itself — see task #172.
+    //  Operators with stranded ``fine_calib.txt`` files must
+    //  regenerate (the resolver returns MissingNeedsRebuild here so
+    //  pulser_calib_writer will produce a fresh .toml on the next
+    //  launch).
     const std::string default_full = run_dir + "/" + cfg.default_path;
-    auto swap_ext = [](const std::string &p) -> std::string {
-        auto dot = p.rfind('.');
-        if (dot == std::string::npos)
-            return {};
-        const std::string base = p.substr(0, dot);
-        const std::string ext  = p.substr(dot);
-        if (ext == ".toml")
-            return base + ".txt";
-        if (ext == ".txt")
-            return base + ".toml";
-        return {};
-    };
-    const std::string sibling_full = swap_ext(default_full);
     if (fs::exists(default_full))
     {
         r.kind = CalibPathResolution::Default;
         r.path = default_full;
-        return r;
-    }
-    if (!sibling_full.empty() && fs::exists(sibling_full))
-    {
-        r.kind = CalibPathResolution::Default;
-        r.path = sibling_full;
         return r;
     }
     //  Tier 3: nothing — rebuild needed.

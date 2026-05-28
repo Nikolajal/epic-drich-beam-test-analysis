@@ -47,8 +47,10 @@
  *    `resolve_rollover_offsets()` is for cross-stream alignment —
  *    not used here.
  *
- * Output `fine_calib.txt` is the v2 schema (`key 1 a -b sigma`);
- * downstream consumers unchanged.
+ * Output `fine_calib.toml` is the TOML v3 schema (`[[entry]]` table
+ * with `key / method / a / minus_b / sigma`); downstream consumers
+ * read via `AlcorFinedata::read_calib_from_file`.  The legacy `.txt`
+ * format was retired in task #172.
  */
 
 #include "writers/pulser_calib.h"
@@ -1209,7 +1211,7 @@ void pulser_calib_writer(
     //
     //  Physical clamps applied HERE (at publish time), not inside
     //  fit_channel — keeps the raw fit auditable while ensuring both
-    //  the fine_calib.txt file and the QA histograms see the same
+    //  the fine_calib.toml file and the QA histograms see the same
     //  bounded values.
 
     struct PublishedTdc

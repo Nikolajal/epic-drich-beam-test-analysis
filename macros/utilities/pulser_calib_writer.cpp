@@ -28,9 +28,9 @@
  *   1. `lightdata_writer --calib <repo> <run>` produces lightdata.root
  *      with the anchor channel flowing as a normal hit.
  *   2. `pulser_calib_writer <repo> <run>` (this binary) produces
- *      <repo>/<run>/fine_calib.txt + <repo>/<run>/pulser_calib_qa.root.
+ *      <repo>/<run>/fine_calib.toml + <repo>/<run>/pulser_calib_qa.root.
  *   3. Subsequent `recodata_writer` / `lightdata_writer` calls pick up
- *      the new fine_calib.txt automatically via AlcorFinedata.
+ *      the new fine_calib.toml automatically via AlcorFinedata.
  */
 
 #include "utility/conf_path.h"
@@ -68,7 +68,7 @@ int main(int argc, char **argv)
     auto *p_conf = app.add_option("--calib-conf", calib_config_file,
                                   "Calibration TOML (default: conf/calib/calibration_conf.toml)");
     app.add_flag("--force-rebuild", force_rebuild,
-                 "Overwrite an existing fine_calib.txt in the run dir");
+                 "Overwrite an existing fine_calib.toml in the run dir");
     app.add_option("--max-spill", max_spill,
                    "Cap on spills processed (default: -1 = all)");
     app.add_option("--anchor-device", anchor_device_override,

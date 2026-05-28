@@ -14,8 +14,9 @@
 #
 #   2. `pulser_calib_writer <repo> <run>`
 #      Reads this file, identifies the anchor, runs the per-TDC
-#      linear regression, writes <repo>/<run>/fine_calib.txt + the
-#      pulser_calib_qa.root diagnostic.
+#      linear regression, writes <repo>/<run>/fine_calib.toml + the
+#      pulser_calib_qa.root diagnostic.  (The legacy fine_calib.txt
+#      format was retired in task #172 — TOML v3 only.)
 #
 # Switching anchor (e.g. 192 hardware fails): edit anchor_device /
 # anchor_chip / anchor_eo_channel below.  No rebuild needed.
@@ -31,7 +32,7 @@ anchor_eo_channel = 0
 
 # ── Fit thresholds ──────────────────────────────────────────────────
 # Cumulative hit floor for publishing a per-GlobalIndex calibration.
-# Below this, the GlobalIndex is omitted from fine_calib.txt (downstream
+# Below this, the GlobalIndex is omitted from fine_calib.toml (downstream
 # consumers fall back to the AlcorFinedata built-in default) and listed
 # in pulser_calib_qa.root's `skipped_global_indices` TNamed.
 min_hits_per_tdc = 250

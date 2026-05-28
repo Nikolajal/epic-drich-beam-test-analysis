@@ -1158,7 +1158,9 @@ void lightdata_writer(
     outfile->cd();
     lightdata_tree->Write();
     framer.get_fine_tune_distribution()->Write("h_fine_calib");
-    AlcorFinedata::write_calib_to_file((base_dir / "fine_calib.txt").string());
+    //  TOML v3 only — see task #172.  ``write_calib_to_file`` will
+    //  hard-error if the path doesn't end in ``.toml``.
+    AlcorFinedata::write_calib_to_file((base_dir / "fine_calib.toml").string());
     //  ---
     //  --- Rollover QA
     TDirectory *rollover_dir = outfile->mkdir("Rollover QA");

@@ -461,11 +461,12 @@ public:
     /// Returns `tdc + 4 * eo_channel + 128 * real_chip`.
     ///
     /// @deprecated 2026-05-28 — this key omits the `device` field, so
-    /// multiple devices collide on the same value in fine_calib.txt.
+    /// multiple devices collide on the same value (a historical bug
+    /// in the legacy fine_calib.txt format, since retired in task #172).
     /// Use @ref raw() as the calibration key instead — it encodes
     /// every component and uniquely identifies a TDC across the whole
-    /// detector.  Kept here only for old-format file detection during
-    /// the migration period; do not use in new code.
+    /// detector.  Kept here only for downstream callers that haven't
+    /// migrated yet; do not use in new code.
     [[deprecated("Use GlobalIndex::raw() as the calibration key — calib_index() collides across devices.")]]
     [[nodiscard]] constexpr int
     calib_index() const noexcept

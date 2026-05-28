@@ -1698,20 +1698,6 @@ def _complex_widget(value: Any) -> QtWidgets.QWidget:
 
 
 # ---------------------------------------------------------------------------
-# Misc.
-# ---------------------------------------------------------------------------
-
-
-def _row_label(key: str, leaf: Leaf) -> QtWidgets.QLabel:
-    # Kept for backward compatibility with any caller still using the
-    # single-row form.  Colour comes from the global QLabel rule; we
-    # just attach the path / kind tooltip.
-    label = QtWidgets.QLabel(key)
-    label.setToolTip(f"path: {'.'.join(_stringify_path(leaf.path))}\nkind: {leaf.kind}")
-    return label
-
-
-# ---------------------------------------------------------------------------
 # Human-readable rendering of snake_case TOML keys.
 # ---------------------------------------------------------------------------
 

@@ -148,7 +148,9 @@ def render_histogram(
     #  green→coral gradient in dark mode (operator-picked accents,
     #  ``#0BDA51`` ↔ ``#FF6B6B``) and stick with ``magma`` in light
     #  mode (its low end is light enough on white).
-    cmap_for_th2 = _DRICH_DARK_CMAP if dark else matplotlib.cm.get_cmap("magma")
+    #  ``matplotlib.colormaps`` is the post-3.7 API; ``cm.get_cmap``
+    #  is deprecated as of 3.7 and slated to disappear in 3.11.
+    cmap_for_th2 = _DRICH_DARK_CMAP if dark else matplotlib.colormaps["magma"]
     axes_bg = "#222222" if dark else "#FFFFFF"
     #  TH1 line/trace colour: coral on light theme stays visible;
     #  on dark we want a brighter accent so the step plot pops

@@ -675,32 +675,30 @@ public:
     /**
      * @brief Writes the current calibration parameters to disk.
      *
-     * Output format is selected by the file extension:
-     *   - @c .toml — TOML v3 schema (`[[entry]]` tables per GlobalIndex)
-     *   - anything else — legacy whitespace-separated text (v2 schema):
-     *     one line per entry, @c "key method a -b sigma".
+     * Output format is **always** TOML v3 (`[[entry]]` tables per
+     * GlobalIndex).  @p filename must end in @c .toml — the legacy
+     * whitespace-separated text format (``fine_calib.txt``, v2
+     * schema) is no longer supported and the call hard-fails with a
+     * @c std::runtime_error if the extension doesn't match.  Hard
+     * cut — see task #172.
      *
-     * Both formats encode the same values; the TOML form is preferred
-     * for new outputs because it is self-describing and round-trips
-     * through @c toml++ losslessly.
-     *
-     * @param filename Path to the output calibration file.
+     * @param filename Path to the output calibration file.  Must end in @c .toml.
+     * @throws std::runtime_error if @p filename doesn't end in @c .toml or cannot be opened.
      */
     static void write_calib_to_file(const std::string &filename);
 
     /**
      * @brief Loads calibration parameters from disk.
      *
-     * Reader auto-detects the input format:
-     *   - filename ending in @c .toml ⇒ TOML v3 schema reader
-     *   - otherwise ⇒ legacy whitespace-separated text (v2 schema)
+     * Input format is **always** TOML v3 — same hard-cut as
+     * @ref write_calib_to_file.  Passing a non-`.toml` path raises
+     * @c std::runtime_error; operators with old ``fine_calib.txt``
+     * files must regenerate via @c pulser_calib_writer.
      *
-     * The legacy reader stays so existing @c fine_calib.txt files keep
-     * loading without regeneration.
-     *
-     * @param filename     Path to the calibration file to read.
+     * @param filename     Path to the calibration file to read.  Must end in @c .toml.
      * @param clear_first  If @c true, clears existing parameters before loading (default: @c true).
      * @param overwrites   If @c true, existing entries are overwritten by file values (default: @c true).
+     * @throws std::runtime_error if @p filename doesn't end in @c .toml.
      */
     static void read_calib_from_file(const std::string &filename, bool clear_first = true, bool overwrites = true);
 
@@ -804,9 +802,9 @@ private:
     //  Keyed by `GlobalIndex::raw()` (the full 32-bit packed identifier).
     //  Was previously keyed by `AlcorData::get_calib_index()` which omitted
     //  the device field — caused silent collisions between devices in
-    //  fine_calib.txt with last-write-wins behaviour.  Now uses the raw
-    //  GlobalIndex value, which encodes every component (device, fifo,
-    //  chip, channel, tdc) plus the validity bit.
+    //  the legacy fine_calib.txt format with last-write-wins behaviour.
+    //  Now uses the raw GlobalIndex value, which encodes every component
+    //  (device, fifo, chip, channel, tdc) plus the validity bit.
     inline static std::unordered_map<uint32_t, std::array<float, 3>> calibration_parameters = {};
 
     /** @brief Per-channel phase-correction method override.

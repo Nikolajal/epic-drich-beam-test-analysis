@@ -344,11 +344,20 @@ class QaView(QtWidgets.QWidget):
                 page.set_run(self._current_run_id, self._data_dir)
 
     def _on_monitor_anim_value(self, color) -> None:
-        """Apply the interpolated colour as the button background."""
-        if not isinstance(color, QtGui.QColor):
+        """Apply the interpolated colour as the button background.
+
+        Defensive: QVariantAnimation interpolates QColor on most Qt
+        versions, but some older builds (or unusual easing curves)
+        can emit a raw tuple or partial value.  Pass through anything
+        QColor-shaped, ignore everything else — silently dropping a
+        frame is better than crashing the dashboard mid-pulse.
+        """
+        try:
+            css_name = color.name()  # QColor.name() → "#rrggbb"
+        except AttributeError:
             return
         self._monitor_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {color.name()};"
+            f"QPushButton {{ background-color: {css_name};"
             "  color: white; font-weight: 600;"
             "  border-radius: 4px; padding: 2px 8px; }"
         )

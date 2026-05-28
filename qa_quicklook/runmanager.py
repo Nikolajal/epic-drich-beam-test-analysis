@@ -1705,6 +1705,14 @@ class _RunInfoCard(QtWidgets.QFrame):
 
     @staticmethod
     def _numeric_equal(a, b) -> bool:
+        #  Explicit None-check up front — relying on
+        #  ``float(None) → TypeError → False`` worked but masked
+        #  intent (a maintainer reading the body wouldn't know None
+        #  was an expected input).  Either side being None ⇒ not a
+        #  numeric match; let the textual equality path upstream
+        #  catch "both unset" cases.
+        if a is None or b is None:
+            return False
         try:
             return float(a) == float(b)
         except (TypeError, ValueError):

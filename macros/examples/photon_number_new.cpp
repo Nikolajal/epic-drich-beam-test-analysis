@@ -203,7 +203,9 @@ void photon_number_new(std::string data_repository, std::string run_name,
     recodata->link_to_tree(recodata_tree);
     const int total_frames_to_process = (int)std::min((Long64_t)max_frames,
                                                       recodata_tree->GetEntries());
-    AlcorFinedata::read_calib_from_file(data_repository + "/" + "20251111-164951" + "/gold_timing_fine_calib.txt");
+    //  TOML v3 only — see task #172.  Old ``.txt`` calibrations
+    //  must be regenerated.
+    AlcorFinedata::read_calib_from_file(data_repository + "/" + "20251111-164951" + "/gold_timing_fine_calib.toml");
 
     // ══════════════════════════════════════════════════════════════════════════
     // Pass 0 — spill accounting

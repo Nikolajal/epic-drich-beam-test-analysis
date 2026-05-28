@@ -673,4 +673,151 @@ After all changes: `cmake --build` clean; `pulser_calib_writer Data 20260527-073
 
 ---
 
+## Triage taxonomy
+
+From this point forward, every backlog item — bug report, design idea,
+deferred feature, refactor candidate — is filed under a single shared
+taxonomy so the queue stays sortable, filterable, and free of
+ambiguity.  The taxonomy lives here (top-level DISCUSSION) because it
+applies to **every** subdirectory's local DISCUSSION + every per-file
+comment that flags work to do.
+
+### Categories
+
+Two top-level groupings, three severities each.
+
+**Fixing** — something is wrong and the *intent* is to restore the
+already-designed behaviour.  No new functionality.
+
+| Severity | Name | Definition |
+|---|---|---|
+| 1 | **Bug** | Narrowly scoped, doesn't hinder reco + analysis.  Typo, wrong axis range, wrong units, harmless log line. |
+| 2 | **Liability** | Significant but localised, or mild but global.  Could hinder reco + analysis or part of it (silent data clipping, subtle init order, sign error in a side metric). |
+| 3 | **Vulnerability** | Endangers the whole workflow.  Random event discard, UB in a hot spot, divide-by-zero in a non-guarded path, data corruption on disk. |
+
+**Adding** — the design itself is changing.  New functionality, new
+contract, or removal of old behaviour.
+
+| Severity | Name | Definition |
+|---|---|---|
+| 1 | **Patch** | Quick, surgical, contained.  One config knob, one CLI flag, one helper added. |
+| 2 | **Feature** | Medium impact, multiple files involved.  A new tab on the dashboard, a new QA histogram set, a new fit method. |
+| 3 | **Schema** | Strong impact — reshapes a contract (file format, TOML key layout, TDirectory tree, published function signature, pipeline stage).  Downstream consumers may break. |
+
+### Rating axes
+
+| Axis | Definition | Formula | Range |
+|---|---|---|---|
+| **IMPACT** | Operator-facing value when fixed / landed.  1 = cosmetic / docs / UX polish; 2 = affects one writer output, one analysis step, one tab; 3 = affects the analysis chain end-to-end, the database, or every shifter. | categorical | 1 · 2 · 3 |
+| **FILES (F)** | How many distinct files the change touches.  Captures coordination / review surface, saturates because beyond ~10 files the marginal pain levels off. | `6 · [File / (File + 1) − 0.5]` | [0, 3] for File ≥ 1 |
+| **LOC (L)** | Total lines edited / added / deleted, log scale (one decade = one point of pain), clamped because beyond ~1000 LOC the absolute count stops mattering for ranking. | `min( log₁₀(LOC + 1),  3 )` | [0, 3] for LOC ≥ 1 |
+
+### Filter tags (do not enter Priority)
+
+| Tag | Values |
+|---|---|
+| **SCOPE** | `NOW` (this shift) · `CAMPAIGN` (before next beam test) · `LATER` (background) |
+| **STATUS** | `READY` (path is known, can code) · `INVESTIGATE` (need to confirm hypothesis, measure, or decide first) |
+| **DOMAIN** | `C++` (writers, headers, ROOT helpers) · `Dash` (qa_quicklook, scripts) · `Macro` (macros/) · `Conf` (conf/, run-lists/) · `Doc` (*.md, Doxygen) · `CI` (.github/, scripts/check_*.sh) |
+
+### Priority formula
+
+For **READY** items only:
+
+    Priority = (Severity × Impact) / max(F + L, 1)            ∈ [≈0.17, 9]
+
+- Multiplicative numerator (`Sev × Imp`) so the worst items
+  *compound* rather than just *rank* above the rest — a Vulnerability
+  with chain-wide impact (9) towers over an isolated Bug (1) by 9×,
+  matching the operator's gut sense of "drop everything and fix
+  this."
+- Additive denominator (`F + L`) so a cheap fix gets a clean
+  multiplicative boost.
+- `max(F + L, 1)` floor pins the maximum priority at exactly 9 (Sev =
+  3, Imp = 3, smallest possible cost) instead of letting tiny-cost
+  critical fixes inflate past the rest of the scale.
+
+For **INVESTIGATE** items: no Priority computed.  They live in a
+**Purgatory** section, sorted by `Sev × Imp` (range 1–9, "value if it
+pans out").  Once an INVESTIGATE item graduates to READY (someone
+estimated F + L), it moves to the main backlog and gets a real
+Priority.
+
+### Tie breaking
+
+With continuous F and L scores, exact ties on Priority are vanishingly
+unlikely (you'd need identical integer Files *and* identical LOC to
+several decimals).  If one occurs, break by SCOPE: `NOW > CAMPAIGN >
+LATER`.  Expected to be theoretical only.
+
+### Compact tag line
+
+Every triaged item carries one greppable header:
+
+```
+[<TYPE> · F<f> L<l> I<i> · <SCOPE> · <STATUS> · <DOMAIN> · P <p>]  <short title>
+```
+
+Examples:
+
+```
+[Vuln · F1.0 L1.49 I3 · NOW · READY · C++ · P 2.58]    pulser_calib: anchor channel auto-detect
+[Bug  · F0.0 L0.30 I1 · LATER · READY · Doc · P 0.77]   README: stray Oxford comma
+[Schema · F2.5 L3.00 I2 · LATER · INVEST · C++ · P  ?]  D-08 round 2: AlcorRecodata two-layer migration
+[Feature · F0.0 L2.40 I2 · CAMPAIGN · READY · Dash · P 1.18]  qa: per-field audit history dialog
+```
+
+The `P x.xx` suffix is computed once at filing time so a grep + sort
+gives a backlog ordering without recomputing the formula every read.
+INVESTIGATE items show `P ?` deliberately — anything else would lie
+about the cost estimate not existing yet.
+
+### Workflow
+
+1. **Filing.**  Anyone notices something → tag with `TYPE`,
+   `IMPACT`, `SCOPE`, `STATUS`, `DOMAIN`.  If READY, estimate F + LOC
+   and compute Priority.  If INVESTIGATE, leave them as `?` and drop
+   into Purgatory.
+2. **Sorting.**  Main backlog sorted by Priority descending.
+   Purgatory sorted by `Sev × Imp` descending.
+3. **Filtering.**  Operator picks a session focus by SCOPE (e.g.,
+   "everything NOW") or DOMAIN (e.g., "C++ only this morning") and
+   walks down the sorted list.
+4. **Graduating.**  An INVESTIGATE item moves to READY when someone
+   estimates its cost — at which point it gets a Priority and joins
+   the main backlog at its earned position.
+5. **Dropping.**  Items can be explicitly **DROPPED** with a one-line
+   rationale (kept visible so a future reader doesn't reopen them).
+
+### Why this scheme
+
+- **The fix-vs-add split** maps to the operational question "is this
+  paying down debt or building new?" — directly the planning
+  question for a shift / a week / a campaign.
+- **Three severities** is enough granularity for triage without
+  inviting bucket-boundary debates.
+- **Continuous F + LOC** kills "is it 5 files or 6?" arguments.
+- **Sev × Impact** in the numerator means the worst items rank
+  *exponentially* above the rest, not just *linearly* — matching the
+  operator's gut sense.
+- **INVESTIGATE → Purgatory** is honest about cost uncertainty.  A
+  faked Priority on an unscoped item misleads planning; "no priority,
+  estimate before queuing" is correct.
+- **Filter tags** are filters, not scores — they keep prioritization
+  one-dimensional while still letting the operator focus.
+
+### Worked examples on real items
+
+| Item | TYPE | Sev | Imp | Files | F | LOC | L | Priority |
+|---|---|---|---|---|---|---|---|---|
+| pulser_calib `b` ±0.5 cc satellites | Liability | 2 | 3 | 1 | 0.00 | 30 | 1.49 | (2·3)/1.49 ≈ **4.03** |
+| README typo | Bug | 1 | 1 | 1 | 0.00 | 1 | 0.30 | 1/max(0.30,1) = **1.00** |
+| D-08 round 2 (AlcorRecodata) | Schema | 3 | 2 | 11 | 2.50 | 1000 | 3.00 | (3·2)/5.50 ≈ **1.09** |
+| Show-history UI (qa_quicklook) | Feature | 2 | 2 | 1 | 0.00 | 250 | 2.40 | (2·2)/2.40 ≈ **1.67** |
+| Run-info edit cascade prompt | Feature | 2 | 2 | 2 | 1.00 | 200 | 2.30 | (2·2)/3.30 ≈ **1.21** |
+
+---
+
 *Last updated: 2026-05-27 (autonomous sweep; see § above for the line-by-line changes).*
+
+*Triage taxonomy added 2026-05-28 — applies repo-wide from this date forward.*

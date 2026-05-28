@@ -37,7 +37,9 @@ void fine_calibration(std::string data_repository, std::string run_name, int max
     }
     AlcorRecodata *recodata = new AlcorRecodata();
     recodata->link_to_tree(recodata_tree);
-    AlcorFinedata::read_calib_from_file(data_repository + "/" + run_name + "/timing_fine_calib.txt");
+    //  TOML v3 only — see task #172.  Old ``.txt`` calibrations
+    //  must be regenerated.
+    AlcorFinedata::read_calib_from_file(data_repository + "/" + run_name + "/timing_fine_calib.toml");
     //  Get number of frames, limited to maximum requested frames
     auto n_frames = recodata_tree->GetEntries();
     auto all_frames = min((int)n_frames, (int)max_frames);
