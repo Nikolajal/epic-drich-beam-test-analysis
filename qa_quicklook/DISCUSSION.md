@@ -351,14 +351,20 @@ their own name.
 
 ### Open questions
 
-  - **Old entries with no provenance.**  Still TODO: one-shot
-    migration adds ``source = "legacy"`` to every existing record so
-    pre-history rows are immediately distinguishable from
-    properly-attributed ones.
+  - ~~**Old entries with no provenance.**~~  **Landed** —
+    ``scripts/backfill_audit_legacy.py`` is the idempotent one-shot
+    migration that emits one ``[[entry]]`` per (run, field, value)
+    pair from existing ``run-lists/*.database.toml`` files with
+    ``source = "legacy"`` and the current value as ``new_value``.
+    Re-runs skip already-migrated tuples.
   - **``rundb.results_update`` Python wrapper.**  Not built — the
     C++ writers feed AnalysisResults directly today.  When the
     dashboard ever needs to write results (e.g. operator-entered
     fit overrides), this is the symmetrical entry point.
+  - **"Show history" UI.**  Still pending — tail the sibling
+    ``*.audit.toml`` by hand for now.  Right-click on a runcard
+    field → filter the audit log down to that (run, field) is the
+    target shape.
 
 
 ## Cross-shifter sync

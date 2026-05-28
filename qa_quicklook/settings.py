@@ -315,7 +315,12 @@ class _FileSection(QtWidgets.QWidget):
         #  hook the same pipe via ``set_warnings([...])``.
         self._warn_label = QtWidgets.QLabel()
         self._warn_label.setWordWrap(True)
-        self._warn_label.setTextFormat(QtCore.Qt.RichText)
+        #  PlainText (not RichText) — warning lines are composed from
+        #  TOML field names (device ids, chip lists, role labels) which
+        #  the operator can in principle edit by hand.  Rendering them
+        #  as HTML would leave a small injection surface; plain text +
+        #  Unicode bullets gives the same visual without the risk.
+        self._warn_label.setTextFormat(QtCore.Qt.PlainText)
         self._warn_label.setStyleSheet(
             "QLabel { background-color: rgba(192, 57, 43, 0.18);"
             "  color: #E74C3C; border: 1px solid #C0392B;"
@@ -361,10 +366,11 @@ class _FileSection(QtWidgets.QWidget):
             self._warn_label.setVisible(False)
             self._warn_label.clear()
             return
-        bullets = "<br>".join(f"⚠ {w}" for w in warnings)
-        self._warn_label.setText(
-            "<b>Validation warning</b><br>" + bullets
-        )
+        #  Plain-text layout — see _warn_label's setTextFormat note.
+        #  Newline-joined "⚠ <line>" bullets read identically without
+        #  the HTML injection vector.
+        bullets = "\n".join(f"⚠ {w}" for w in warnings)
+        self._warn_label.setText("Validation warning\n" + bullets)
         self._warn_label.setVisible(True)
 
     def render(

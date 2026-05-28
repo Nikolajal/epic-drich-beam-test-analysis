@@ -137,19 +137,15 @@ void recodata_writer(
     AlcorSpilldata *spilldata = new AlcorSpilldata();
     spilldata->link_to_tree(lightdata_tree);
 
-    //  Calibration file: prefer the TOML form if present, fall back to
-    //  the legacy text file.  Both are produced by `pulser_calib_writer`
-    //  depending on the `default_path` extension in
-    //  conf/calib/calibration_conf.toml; one or the other is canonical
-    //  per run.  AlcorFinedata::read_calib_from_file auto-detects on
-    //  the file extension.
+    //  Calibration file: TOML v3 only — ``fine_calib.toml`` in the
+    //  run dir, produced by ``pulser_calib_writer``.  The legacy
+    //  ``fine_calib.txt`` path has been retired (task #172);
+    //  ``read_calib_from_file`` hard-errors on non-`.toml` inputs.
     {
         namespace fs = std::filesystem;
         const fs::path run_dir   = fs::path(data_repository) / run_name;
         const fs::path toml_path = run_dir / "fine_calib.toml";
-        const fs::path txt_path  = run_dir / "fine_calib.txt";
-        const fs::path picked    = fs::exists(toml_path) ? toml_path : txt_path;
-        AlcorFinedata::read_calib_from_file(picked.string());
+        AlcorFinedata::read_calib_from_file(toml_path.string());
     }
 
     auto fine_time_calib_th2f = input_file->Get<TH2F>("h_fine_calib");

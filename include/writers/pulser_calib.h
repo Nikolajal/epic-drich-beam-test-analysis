@@ -7,19 +7,19 @@
  * Reads ALCOR FIFO files directly (no framer, no lightdata.root, no
  * trigger pipeline), runs a per-channel joint closed-form linear
  * least-squares fit against the pulser period, and writes the
- * canonical `fine_calib.txt` (v2 schema, consumed by every downstream
- * `AlcorFinedata::read_calib_from_file`).
+ * canonical `fine_calib.toml` (TOML v3 schema, consumed by every
+ * downstream `AlcorFinedata::read_calib_from_file`).  The legacy
+ * `fine_calib.txt` format was retired in task #172.
  *
  * ### Pipeline
  *
  *   1. `pulser_calib_writer(<repo>, <run>)` walks
  *      @c <repo>/<run>/rdo-NNN/decoded/alcdaq.fifo_M.root and produces:
- *        - @c <repo>/<run>/fine_calib.txt        (v2 schema)
+ *        - @c <repo>/<run>/fine_calib.toml       (TOML v3 schema)
  *        - @c <repo>/<run>/pulser_calib_qa.root  (diagnostic histograms)
  *
  *   2. Downstream writers (`recodata_writer`, `lightdata_writer`)
- *      load `fine_calib.txt` via `AlcorFinedata::read_calib_from_file`.
- *      No change to consumers.
+ *      load `fine_calib.toml` via `AlcorFinedata::read_calib_from_file`.
  *
  * ### Method
  *
@@ -64,13 +64,15 @@
  *
  * ### Storage
  *
- * `fine_calib.txt` is written as `key method p0 p1 p2` per line where
- *  - `key = GlobalIndex::raw()` (full 32-bit GlobalIndex)
- *  - `method = AlcorV2FitCalib` (= 1)
- *  - `p0 = a` (slope, cc per fine bin)
- *  - `p1 = -b` (negated intercept so downstream's
- *    `get_phase = fine·p0 − p1` recovers `c − (f·a + b)`)
- *  - `p2 = sqrt(chi²/N)` (per-pair residual sigma, cc)
+ * `fine_calib.toml` carries one `[[entry]]` table per GlobalIndex with
+ * the same five fields the legacy text format used (renamed but
+ * semantically identical):
+ *  - `key     = GlobalIndex::raw()` (full 32-bit GlobalIndex)
+ *  - `method  = AlcorV2FitCalib` (= 1)
+ *  - `a       = slope` (cc per fine bin)
+ *  - `minus_b = -b` (negated intercept so downstream's
+ *    `get_phase = fine·a − minus_b` recovers `c − (f·a + b)`)
+ *  - `sigma   = sqrt(chi²/N)` (per-pair residual sigma, cc)
  *
  * Out-of-band fitted slopes (outside `[cfg.slope_min, cfg.slope_max]`)
  * are replaced by `cfg.default_slope_cc_per_bin` at publish time;
@@ -95,7 +97,7 @@ namespace btana
  * @param calib_config_file Path to the calibration TOML.  Defaults to
  *                          @c conf/calib/calibration_conf.toml.
  * @param force_rebuild     If @c true, overwrite an existing
- *                          `fine_calib.txt`.  When @c false and a
+ *                          `fine_calib.toml`.  When @c false and a
  *                          calibration already exists, the writer logs
  *                          a warning and bails — protects against
  *                          accidental overwrites of a vetted calibration.

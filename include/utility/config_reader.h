@@ -324,7 +324,7 @@ struct CalibConfigStruct
 
     /// @brief Minimum cumulative hits (across all spills) on a single
     /// GlobalIndex before its `(a, b)` fit is published.  GlobalIndex's
-    /// below threshold are omitted from `fine_calib.txt` and listed in
+    /// below threshold are omitted from `fine_calib.toml` and listed in
     /// the QA root file's skipped-channel TNamed.  Default 250.
     int min_hits_per_tdc = 250;
 
@@ -480,8 +480,9 @@ struct CalibConfigStruct
     /// @brief Compulsory default calibration path, relative to
     /// `<data_repository>/<run_name>/`.  Where `pulser_calib_writer`
     /// writes its output and where consumers read from when
-    /// `override_path` is unset.  Default `"fine_calib.txt"`.
-    std::string default_path = "fine_calib.txt";
+    /// `override_path` is unset.  Must end in `.toml` — the only
+    /// supported on-disk schema since task #172.
+    std::string default_path = "fine_calib.toml";
 
     /// @brief Force producer (`pulser_calib_writer`) to re-run even
     /// if a calibration already exists.  No effect on consumers.

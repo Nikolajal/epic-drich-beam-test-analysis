@@ -1,0 +1,4891 @@
+# Audit log for 2025.database.toml
+# Appended by scripts/backfill_audit_legacy.py for entries that pre-date task #156.
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "beam_energy"
+old_value = ""
+new_value = 180
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "beam_status"
+old_value = ""
+new_value = "on"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.2.6"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.02"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "temperature"
+old_value = ""
+new_value = -28
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "v_bias"
+old_value = ""
+new_value = 45.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "radiators"
+old_value = ""
+new_value = "[{'type': 'Aerogel', 'refindex': 1.021, 'tag': 'AG22-J001', 'depth': 2}, {'type': 'Aerogel', 'refindex': 1.0207, 'tag': 'AG22-J003', 'depth': 2, 'side': 'B'}]"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-135431"
+field     = "notes"
+old_value = ""
+new_value = "Test Run of 10 SPILLs, test for occupancy of the RDOs FIFO after calibration (196 was bad as 9 FIFOs full, peaks of 500 words for max occupancy plot)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-140610"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-140610"
+field     = "notes"
+old_value = ""
+new_value = "Test Run of 50 SPILLs, test for occupancy of the RDOs FIFO after calibration (196 was bad as 9 FIFOs full, peaks of 500 words for max occupancy plot, FIFO 10 in timing FULL)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-143319"
+field     = "notes"
+old_value = ""
+new_value = "Test Run of 50 SPILLs, test for occupancy of the RDOs FIFO after calibration (196 was bad as 9 FIFOs full, peaks of 500 words for max occupancy plot)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-145457"
+field     = "notes"
+old_value = ""
+new_value = "Test Run of 100 SPILLs, test for occupancy of the RDOs FIFO after calibration (196 was bad as 9 FIFOs full, peaks of 500 words for max occupancy plot)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251109-150507"
+field     = "notes"
+old_value = ""
+new_value = "Test Run of 100 SPILLs, test for occupancy of the RDOs FIFO after calibration (196 was bad as 9 FIFOs full, peaks of 500 words for max occupancy plot). No better performance configuration was found to solve occupancy issue"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-115618"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-115618"
+field     = "notes"
+old_value = ""
+new_value = "Test run on all the devices"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-115914"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-115914"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-115914"
+field     = "notes"
+old_value = ""
+new_value = "Test run on all the devices in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-120134"
+field     = "notes"
+old_value = ""
+new_value = "Test run on all the devices in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-120533"
+field     = "notes"
+old_value = ""
+new_value = "Test run on all the devices in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-123700"
+field     = "notes"
+old_value = ""
+new_value = "Test Run on alll the rdos in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-124846"
+field     = "notes"
+old_value = ""
+new_value = "Test Run on all the rdos in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-125539"
+field     = "notes"
+old_value = ""
+new_value = "Test Run in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-130320"
+field     = "notes"
+old_value = ""
+new_value = "Test Run on all the rdos in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-131430"
+field     = "notes"
+old_value = ""
+new_value = "Test Run on all the rdos in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-150427"
+field     = "notes"
+old_value = ""
+new_value = "Test Run on all the devices in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-152310"
+field     = "notes"
+old_value = ""
+new_value = "Test Run rdo-192 the devices in WWE"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-183457"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.0"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-183457"
+field     = "notes"
+old_value = ""
+new_value = "Test run with rdo-192 with 10 spills"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-185820"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.2.6"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-185820"
+field     = "notes"
+old_value = ""
+new_value = "Test run with rdo-192 with 10 spills using firmware version 1.2.6"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-191643"
+field     = "quality"
+old_value = ""
+new_value = "good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-191643"
+field     = "notes"
+old_value = ""
+new_value = "Test run with rdo-192 with 10 spills using firmware version 1.2.6"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-192344"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.0"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-192344"
+field     = "notes"
+old_value = ""
+new_value = "Test run for all RDOs  with 10 spills using firmware version 1.3.0"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-193209"
+field     = "beam_status"
+old_value = ""
+new_value = "off"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-193209"
+field     = "notes"
+old_value = ""
+new_value = "Test run for all RDOs  with 10 spills using firmware version 1.3.0"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251110-193709"
+field     = "notes"
+old_value = ""
+new_value = "Test run for all RDOs  with 10 spills using firmware version 1.3.0. The beam was off up to 4 spills"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "mirror_mm"
+old_value = ""
+new_value = 70
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "beam_status"
+old_value = ""
+new_value = "on"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "particle"
+old_value = ""
+new_value = "pions"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "polarity"
+old_value = ""
+new_value = "positive"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "beam_energy"
+old_value = ""
+new_value = 180
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-105543"
+field     = "notes"
+old_value = ""
+new_value = "Physics run with the mirror moved at 70 mm from home point"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-110914"
+field     = "mirror_mm"
+old_value = ""
+new_value = 60
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-110914"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +60 mm (from home point = prototype position)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-111835"
+field     = "mirror_mm"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-111835"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +50 mm (from home point = prototype position)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-113106"
+field     = "mirror_mm"
+old_value = ""
+new_value = 40
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-113106"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +40 mm (from home point = prototype position) test with scp running on the bkg for automatic QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-114254"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +40 mm (from home point = prototype position)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-115851"
+field     = "mirror_mm"
+old_value = ""
+new_value = 100
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-115851"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +100 mm (from home point = prototype position)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-124119"
+field     = "mirror_mm"
+old_value = ""
+new_value = 90
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-124119"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +90 mm (from home point = prototype position)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-124758"
+field     = "mirror_mm"
+old_value = ""
+new_value = 80
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-124758"
+field     = "notes"
+old_value = ""
+new_value = "Aerogel mirror moved to +80 mm (from home point = prototype position)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-132615"
+field     = "v_bias"
+old_value = ""
+new_value = 55.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-132615"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-132615"
+field     = "notes"
+old_value = ""
+new_value = "Test Run at 80 mm distance of Aerogel mirror at 55.5 V of Vbias with new PCR config: op-mode=1 delta-thr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-140139"
+field     = "mirror_mm"
+old_value = ""
+new_value = 20
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-140139"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-143628"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-143628"
+field     = "notes"
+old_value = ""
+new_value = "setting new PCR config: op-mode=1 delta-thr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-150919"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-150919"
+field     = "notes"
+old_value = ""
+new_value = "setting new PCR config: op-mode=1 delta-thr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-163400"
+field     = "notes"
+old_value = ""
+new_value = "test with new beam setting"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-164951"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-164951"
+field     = "notes"
+old_value = ""
+new_value = "New beam setting, 3x particles expected \"standard\" run"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-172946"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-172946"
+field     = "notes"
+old_value = ""
+new_value = "New timing setting for bkg VETO --> set scintillator on PDU of rdo-199 | spills missing, beam ?"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-181940"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-181940"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-181940"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-181940"
+field     = "notes"
+old_value = ""
+new_value = "50.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-181940"
+field     = "opmode"
+old_value = ""
+new_value = 1
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-181940"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-182949"
+field     = "v_bias"
+old_value = ""
+new_value = 50.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-182949"
+field     = "notes"
+old_value = ""
+new_value = "50.75V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-184527"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-184527"
+field     = "notes"
+old_value = ""
+new_value = "51.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-190706"
+field     = "v_bias"
+old_value = ""
+new_value = 51.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-190706"
+field     = "notes"
+old_value = ""
+new_value = "51.25V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-191852"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-191852"
+field     = "notes"
+old_value = ""
+new_value = "51.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-193024"
+field     = "v_bias"
+old_value = ""
+new_value = 51.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-193024"
+field     = "notes"
+old_value = ""
+new_value = "51.75V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-193942"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-193942"
+field     = "notes"
+old_value = ""
+new_value = "52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-195731"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.2.6"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-195731"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-195731"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-195731"
+field     = "notes"
+old_value = ""
+new_value = "52.00V opmode=1 deltathr=10 standard run with previous firmware version (50 SPILLs) --> Modification to software for 1024 word FIFO is needed and not aplied"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-195731"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-201701"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-201701"
+field     = "notes"
+old_value = ""
+new_value = "52.00V opmode=1 deltathr=10 standard run with previous firmware version (50 SPILLs)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-204935"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.0"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-204935"
+field     = "v_bias"
+old_value = ""
+new_value = 52.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-204935"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-204935"
+field     = "notes"
+old_value = ""
+new_value = "52.25V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-204935"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-205721"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-205721"
+field     = "notes"
+old_value = ""
+new_value = "52.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-210353"
+field     = "v_bias"
+old_value = ""
+new_value = 52.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-210353"
+field     = "notes"
+old_value = ""
+new_value = "52.75V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-210949"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-210949"
+field     = "notes"
+old_value = ""
+new_value = "53.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-212219"
+field     = "v_bias"
+old_value = ""
+new_value = 53.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-212219"
+field     = "notes"
+old_value = ""
+new_value = "53.25V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-212942"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-212942"
+field     = "notes"
+old_value = ""
+new_value = "53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-214103"
+field     = "v_bias"
+old_value = ""
+new_value = 53.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-214103"
+field     = "notes"
+old_value = ""
+new_value = "53.75V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-215015"
+field     = "v_bias"
+old_value = ""
+new_value = 54.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-215015"
+field     = "notes"
+old_value = ""
+new_value = "54.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-220133"
+field     = "v_bias"
+old_value = ""
+new_value = 54.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-220133"
+field     = "notes"
+old_value = ""
+new_value = "54.25V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-221010"
+field     = "v_bias"
+old_value = ""
+new_value = 54.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-221010"
+field     = "notes"
+old_value = ""
+new_value = "54.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-222010"
+field     = "v_bias"
+old_value = ""
+new_value = 54.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-222010"
+field     = "notes"
+old_value = ""
+new_value = "54.75V opmode=1 deltathr=5 --> FIFO memory full in more than 4 RDOs"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-224109"
+field     = "v_bias"
+old_value = ""
+new_value = 55.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-224109"
+field     = "notes"
+old_value = ""
+new_value = "55.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-225920"
+field     = "v_bias"
+old_value = ""
+new_value = 55.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-225920"
+field     = "notes"
+old_value = ""
+new_value = "55.25V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-232638"
+field     = "v_bias"
+old_value = ""
+new_value = 55.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251111-232638"
+field     = "notes"
+old_value = ""
+new_value = "55.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-000447"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-000447"
+field     = "notes"
+old_value = ""
+new_value = "50.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-000447"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-001846"
+field     = "v_bias"
+old_value = ""
+new_value = 50.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-001846"
+field     = "notes"
+old_value = ""
+new_value = "50.75V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-003532"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-003532"
+field     = "notes"
+old_value = ""
+new_value = "51.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-004723"
+field     = "v_bias"
+old_value = ""
+new_value = 51.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-004723"
+field     = "notes"
+old_value = ""
+new_value = "51.25V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-005540"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-005540"
+field     = "notes"
+old_value = ""
+new_value = "51.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-010638"
+field     = "v_bias"
+old_value = ""
+new_value = 51.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-010638"
+field     = "notes"
+old_value = ""
+new_value = "51.75V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-011436"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-011436"
+field     = "notes"
+old_value = ""
+new_value = "52.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-012144"
+field     = "v_bias"
+old_value = ""
+new_value = 52.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-012144"
+field     = "notes"
+old_value = ""
+new_value = "52.25V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-012752"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-012752"
+field     = "notes"
+old_value = ""
+new_value = "52.50V opmode=1 deltathr=10 //ring with 2 PDU almost empty"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-013411"
+field     = "v_bias"
+old_value = ""
+new_value = 52.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-013411"
+field     = "notes"
+old_value = ""
+new_value = "52.75V opmode=1 deltathr=10 // last one checked with qa code"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-014034"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-014034"
+field     = "notes"
+old_value = ""
+new_value = "53.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-014658"
+field     = "v_bias"
+old_value = ""
+new_value = 53.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-014658"
+field     = "notes"
+old_value = ""
+new_value = "53.25V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-015330"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-015330"
+field     = "notes"
+old_value = ""
+new_value = "53.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-020007"
+field     = "v_bias"
+old_value = ""
+new_value = 53.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-020007"
+field     = "notes"
+old_value = ""
+new_value = "53.75V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-020826"
+field     = "v_bias"
+old_value = ""
+new_value = 54.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-020826"
+field     = "notes"
+old_value = ""
+new_value = "54.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-021938"
+field     = "v_bias"
+old_value = ""
+new_value = 54.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-021938"
+field     = "notes"
+old_value = ""
+new_value = "54.25V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-022647"
+field     = "v_bias"
+old_value = ""
+new_value = 54.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-022647"
+field     = "notes"
+old_value = ""
+new_value = "54.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-023352"
+field     = "v_bias"
+old_value = ""
+new_value = 54.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-023352"
+field     = "notes"
+old_value = ""
+new_value = "54.75V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-025653"
+field     = "v_bias"
+old_value = ""
+new_value = 55.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-025653"
+field     = "notes"
+old_value = ""
+new_value = "55.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-030416"
+field     = "v_bias"
+old_value = ""
+new_value = 55.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-030416"
+field     = "notes"
+old_value = ""
+new_value = "55.25V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-031125"
+field     = "v_bias"
+old_value = ""
+new_value = 55.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-031125"
+field     = "notes"
+old_value = ""
+new_value = "55.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-034447"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-034447"
+field     = "notes"
+old_value = ""
+new_value = "50.50V opmode=1 deltathr=15 // run after reboot pc"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-034447"
+field     = "deltathr"
+old_value = ""
+new_value = 15
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-035125"
+field     = "v_bias"
+old_value = ""
+new_value = 50.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-035125"
+field     = "notes"
+old_value = ""
+new_value = "50.75V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-035748"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-035748"
+field     = "notes"
+old_value = ""
+new_value = "51.00V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-040400"
+field     = "v_bias"
+old_value = ""
+new_value = 51.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-040400"
+field     = "notes"
+old_value = ""
+new_value = "51.25V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-041033"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-041033"
+field     = "notes"
+old_value = ""
+new_value = "51.50V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-041700"
+field     = "v_bias"
+old_value = ""
+new_value = 51.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-041700"
+field     = "notes"
+old_value = ""
+new_value = "51.75V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-042329"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-042329"
+field     = "notes"
+old_value = ""
+new_value = "52.00V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-043004"
+field     = "v_bias"
+old_value = ""
+new_value = 52.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-043004"
+field     = "notes"
+old_value = ""
+new_value = "52.25V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-043730"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-043730"
+field     = "notes"
+old_value = ""
+new_value = "52.50V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-044349"
+field     = "v_bias"
+old_value = ""
+new_value = 52.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-044349"
+field     = "notes"
+old_value = ""
+new_value = "52.75V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-045015"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-045015"
+field     = "notes"
+old_value = ""
+new_value = "53.00V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-050254"
+field     = "v_bias"
+old_value = ""
+new_value = 53.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-050254"
+field     = "notes"
+old_value = ""
+new_value = "53.25V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-050928"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-050928"
+field     = "notes"
+old_value = ""
+new_value = "53.50V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-051559"
+field     = "v_bias"
+old_value = ""
+new_value = 53.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-051559"
+field     = "notes"
+old_value = ""
+new_value = "53.75V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-052237"
+field     = "v_bias"
+old_value = ""
+new_value = 54.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-052237"
+field     = "notes"
+old_value = ""
+new_value = "54.00V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-052917"
+field     = "v_bias"
+old_value = ""
+new_value = 54.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-052917"
+field     = "notes"
+old_value = ""
+new_value = "54.25V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-053603"
+field     = "v_bias"
+old_value = ""
+new_value = 54.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-053603"
+field     = "notes"
+old_value = ""
+new_value = "54.50V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-054309"
+field     = "v_bias"
+old_value = ""
+new_value = 54.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-054309"
+field     = "notes"
+old_value = ""
+new_value = "54.75V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-054309"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-054935"
+field     = "v_bias"
+old_value = ""
+new_value = 55.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-054935"
+field     = "notes"
+old_value = ""
+new_value = "55.00V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-054935"
+field     = "deltathr"
+old_value = ""
+new_value = 15
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-055721"
+field     = "v_bias"
+old_value = ""
+new_value = 55.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-055721"
+field     = "notes"
+old_value = ""
+new_value = "55.25V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-060416"
+field     = "v_bias"
+old_value = ""
+new_value = 55.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-060416"
+field     = "notes"
+old_value = ""
+new_value = "55.50V opmode=1 deltathr=15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-061238"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-061238"
+field     = "notes"
+old_value = ""
+new_value = "50.50V opmode=1 deltathr= 20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-061238"
+field     = "deltathr"
+old_value = ""
+new_value = 20
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-061856"
+field     = "v_bias"
+old_value = ""
+new_value = 50.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-061856"
+field     = "notes"
+old_value = ""
+new_value = "50.75V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-062545"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-062545"
+field     = "notes"
+old_value = ""
+new_value = "51.00V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-063324"
+field     = "v_bias"
+old_value = ""
+new_value = 51.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-063324"
+field     = "notes"
+old_value = ""
+new_value = "51.25V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-064113"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-064113"
+field     = "notes"
+old_value = ""
+new_value = "51.50V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-064859"
+field     = "v_bias"
+old_value = ""
+new_value = 51.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-064859"
+field     = "notes"
+old_value = ""
+new_value = "51.75V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-065713"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-065713"
+field     = "notes"
+old_value = ""
+new_value = "52.00V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-070358"
+field     = "v_bias"
+old_value = ""
+new_value = 52.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-070358"
+field     = "notes"
+old_value = ""
+new_value = "52.25V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-071039"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-071039"
+field     = "notes"
+old_value = ""
+new_value = "52.50V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-071711"
+field     = "v_bias"
+old_value = ""
+new_value = 52.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-071711"
+field     = "notes"
+old_value = ""
+new_value = "52.75V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-072343"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-072343"
+field     = "notes"
+old_value = ""
+new_value = "53.00V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-072958"
+field     = "v_bias"
+old_value = ""
+new_value = 53.25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-072958"
+field     = "notes"
+old_value = ""
+new_value = "53.25V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-073732"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-073732"
+field     = "notes"
+old_value = ""
+new_value = "53.50V opmode=1 deltathr=20"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-074544"
+field     = "notes"
+old_value = ""
+new_value = "Left running in bkg until incident of 14/11 00:21 !!!"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-080154"
+field     = "v_bias"
+old_value = ""
+new_value = 53.75
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-080154"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-080154"
+field     = "notes"
+old_value = ""
+new_value = "53.75V opmode=1 deltathr=20 - NO BEAM"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-190403"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-190403"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-190403"
+field     = "notes"
+old_value = ""
+new_value = "Test run after intrervention on rdo-193"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-195704"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-195704"
+field     = "notes"
+old_value = ""
+new_value = "Beam in degraded mode"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-225204"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-225204"
+field     = "notes"
+old_value = ""
+new_value = "trigger0 was in OR and not in AND"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-234245"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251112-234245"
+field     = "notes"
+old_value = ""
+new_value = "test run: two triggers and an AND trigger0 condition"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-001556"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-001556"
+field     = "notes"
+old_value = ""
+new_value = "test run with 50 spill"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-003650"
+field     = "notes"
+old_value = ""
+new_value = "test run with 50 spill"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-224445"
+field     = "temperature"
+old_value = ""
+new_value = -25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-224445"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-224445"
+field     = "quality"
+old_value = ""
+new_value = "good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-224445"
+field     = "notes"
+old_value = ""
+new_value = "Testing new configuration at -25C Vbias=52.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-224445"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-224445"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-231617"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-231617"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-231617"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-231617"
+field     = "v_bias"
+old_value = ""
+new_value = 48.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-231617"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-234248"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-234248"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=10 FPGA lost programming for 8hrs window"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251113-234248"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-004708"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-004708"
+field     = "notes"
+old_value = ""
+new_value = "\\=== Test of system after clean-up Vbias=52.00V opmode=1 deltathr=10 -> Full recovery!"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-004708"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-010853"
+field     = "v_bias"
+old_value = ""
+new_value = 48.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-010853"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-010853"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-010853"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-013344"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-013344"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-013344"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-015103"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-015103"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-020815"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-020815"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-020815"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-022450"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-022450"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-024241"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-024241"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-024241"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-031050"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-031050"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-033300"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-033300"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-033300"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-035136"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-035136"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-041247"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-041247"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-041247"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-043649"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-043649"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-050233"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-050233"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-050233"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5 === unknown issue ==="
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-050233"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-051218"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-052308"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-052308"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-152025"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-152025"
+field     = "quality"
+old_value = ""
+new_value = "good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-152025"
+field     = "notes"
+old_value = ""
+new_value = "\\=== Test of system after clean-up Vbias=52.00V opmode=1 deltathr=10 -> Full recovery!"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-152025"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-154120"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-154120"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-154120"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-154120"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-154120"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-162403"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-162403"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-165831"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-165831"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-165831"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-172149"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-172149"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-195303"
+field     = "temperature"
+old_value = ""
+new_value = -15
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-195303"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-195303"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10 -> Unstable beams"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-202429"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-202429"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-204942"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.1"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-204942"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-204942"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-210927"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.2"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-210927"
+field     = "v_bias"
+old_value = ""
+new_value = 48.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-210927"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-212620"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.3"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-212620"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-212620"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-214216"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.4"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-214216"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-214216"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-214216"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-215942"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-215942"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-215942"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-221705"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.6"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-221705"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-221705"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-221705"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-223529"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.7"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-223529"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-223529"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-225318"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.8"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-225318"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-225318"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-225318"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-231141"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.9"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-231141"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-231141"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-233249"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-233249"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-233249"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-233249"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-235219"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.11"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-235219"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-235219"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251114-235219"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-004402"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.12"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-004402"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-004402"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-010616"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.13"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-010616"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-010616"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-010616"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-013423"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.14"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-013423"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=10  (si e' interrotto il fascio per circa un'ora ma poi la misura e' ripresa ed e' terminata)"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-013423"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-025312"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-025312"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-025312"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-025312"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-033117"
+field     = "rdo_firmware"
+old_value = ""
+new_value = "rdo-v1.3.16"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-033117"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-033117"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-105353"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-105353"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-105353"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10 TEST RUN ----BAD due to unstable beam"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-105353"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123010"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123010"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10 TEST first spill empty"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123427"
+field     = "temperature"
+old_value = ""
+new_value = -10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123427"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123427"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123427"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-123427"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-125744"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-125744"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-132137"
+field     = "v_bias"
+old_value = ""
+new_value = 48.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-132137"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-133630"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-133630"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-155046"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-155046"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-155046"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-160923"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-160923"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-162727"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-162727"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-162727"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-165919"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-165919"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-171736"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-171736"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-171736"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-173639"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-173639"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-175803"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-175803"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-175803"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-181745"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-181745"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-183805"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-183805"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-183805"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-185825"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-185825"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-192007"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-192007"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-192007"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-193955"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-193955"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235106"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.03"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235106"
+field     = "temperature"
+old_value = ""
+new_value = -5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235106"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235106"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235106"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235725"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.04"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235725"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251115-235725"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-001649"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.05"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-001649"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-001649"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-004513"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.06"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-004513"
+field     = "v_bias"
+old_value = ""
+new_value = 48.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-004513"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-005925"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.07"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-005925"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=48.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-005925"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-011515"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.08"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-011515"
+field     = "v_bias"
+old_value = ""
+new_value = 50.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-011515"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-011515"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-013830"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.09"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-013830"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=50.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-013830"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-020745"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-020745"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-020745"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-020745"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-024620"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.11"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-024620"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-024620"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-032044"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.12"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-032044"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-032044"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-032044"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-034911"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.13"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-034911"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-034911"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-041453"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.14"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-041453"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-041453"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-041453"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-043343"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.15"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-043343"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-043343"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-045540"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.16"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-045540"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-045540"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-045540"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-051339"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.17"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-051339"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-051339"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-053340"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.18"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-053340"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-053340"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-053340"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-055302"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.19"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-055302"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-055302"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-162645"
+field     = "timing_firmware"
+old_value = ""
+new_value = "single-ext-std-tb2024-base.02"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-162645"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-162645"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10 > 1.5V difference in Vbd we shift everything by 1.5V"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-163206"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-163206"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-163206"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-163206"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10 no beam"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-165203"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-165203"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-165203"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-172304"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-172304"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-180948"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-180948"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-230005"
+field     = "v_bias"
+old_value = ""
+new_value = 54.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-230005"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.00V opmode=1 deltathr=5 done before the run at threshold 10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-222527"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-222527"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-232037"
+field     = "v_bias"
+old_value = ""
+new_value = 54.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-232037"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-232037"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-233659"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251116-233659"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-031441"
+field     = "temperature"
+old_value = ""
+new_value = -10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-031441"
+field     = "v_bias"
+old_value = ""
+new_value = 54.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-031441"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-031441"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.00V opmode=1 deltathr=5 --- went off before measurment and the got completed"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-031441"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-055918"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.00V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-061737"
+field     = "v_bias"
+old_value = ""
+new_value = 54.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-061737"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.00V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-061737"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-064031"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.50V opmode=1 deltathr=5"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-064031"
+field     = "v_bias"
+old_value = ""
+new_value = 54.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-064031"
+field     = "deltathr"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-070124"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=54.50V opmode=1 deltathr=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-070124"
+field     = "deltathr"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-152504"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-152504"
+field     = "notes"
+old_value = ""
+new_value = "Wrong spill, reset of the pulser configuring channel 2 veto for the trigger"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-164624"
+field     = "notes"
+old_value = ""
+new_value = "test with ALTAI-good,0.95 tracks/event"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-170303"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-170303"
+field     = "notes"
+old_value = ""
+new_value = "test with ALTAI-doubtful"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-170303"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-171659"
+field     = "notes"
+old_value = ""
+new_value = "test with ALTAI-doubtful"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-171659"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-172414"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-172414"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-172414"
+field     = "notes"
+old_value = ""
+new_value = "test with ALTAI-good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-173023"
+field     = "n_spills"
+old_value = ""
+new_value = 10
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-173023"
+field     = "notes"
+old_value = ""
+new_value = "test with ALTAI-good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-173828"
+field     = "n_spills"
+old_value = ""
+new_value = 50
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251117-173828"
+field     = "notes"
+old_value = ""
+new_value = "test with ALTAI-very good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-170605"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-170605"
+field     = "quality"
+old_value = ""
+new_value = "warning"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-170605"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10 a couple spills no triggers"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-170605"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-181106"
+field     = "n_spills"
+old_value = ""
+new_value = 20
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-181106"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-181106"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10, no triggers for several spills"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-182529"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-182529"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-183513"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-183513"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-185556"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-185556"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-191408"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-191408"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-192738"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-192738"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-194506"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-194506"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-195755"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-195755"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-220624"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-220624"
+field     = "n_spills"
+old_value = ""
+new_value = 25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-223407"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-223407"
+field     = "notes"
+old_value = ""
+new_value = "no beam"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-223832"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-225003"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-230049"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-231110"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251118-232138"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-002835"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-002835"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-002835"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-002835"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10 > FPGAs de-programmed"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-005212"
+field     = "quality"
+old_value = ""
+new_value = "good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-005212"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10 test"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-005520"
+field     = "n_spills"
+old_value = ""
+new_value = 25
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-005520"
+field     = "quality"
+old_value = ""
+new_value = "bad"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-005520"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10 only 1 spill good"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-010426"
+field     = "quality"
+old_value = ""
+new_value = "need QA"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-010426"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-011609"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-011609"
+field     = "v_bias"
+old_value = ""
+new_value = 52.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-012612"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-013910"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-013910"
+field     = "v_bias"
+old_value = ""
+new_value = 53.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-020334"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-021738"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-021738"
+field     = "v_bias"
+old_value = ""
+new_value = 53.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-022649"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=53.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-023839"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-023839"
+field     = "v_bias"
+old_value = ""
+new_value = 51.5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-024811"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.50 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-025926"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-025926"
+field     = "v_bias"
+old_value = ""
+new_value = 51.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-030844"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=51.00 opmode=1 deltathreshold=10"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-032623"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-032623"
+field     = "v_bias"
+old_value = ""
+new_value = 52.0
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-034012"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-035046"
+field     = "n_spills"
+old_value = ""
+new_value = 5
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-035046"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-040419"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
+
+[[entry]]
+at        = "2026-05-28T21:07:48"
+source    = "legacy"
+run       = "20251119-040749"
+field     = "notes"
+old_value = ""
+new_value = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
+

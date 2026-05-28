@@ -952,10 +952,6 @@ def _match_field(
     return None
 
 
-def _matches(record: rundb.RunRecord, needle: str) -> bool:
-    return _match_field(record, needle) is not None
-
-
 # ---------------------------------------------------------------------------
 # Runcard — right-pane read-only view of one merged run record.
 # ---------------------------------------------------------------------------

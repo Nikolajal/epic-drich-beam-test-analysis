@@ -946,8 +946,11 @@ void fine_calibration_timing(
     // -------------------------------------------------------------------------
     // Persist calibration and write output
     // -------------------------------------------------------------------------
+    //  TOML v3 only — see task #172.  Old ``timing_fine_calib.txt``
+    //  outputs from this example need regeneration with the new
+    //  extension.
     AlcorFinedata::write_calib_to_file(
-        data_repository + "/" + run_name + "/timing_fine_calib.txt");
+        data_repository + "/" + run_name + "/timing_fine_calib.toml");
 
     auto draw = [](TObject *obj, const char *opt = "")
     {

@@ -6,8 +6,8 @@
  * with upsert semantics and helpers for building TGraphErrors for plotting.
  *
  * ### File layout
- * A single ROOT file (e.g. `extData/standard_results.root`) stores one TTree named
- * `"results"` with five branches:
+ * A single ROOT file (e.g. `<data_repository>/standard_results.root`)
+ * stores one TTree named `"results"` with five branches:
  *
  * | Branch   | Type | Description                                      |
  * |----------|------|--------------------------------------------------|
@@ -121,12 +121,12 @@ using ResultMap = std::map<ResultKey, ResultEntry>;
  * ### Typical workflow
  * @code
  * // After photon_number() fills fit_results …
- * AnalysisResults ar("extData/standard_results.root");
+ * AnalysisResults ar(data_repository + "/standard_results.root");
  * ar.update({
  *     {{"20251111-181940", "all",  "ex_gap.n_gamma"}, {N,   N_err }},
  *     {{"20251111-181940", "all",  "ex_gap.sigma"},   {sig, sig_err}},
  *     {{"20251111-181940", "1350", "ex_gap.n_gamma"}, {N_1350, ...}},
- * });
+ * }, "recodata");  // source tag → audit log
  *
  * // Later, in a plotting macro …
  * auto m  = ar.load();
@@ -144,8 +144,13 @@ public:
      * The file does not need to exist yet; it will be created on the first
      * call to update().
      *
-     * @param path  Filesystem path to the ROOT result file,
-     *              e.g. @c "extData/standard_results.root".
+     * @param path  Filesystem path to the ROOT result file.  The
+     *              writers feed it as @c <data_repository>/standard_results.root
+     *              (typically @c Data/standard_results.root), so the
+     *              cross-run aggregate sits next to the per-run
+     *              directories it summarises.  A sibling
+     *              @c .toml file and an audit log @c *.audit.toml
+     *              are emitted alongside on every @c update().
      */
     explicit AnalysisResults(const std::string &path) : fPath(path) {}
 
