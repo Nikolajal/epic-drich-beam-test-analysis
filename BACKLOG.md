@@ -130,6 +130,3 @@ Tracked here so they don't reappear as discoveries in future sweeps.
 [DROPPED · C++]  D-12 extension to timing + tracking detectors — Cherenkov-specific motivation (DCR-driven score); other detectors don't share the same noise structure.  Decided 2026-05-28.
 ```
 
----
-
-*Generated 2026-05-28 from the comprehensive repo sweep + taxonomy chapter in `DISCUSSION.md`.  Refresh by running another sweep and re-applying the formulas.*

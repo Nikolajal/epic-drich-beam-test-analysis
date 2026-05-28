@@ -6,6 +6,8 @@ promoted to a GitHub issue when it's worth collaborating on.
 
 | Section | What it holds | Removal trigger |
 |---|---|---|
+| [Satellite discussions](#satellite-discussions--hub) | Pointers to per-area `DISCUSSION.md` files scattered through the tree.  This file is the **hub** — every other DISCUSSION.md should be reachable from one click here. | Satellite file added / removed → update the hub. |
+| [Triage taxonomy](#triage-taxonomy) | Project-wide convention for tagging backlog items (Bug / Liability / Vulnerability / Patch / Feature / Schema) + the priority formula.  Defines the format used by [`BACKLOG.md`](BACKLOG.md). | Taxonomy change → update the chapter + retag BACKLOG.md. |
 | [Design discussions](#design-discussions) | Open architectural questions — **decision needed before any code change**.  Each `D-XX` is a self-contained proposal with options + recommendation. | Decision made → entry deleted (the resulting change goes into TODOs or directly into a PR). |
 | [TODOs](#todos--concrete-fixes-in-the-queue) | Concrete code-work items.  No design decision pending — just hands on the keyboard.  Source files carry `CODE_REVIEW §X.Y` breadcrumbs at the original finding sites. | Fix lands in `main` → row removed. |
 | [Attention points](#attention-points--latent-issues-to-be-careful-about) | Latent caveats in the codebase that don't need a design discussion but **do** need a heads-up so they don't get propagated or forgotten. | Caveat resolved or formally captured as a design question / TODO. |
@@ -14,6 +16,33 @@ promoted to a GitHub issue when it's worth collaborating on.
 > File is `.gitignore`d (see `.gitignore`).  When an entry is worth
 > collaborating on, open a GitHub issue with the appropriate label
 > (`design` / `enhancement` / `bug`) and drop the entry from here.
+
+---
+
+## Satellite discussions — hub
+
+The project keeps per-area `DISCUSSION.md` files next to the code they
+discuss, so design notes live where the implementation lives.  This
+hub is the **single landing page** — start here, jump to the area you
+care about.  Whenever a new satellite lands, add a row.
+
+| File | Scope | Highlights |
+|---|---|---|
+| [`include/triggers/DISCUSSION.md`](include/triggers/DISCUSSION.md) | Community-facing reference for the **triggers subsystem** as a whole (TriggerEvent schema, registry, sequencing). | TriggerEvent's physical-origin limitation; future schema-extension proposal (GlobalIndex / device-fifo-channel triple). |
+| [`include/triggers/streaming/DISCUSSION.md`](include/triggers/streaming/DISCUSSION.md) | Deep-dive on the **DCR-weighted streaming + Hough trigger** stages.  Section refs match per-stage headings here. | D-12 v1 design + Hough §2.3 sub-cell refinement (sliding-window, SAT, padding); §2.6 live-QA pipeline (V1 shipped); §2.7 frames-within-spill multithreading. |
+| [`include/writers/DISCUSSION.md`](include/writers/DISCUSSION.md) | Open questions specific to the **writers** (pulser_calib, lightdata, recodata, recotrackdata). | Pulser ±0.5 cc satellite hypothesis; regime-2 slip vs coarse-edge quantisation; fine-band filter as IRLS candidate. |
+| [`qa_quicklook/DISCUSSION.md`](qa_quicklook/DISCUSSION.md) | Longer-term roadmap for the **operator dashboard**.  Items the dashboard *should* do but aren't pressing. | PDF publication contract; AnalysisResults dual-backend (ROOT → TOML); audit log + Show-history UI; cross-shifter sync candidates. |
+
+**Conventions for the satellites:**
+
+- One satellite per major subdirectory (`include/triggers/`, `qa_quicklook/`, …) — not per file.
+- Open items in satellites should also appear in the hub-level [`BACKLOG.md`](BACKLOG.md) so the queue stays single-source.
+- The satellite holds the *narrative* (why, options, history); the
+  backlog row holds the *tag* + the *priority*.  Cross-link by
+  free-text reference, not by mechanical sync.
+- When a satellite's discussion section closes (decision taken,
+  feature shipped), strike it through but keep the prose — it's
+  historical context for the next reader.
 
 ---
 
@@ -816,8 +845,3 @@ about the cost estimate not existing yet.
 | Show-history UI (qa_quicklook) | Feature | 2 | 2 | 1 | 0.00 | 250 | 2.40 | (2·2)/2.40 ≈ **1.67** |
 | Run-info edit cascade prompt | Feature | 2 | 2 | 2 | 1.00 | 200 | 2.30 | (2·2)/3.30 ≈ **1.21** |
 
----
-
-*Last updated: 2026-05-27 (autonomous sweep; see § above for the line-by-line changes).*
-
-*Triage taxonomy added 2026-05-28 — applies repo-wide from this date forward.*
