@@ -54,19 +54,27 @@
 #include "writers/pulser_calib.h"
 
 #include "alcor_data.h"
+#include "analysis_results.h"
 #include "alcor_data_streamer.h"
 #include "alcor_finedata.h" // CalibrationMethod enum (v2 schema selector at write time)
+#include "utility/config_dump.h"
 #include "utility/config_reader.h"
 #include "utility/global_index.h"
+#include "utility/qa_publish.h"
 
+#include <TCanvas.h>
 #include <TF1.h>
 #include <TFile.h>
 #include <TFitResult.h>
 #include <TFitResultPtr.h>
 #include <TH1F.h>
+#include <TH2F.h>
+#include <TLatex.h>
 #include <TNamed.h>
+#include <TPad.h>
 #include <TParameter.h>
 #include <TString.h>
+#include <TStyle.h>
 
 #include <mist/logger/logger.h>
 
@@ -860,7 +868,11 @@ void pulser_calib_writer(
     const std::string &run_name,
     const std::string &calib_config_file,
     bool force_rebuild,
-    int max_spill)
+    int max_spill,
+    int anchor_device_override,
+    int anchor_chip_override,
+    int anchor_eo_channel_override,
+    double pulser_period_cc_override)
 {
     namespace fs = std::filesystem;
 
@@ -874,6 +886,48 @@ void pulser_calib_writer(
     auto cfg = calib_conf_reader(calib_config_file);
     if (force_rebuild)
         cfg.force_rebuild = true;
+
+    //  CLI-level anchor overrides (≥0 wins over TOML).  Plumbed for the
+    //  Run Manager card so an operator can flip the anchor channel
+    //  per-launch — e.g. when 192/0/ch0 fails mid-shift — without
+    //  rewriting the persistent calibration_conf.toml that may be
+    //  shared across runs.  Sentinel -1 means "don't override".
+    //  The eventual cfg.anchor_* values are dumped into the QA file's
+    //  Config/ folder downstream, so reproducibility is preserved.
+    if (anchor_device_override >= 0 && anchor_device_override != cfg.anchor_device)
+    {
+        mist::logger::info(TString::Format(
+            "(pulser_calib_writer) CLI override: anchor_device %d -> %d",
+            cfg.anchor_device, anchor_device_override).Data());
+        cfg.anchor_device = anchor_device_override;
+    }
+    if (anchor_chip_override >= 0 && anchor_chip_override != cfg.anchor_chip)
+    {
+        mist::logger::info(TString::Format(
+            "(pulser_calib_writer) CLI override: anchor_chip %d -> %d",
+            cfg.anchor_chip, anchor_chip_override).Data());
+        cfg.anchor_chip = anchor_chip_override;
+    }
+    if (anchor_eo_channel_override >= 0 && anchor_eo_channel_override != cfg.anchor_eo_channel)
+    {
+        mist::logger::info(TString::Format(
+            "(pulser_calib_writer) CLI override: anchor_eo_channel %d -> %d",
+            cfg.anchor_eo_channel, anchor_eo_channel_override).Data());
+        cfg.anchor_eo_channel = anchor_eo_channel_override;
+    }
+    //  Pulser period override: dashboard hands us pulser frequency in
+    //  Hz, the CLI driver converts to ``cc`` via the 320 MHz clock
+    //  before reaching this fn, so we get a straight cc value to
+    //  drop into cfg.  Sentinel -1.0 = "no override" (use TOML).
+    //  Note: 0.0 is a *valid* override — it means "fit per channel"
+    //  (the existing TOML semantic) — so the gate is strictly ``< 0``.
+    if (pulser_period_cc_override >= 0.0 && pulser_period_cc_override != cfg.pulser_period_cc)
+    {
+        mist::logger::info(TString::Format(
+            "(pulser_calib_writer) CLI override: pulser_period_cc %.3f -> %.3f",
+            cfg.pulser_period_cc, pulser_period_cc_override).Data());
+        cfg.pulser_period_cc = pulser_period_cc_override;
+    }
     const auto resolved = resolve_fine_calib_path(cfg, run_dir);
     switch (resolved.kind)
     {
@@ -995,6 +1049,89 @@ void pulser_calib_writer(
     {
         mist::logger::error("(pulser_calib_writer) no hits read — bailing");
         return;
+    }
+
+    //  ── Anchor-Δ diagnostic: TH2F (spill, channel.cc − anchor.cc) ──
+    //  Tracks how each channel's coarse counter drifts away from the
+    //  anchor (pulser reference) per spill.  Pulser fires once per
+    //  period across all channels, so for an in-spec channel the
+    //  difference should sit at 0 ± slipping-tolerance.  Excursions
+    //  by ±1 rollover (= BTANA_ALCOR_ROLLOVER_TO_CC = 32768 cc) flag
+    //  channels whose coarse counter wrapped relative to the anchor —
+    //  exactly the population the operator wants to spot.
+    //
+    //  Filled *before* the parallel fit moves the per-channel buckets
+    //  out of `channels` (line ~1009 below).  All channels go onto a
+    //  single histogram so a one-shot read of the plot tells the
+    //  operator "every channel is happy" or "channel X drifted".
+    //
+    //  Index-based pair matching per spill: anchor.hits[i] is taken
+    //  to correspond to channel.hits[i] (one hit per pulser shot is
+    //  the calibration assumption).  Length mismatches truncate to
+    //  the shorter list — defensive; channels that missed a pulse
+    //  still contribute their matched fraction.
+    constexpr int kRollover = BTANA_ALCOR_ROLLOVER_TO_CC;
+    const int n_y_bins  = 2 * (kRollover + 100) + 1;          // 1 cc / bin
+    const double y_lo   = -(kRollover + 100) - 0.5;
+    const double y_hi   = +(kRollover + 100) + 0.5;
+    auto h_anchor_dt_vs_spill = std::make_unique<TH2F>(
+        "h_anchor_dt_vs_spill",
+        //  TLatex codes (#Delta etc.) so the title renders properly —
+        //  raw UTF-8 in TString::Format gets mangled by ROOT's text
+        //  rendering on most fonts.
+        TString::Format(
+            "#Deltac vs spill (channel - anchor [%d/%d/ch%d]);"
+            "spill;#Deltac (cc)  = c_{ch} - c_{anchor}",
+            cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel),
+        std::max(1, spills_seen), -0.5, spills_seen - 0.5,
+        n_y_bins, y_lo, y_hi);
+    // Keep the histogram off the global ROOT directory list so the
+    // automatic .root write at qa->Write() doesn't pick it up — we
+    // place it explicitly under Diagnostics/ later.
+    h_anchor_dt_vs_spill->SetDirectory(nullptr);
+
+    const ChannelKey anchor_key{
+        static_cast<uint16_t>(cfg.anchor_device),
+        static_cast<uint16_t>(cfg.anchor_chip),
+        static_cast<uint16_t>(cfg.anchor_eo_channel)};
+    auto anchor_it = channels.find(anchor_key);
+    long n_anchor_pairs_filled = 0;
+    if (anchor_it == channels.end())
+    {
+        mist::logger::warning(TString::Format(
+            "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
+            "ingested hits — anchor-Δ diagnostic will be empty.",
+            cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel).Data());
+    }
+    else
+    {
+        const auto &anchor_bucket = anchor_it->second;
+        for (const auto &[ch_key, ch_bucket] : channels)
+        {
+            // Cap at the shorter per_spill so we don't read past the
+            // end of either channel's sparse vector.
+            const int n_spills = static_cast<int>(std::min(
+                anchor_bucket.per_spill.size(),
+                ch_bucket.per_spill.size()));
+            for (int s = 0; s < n_spills; ++s)
+            {
+                const auto &anchor_hits = anchor_bucket.per_spill[s].hits;
+                const auto &ch_hits     = ch_bucket.per_spill[s].hits;
+                const int n_pairs = static_cast<int>(std::min(
+                    anchor_hits.size(), ch_hits.size()));
+                for (int i = 0; i < n_pairs; ++i)
+                {
+                    const double dc = static_cast<double>(
+                        ch_hits[i].abs_coarse_cc - anchor_hits[i].abs_coarse_cc);
+                    h_anchor_dt_vs_spill->Fill(s, dc);
+                    ++n_anchor_pairs_filled;
+                }
+            }
+        }
+        mist::logger::info(TString::Format(
+            "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
+            "(channel, anchor) pairs across %d spills",
+            n_anchor_pairs_filled, spills_seen).Data());
     }
 
     //  ── Per-channel closed-form fits, parallel ───────────────────
@@ -1269,57 +1406,6 @@ void pulser_calib_writer(
     {
         mist::logger::error("(pulser_calib_writer) cannot open " + qa_root_path + " for write");
         return;
-    }
-
-    //  ── Config/ ──────────────────────────────────────────────────
-    //  Snapshot every loaded knob so the QA file is self-describing.
-    //  Reading consumers can dump this directory to know exactly what
-    //  was configured for the run.
-    {
-        TDirectory *cfg_dir = qa->mkdir("Config");
-        cfg_dir->cd();
-        TParameter<int> p_anchor_device("anchor_device", cfg.anchor_device);
-        TParameter<int> p_anchor_chip("anchor_chip", cfg.anchor_chip);
-        TParameter<int> p_anchor_eo("anchor_eo_channel", cfg.anchor_eo_channel);
-        TParameter<int> p_min_cum("min_hits_per_tdc", cfg.min_hits_per_tdc);
-        TParameter<int> p_min_spill("min_hits_per_tdc_per_spill", cfg.min_hits_per_tdc_per_spill);
-        TParameter<int> p_fine_lo("fine_min_valid", cfg.fine_min_valid);
-        TParameter<int> p_fine_hi("fine_max_valid", cfg.fine_max_valid);
-        TParameter<int> p_slope_min_span("slope_fit_min_fine_span", cfg.slope_fit_min_fine_span);
-        TParameter<double> p_default_slope("default_slope_cc_per_bin", cfg.default_slope_cc_per_bin);
-        TParameter<double> p_slope_min("slope_min", cfg.slope_min);
-        TParameter<double> p_slope_max("slope_max", cfg.slope_max);
-        TParameter<double> p_b_min("b_min", cfg.b_min);
-        TParameter<double> p_b_max("b_max", cfg.b_max);
-        TParameter<double> p_pulser_period_cc("pulser_period_cc", cfg.pulser_period_cc);
-        TParameter<double> p_pair_tol("consecutive_pair_tolerance_cc",
-                                      cfg.consecutive_pair_tolerance_cc);
-        TParameter<double> p_slip_conf("slip_confidence_cc", cfg.slip_confidence_cc);
-        TParameter<double> p_slip_frac("slip_max_snap_fraction",
-                                       cfg.slip_max_snap_fraction);
-        p_anchor_device.Write();
-        p_anchor_chip.Write();
-        p_anchor_eo.Write();
-        p_min_cum.Write();
-        p_min_spill.Write();
-        p_fine_lo.Write();
-        p_fine_hi.Write();
-        p_slope_min_span.Write();
-        p_default_slope.Write();
-        p_slope_min.Write();
-        p_slope_max.Write();
-        p_b_min.Write();
-        p_b_max.Write();
-        p_pulser_period_cc.Write();
-        p_pair_tol.Write();
-        p_slip_conf.Write();
-        p_slip_frac.Write();
-        TNamed n_override_path("override_path", cfg.override_path.c_str());
-        TNamed n_default_path("default_path", cfg.default_path.c_str());
-        TNamed n_force_rebuild("force_rebuild", cfg.force_rebuild ? "true" : "false");
-        n_override_path.Write();
-        n_default_path.Write();
-        n_force_rebuild.Write();
     }
 
     //  ── RunSummary/ ──────────────────────────────────────────────
@@ -1766,6 +1852,342 @@ void pulser_calib_writer(
                                cfg.consecutive_pair_tolerance_cc,
                                100.0 * frac)
                                .Data());
+
+        //  ── Anchor-Δ vs spill — fill happened earlier, write here ──
+        //  Stored in Diagnostics/ alongside the other pair plots; also
+        //  rendered to a 3-pad PDF picked up by the QA Calibration
+        //  sub-tab (slim top zoom at +rollover, main at ±250 cc,
+        //  slim bottom zoom at −rollover).
+        if (h_anchor_dt_vs_spill)
+        {
+            diag_dir->WriteObject(h_anchor_dt_vs_spill.get(),
+                                  h_anchor_dt_vs_spill->GetName());
+
+            //  Per-pad under/overflow counts — *paramount* for reading
+            //  this plot, since the rollover-zone populations are the
+            //  whole point.  We split the Y axis into 7 named regions
+            //  and integrate each against the source histogram.  Each
+            //  pad's overlay then reports its in-window count + the
+            //  total of everything above and everything below its
+            //  window so leakage is impossible to miss.
+            struct Region
+            {
+                const char *latex;    // ROOT-codes label for in-canvas TLatex
+                const char *plain;    // plain ASCII for the log line
+                double y_lo;
+                double y_hi;
+                long long count;
+            };
+            // Edges (half-cc offsets so an entry exactly on the boundary
+            // attaches deterministically to the upper region, matching
+            // ROOT's bin "[low, high)" convention with .5-offset edges).
+            constexpr double E_top_hi = kRollover + 50.5;
+            constexpr double E_top_lo = kRollover - 50.5;
+            constexpr double E_main_hi = 250.5;
+            constexpr double E_main_lo = -250.5;
+            constexpr double E_bot_hi = -kRollover + 50.5;
+            constexpr double E_bot_lo = -kRollover - 50.5;
+            Region regions[] = {
+                {"#Delta > +rollover+50",                "Delta > +rollover+50",
+                 E_top_hi,  1e9,        0},
+                {"|#Delta #minus rollover| #leq 50",     "|Delta - rollover| <= 50",
+                 E_top_lo,  E_top_hi,   0},
+                {"+250 < #Delta < +rollover#minus50",    "+250 < Delta < +rollover-50",
+                 E_main_hi, E_top_lo,   0},
+                {"|#Delta| #leq 250 (main)",             "|Delta| <= 250 (main)",
+                 E_main_lo, E_main_hi,  0},
+                {"#minusrollover+50 < #Delta < #minus250", "-rollover+50 < Delta < -250",
+                 E_bot_hi,  E_main_lo,  0},
+                {"|#Delta + rollover| #leq 50",          "|Delta + rollover| <= 50",
+                 E_bot_lo,  E_bot_hi,   0},
+                {"#Delta < #minusrollover#minus50",      "Delta < -rollover-50",
+                 -1e9,      E_bot_lo,   0},
+            };
+            const int n_x = h_anchor_dt_vs_spill->GetNbinsX();
+            const auto *yax = h_anchor_dt_vs_spill->GetYaxis();
+            for (auto &r : regions)
+            {
+                const int b_lo = yax->FindFixBin(r.y_lo);
+                const int b_hi = yax->FindFixBin(r.y_hi) - 1;
+                r.count = static_cast<long long>(
+                    h_anchor_dt_vs_spill->Integral(1, n_x, b_lo, b_hi));
+            }
+            const long long n_total = std::accumulate(
+                std::begin(regions), std::end(regions), 0LL,
+                [](long long a, const Region &r) { return a + r.count; });
+
+            // Per-pad over/under helper: returns the number of entries
+            // OUTSIDE the pad's [y_lo, y_hi] window, split into below /
+            // above.  The pad's own SetRangeUser hides them visually;
+            // the overlay surfaces them numerically.
+            auto pad_uoflow = [&](double y_lo, double y_hi)
+                -> std::pair<long long, long long>
+            {
+                const int b_lo = yax->FindFixBin(y_lo);
+                const int b_hi = yax->FindFixBin(y_hi) - 1;
+                const long long below = static_cast<long long>(
+                    h_anchor_dt_vs_spill->Integral(1, n_x, 0, b_lo - 1));
+                const long long above = static_cast<long long>(
+                    h_anchor_dt_vs_spill->Integral(1, n_x,
+                                                   b_hi + 1, yax->GetNbins() + 1));
+                return {below, above};
+            };
+
+            // Log the breakdown — shows up in the writer's stdout so
+            // operators running on the CLI see it too.
+            mist::logger::info(TString::Format(
+                "(pulser_calib_writer) anchor-Δ region split (total %lld):",
+                n_total).Data());
+            for (const auto &r : regions)
+            {
+                const double pct = n_total > 0
+                    ? 100.0 * static_cast<double>(r.count)
+                            / static_cast<double>(n_total)
+                    : 0.0;
+                mist::logger::info(TString::Format(
+                    "(pulser_calib_writer)   %-30s : %lld (%.3f%%)",
+                    r.plain, r.count, pct).Data());
+            }
+
+            // Stats box off — we have our own custom overlay.  Saved
+            // + restored so we don't poison other writers that might
+            // run later in the same process.
+            const int prev_optstat = gStyle->GetOptStat();
+            gStyle->SetOptStat(0);
+
+            // Canvas layout — **equal px/cc** across the three plot
+            // pads so a 5-pixel vertical span means the same Δc
+            // everywhere.  Math:
+            //   Y data to render:  100 cc (top) + 500 cc (main) + 100 cc (bot)
+            //                   =  700 cc total
+            //   Available canvas:  100 % − banner 10 % − x-axis area 14 %  ≈ 76 %
+            //   px/cc fraction:    0.76 / 700  →  1 cc ≈ 0.00109 of canvas height
+            //
+            // Plot-area heights (canvas NDC) — pad bounds add inner
+            // top/bottom margins around these for axis labels:
+            //   top  plot ≈ 10.9 %
+            //   main plot ≈ 54.4 %
+            //   bot  plot ≈ 10.9 %  (+ 14 % for x-axis labels below)
+            //
+            //   banner : y = [0.90, 1.00]  10 %   (title + total only)
+            //   top    : y = [0.79, 0.90]  11 %   (+rollover ±50)
+            //   main   : y = [0.25, 0.79]  54 %   (±250)
+            //   bot    : y = [0.00, 0.25]  25 %   (-rollover ±50 + x-axis)
+            //
+            // Right margin sized for the colz palette (main only;
+            // shared z-range makes scale consistent across pads).
+            TCanvas c_anchor("c_anchor_dt_vs_spill", "", 1400, 950);
+            constexpr double kLeftMargin  = 0.10;
+            constexpr double kRightMargin = 0.09;
+
+            // Banner pad — borderless, used only as a TLatex canvas
+            // for the title and total-entries subtitle.  The per-region
+            // breakdown table moved out of the canvas; it's still in
+            // the writer's log output and the per-pad in/above/below
+            // overlays already convey "is this region populated?" at
+            // a glance.
+            TPad p_banner("p_banner", "", 0.0, 0.90, 1.0, 1.00);
+            p_banner.SetTopMargin(0.0);
+            p_banner.SetBottomMargin(0.0);
+            p_banner.SetLeftMargin(0.0);
+            p_banner.SetRightMargin(0.0);
+            p_banner.SetBorderMode(0);
+            p_banner.Draw();
+
+            // ── Inner margins zeroed where pads abut ──────────────
+            // Top.bottom = 0, Main.top = 0  → top and main touch.
+            // Main.bottom = 0, Bot.top = 0  → main and bot touch.
+            // Outer edges (top of canvas, bottom of canvas) keep
+            // their normal margins for ticks + x-axis title.
+            // ── Inner margins zeroed where pads abut ──────────────
+            // Top.bottom = 0, Main.top = 0  → top and main touch.
+            // Main.bottom = 0, Bot.top = 0  → main and bot touch.
+            // Outer edges keep their normal margins for ticks +
+            // x-axis title.  BorderMode(0) + BorderSize(0) hide the
+            // pad's decorative bevel; the histograms' own frames
+            // (thin, configured below) still provide the visible box.
+            auto configure_pad = [&](TPad &p, double top, double bot) {
+                p.SetTopMargin(top);
+                p.SetBottomMargin(bot);
+                p.SetLeftMargin(kLeftMargin);
+                p.SetRightMargin(kRightMargin);
+                p.SetBorderMode(0);
+                p.SetBorderSize(0);
+                p.SetFrameBorderMode(0);
+                p.SetFrameBorderSize(0);
+                p.Draw();
+            };
+            TPad p_top("p_top", "+rollover zoom", 0.0, 0.79, 1.0, 0.90);
+            configure_pad(p_top,  0.02, 0.00);
+            TPad p_main("p_main", "main", 0.0, 0.25, 1.0, 0.79);
+            configure_pad(p_main, 0.00, 0.00);
+            TPad p_bot("p_bot", "-rollover zoom", 0.0, 0.0, 1.0, 0.25);
+            configure_pad(p_bot,  0.00, 0.55);   // 0.55 of 25 % ≈ 14 % canvas for x-axis
+
+            // Shared z-range across all three pads — top and bottom
+            // zooms reuse the main pad's colour scale so a non-zero
+            // bin reads at the same hue everywhere on the canvas.
+            // Floor at 1 to keep empty bins blank instead of dark-end-
+            // of-palette.
+            const double z_min = 1.0;
+            const double z_max = std::max(
+                1.0, static_cast<double>(h_anchor_dt_vs_spill->GetMaximum()));
+
+            // Absolute (pixel) font sizes so tick labels look identical
+            // across pads of different heights.  Font code 43 = Helvetica
+            // with size in pixels (font precision 3); fraction-of-pad
+            // sizing (the default) would make slim-pad labels look
+            // microscopic vs the main pad's.
+            //
+            // Sizes tuned for the 1400×950 canvas — readable when the
+            // PDF is rendered at 100% zoom in a typical viewer.
+            constexpr int kFont       = 43;
+            constexpr int kLabelPx    = 20;   // axis tick labels
+            constexpr int kTitlePx    = 24;   // axis titles
+            constexpr int kOverlayPx  = 18;   // per-pad in/above/below
+            constexpr int kBannerPx   = 26;   // banner title
+            constexpr int kBannerSubPx = 16;  // banner subtitle / total
+            constexpr int kRegionPx   = 15;   // region breakdown lines
+
+            auto draw_in_pad = [&](TPad &pad, double y_lo_r, double y_hi_r,
+                                   bool show_xaxis, bool with_palette,
+                                   bool show_ytitle,
+                                   const char *in_label) {
+                pad.cd();
+                auto *h = static_cast<TH2F *>(
+                    h_anchor_dt_vs_spill->Clone(
+                        TString::Format("h_anchor_dt_pad_%s", pad.GetName())));
+                h->SetDirectory(nullptr);
+                h->SetStats(0);
+                h->SetTitle("");
+                h->GetYaxis()->SetRangeUser(y_lo_r, y_hi_r);
+                h->SetMinimum(z_min);
+                h->SetMaximum(z_max);
+                // Thinner frame line so the touching-pad boundaries
+                // read as a single clean line, not a doubled bar.
+                h->SetLineWidth(1);
+
+                auto *yax = h->GetYaxis();
+                yax->SetLabelFont(kFont);
+                yax->SetLabelSize(kLabelPx);
+                yax->SetTitleFont(kFont);
+                yax->SetTitleSize(kTitlePx);
+                yax->SetTitleOffset(1.7);   // room for 5-digit labels
+                if (!show_ytitle)
+                    yax->SetTitle("");
+                // Slim pads only span ~100 cc → 5 default labels are
+                // visually crowded.  3 major divisions is enough to
+                // convey the range without overlapping into adjacent
+                // pads at the touching edges.
+                if (&pad != &p_main)
+                    yax->SetNdivisions(503);
+
+                auto *xax = h->GetXaxis();
+                if (show_xaxis)
+                {
+                    xax->SetLabelFont(kFont);
+                    xax->SetLabelSize(kLabelPx);
+                    xax->SetTitleFont(kFont);
+                    xax->SetTitleSize(kTitlePx);
+                    xax->SetTitleOffset(2.4);
+                }
+                else
+                {
+                    xax->SetLabelSize(0);
+                    xax->SetTitle("");
+                    xax->SetTickLength(0.0);
+                }
+
+                // Suppress "×10^N" scientific notation on the Z palette
+                // so big integer bin counts (76 M total in this run)
+                // render as plain numbers — easier to compare at a
+                // glance against the in-pad count overlays.
+                h->GetZaxis()->SetMaxDigits(7);
+
+                // Only main pad gets the palette — shared z-range
+                // makes the visual scale consistent across the slim
+                // pads even without their own palette strip.
+                h->Draw(with_palette ? "colz" : "col");
+
+                // In-pad count overlay — JUST the in-window count.
+                // Per-pad "above/below" was redundant with the three
+                // pads themselves + the single banner "off-canvas"
+                // summary (drawn after the loop).  Keeping the
+                // overlay minimal so the slim pads stay clean.
+                const int b_lo = yax->FindFixBin(y_lo_r);
+                const int b_hi = yax->FindFixBin(y_hi_r) - 1;
+                const long long in_n = static_cast<long long>(
+                    h_anchor_dt_vs_spill->Integral(1, n_x, b_lo, b_hi));
+                TLatex tx;
+                tx.SetNDC();
+                tx.SetTextFont(43);
+                tx.SetTextSize(&pad == &p_main ? kOverlayPx
+                                              : std::max(12, kOverlayPx - 4));
+                tx.SetTextAlign(13);
+                tx.DrawLatex(0.13,
+                    &pad == &p_main ? 0.94 : 0.85,
+                    TString::Format("%s: %lld", in_label, in_n));
+            };
+            // Only the main pad shows the full Y title; slim pads stay
+            // clean (operator reads off the visible range labels).
+            draw_in_pad(p_top,  +kRollover - 50, +kRollover + 50,
+                        false, false, false, "+rollover #pm 50");
+            draw_in_pad(p_main, -250.0,          +250.0,
+                        false, true,  true,  "|#Delta| #leq 250");
+            draw_in_pad(p_bot,  -kRollover - 50, -kRollover + 50,
+                        true,  false, false, "#minusrollover #pm 50");
+
+            // ── Banner: title (left) + total-entries subtitle.
+            //  The per-region breakdown lives in the writer's log
+            //  output + the per-pad in/above/below overlays.  Trying
+            //  to also pack 7 region lines into the 10 % banner pad
+            //  made the rendering messy (line overlap at 1400 px
+            //  width), and the info is already redundant with the
+            //  per-pad overlays.
+            p_banner.cd();
+            TLatex bn;
+            bn.SetNDC();
+            bn.SetTextFont(kFont);
+            bn.SetTextSize(kBannerPx);
+            bn.SetTextAlign(13);   // top-left
+            bn.SetTextColor(kBlack);
+            bn.DrawLatex(0.01, 0.92,
+                TString::Format(
+                    "#Deltac vs spill   (channel #minus anchor [%d/%d/ch%d])",
+                    cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel));
+            // Off-canvas count: entries that fell in NONE of the three
+            // pad Y-windows (main ±250 / top +rollover±50 / bot
+            // -rollover±50).  This is the "stuff you'd miss without
+            // looking" number — the single one operator-relevant
+            // for "did anything weird happen?".  The four
+            // off-canvas regions are at indices 0, 2, 4, 6 of the
+            // regions[] table (defined by hand above; in-pad
+            // regions are at 1, 3, 5).
+            const long long n_off_canvas =
+                regions[0].count   // Δ > +rollover+50
+              + regions[2].count   // +250 < Δ < +rollover-50
+              + regions[4].count   // -rollover+50 < Δ < -250
+              + regions[6].count;  // Δ < -rollover-50
+            const double off_pct = n_total > 0
+                ? 100.0 * static_cast<double>(n_off_canvas)
+                        / static_cast<double>(n_total)
+                : 0.0;
+            bn.SetTextSize(kBannerSubPx);
+            bn.SetTextColor(n_off_canvas > 0 ? kRed + 1 : kGray + 3);
+            bn.DrawLatex(0.01, 0.30,
+                TString::Format(
+                    "Total: %lld   |   Off-canvas (in no pad): %lld (%.3f%%)",
+                    n_total, n_off_canvas, off_pct));
+
+            // PDF for the dashboard's QA Calibration sub-tab.
+            const std::string pulser_run_dir = data_repository + "/" + run_name;
+            const auto pdf = util::qa::pdf_path(
+                pulser_run_dir, "calibration", 5, "anchor_dt_vs_spill");
+            c_anchor.SaveAs(pdf.string().c_str());
+
+            // Restore the prior stats-box convention.
+            gStyle->SetOptStat(prev_optstat);
+        }
     }
 
     //  ── Skipped-TDC list — lives under RunSummary/ next to its
@@ -1795,9 +2217,77 @@ void pulser_calib_writer(
         n_skipped.Write();
     }
 
+    //  ── Config/ ──────────────────────────────────────────────────
+    //  Anchored at the very end so it sits LAST in the TFile's key
+    //  list (alongside the convention recodata / recotrack /
+    //  lightdata follow): all the physics subdirs first, the self-
+    //  describing parameter dump after.  Makes a `TBrowser` view
+    //  read top-to-bottom from "what was measured" to "how it was
+    //  measured".  Routed through util::ConfigDump
+    //  (include/utility/config_dump.h) for uniformity with the other
+    //  writers — every writer emits the same Config/ schema so the
+    //  QA dashboard reads them with one code path.
+    {
+        util::ConfigDump dump(qa.get());
+        dump.add("anchor_device",                 cfg.anchor_device)
+            .add("anchor_chip",                   cfg.anchor_chip)
+            .add("anchor_eo_channel",             cfg.anchor_eo_channel)
+            .add("min_hits_per_tdc",              cfg.min_hits_per_tdc)
+            .add("min_hits_per_tdc_per_spill",    cfg.min_hits_per_tdc_per_spill)
+            .add("fine_min_valid",                cfg.fine_min_valid)
+            .add("fine_max_valid",                cfg.fine_max_valid)
+            .add("slope_fit_min_fine_span",       cfg.slope_fit_min_fine_span)
+            .add("default_slope_cc_per_bin",      cfg.default_slope_cc_per_bin)
+            .add("slope_min",                     cfg.slope_min)
+            .add("slope_max",                     cfg.slope_max)
+            .add("b_min",                         cfg.b_min)
+            .add("b_max",                         cfg.b_max)
+            .add("pulser_period_cc",              cfg.pulser_period_cc)
+            .add("consecutive_pair_tolerance_cc", cfg.consecutive_pair_tolerance_cc)
+            .add("slip_confidence_cc",            cfg.slip_confidence_cc)
+            .add("slip_max_snap_fraction",        cfg.slip_max_snap_fraction);
+        //  Runtime flags + the conf-file paths used at load time.
+        dump.add("force_rebuild", cfg.force_rebuild)
+            .add_path("override_path", cfg.override_path)
+            .add_path("default_path",  cfg.default_path);
+        //  Verbatim TOML body of whichever calibration conf was picked
+        //  up (override takes precedence over the default).  Was
+        //  missing in v1 — the dashboard now has the same "[toml
+        //  payloads]" section it shows for lightdata.root.
+        const std::string calib_conf_path =
+            !cfg.override_path.empty() ? cfg.override_path : cfg.default_path;
+        dump.add_conf_file("calibration_conf", calib_conf_path);
+    }
+
     qa->Write();
     qa->Close();
     mist::logger::info("(pulser_calib_writer) wrote QA to " + qa_root_path);
+
+    //  ---
+    //  --- Publish cross-run scalars to AnalysisResults.
+    //
+    //  Same dual-backend (.root + .toml) store the other writers feed.
+    //  Sensor key is "all" — pulser_calib spans every TDC the run had
+    //  hits on, and the per-TDC fine-table itself already lives on
+    //  disk as the canonical artefact.  These are the run-level
+    //  summary numbers the dashboard scoreboard needs.
+    {
+        //  Cross-run aggregate next to the run directories
+        //  (``<repo>/standard_results.root``).  Same convention as
+        //  the other three writers — stale ``extData/`` hard-code
+        //  was failing because the dashboard launches with cwd at
+        //  the repo root, where ``extData/`` doesn't exist.
+        AnalysisResults ar(data_repository + "/standard_results.root");
+        ar.update(ResultMap{
+            {{run_name, "all", "calibration.total_hits_read"},
+             {static_cast<double>(total_hits_read), 0.0}},
+            {{run_name, "all", "calibration.spills_seen"},
+             {static_cast<double>(spills_seen), 0.0}},
+            {{run_name, "all", "calibration.n_published_tdcs"},
+             {static_cast<double>(published.size()), 0.0}},
+        }, /*source=*/"calibration");
+    }
+
     mist::logger::info("(pulser_calib_writer) === DONE ===");
 }
 

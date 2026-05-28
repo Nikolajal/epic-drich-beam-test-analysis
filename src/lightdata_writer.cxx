@@ -12,6 +12,9 @@
 #include "TProfile2D.h"
 #include "TNamed.h"
 #include "TParameter.h"
+#include "analysis_results.h"
+#include "utility/config_dump.h"
+#include "utility/qa_publish.h"
 #include "TCanvas.h"
 #include "TLegend.h"
 #include <algorithm>
@@ -1166,27 +1169,69 @@ void lightdata_writer(
     h_rollover_correction_affected_streams_per_spill->Write();
     //  ---
     //  --- Trigger QA
+    //
+    //  Layout:
+    //    Triggers/
+    //      h2_trigger_matrix                 ← aggregate, top-level
+    //      <trigger-name>/                   ← one sub-dir per trigger
+    //        h_trigger_frame_population_<name>
+    //        h_trigger_time_diff_w_cherenkov_<name>
+    //        h_trigger_full_hitmap_<name>
+    //        h_trigger_hit_multiplicity_in_time_<name>
+    //        h_trigger_hit_multiplicity_out_of_time_<name>
+    //        h_trigger_dt_<name>
+    //
+    //  The dashboard's QA Lightdata sub-tab mirrors this tree
+    //  automatically via the schema-mirror layout, so each trigger
+    //  gets a collapsible sub-card with all its control histograms.
+    //  Aggregate histograms stay at the Triggers/ level so they're
+    //  visible without expanding any per-trigger card.
     TDirectory *trigger_dir = outfile->mkdir("Triggers");
     trigger_dir->cd();
     h2_trigger_matrix->Write();
+
+    //  Per-trigger sub-folder helper — same trigger index keys all
+    //  the maps below, so we cd() into the right sub-dir once and
+    //  write each per-trigger histogram from there.  Pre-scales any
+    //  ratios that used to happen in-line (time-diff normalisation
+    //  by trigger-matrix diagonal; dt scaling by bin width).
+    std::map<int, TDirectory *> per_trigger_dirs;
+    auto get_dir_for = [&](int idx) -> TDirectory * {
+        auto it = per_trigger_dirs.find(idx);
+        if (it != per_trigger_dirs.end())
+            return it->second;
+        const std::string name = registry.name_of(idx);
+        TDirectory *d = trigger_dir->mkdir(name.c_str());
+        per_trigger_dirs[idx] = d;
+        return d;
+    };
+    auto write_in = [&](int idx, auto *h) {
+        if (!h) return;
+        auto *d = get_dir_for(idx);
+        d->cd();
+        h->Write();
+    };
+
     for (auto &[key, val] : h_trigger_frame_population)
-        val->Write();
+        write_in(key, val.get());
     for (auto &[key, val] : h_trigger_time_diff_w_cherenkov)
     {
-        val->Scale(1. / h2_trigger_matrix->GetBinContent(registry.index_of(key) + 1, registry.index_of(key) + 1));
-        val->Write();
+        val->Scale(1. / h2_trigger_matrix->GetBinContent(
+                            registry.index_of(key) + 1,
+                            registry.index_of(key) + 1));
+        write_in(key, val.get());
     }
     for (auto &[key, val] : h_trigger_hit_multiplicity)
     {
-        val[0]->Write();
-        val[1]->Write();
+        write_in(key, val[0].get());
+        write_in(key, val[1].get());
     }
     for (auto &[key, val] : h_trigger_full_hitmap)
-        val->Write();
+        write_in(key, val.get());
     for (auto &[key, val] : h_trigger_dt)
     {
         val->Scale(1., "width");
-        val->Write();
+        write_in(key, val.get());
     }
     //  ---
     //  --- Timing
@@ -1286,70 +1331,128 @@ void lightdata_writer(
     }
     //  ---
     //  --- Config — write all processing settings for reproducibility
+    //
+    //  Routed through util::ConfigDump (include/utility/config_dump.h)
+    //  so every writer in the project shares one ``Config/`` layout
+    //  and the QA dashboard's DataInspectPane reads them uniformly.
+    //  The on-disk schema is unchanged from the hand-rolled version
+    //  this replaces — same key names, same TParameter/TNamed kinds.
     {
-        TDirectory *cfg_dir = outfile->mkdir("Config");
-        cfg_dir->cd();
+        util::ConfigDump cfg(outfile.get());
 
-        //  Numeric values as TParameter so they are directly readable downstream
-        TParameter<int> p_frame_size("frame_size", framer_cfg.frame_size);
-        TParameter<int> p_first_frames_trigger("first_frames_trigger", framer_cfg.first_frames_trigger);
-        TParameter<int> p_afterpulse_deadtime("afterpulse_deadtime", framer_cfg.afterpulse_deadtime);
-        TParameter<int> p_trigger_secondary_window("trigger_secondary_window", framer_cfg.trigger_secondary_window);
-        TParameter<double> p_frame_length_ns("frame_length_ns", framer_cfg.frame_length_ns());
-        p_frame_size.Write();
-        p_first_frames_trigger.Write();
-        p_afterpulse_deadtime.Write();
-        p_trigger_secondary_window.Write();
-        p_frame_length_ns.Write();
+        //  Framer numeric knobs.
+        cfg.add("frame_size",                framer_cfg.frame_size)
+           .add("first_frames_trigger",      framer_cfg.first_frames_trigger)
+           .add("afterpulse_deadtime",       framer_cfg.afterpulse_deadtime)
+           .add("trigger_secondary_window",  framer_cfg.trigger_secondary_window)
+           .add("frame_length_ns",           framer_cfg.frame_length_ns());
 
         //  QA windows used by the afterpulse sideband subtraction and the CT scan.
-        TParameter<int> p_qa_ap_near_lo("qa_afterpulse_near_lo", qa_cfg.afterpulse_near_lo);
-        TParameter<int> p_qa_ap_near_hi("qa_afterpulse_near_hi", qa_cfg.afterpulse_near_hi);
-        TParameter<int> p_qa_ap_sideband_offset("qa_afterpulse_sideband_offset", qa_cfg.afterpulse_sideband_offset);
-        TParameter<int> p_qa_ct_scan_dt_min("qa_ct_scan_dt_min", qa_cfg.ct_scan_dt_min);
-        TParameter<int> p_qa_ct_scan_dt_max("qa_ct_scan_dt_max", qa_cfg.ct_scan_dt_max);
-        TParameter<int> p_qa_ct_phys_signal_lo("qa_ct_phys_signal_lo", qa_cfg.ct_phys_signal_lo);
-        TParameter<int> p_qa_ct_phys_signal_hi("qa_ct_phys_signal_hi", qa_cfg.ct_phys_signal_hi);
-        TParameter<int> p_qa_ct_elec_signal_lo("qa_ct_elec_signal_lo", qa_cfg.ct_elec_signal_lo);
-        TParameter<int> p_qa_ct_elec_signal_hi("qa_ct_elec_signal_hi", qa_cfg.ct_elec_signal_hi);
-        p_qa_ap_near_lo.Write();
-        p_qa_ap_near_hi.Write();
-        p_qa_ap_sideband_offset.Write();
-        p_qa_ct_scan_dt_min.Write();
-        p_qa_ct_scan_dt_max.Write();
-        p_qa_ct_phys_signal_lo.Write();
-        p_qa_ct_phys_signal_hi.Write();
-        p_qa_ct_elec_signal_lo.Write();
-        p_qa_ct_elec_signal_hi.Write();
+        cfg.add("qa_afterpulse_near_lo",        qa_cfg.afterpulse_near_lo)
+           .add("qa_afterpulse_near_hi",        qa_cfg.afterpulse_near_hi)
+           .add("qa_afterpulse_sideband_offset",qa_cfg.afterpulse_sideband_offset)
+           .add("qa_ct_scan_dt_min",            qa_cfg.ct_scan_dt_min)
+           .add("qa_ct_scan_dt_max",            qa_cfg.ct_scan_dt_max)
+           .add("qa_ct_phys_signal_lo",         qa_cfg.ct_phys_signal_lo)
+           .add("qa_ct_phys_signal_hi",         qa_cfg.ct_phys_signal_hi)
+           .add("qa_ct_elec_signal_lo",         qa_cfg.ct_elec_signal_lo)
+           .add("qa_ct_elec_signal_hi",         qa_cfg.ct_elec_signal_hi);
 
-        //  Config file paths as TNamed
-        TNamed n_trigger_conf("trigger_conf_file", trigger_setup_file.c_str());
-        TNamed n_readout_conf("readout_conf_file", readout_config_file.c_str());
-        TNamed n_mapping_conf("mapping_conf_file", mapping_config_file.c_str());
-        TNamed n_fine_calib_conf("fine_calib_conf_file", fine_calibration_config_file.c_str());
-        TNamed n_framer_conf("framer_conf_file", framer_conf_file.c_str());
-        n_trigger_conf.Write();
-        n_readout_conf.Write();
-        n_mapping_conf.Write();
-        n_fine_calib_conf.Write();
-        n_framer_conf.Write();
+        //  Conf-file paths + verbatim TOML snapshots.  ``add_conf_file``
+        //  writes both ``<key>_file`` (the path as TNamed) and
+        //  ``<key>_toml`` (the file content as TNamed) — matches the
+        //  previous hand-rolled emission exactly.
+        cfg.add_conf_file("trigger_conf",   trigger_setup_file)
+           .add_conf_file("readout_conf",   readout_config_file)
+           .add_conf_file("mapping_conf",   mapping_config_file)
+           .add_conf_file("framer_conf",    framer_conf_file)
+           .add_conf_file("streaming_conf", streaming_conf_file)
+           //  Fine-calib has no TOML body to snapshot in v1 (it's a
+           //  text file produced by pulser_calib_writer); only the
+           //  path is recorded so downstream knows which calib was used.
+           .add_path("fine_calib_conf_file", fine_calibration_config_file);
+    }
 
-        //  Raw TOML content snapshots — read each config file and store verbatim
-        auto write_toml_snapshot = [&](const std::string &key, const std::string &path)
-        {
-            std::ifstream f(path);
-            if (!f.good())
+    //  ---
+    //  --- Curated QA PDFs for the dashboard
+    //
+    //  The QA tab's "Lightdata" sub-tab looks for *.pdf under
+    //  ``Data/<run>/qa/lightdata/`` and renders them inline.  Emit a
+    //  small, curated set here — these are the plots a shifter looks
+    //  at first; the full set still lives in lightdata.root for
+    //  deep dives via the Inspect → TBrowser path.
+    //
+    //  Order matters: the 2-digit filename prefix governs the order
+    //  the dashboard renders them in (alphabetical by basename).
+    //
+    //  Failures are quiet — TCanvas::SaveAs reports its own warnings
+    //  to ROOT's logger and we don't want a broken plot to tank the
+    //  whole writer run.
+    {
+        const std::string run_dir = data_repository + "/" + run_name;
+        auto save_one = [&run_dir](int order, const std::string &name,
+                                   TH1 *h, const char *draw_opt) {
+            if (!h)
                 return;
-            std::ostringstream ss;
-            ss << f.rdbuf();
-            TNamed named(key.c_str(), ss.str().c_str());
-            named.Write();
+            // Compose a unique canvas name per plot so simultaneous
+            // saves don't collide on the gROOT canvas registry.
+            TCanvas c(TString::Format("c_qa_lightdata_%02d_%s", order, name.c_str()),
+                      "", 1200, 800);
+            h->Draw(draw_opt);
+            const auto path = util::qa::pdf_path(run_dir, "lightdata", order, name);
+            c.SaveAs(path.string().c_str());
         };
-        write_toml_snapshot("trigger_conf_toml", trigger_setup_file);
-        write_toml_snapshot("readout_conf_toml", readout_config_file);
-        write_toml_snapshot("mapping_conf_toml", mapping_config_file);
-        write_toml_snapshot("framer_conf_toml", framer_conf_file);
-        write_toml_snapshot("streaming_conf_toml", streaming_conf_file);
+
+        // 01 Trigger coincidence matrix — which triggers fire together.
+        save_one(1, "trigger_matrix",       h2_trigger_matrix.get(),       "colz");
+        // 02 Timing chip-0 vs chip-1 alignment — health of the timing reference.
+        save_one(2, "timing_alignment",     h_timing_ref_delta.get(),      "hist");
+        // 03 Single-pixel DCR hitmap — surfaces hot / dead channels.
+        save_one(3, "dcr_hitmap",           h_dcr_hitmap.get(),            "colz");
+        // 04 Afterpulse hitmap (subtracted) — diagnostic for AP cleaning.
+        save_one(4, "afterpulse_hitmap",    h_afterpulse_hitmap.get(),     "colz");
+    }
+
+    //  ---
+    //  --- Publish curated scalars to AnalysisResults (cross-run store)
+    //
+    //  Dual-backend phase: AnalysisResults::update writes both
+    //  ``<repo>/standard_results.root`` (the existing TTree the legacy
+    //  plotting macros read) and a sibling ``standard_results.toml``
+    //  (the new dashboard-friendly format).  See DISCUSSION.md.
+    //
+    //  Sensor tag comes from the cherenkov role's readout config — the
+    //  single source of truth for SiPM type added in this campaign.
+    //  Falls back to ``"all"`` when no tag is set so we never write an
+    //  empty sensor key (which would defeat the slicing dimension).
+    {
+        std::string sensor = "all";
+        if (const auto *cher = framer.get_readout_config()
+                .find_by_name("cherenkov"))
+        {
+            if (!cher->sensor_type.empty())
+                sensor = cher->sensor_type;
+        }
+
+        //  Cross-run aggregate lives next to the run directories
+        //  (``<repo>/standard_results.root``).  The legacy
+        //  ``extData/`` hard-code failed whenever the writer was
+        //  launched from a cwd that didn't happen to have an
+        //  ``extData/`` directory — the dashboard does exactly that.
+        AnalysisResults ar(data_repository + "/standard_results.root");
+        ar.update(ResultMap{
+            // n_events: total trigger-matrix entries (≈ frames processed).
+            {{run_name, sensor, "lightdata.n_events"},
+             {static_cast<double>(h2_trigger_matrix->GetEntries()), 0.0}},
+            // n_dcr_hits: total entries in the single-pixel-noise hitmap.
+            {{run_name, sensor, "lightdata.n_dcr_hits"},
+             {static_cast<double>(h_dcr_hitmap->GetEntries()), 0.0}},
+            // n_afterpulse_hits: subtracted afterpulse-hitmap integral
+            // (can be negative when the subtraction overshoots — useful
+            // diagnostic on its own).
+            {{run_name, sensor, "lightdata.n_afterpulse_hits"},
+             {static_cast<double>(h_afterpulse_hitmap->GetEntries()), 0.0}},
+        }, /*source=*/"lightdata");
     }
     //  outfile closed automatically by TFilePtr dtor
     //  End: QA plots

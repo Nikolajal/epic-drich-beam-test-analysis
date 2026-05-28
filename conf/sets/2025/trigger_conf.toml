@@ -1,0 +1,60 @@
+# trigger_conf.2025.toml — trigger source definitions for the 2025 test-beam run
+#
+# Each [[trigger]] entry defines one trigger source. The parser stops reading at
+# the first "##" comment line, so entries below that marker are safely ignored
+# and can be used for disabled triggers, notes, or examples.
+
+[[trigger]]
+name   = "luca_and_finger"   # human-readable label used in output trees and logs
+index  = 0                   # trigger index (0-based); referenced in hit bitmasks
+device = 196                 # ALCOR device ID that provides the trigger signal
+delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+
+[[trigger]]
+name   = "broad_scintillator"   # human-readable label used in output trees and logs
+index  = 1                      # trigger index (0-based); referenced in hit bitmasks
+device = 197                    # ALCOR device ID that provides the trigger signal
+delay  = 117                    # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+
+##
+# Everything below this line is ignored by the parser.
+# Good for disabled entries, notes, changelogs, etc.
+
+# ---------------------------------------------------------------------------
+# Schema reference (see DISCUSSION.md → D-05)
+#
+# Every [[trigger]] entry is exactly one of two shapes — nothing in between.
+#
+# DEVICE-MODE: the hardware tags the word as a trigger.  The entry just
+# attaches a name, an index, and a delay offset.  One per `device`.
+#   Required: name, index, device, delay
+#   No source-selector keys (no fifo/column/pixel/eo_channel).
+#
+# CHANNEL-MODE: a normal data channel is FORCED into the trigger path.
+# Required: name, index, device, delay, fifo, AND a channel position:
+#   - column + pixel (canonical), or
+#   - eo_channel ∈ [0, 31]   (= column * 4 + pixel)
+# One per (device, fifo, column, pixel).
+#
+# Legacy fields `chip` and `use_hit` are no longer accepted — entries
+# that still set them get a deprecation warning and the field is ignored.
+# ---------------------------------------------------------------------------
+
+# Example: channel-mode using column + pixel
+[[trigger]]
+name   = "my_pixel_trigger"
+index  = 3
+device = 196
+fifo   = 5
+column = 3
+pixel  = 0
+delay  = 80
+
+# Example: channel-mode using eo_channel (equivalent to column=3, pixel=0)
+[[trigger]]
+name       = "my_pixel_trigger_alt"
+index      = 4
+device     = 196
+fifo       = 5
+eo_channel = 12
+delay      = 80

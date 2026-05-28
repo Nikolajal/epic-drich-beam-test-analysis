@@ -1,0 +1,38 @@
+# readout_config.toml — ALCOR device and chip assignment per sub-detector role
+#
+# Devices are grouped by their physical role. The framer uses these lists to
+# route hits into the correct processing path (Cherenkov light, timing, tracking).
+# chips = "*" reads all 8 chips on the device; an explicit list reads only those chips.
+
+[readout]
+
+# ALCOR devices instrumented on the Cherenkov radiator PDUs.
+[readout.cherenkov]
+# SiPM model deployed on this role's PDUs.  Recognised tags today:
+# "1350" (Hamamatsu S13360-1350...), "1375" (S13360-1375...), "mixed"
+# (heterogeneous setup), or "" (unspecified).  Single source of truth
+# for downstream code that needs to tag results by sensor — the
+# AnalysisResults sensor dimension reads it from here, as do future
+# QA plots split by sensor.  Per-device override is a future extension.
+sensor_type = ""
+devices = [
+    { id = 192, chips = "*" },
+    { id = 193, chips = "*" },
+    { id = 194, chips = "*" },
+    { id = 195, chips = "*" },
+    { id = 196, chips = "*" },
+    { id = 197, chips = "*" },
+    { id = 198, chips = "*" },
+    { id = 199, chips = "*" },
+]
+
+# ALCOR devices used as timing reference (e.g. MCP-PMT or fast scintillator).
+[readout.timing]
+devices = [
+    { id = 200, chips = [0, 2] },   # read only chips 0 and 2 (active channels on this board)
+]
+
+# ALCOR devices dedicated to charged-particle tracking.
+# Empty → no standalone tracking device in this configuration.
+[readout.tracking]
+devices = []

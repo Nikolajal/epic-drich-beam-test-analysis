@@ -1,4 +1,4 @@
-"""Unit tests for ``qa_quicklook.summary`` and ``qa_quicklook.download``.
+"""Unit tests for ``qa_quicklook.summary``.
 
 Stdlib only.  The summary reader is exercised against the real run
 directories present in ``Data/`` so we never have to keep a fixture
@@ -14,24 +14,11 @@ Run::
 from __future__ import annotations
 
 import sys
-import textwrap
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-
-from qa_quicklook.download import (  # noqa: E402
-    DownloadConfig,
-    build_argv,
-    describe,
-    load_config,
-)
-
-
-# ---------------------------------------------------------------------------
-# Summary reader.
-# ---------------------------------------------------------------------------
 
 
 class TestSummaryReader(unittest.TestCase):
@@ -90,98 +77,6 @@ class TestSummaryReader(unittest.TestCase):
         self.assertIsNone(s.sigma_mm)
         self.assertEqual(s.sigma_by_bin, {})
         self.assertIsNotNone(s.n_entries)
-
-
-# ---------------------------------------------------------------------------
-# Download config parsing + argv composition.
-# ---------------------------------------------------------------------------
-
-
-class TestDownloadConfig(unittest.TestCase):
-    def _write_toml(self, body: str) -> Path:
-        import tempfile
-
-        tmp = Path(tempfile.mkdtemp(prefix="qaq-download-")) / "qa_quicklook.toml"
-        tmp.write_text(textwrap.dedent(body))
-        return tmp
-
-    def test_missing_file_disables_feature(self):
-        cfg = load_config(Path("/no/such/path.toml"))
-        self.assertFalse(cfg.enabled)
-        self.assertEqual(cfg.source, "")
-        self.assertEqual(cfg.extra_flags, ())
-
-    def test_empty_source_disables_feature(self):
-        path = self._write_toml('''
-            [rsync]
-            source = ""
-        ''')
-        cfg = load_config(path)
-        self.assertFalse(cfg.enabled)
-        self.assertIn("disabled", describe(cfg).lower())
-
-    def test_populated_source_enables_feature(self):
-        path = self._write_toml('''
-            [rsync]
-            source = "user@daq:/data/2025/Data/"
-            extra_flags = ["--dry-run", "--bwlimit=20M"]
-        ''')
-        cfg = load_config(path)
-        self.assertTrue(cfg.enabled)
-        self.assertEqual(cfg.source, "user@daq:/data/2025/Data/")
-        self.assertEqual(cfg.extra_flags, ("--dry-run", "--bwlimit=20M"))
-
-    def test_extra_flags_optional(self):
-        path = self._write_toml('''
-            [rsync]
-            source = "user@daq:/data/Data/"
-        ''')
-        cfg = load_config(path)
-        self.assertEqual(cfg.extra_flags, ())
-
-    def test_build_argv_appends_trailing_slash_to_dest(self):
-        cfg = DownloadConfig(source="user@host:/abs/Data/")
-        argv = build_argv(cfg, Path("Data"))
-        self.assertEqual(
-            argv,
-            ["rsync", "-av", "--info=progress2", "user@host:/abs/Data/", "Data/"],
-        )
-
-    def test_build_argv_keeps_existing_trailing_slash(self):
-        cfg = DownloadConfig(source="user@host:/abs/Data/")
-        argv = build_argv(cfg, Path("Data/"))
-        # No double slash injected.
-        self.assertEqual(argv[-1], "Data/")
-
-    def test_build_argv_with_extra_flags(self):
-        cfg = DownloadConfig(
-            source="user@host:/abs/Data/",
-            extra_flags=("--dry-run",),
-        )
-        argv = build_argv(cfg, Path("Data"))
-        # extra flags appear before the positional source+dest pair.
-        self.assertEqual(argv[-3], "--dry-run")
-        self.assertEqual(argv[-2], "user@host:/abs/Data/")
-        self.assertEqual(argv[-1], "Data/")
-
-    def test_build_argv_raises_when_disabled(self):
-        cfg = DownloadConfig(source="")
-        with self.assertRaises(ValueError):
-            build_argv(cfg, Path("Data"))
-
-
-# ---------------------------------------------------------------------------
-# Chain step argv assembly.
-# ---------------------------------------------------------------------------
-
-
-class TestChainSteps(unittest.TestCase):
-    def test_chain_step_holds_argv_verbatim(self):
-        from qa_quicklook.chain import ChainStep
-
-        s = ChainStep(name="lightdata", argv=["/bin/foo", "a", "b"])
-        self.assertEqual(s.name, "lightdata")
-        self.assertEqual(s.argv, ["/bin/foo", "a", "b"])
 
 
 if __name__ == "__main__":

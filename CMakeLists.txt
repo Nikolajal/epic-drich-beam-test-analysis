@@ -230,12 +230,25 @@ add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
 add_executable(pulser_calib_writer   macros/utilities/pulser_calib_writer.cpp)
 add_executable(btana-dump            macros/utilities/btana_dump.cpp)
+# Stand-alone TBrowser launcher used by the QA dashboard's Inspect
+# button.  See macros/utilities/qa_tbrowser.cpp for the rationale.
+add_executable(qa_tbrowser           macros/utilities/qa_tbrowser.cpp)
+# Sibling — pops a single histogram on a TCanvas (Open-in-ROOT path).
+# See macros/utilities/qa_tcanvas.cpp.
+add_executable(qa_tcanvas            macros/utilities/qa_tcanvas.cpp)
 
 target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
 target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
 target_link_libraries(pulser_calib_writer   PRIVATE beam_test_analysis)
 target_link_libraries(btana-dump            PRIVATE beam_test_analysis)
+# qa_tbrowser + qa_tcanvas only need ROOT (no project lib) since
+# they're pure TApplication glue.  Link against the umbrella ROOT
+# library target FindROOT already exports for the writers.
+target_include_directories(qa_tbrowser     PRIVATE ${ROOT_INCLUDE_DIRS})
+target_link_libraries(qa_tbrowser           PRIVATE ${ROOT_LIBRARIES})
+target_include_directories(qa_tcanvas      PRIVATE ${ROOT_INCLUDE_DIRS})
+target_link_libraries(qa_tcanvas            PRIVATE ${ROOT_LIBRARIES})
 
 # --------------------------------------------------
 # Install Rules
@@ -247,6 +260,8 @@ install(TARGETS
     recotrackdata_writer
     pulser_calib_writer
     btana-dump
+    qa_tbrowser
+    qa_tcanvas
     EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

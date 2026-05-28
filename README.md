@@ -22,6 +22,7 @@ The framework provides core data structures, I/O utilities, ROOT dictionary supp
 - [Configuration](#configuration)
 - [Documentation](#documentation)
 - [Testing & CI](#testing--ci)
+- [Operator dashboard](#operator-dashboard)
 - [Open design questions](#open-design-questions)
 - [Contributing](#contributing)
 - [Authors](#authors)
@@ -393,6 +394,29 @@ cleans up ACLiC intermediates on exit so the source tree stays tidy.
 > is tracked separately; the CI hook for this script lights up once that
 > work lands (and once the OS build legs are re-enabled — see
 > [`DISCUSSION.md`](DISCUSSION.md) §ci-os-legs).
+
+---
+
+## Operator dashboard
+
+A PySide6 dashboard for shift-time operations lives under
+[`qa_quicklook/`](qa_quicklook).  Single-window app with four tabs —
+**Run Manager** (launch the writer chain, follow it live, status
+lock files survive a dashboard restart, `🔍 Inspect` button pops up
+TBrowser), **QA** (placeholder), **Runlist** (browse / edit
+`run-lists/2025.database.toml` with forward-inheritance), and
+**Settings** (edit every `conf/*.toml` two-way, with comment-
+preserving write-back, a setting-set system on top of
+`conf/defaults/` + `conf/sets/<year>/` + `conf/working/`, and the
+dashboard's own theme + behaviour knobs).
+
+Launch:
+
+```bash
+./scripts/qa_quicklook              # bootstrap (.venv) + launch GUI
+```
+
+Full description in [`qa_quicklook/README.md`](qa_quicklook/README.md).
 
 ---
 

@@ -170,8 +170,17 @@ public:
      * Entries not present in @p entries are preserved unchanged.
      *
      * @param entries  Map of keys and values to insert or update.
+     * @param source   Optional provenance tag.  When non-empty, one
+     *                 ``[[entry]]`` block per key in @p entries is appended
+     *                 to the sibling ``*.audit.toml`` file via
+     *                 ``util::audit::log`` (see ``utility/audit.h``).
+     *                 Pass the writer name — ``"lightdata"``,
+     *                 ``"recodata"``, ``"recotrack"``, ``"calibration"`` —
+     *                 or ``"dashboard"`` from Python edits.  Empty (the
+     *                 default) preserves the pre-audit behaviour: no log.
      */
-    void update(const ResultMap &entries) const;
+    void update(const ResultMap &entries,
+                const std::string &source = "") const;
 
     /**
      * @brief Upsert a single entry into the persistent store.
@@ -181,8 +190,11 @@ public:
      * @param key    Three-component key (run, sensor, quantity).
      * @param value  Central value to store.
      * @param error  Associated uncertainty (default 0).
+     * @param source Optional provenance tag (see batch overload).
      */
-    void update(const ResultKey &key, double value, double error = 0.) const { update(ResultMap{{key, {value, error}}}); }
+    void update(const ResultKey &key, double value, double error = 0.,
+                const std::string &source = "") const
+    { update(ResultMap{{key, {value, error}}}, source); }
 
     /**
      * @brief Return the filesystem path this handle points to.

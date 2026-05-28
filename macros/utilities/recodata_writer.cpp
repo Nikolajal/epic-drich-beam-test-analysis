@@ -12,11 +12,12 @@ int main(int argc, char **argv)
 
     std::string data_repository;
     std::string run_name;
-    //  Mapping default carries the year suffix because the geometry
-    //  evolved across run periods — see conf/mapping_conf.YYYY.toml.
-    //  The "current year" default lives here in the CLI; pass
-    //  --Mapping-conf to override (e.g. for the 2024 layout).
-    std::string mapping_conf = "conf/mapping_conf.2025.toml";
+    //  Mapping default is the active master `conf/mapping_conf.toml` —
+    //  a symlink managed by the QA dashboard's "setting set" picker
+    //  (defaults / 2023 / 2024 / 2025 / working).  Pass --Mapping-conf
+    //  to override against a specific file (e.g. when running outside
+    //  the dashboard).
+    std::string mapping_conf = "conf/mapping_conf.toml";
     std::string trigger_config_file;
     std::string framer_config_file;
     std::string recodata_config_file;

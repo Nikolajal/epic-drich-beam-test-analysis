@@ -567,7 +567,7 @@ config schema rework — the entire scoring/multimap design was superseded by a
 two-mode `(DeviceTrigger, ChannelTrigger)` split with O(1) hash lookups.  See
 the in-code docs in [`include/triggers.h`](include/triggers.h) and the new
 `pack_channel_key` / `TriggerConfigSet` helpers; the schema notes in
-[`conf/trigger_conf.2025.toml`](conf/trigger_conf.2025.toml) summarise the
+[`conf/trigger_conf.toml`](conf/trigger_conf.toml) summarise the
 TOML shapes._
 
 ### Medium restructures
