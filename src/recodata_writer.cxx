@@ -28,7 +28,9 @@
 //  + per-ring fit_circle re-run on mask-tagged hits → N_photons /
 //  radial(R) observables filled inline.
 #include "utility/radiator_efficiency.h"
+#include "analysis_results.h"
 #include "utility/circle_fit.h"
+#include "utility/config_dump.h"
 #include "utility/config_reader.h"
 #include <set>
 #include <memory>
@@ -1515,6 +1517,72 @@ void recodata_writer(
         build_summary_hist("h_sigma_R_intrinsic_summary",
                            "#sigma_{R, intrinsic} (mm)",
                            /*want_residual=*/false);
+    }
+
+    //  ---
+    //  --- Config — self-describing parameter dump.
+    //
+    //  Routed through util::ConfigDump for uniformity with the other
+    //  writers (lightdata / pulser_calib / recotrack) so the QA
+    //  dashboard's DataInspectPane reads them all the same way.
+    //  Previously recodata.root carried NO Config/ at all, which is
+    //  what the "doesn't carry a Config/ tree" message in the GUI
+    //  came from.
+    {
+        util::ConfigDump dump(output_file.get());
+        //  Runtime CLI flags.
+        dump.add("max_spill",      max_spill)
+            .add("force_rebuild",  force_rebuild)
+            .add("force_upstream", force_upstream);
+        //  Operationally interesting resolved values — the verbatim
+        //  TOML snapshots below carry the full story; these surface the
+        //  knobs people actually scan for in the dashboard.
+        dump.add("frame_size",                framer_cfg.frame_size)
+            .add("frame_length_ns",           framer_cfg.frame_length_ns())
+            .add("n_phi_bins_coverage",       recodata_cfg.n_phi_bins_coverage)
+            .add("n_r_bins_coverage",         recodata_cfg.n_r_bins_coverage)
+            .add("r_min_coverage_mm",         recodata_cfg.r_min_coverage_mm)
+            .add("r_max_coverage_mm",         recodata_cfg.r_max_coverage_mm)
+            .add("channel_half_width_mm",     recodata_cfg.channel_half_width_mm)
+            .add("nominal_centre_x_mm",       recodata_cfg.nominal_centre_x_mm)
+            .add("nominal_centre_y_mm",       recodata_cfg.nominal_centre_y_mm);
+        //  Conf-file paths + verbatim TOML bodies for every conf the
+        //  writer reads (mapping, trigger, framer, recodata) plus the
+        //  streaming conf that's only forwarded to the lightdata
+        //  cascade on --force-upstream (recorded anyway so the
+        //  cascade is reproducible from this file alone).
+        dump.add_conf_file("mapping_conf",   mapping_conf)
+            .add_conf_file("trigger_conf",   trigger_conf)
+            .add_conf_file("framer_conf",    framer_conf)
+            .add_conf_file("recodata_conf",  recodata_conf)
+            .add_conf_file("streaming_conf", streaming_conf);
+    }
+
+    //  ---
+    //  --- Publish cross-run scalars to AnalysisResults.
+    //
+    //  Same dual-backend store (<repo>/standard_results.{root,toml})
+    //  that lightdata + recotrack write to.  Sensor key is "all" —
+    //  per-sensor splitting (1350 / 1375) would require redoing the
+    //  fits per sensor, which is downstream-macro work; the dashboard
+    //  trend reader can already slice on "all".
+    {
+        //  Sibling of the run directories — i.e. ``<repo>/standard_results.root``
+        //  — so the cross-run aggregate lives next to the per-run data
+        //  it summarises.  Earlier ``extData/`` literal was a stale
+        //  hard-code from the legacy macro paths and failed to open
+        //  whenever the dashboard launched from a different cwd.
+        AnalysisResults ar(data_repository + "/standard_results.root");
+        ar.update(ResultMap{
+            {{run_name, "all", "recodata.n_spills"},
+             {static_cast<double>(all_spills), 0.0}},
+            {{run_name, "all", "recodata.frame_size"},
+             {static_cast<double>(framer_cfg.frame_size), 0.0}},
+            {{run_name, "all", "recodata.nominal_centre_x_mm"},
+             {static_cast<double>(recodata_cfg.nominal_centre_x_mm), 0.0}},
+            {{run_name, "all", "recodata.nominal_centre_y_mm"},
+             {static_cast<double>(recodata_cfg.nominal_centre_y_mm), 0.0}},
+        }, /*source=*/"recodata");
     }
     //
     //  input_file and output_file closed automatically by TFilePtr dtors.

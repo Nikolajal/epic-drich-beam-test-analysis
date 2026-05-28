@@ -1,0 +1,8 @@
+PySide6>=6.5
+tomlkit>=0.12
+uproot>=5.3
+# Matplotlib's QtAgg backend is what the QA tab's per-run thumbnails
+# render onto.  PySide6 is the Qt binding it picks up automatically;
+# no extra config needed beyond the import.
+matplotlib>=3.8
+numpy>=1.26

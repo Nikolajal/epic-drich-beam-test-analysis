@@ -46,8 +46,11 @@
  * @endcode
  *
  * See [`triggers/config.h`](triggers/config.h) for the full schema and
- * [`conf/trigger_conf.2025.toml`](../conf/trigger_conf.2025.toml) for live
+ * [`conf/trigger_conf.toml`](../conf/trigger_conf.toml) for live
  * examples of both modes (including the `eo_channel` alternative).
+ * The 2024 / 2025 year variants live under
+ * [`conf/sets/<year>/trigger_conf.toml`](../conf/sets/) after the
+ * setting-set migration.
  */
 
 #include "triggers/events.h"

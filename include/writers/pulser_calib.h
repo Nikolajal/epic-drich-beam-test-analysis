@@ -101,12 +101,36 @@ namespace btana
  *                          accidental overwrites of a vetted calibration.
  * @param max_spill         Cap on the number of spills processed.
  *                          @c -1 (default) processes the whole run.
+ * @param anchor_device_override     CLI override for ``cfg.anchor_device``.
+ *                                   @c -1 (default) keeps the TOML value.
+ *                                   Set ≥ 0 to override per-launch from
+ *                                   the dashboard without rewriting the
+ *                                   persistent calibration_conf.toml.
+ * @param anchor_chip_override       CLI override for ``cfg.anchor_chip``.
+ *                                   @c -1 keeps the TOML value.
+ * @param anchor_eo_channel_override CLI override for ``cfg.anchor_eo_channel``.
+ *                                   @c -1 keeps the TOML value.
+ * @param pulser_period_cc_override  CLI override for ``cfg.pulser_period_cc``.
+ *                                   @c -1.0 keeps the TOML value;
+ *                                   any value @c >= 0.0 wins (0.0
+ *                                   means "fit per channel" — same
+ *                                   semantic as the TOML field).
+ *                                   The dashboard converts an
+ *                                   operator-entered pulser
+ *                                   frequency (Hz) into ``cc`` before
+ *                                   calling this binary, so the
+ *                                   on-the-wire override is always
+ *                                   in cc — matches the TOML field.
  */
 void pulser_calib_writer(
     const std::string &data_repository,
     const std::string &run_name,
     const std::string &calib_config_file = "conf/calib/calibration_conf.toml",
     bool force_rebuild = false,
-    int max_spill = -1);
+    int max_spill = -1,
+    int anchor_device_override = -1,
+    int anchor_chip_override = -1,
+    int anchor_eo_channel_override = -1,
+    double pulser_period_cc_override = -1.0);
 
 } // namespace btana

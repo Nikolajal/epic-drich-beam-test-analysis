@@ -49,7 +49,7 @@ void recodata_writer(
     int max_spill = 1000,
     bool force_rebuild = false,
     bool force_upstream = false,
-    std::string mapping_conf = "conf/mapping_conf.2025.toml",
+    std::string mapping_conf = "conf/mapping_conf.toml",
     std::string trigger_conf = "conf/trigger_conf.toml",
     std::string framer_conf = "conf/framer_conf.toml",
     std::string recodata_conf = "conf/recodata.toml",

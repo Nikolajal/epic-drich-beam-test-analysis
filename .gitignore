@@ -11,3 +11,9 @@ build/
 macros/*.h
 .claude
 *.pyc
+
+# qa_quicklook setting-set "working overlay" — per-operator scratch
+# space.  Master files at conf/<name>.toml symlink into here while
+# the dashboard has unsaved local edits; the directory itself stays
+# untracked so a dirty working tree doesn't follow operators around.
+conf/working/

@@ -25,7 +25,7 @@
 # ── Anchor channel ──────────────────────────────────────────────────
 # The channel pulsed by the external pulser; serves as the per-pulse
 # coincidence reference.  Convention: dRICH 2026 test-beam uses 192/0/0.
-anchor_device     = 192
+anchor_device     = 200
 anchor_chip       = 0
 anchor_eo_channel = 0
 

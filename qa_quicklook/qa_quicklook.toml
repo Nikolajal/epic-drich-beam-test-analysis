@@ -1,28 +1,34 @@
-# qa_quicklook.toml — local-machine configuration for the QA dashboard.
+# qa_quicklook.toml — dashboard-local configuration.
 #
-# This file is read at GUI startup.  It lives next to the package on the
-# *operator's* machine, not in the run database — none of the values
-# here describe physics, they describe how this workstation reaches the
-# DAQ host and where the analysis data sits on disk.
-#
-# Edit values in place.  Empty strings disable the corresponding feature
-# (e.g. an empty rsync source disables the Download button, with a
-# tooltip explaining why).
+# This file describes the operator's machine and visual preferences,
+# not the analysis pipeline.  Edit values in place; the dashboard
+# picks up changes within a second (no restart needed).
+
+[ui]
+show_advanced_qa = false      # Show the "Advanced QA" tab (plots and values pulled from ROOT macros). Off by default.
+theme            = "dark"     # Visual theme: "system" follows the OS, "light" or "dark" force a mode.
+plots_theme      = "follow"   # QA matplotlib plot theme: "follow" tracks the UI theme, "light"/"dark" pin it (useful when projector/printer/contrast preferences differ from the UI).
 
 [rsync]
-# Remote source for the "Download new runs" button.  Format:
-#
-#     "<user>@<host>:/absolute/path/to/Data/"
-#
-# Trailing slash matters: with one, rsync copies the *contents* of the
-# remote directory into the local Data/.  Without one it would nest
-# another Data/ underneath, which is never what we want here.
-#
-# Example:
-#     source = "drich@daqhost.lab:/data/2025_beamtest/Data/"
-source = ""
+# Where the writers' raw data lives on the DAQ machine.  The (future)
+# Download button shells out to ``rsync -av <source>:<remote_data_dir>/<run_id>
+# <local_data_dir>/`` so only the selected run id moves over the wire.
+remote_host      = "eic@eicserv01"         # SSH host (e.g. "drich-daq.local") — empty disables the Download button.
+remote_data_dir  = "/data/2026-testbeam/preparation/testpulse/"         # Absolute path on the DAQ host where run directories live.
+local_data_dir   = "Data"     # Project-relative path where downloaded runs land.
+extra_args       = "-av"      # Extra flags forwarded to rsync (compression, partial, bandwidth limits, …).
 
-# Extra flags appended after the standard `-av --info=progress2`.  Use
-# e.g. `["--dry-run"]` while testing connectivity, or `["--bwlimit=20M"]`
-# to throttle.  Most shifts can leave this empty.
-extra_flags = []
+[detector]
+# Expected V_bias band per temperature window — drives the green/amber
+# chip next to the Detector row in the Run Manager run-info card.
+# Outside any defined band → the chip says "no opinion" rather than
+# guessing. Edit freely; the dashboard reads on every refresh.
+#
+# Format: list of {temp_min, temp_max, vbias_min, vbias_max} bands.
+# temp_min inclusive, temp_max exclusive so adjacent bands tile.
+vbias_check.bands = [
+    { temp_min = -40, temp_max = -20, vbias_min = 52.0, vbias_max = 56.0 },  # cold
+    { temp_min = -20, temp_max =   0, vbias_min = 50.0, vbias_max = 54.0 },  # cool
+    { temp_min =   0, temp_max =  20, vbias_min = 48.0, vbias_max = 52.0 },  # room
+    { temp_min =  20, temp_max =  40, vbias_min = 46.0, vbias_max = 50.0 },  # warm
+]

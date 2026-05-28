@@ -52,6 +52,7 @@ inline const std::set<std::string> lightdata_core_tags = {"timing", "tracking", 
 struct ReadoutConfigStruct
 {
     std::string name;                                      ///< Human-readable role name (e.g. @c "cherenkov").
+    std::string sensor_type;                               ///< SiPM model / sensor tag for this role (e.g. @c "1350", @c "1375", @c "mixed", @c ""=unspecified).
     std::map<uint16_t, std::vector<uint16_t>> device_chip; ///< Active chips per device.
 
     ReadoutConfigStruct() = default;
