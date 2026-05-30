@@ -2,18 +2,20 @@
 
 #   2025 Mirror Scan
 [runlists.2025_mirror_scan]
+campaign = ""   # short campaign tag — surfaces on the cross-shifter Google Sheet
 runs = [
-"20251111-105543", 
-"20251111-110914", 
+"20251111-105543",
+"20251111-110914",
 "20251111-111835",
-"20251111-113106", 
+"20251111-113106",
 "20251111-114254",
-"20251111-115851", 
-"20251111-124119", 
+"20251111-115851",
+"20251111-124119",
 "20251111-124758"]
 
 #   Vbias scan @ -28C
 [runlists.vbias_min28]
+campaign = ""
 runs = [
 "20251111-181940",
 "20251111-182949",
@@ -39,6 +41,7 @@ runs = [
 
 #   Temp scan @ 3OV delta_thr = 10
 [runlists.vbias_min30]
+campaign = ""
 runs = [
 "20251111-181940",
 "20251111-182949",
@@ -64,6 +67,7 @@ runs = [
 
 #   Mattia Valenti analysis
 [runlists.valenti]
+campaign = ""
 runs = [
     "20251111-105543",
     "20251111-110914",

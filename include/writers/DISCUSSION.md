@@ -1,8 +1,7 @@
 # Writers — design discussion & open questions
 
 > 🧭 **Hub:** project-wide design log + index of satellites lives at
-> [`../../DISCUSSION.md`](../../DISCUSSION.md).  Open items here
-> also show up in the top-level [`BACKLOG.md`](../../BACKLOG.md).
+> [`../../DISCUSSION.md`](../../DISCUSSION.md).
 
 Per-area discussion log for the writers (`pulser_calib_writer`,
 `lightdata_writer`, `recodata_writer`, `recotrackdata_writer`).  Use
@@ -109,6 +108,121 @@ satellites are the calibration working as intended, not a defect.
 
 ---
 
+## Shared anchor-Δt canvas (`render_anchor_dt_canvas`)
+
+The 3-pad ``Δt_{trg} vs spill`` zoom canvas (banner + +rollover pad +
+±250 cc main + −rollover pad, colz palette, equal-px/cc invariant) was
+originally inline in `pulser_calib_writer`.  Extracted 2026-05-29 to
+`include/writers/anchor_dt_canvas.h` / `src/writers/anchor_dt_canvas.cxx`
+so the same renderer covers both:
+
+- `pulser_calib_writer` — one canvas per run, anchor = a configured
+  channel (`cfg.anchor_device/chip/eo_channel`).
+- `lightdata_writer` — one canvas per ``TriggerNumber`` that fired
+  ≥ 1 time in the run.  Anchor = the trigger's own coarse counter;
+  Y = `c_hit − c_trigger` in cc.  Lazy-allocated per trigger; written
+  to the per-trigger TDirectory in `lightdata.root` and emitted as
+  `qa/lightdata/<NN>_anchor_dt_<trigger_name>.pdf` (NN starts at 05,
+  sorted by trigger registry index for deterministic file order).
+
+Layout invariant: **plot areas exactly 1:5:1** matching the
+100:500:100 cc Y-data ranges (equal px/cc).  Pad outlines work out to
+≈ 1:5:1.47 because the bot pad bundles a 6 % canvas-NDC x-axis area
+on top of its plot unit — the geometric trade for keeping the
+``spill`` x-axis title visible without clipping.  Tunables live at
+the top of the layout block in `anchor_dt_canvas.cxx`
+(`kBannerH`/`kXAxisH`/`kTopMargin`); change one, the rest re-solve.
+
 ## Lightdata / recodata / recotrackdata writers
 
-(No open items at sweep time.  Add as they surface.)
+Open design points captured 2026-05-29 (BACKLOG Q&A pass).
+
+### pulser_calib — design batch
+
+- **`±0.5 cc satellites in published `b`** — disambiguate
+  edge-quantisation artefact vs hardware slip by **per-spill
+  stability**: if the satellite population correlates with spill
+  number (clusters at specific spills), it's a real hardware slip
+  event; if uniform in time, it's coarse-edge quantisation noise.
+  The existing anchor-Δ vs spill diagnostic plot already carries the
+  signal — read it off, no new code needed for the measurement
+  protocol.
+- **Regime-2 slip pair-difference test** — design is clear: take
+  consecutive `(c_h − c_p)` pairs (same hardware, same anchor); under
+  pure quantisation noise their difference distributes as
+  `0 ± √2 · σ_quant`.  A real slip shows up as a step in the
+  pair-difference time series.  Quantitative thresholds get pinned
+  on first data run.
+- **γ-mode (Stage 2) per-TDC aggregation** — firm design: pool
+  cdiff histograms across TDCs that share the same `(chip,
+  channel_logical)` (i.e. TDCs that see the same physical pixel),
+  fit *once* per channel, distribute the result back.  Reduces per-
+  TDC statistical noise on the channels that have multiple TDCs
+  feeding them.
+- **Per-TDC residual σ propagation (`sigma_a` placeholder)** —
+  currently emitted as `0.0` (hard-coded at `pulser_calib_writer.cxx:820`).
+  Three sub-tasks: (i) compute per-TDC residual σ from the fit, (ii)
+  emit into the published TOML calibration file, (iii) define the
+  downstream meaning (does AlcorFinedata propagate this into the
+  per-hit time σ used by lightdata/recodata?).  (iii) is the design
+  question; the other two are wiring.
+
+### recodata writer — split / variant strategy
+
+- **Sensor-model split (k1350 / k1375)** — source the per-device
+  sensor type from `readout_conf.toml` (the existing per-role
+  `sensor_type` field).  Add the per-device override later
+  (separate Patch row, see `readout_config.toml`).
+- **Time-window QA split** — trigger-aligned windows, not
+  prompt/early/DCR.  See `triggers/streaming/DISCUSSION.md` →
+  "Recodata multiple time windows" for the rationale.
+- **φ-gap split** — **DROPPED 2026-05-29**.  Was on READY; user
+  decided the QA value didn't justify the complexity.
+- **Stage 2 multithreading (frames-within-spill)** — motivation is
+  pure **wall-clock reduction on large datasets** (idle cores during
+  per-spill serial loop).  *Not* latency for live operator feedback
+  (the per-spill loop is already fast enough for that).  This rules
+  out the schedulers that prioritise first-frame latency over
+  throughput.
+- **Ring → radiator labelling** — blocked on a **per-run beam-metadata
+  schema** that doesn't exist yet.  The current database has a
+  `radiators` field per run; what's missing is the ring-index ↔
+  radiator-index association rule.  Design the schema first, then
+  the writer wiring is straightforward.
+- **CB+pol3 N_γ restoration (with analytic integral)** — switched
+  away from CB on 2026-05-27 (Gauss+pol3 in `radial_fit.cxx`) because
+  CB tail parameters `(α, n)` rail-locked on low-stats / broad
+  samples, especially ring 2.  The **analytic-integral path
+  sidesteps this**: fix `α, n` at physical seeds (or fit loosely),
+  extract `N_γ` from the closed form (erf on Gaussian core +
+  power-law antiderivative on α-tail) instead of relying on a
+  well-converged fit.  Integration domain: right side → `+∞` since
+  the tail past `μ` is pure Gaussian; left side → `fit_lo` or
+  further as the α-tail prescribes.  Compare against a freshly
+  regenerated Gauss+pol3 baseline (re-run recodata on the standard
+  run before/after the change — the old snapshot dir is gone).
+
+### lightdata writer — 5 grouped @todos sub-roadmap
+
+The five grouped lightdata-writer sub-roadmap items (FIFO-in-config,
+etc.) are still valid; the inline `@todo` markers were lifted out of
+`lightdata_writer.cxx` into a prose pointer at the CLI-driver scope.
+Sub-roadmap on pickup:
+
+1. **FIFO in config file** — surface the FIFO id from
+   `readout_conf.toml` rather than `framer_conf` constants.
+2. **Single/multi-core consistency test** — golden-output diff
+   between `--jobs 1` and `--jobs N` on a small dataset; must be
+   bit-identical for non-mt-sensitive observables.
+3. **Afterpulse-fraction plot** — per-channel histogram of
+   "consecutive hits within afterpulse-Δt window" / "total hits";
+   currently the afterpulse logic flags hits but doesn't publish
+   the rate.
+4. **QA restructure / re-evaluate needs** — the Hough-refactor QA
+   landed per-ring histograms (`triggers/streaming/DISCUSSION.md` §
+   2.6 changes).  Audit which lightdata-side QA hists are now
+   redundant with the streaming-side ones; consolidate.
+5. **Config files from outside** — generalised "load this knob
+   from this `.toml`" wiring that replaces the per-config-struct
+   boilerplate (`framer_conf_reader`, `qa_conf_reader`,
+   `streaming_*_conf_reader`, ...).

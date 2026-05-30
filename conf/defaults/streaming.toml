@@ -22,13 +22,14 @@
 # excluded from the weight bundle — under-measured channels have wildly
 # variable rate estimates that would inflate the noise-score tail.
 #
-# Tune `n_sigma_threshold` offline from the two QA score histograms
-# (h_streaming_score_noise, h_streaming_score_data) — see § 1.5 in
-# include/triggers/streaming/DISCUSSION.md.  Set to a large value
-# (e.g. 1000) to disable firing while still accumulating QA hists.
+# Tune `n_sigma_threshold` PER-RUN from the QA score histograms via
+# `streaming_n_sigma_threshold = X` in `run-lists/<year>.database.toml`
+# (writer flag `--run-database` honours it).  Falls back to the C++
+# default (3.0) when neither the rundb field nor `--n-sigma-threshold`
+# is supplied.  To disable firing in QA mode, use conf/QA/streaming.toml
+# (1e9 sentinel).  See § 1.5.2 in include/triggers/streaming/DISCUSSION.md.
 [streaming_trigger]
 time_window_ns      =   20.0    # sliding-window width (ns)
-n_sigma_threshold   =   10.0    # fire when score >= this many sigma above noise mean
 min_noise_hits      =   10.0    # min noise-sample hits for a channel to enter the weight bundle
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -44,10 +45,11 @@ min_noise_hits      =   10.0    # min noise-sample hits for a channel to enter t
 # hits).  Centre/radius refinement happens in `recodata_writer` on the
 # mask-tagged hits — not in this stage.
 #
-# The `fit_circle_init_{x,y,r}` knobs below are retained for backwards
-# compatibility with existing TOMLs but are unused at runtime.
 # `time_window_ns` (inherited from [streaming_trigger]) and `max_rings`
 # (hardcoded to 2) are intentional non-knobs.
+# `fit_circle_init_{x,y,r}` were removed 2026-05-30 (C3.5) — recodata
+# seeds the per-ring refit from the Hough peak.  Configs that still
+# carry the keys log a one-shot deprecation warning per key.
 [streaming_hough]
 
 # Hough accumulator geometry — set once at writer init via
@@ -136,9 +138,12 @@ threshold_fraction       =   0.33    # relative floor: min fraction of currently
                                      # active hits required in the peak cell.
                                      # Raise to suppress a duplicate ring 2
                                      # (R_first ≈ R_second in `Hough rings/`).
-min_hits_slack           =   0.50    # ring-acceptance slack on the absolute vote
+min_hits_slack           =   0.75    # ring-acceptance slack on the absolute vote
                                      # floor (0..1).  Leave at 0.75 unless
                                      # explicitly studying the absolute floor.
+                                     # Aligned with config_reader.h default 2026-05-30
+                                     # (was 0.50 — orphan "legacy default for offline
+                                     # workflows" with no live consumer; sweep audit).
 hough_threshold_fraction =   0.0035  # Hough entry gate, as a fraction of active
                                      # Cherenkov channels.  Raise to suppress
                                      # random-noise ring candidates and to
@@ -180,17 +185,7 @@ centre_xy_half_range_mm  =  25.0     # mm
 # no threshold re-tuning is needed when flipping the recipe.
 aggregation_window_cells =     2     # 1 = single-cell peak (legacy); 2 = aggregated
 
-# fit_circle initial guess (centre prior).  These values **are** what
-# the fit currently starts from — the same constant `(x_c, y_c, R)`
-# triple every event, regardless of where the Hough actually peaked.
-# That is fine when the Hough seed is sane (the LM minimiser climbs
-# down quickly), but it explains the wandering tails in `Fit rings/`
-# whenever the Hough produces a bad seed: there is no Hough → fit
-# information flow today.
-#
-# Open item (D-04 in DISCUSSION § 2.5): pass the Hough's discrete
-# (cx, cy, radius) per-ring as the initial guess instead, falling back
-# to the values below only when the Hough peak is below quality.
-fit_circle_init_x        =   0.0     # mm
-fit_circle_init_y        =   0.0     # mm
-fit_circle_init_r        =  50.0     # mm
+# fit_circle initial guess — REMOVED 2026-05-30 (C3.5).  recodata seeds
+# the per-ring refit from the Hough peak's (cx, cy, radius) directly.
+# Keys retained in old TOMLs are tolerated (warning + ignored) for one
+# release; the warning + tolerance go away in v2.1.

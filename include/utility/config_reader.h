@@ -10,8 +10,6 @@
  * - @ref readout_config_reader – TOML file parser populating the above.
  * - @ref RunInfoStruct       – per-run beam, DAQ, sensor, and optics metadata.
  * - @ref RunInfo              – static database of run metadata and run lists.
- *
- * @todo Re-write legacy text-based sections for full TOML configuration files.
  */
 
 #include <fstream>
@@ -28,6 +26,7 @@
 #include <utility.h>
 #include <toml++/toml.h>
 #include "utility/toml_utils.h"
+#include "alcor_data.h"   // BTANA_ALCOR_CC_TO_NS — single source of truth for the 3.125 ns/cc conversion used by frame_length_ns()
 
 // =========================================================================
 //  Core tag set
@@ -199,8 +198,11 @@ struct FramerConfigStruct
     uint16_t afterpulse_deadtime = 64;       ///< Afterpulse suppression deadtime (cc, ~200 ns).
     uint16_t trigger_secondary_window = 200; ///< Secondary-trigger detection window (cc, ~625 ns).
 
-    /// @brief Frame duration in nanoseconds.
-    float frame_length_ns() const { return frame_size * 3.125f; }
+    /// @brief Frame duration in nanoseconds.  Derived from
+    /// @ref BTANA_ALCOR_CC_TO_NS (alcor_data.h) so the 3.125 ns/cc
+    /// conversion has a single source of truth.
+    float frame_length_ns() const
+    { return static_cast<float>(frame_size * BTANA_ALCOR_CC_TO_NS); }
 };
 
 /**
@@ -249,10 +251,13 @@ struct QaConfigStruct
 
     // -------- Cross-talk scan & signal windows (clock cycles) --------
     /// @brief Outer Δt cutoff for the CT scan loop (inclusive lower bound).
-    /// Default extends to -10 cc so the diagnostic Δt histograms (both physical and
-    /// electrical) include the symmetric negative-Δt region — useful to verify that
-    /// CT really clusters near Δt = 0 rather than leaking into the sideband.
-    int ct_scan_dt_min = -10;
+    /// Default -5 cc to match both shipped TOMLs (``conf/defaults/framer_conf.toml``
+    /// and ``conf/QA/framer_conf.toml``).  The diagnostic Δt histograms still
+    /// include the symmetric negative-Δt region — useful to verify that CT really
+    /// clusters near Δt = 0 rather than leaking into the sideband.  Header default
+    /// was -10 historically; the TOML files are the single source of truth so the
+    /// header is aligned (C2.4).
+    int ct_scan_dt_min = -5;
     /// @brief Outer Δt cutoff for the CT scan loop (exclusive upper bound).
     int ct_scan_dt_max = 200;
     /// @brief Physical-CT signal window lower edge (Δt cc, inclusive).
@@ -281,6 +286,21 @@ struct QaConfigStruct
     /// from the channels that became active in the previous spill — useful
     /// only for an online-only mode where no offline calibration is available.
     bool per_spill_calibration_update = false;
+
+    /// @brief Number of per-spill `update_calibration` calls between
+    ///        low-stats cache resets inside @ref AlcorFinedata::generate_calibration.
+    ///
+    /// `0` (the default) = never retry — once a channel fails the
+    /// >=250-entries gate it's cached as low-stats for the rest of the
+    /// run.  Saves ~10–15 s per spill on the --QA cascade by skipping
+    /// the per-channel 256-bin ProjectionY allocation for the long
+    /// tail of always-quiet channels.
+    ///
+    /// `N > 0` = drop the cache every N-th call so marginal channels
+    /// get re-examined.  Only relevant when
+    /// @ref per_spill_calibration_update is `true`; ignored otherwise.
+    /// See @ref AlcorFinedata::set_low_stats_retry_period.
+    unsigned long generate_calibration_low_stats_retry_period = 0;
 };
 
 /**
@@ -584,6 +604,18 @@ struct StreamingTriggerConfigStruct
     ///        for stricter purity, decrease for more channels in early
     ///        spills.
     double min_noise_hits = 5.0;
+
+    /// @brief **C7.6 — multiplicity upper-bound cut.**  Suppress
+    ///        `_TRIGGER_STREAMING_RING_FOUND_` emission for any
+    ///        cluster whose peak hit count exceeds this value.
+    ///
+    /// Pile-up events with many hits look like a strong score signal
+    /// but aren't physics; the cut lets the operator carve them off
+    /// without lowering the n_σ threshold.  Default 0 disables the
+    /// cut (fully backwards-compatible).  Reasonable opt-in values:
+    /// ~150–250 for two Cherenkov rings + DCR floor on the
+    /// dRICH detector; tune from the n_hits-per-cluster QA.
+    int max_hits_per_window = 0;
 };
 
 /**
@@ -617,10 +649,6 @@ streaming_trigger_conf_reader(std::string config_file = "conf/streaming.toml");
  * See [`include/triggers/streaming/DISCUSSION.md`](../triggers/streaming/DISCUSSION.md)
  * for the algorithm, parameter physics, and roadmap.
  *
- * @note  Phase 2 of the streaming-trigger consolidation introduces this
- *        struct + reader.  The algorithm in `src/lightdata_writer.cxx`
- *        still uses hardcoded constants — defaults here match the
- *        hardcoded values, and Phase 4 wires them into the algorithm.
  */
 struct StreamingHoughConfigStruct
 {
@@ -694,13 +722,13 @@ struct StreamingHoughConfigStruct
     /// value comfortably brackets the real ring centres.
     float centre_padding_mm = -1.f;
 
-    // ── fit_circle initial guess ────────────────────────────────────
-    /// @brief Initial centre X [mm] for the per-ring circle fit.
-    float fit_circle_init_x = 0.f;
-    /// @brief Initial centre Y [mm] for the per-ring circle fit.
-    float fit_circle_init_y = 0.f;
-    /// @brief Initial radius [mm] for the per-ring circle fit.
-    float fit_circle_init_r = 50.f;
+    //  C3.5 — removed `fit_circle_init_{x,y,r}` fields and TOML knobs
+    //  (2026-05-30).  No live consumer existed: the centre/radius
+    //  refinement is done by `recodata_writer` from the Hough peak,
+    //  not from a config-supplied seed.  TOMLs that still carry the
+    //  keys are tolerated (warning + ignored) by
+    //  `streaming_hough_conf_reader` for one release; remove the
+    //  warning in v2.1.
 };
 
 /**
@@ -896,6 +924,31 @@ struct RunInfoStruct
     /** @name Radiators */
     /// @{
     std::vector<RadiatorInfoStruct> radiators; ///< Ordered list of active radiator layers.
+    /// @}
+
+    // -------------------------------------------------------------------------
+    /** @name Analyser-tuned trigger thresholds (per-run overrides) */
+    /// @{
+    /// @brief Per-run override for `[streaming_trigger].n_sigma_threshold`.
+    ///
+    /// When > 0, the lightdata writer's CLI driver replaces
+    /// `streaming_trigger_cfg.n_sigma_threshold` with this value
+    /// before launching the writer call.  `0` (the default) leaves
+    /// the streaming config's value untouched — same semantics as
+    /// "field absent from the run record".
+    ///
+    /// Origin: the shifter inspects ``qa/lightdata/05_streaming_score.pdf``,
+    /// picks the n_σ cut that gives them the target FP / S/N trade-off,
+    /// and writes it into `run-lists/<year>.database.toml` for that
+    /// run id.  Per-run physics, not per-campaign config; rides with
+    /// the run record.  Dashboard widget (deferred) will write the
+    /// same field from a click-to-set UI on the score canvas (see
+    /// `include/triggers/streaming/DISCUSSION.md §1.5.2`).
+    ///
+    /// Set to a deliberately large value (e.g. 1000) to disable
+    /// streaming firing while still accumulating QA — same sentinel
+    /// the `conf/QA/streaming.toml` campaign-level disable uses.
+    float streaming_n_sigma_threshold = 0.f;
     /// @}
 };
 

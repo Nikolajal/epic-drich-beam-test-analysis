@@ -43,6 +43,7 @@
 #include <TROOT.h>
 #include <TString.h>
 #include <TStyle.h>
+#include <TSystem.h>
 
 #include <cstdio>
 #include <string>
@@ -106,11 +107,27 @@ int main(int argc, char **argv)
     const char *draw_opt = obj->InheritsFrom("TH2") ? "colz" : "";
 
     //  Canvas title uses the bare hist path so the window menu /
-    //  dock entry reads cleanly.  1100×720 matches what the old
-    //  osascript ``-e`` expression created.
-    auto *c = new TCanvas("c_qa", hist_path.c_str(), 1100, 720);
-    (void)c;  // owned by ROOT, lives till the app quits
+    //  dock entry reads cleanly.  Operator reported the previous
+    //  1100×720 as cramped — especially for the 2D hitmaps where
+    //  the colour-axis text crowds the right margin and the bin
+    //  numbers crowd the top.  Bumped to match the dashboard's
+    //  larger matplotlib inspect dialogs (qa.py uses 1280–1440
+    //  width); still fits a 1440×900 panel with ROOT's default
+    //  decorations.
+    auto *c = new TCanvas("c_qa", hist_path.c_str(), 1400, 900);
+    c->cd();
     obj->Draw(draw_opt);
+
+    //  Force the initial paint BEFORE app.Run() — on macOS Cocoa, a
+    //  canvas drawn between TApplication construction and Run() can
+    //  appear blank until the first window event (resize, click)
+    //  pumps the redraw queue.  Modified() marks the pad dirty,
+    //  Update() runs the paint synchronously, ProcessEvents drains
+    //  any other Qt/Cocoa events queued during canvas construction.
+    //  Without this trio, the operator sees a blank white window.
+    c->Modified();
+    c->Update();
+    gSystem->ProcessEvents();
 
     std::printf("[qa_tcanvas] %s drawn from %s\n",
                 hist_path.c_str(), file_path.c_str());

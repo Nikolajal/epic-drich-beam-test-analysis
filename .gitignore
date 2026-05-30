@@ -17,3 +17,16 @@ macros/*.h
 # the dashboard has unsaved local edits; the directory itself stays
 # untracked so a dirty working tree doesn't follow operators around.
 conf/working/
+
+# Cross-shifter sync — Google service-account JSON keys.  The default
+# storage path is ~/.config/qa_quicklook/sheets-sa.json (outside the
+# worktree); these patterns are belt-and-braces against the day someone
+# accidentally drops a key under the repo root.
+*sa.json
+*service-account*.json
+*-sheets-*.json
+# Reverse-merge snapshot baseline — operator-local state that should
+# never be committed.  Lives under ~/.cache/qa_quicklook/ in the real
+# install; the pattern catches strays from running the CLI inside the
+# repo with --snapshot-path overrides.
+sheets_last_pushed.json

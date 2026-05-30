@@ -277,6 +277,23 @@ Runtime configuration is handled through TOML files in `conf/`:
 All config files honour the `##` cutoff sentinel (see [include/toml_utils.h](include/toml_utils.h))
 so you can append `## --- disabled ---` and keep scratch entries below without them being parsed.
 
+> **Symlinks require `core.symlinks=true`** (git's default on macOS and
+> Linux — the only supported platforms; see `DISCUSSION.md` § D-11).
+> Each top-level `conf/*.toml` is a symlink into `conf/working/`
+> (live-edited) or `conf/defaults/` (pristine).  If you cloned with
+> `core.symlinks=false`, those entries materialise as one-line **text
+> files** whose content is the relative target path (e.g.
+> `working/streaming.toml`) instead of real symlinks, and the writers
+> load garbage.  Fix:
+>
+> ```sh
+> git config core.symlinks true
+> git checkout -- conf/        # re-materialise the symlinks
+> ```
+>
+> A startup sanity check that detects a collapsed-to-text conf file and
+> errors clearly is tracked in the config-reader cluster (CLEAN_OFF C2).
+
 Run lists and a run metadata database for 2025 are available in `run-lists/` in TOML format, loadable via `RunInfo::read_database()` and `RunInfo::read_runslists()`.
 
 ---
@@ -403,8 +420,11 @@ A PySide6 dashboard for shift-time operations lives under
 [`qa_quicklook/`](qa_quicklook).  Single-window app with four tabs —
 **Run Manager** (launch the writer chain, follow it live, status
 lock files survive a dashboard restart, `🔍 Inspect` button pops up
-TBrowser), **QA** (placeholder), **Runlist** (browse / edit
-`run-lists/2025.database.toml` with forward-inheritance), and
+TBrowser), **QA** (General overview with four thematic rows —
+Data-taking health / Sensor health / Cherenkov physics /
+Timing-calibration — plus per-step topic tabs, the interactive
+streaming n_σ picker, and cross-run trend plots), **Runlist**
+(browse / edit `run-lists/2025.database.toml` with forward-inheritance), and
 **Settings** (edit every `conf/*.toml` two-way, with comment-
 preserving write-back, a setting-set system on top of
 `conf/defaults/` + `conf/sets/<year>/` + `conf/working/`, and the

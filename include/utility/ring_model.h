@@ -43,19 +43,6 @@ inline double logistic(double variable, double amplitude, double center_1, doubl
 }
 
 /**
- * @brief Clip an angle to a given range (placeholder — currently throws).
- * @todo Implement the actual clipping.
- */
-inline double clip_phi(double phi, double low_bound, double high_bound)
-{
-    throw std::logic_error("clip_phi: not implemented");
-    (void)phi;
-    (void)low_bound;
-    (void)high_bound;
-    return -1.;
-}
-
-/**
  * @brief Azimuthally-varying ring-width model.
  *
  * Returns a baseline sigma plus contributions from one or more logistic features

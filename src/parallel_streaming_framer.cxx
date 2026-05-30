@@ -540,20 +540,17 @@ bool ParallelStreamingFramer::next_spill()
 
     // --- First frames trigger
     //
-    // Keys are inserted in strictly ascending order (0 .. _first_frames_trigger),
-    // so frame_list.end() is always the correct insertion hint → each
-    // try_emplace is O(1) amortized instead of operator[]'s O(log N)
-    // lookup-or-insert.  Saves ~1-2 ms per spill at the default
-    // first_frames_trigger=5000
-    auto hint = frame_list.end();
+    // frame_list is an unordered_map (hashed buckets, O(1) average insert),
+    // so the previous ascending-order insertion-hint trick is unnecessary.
+    // Reserve once up front so the run of 5000 inserts doesn't trigger any
+    // rehash + bucket reshuffle mid-loop.
+    frame_list.reserve(frame_list.size() + static_cast<size_t>(_first_frames_trigger));
     for (auto i_frame = 0; i_frame < _first_frames_trigger; ++i_frame)
     {
-        hint = frame_list.try_emplace(hint, i_frame);
-        hint->second.trigger_hits.push_back({TriggerFirstFrames,
-                                             static_cast<uint16_t>(_frame_size / 2.),
-                                             static_cast<float>(BTANA_ALCOR_CC_TO_NS * _frame_size / 2.)});
-        ++hint; // advance past the just-inserted element so the next hint
-                // = end(), keeping the amortized-O(1) insert invariant.
+        auto [it, _] = frame_list.try_emplace(i_frame);
+        it->second.trigger_hits.push_back({TriggerFirstFrames,
+                                           static_cast<uint16_t>(_frame_size / 2.),
+                                           static_cast<float>(BTANA_ALCOR_CC_TO_NS * _frame_size / 2.)});
     }
 
     // Invalid streams were already dropped in the constructor, so

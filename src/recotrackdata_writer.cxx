@@ -7,6 +7,7 @@
 #include "analysis_results.h"
 #include "utility/config_dump.h"
 #include <filesystem>
+#include <limits>
 #include <memory>
 // TFilePtr is available via the alcor_recodata.h → utility.h → utility/root_io.h chain.
 
@@ -56,7 +57,17 @@ void recotrackdata_writer(
             mist::logger::info(
                 "(recotrackdata_writer) --force-upstream set — rebuilding recodata "
                 "(which itself cascades into lightdata).");
-        recodata_writer(data_repository, run_name, /*max_spill=*/max_frames,
+        //  UNIT MISMATCH — DO NOT forward max_frames here.  This writer's
+        //  --max-spill knob actually caps FRAMES (recodata is per-frame; the
+        //  CLI variable name is a hold-over from a pre-frame-pipeline era).
+        //  recodata_writer's max_spill is a SPILL cap.  Forwarding the
+        //  frame cap as a spill cap silently truncates the upstream rebuild
+        //  to the wrong unit — `--max-spill 30` rebuilt 30 spills of
+        //  recodata, then locally capped to 30 frames, hiding tracking
+        //  failures.  Pass INT_MAX so the cascade rebuilds the full run;
+        //  the local frame cap below still honours the operator's intent.
+        recodata_writer(data_repository, run_name,
+                        /*max_spill=*/std::numeric_limits<int>::max(),
                         /*force_rebuild=*/true,
                         /*force_upstream=*/force_upstream);
         input_file_recodata.reset(TFile::Open(input_filename_recodata.c_str()));
@@ -89,7 +100,6 @@ void recotrackdata_writer(
 
     //  Prepare output file.  `outname` was already declared at the
     //  top of this function for the --force-rebuild guard; reuse it.
-    //  TODO safer implementation: recodata MUST be initialised earlier, may break
     TFilePtr output_file(TFile::Open(outname.c_str(), "RECREATE"));
     if (!output_file || output_file->IsZombie())
     {
@@ -101,15 +111,34 @@ void recotrackdata_writer(
     TDirectory::TContext ctx(output_file.get());
 
     TTree *recotrackdata_tree = new TTree("recotrackdata", "Recotrackdata tree");
+    //  Defensive init-order guard — `recodata` is constructed via
+    //  make_unique above (line ~81) and bound to the input tree
+    //  immediately after.  An empty unique_ptr here would mean control
+    //  flow took a path we don't expect (a future refactor that moves
+    //  the bind earlier without re-ordering the construct, say);
+    //  failing loud + early is cheaper than the silent UB the
+    //  `*recodata` deref would emit.
+    if (!recodata)
+    {
+        mist::logger::error(
+            "(recotrackdata_writer) internal: recodata is null at "
+            "AlcorRecotrackdata construction — init-order broke.  "
+            "Aborting before deref.");
+        return;
+    }
     // NOTE: *recodata dereference invokes AlcorRecotrackdata(const AlcorRecodata&)
     // which today copies the branch-binding *_ptr members verbatim — a latent
-    // dangle once 's no-copy contract lands.  Documented; fix follows in .
+    // dangle once a no-copy contract lands.  Documented; fix follows separately.
     auto recotrackdata = std::make_unique<AlcorRecotrackdata>(*recodata);
     recotrackdata->write_to_tree(recotrackdata_tree);
 
-    //  Get number of frames, limited to maximum requested frames
+    //  Get number of frames, capped at the caller's --max-frames knob.
+    //  Note: max_frames is also forwarded to upstream recodata_writer (as
+    //  max_spill) on the cascade path above, but when recodata.root already
+    //  exists we skip the cascade — without this local cap the CLI flag
+    //  would silently do nothing on second-pass runs.
     auto n_frames = recodata_tree->GetEntries();
-    auto all_frames = n_frames; // std::min((int)n_frames, (int)max_frames); // TODO: understand this
+    auto all_frames = std::min<Long64_t>(n_frames, max_frames);
 
     //  Loop over frames
     auto i_spill = -1;
@@ -195,10 +224,10 @@ void recotrackdata_writer(
     //  directly (it inherits everything via recodata).
     {
         //  Cross-run aggregate sits next to the run directories
-        //  (``<repo>/standard_results.root``) — same convention as
+        //  (``<repo>/standard_results.toml``) — same convention as
         //  recodata + lightdata + calibration writers.  The earlier
         //  ``extData/`` literal was a stale hard-code.
-        AnalysisResults ar(data_repository + "/standard_results.root");
+        AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
             {{run_name, "all", "recotrack.n_matched_tracks"},
              {static_cast<double>(recotrack_events_counter), 0.0}},

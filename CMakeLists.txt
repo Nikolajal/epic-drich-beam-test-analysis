@@ -145,6 +145,7 @@ set(SRC_FILES
     src/radiator_efficiency.cxx
     src/utilities/btana_dump.cxx
     src/writers/pulser_calib_writer.cxx
+    src/writers/anchor_dt_canvas.cxx
 )
 
 # --------------------------------------------------
@@ -216,11 +217,13 @@ target_link_libraries(beam_test_analysis
         mist::mist
 )
 
-if(APPLE)
-    set_target_properties(beam_test_analysis PROPERTIES
-        INSTALL_RPATH "@loader_path"
-    )
-endif()
+#  Install RPATH for the shared library — resolve its own siblings
+#  (libmist.so etc.) from the same lib/ dir after install.  Ship BOTH
+#  the macOS (@loader_path) and Linux ($ORIGIN) idioms in one list; the
+#  loader on each platform ignores the token it doesn't understand.
+set_target_properties(beam_test_analysis PROPERTIES
+    INSTALL_RPATH "@loader_path;$ORIGIN"
+)
 
 # --------------------------------------------------
 # Executables
@@ -249,6 +252,26 @@ target_include_directories(qa_tbrowser     PRIVATE ${ROOT_INCLUDE_DIRS})
 target_link_libraries(qa_tbrowser           PRIVATE ${ROOT_LIBRARIES})
 target_include_directories(qa_tcanvas      PRIVATE ${ROOT_INCLUDE_DIRS})
 target_link_libraries(qa_tcanvas            PRIVATE ${ROOT_LIBRARIES})
+
+#  Install RPATH for the writer executables.  They install to bin/ and
+#  link libbeam_test_analysis (+ transitively libmist) which install to
+#  lib/, so the runtime search path must point one level up into lib/.
+#  Without this a fresh `cmake --install` on Linux produced binaries
+#  that failed at first run with "libmist.so: cannot open shared object
+#  file" unless the operator set LD_LIBRARY_PATH by hand — exactly the
+#  "README says it works, it doesn't" failure mode for a new shifter.
+#  Both idioms shipped (see the library block above for why).  qa_tbrowser
+#  / qa_tcanvas link only ROOT (found via its own RPATH) so they don't
+#  need the project lib path, but including them is harmless and uniform.
+set_target_properties(
+    lightdata_writer
+    recodata_writer
+    recotrackdata_writer
+    pulser_calib_writer
+    btana-dump
+    PROPERTIES
+        INSTALL_RPATH "@loader_path/../lib;$ORIGIN/../lib"
+)
 
 # --------------------------------------------------
 # Install Rules

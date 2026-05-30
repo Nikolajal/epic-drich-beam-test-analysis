@@ -4889,3 +4889,19 @@ field     = "notes"
 old_value = ""
 new_value = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
 
+[[entry]]
+at        = "2026-05-29T12:15:01"
+source    = "sheet"
+run       = "20251112-023352"
+field     = "polarity"
+old_value = "positive"
+new_value = "negative"
+
+[[entry]]
+at        = "2026-05-29T12:20:46"
+source    = "dashboard"
+run       = "20251112-023352"
+field     = "polarity"
+old_value = "negative"
+new_value = "positive"
+

@@ -1,8 +1,7 @@
 # Trigger subsystem — design notes
 
 > 🧭 **Hub:** project-wide design log + index of satellites lives at
-> [`../../DISCUSSION.md`](../../DISCUSSION.md).  Open items here also
-> show up in the top-level [`BACKLOG.md`](../../BACKLOG.md).
+> [`../../DISCUSSION.md`](../../DISCUSSION.md).
 
 This document is the **community-facing** design reference for the
 trigger subsystem.  It lives in the source tree (git-tracked) alongside

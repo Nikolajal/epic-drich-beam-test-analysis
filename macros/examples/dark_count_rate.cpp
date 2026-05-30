@@ -149,7 +149,7 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
         const double mean2_1375 = f_gaus_1375->GetParameter(4);
         const bool peak1_lower = (mean1_1375 < mean2_1375);
 
-        AnalysisResults ar(data_repository + "/standard_results.root");
+        AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update({
             // ── SiPM 1350: single Gaussian ───────────────────────────────────
             {{run_name, "1350", "dcr.mean"}, {f_gaus_1350->GetParameter(1), f_gaus_1350->GetParameter(2)}},
@@ -164,7 +164,7 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
             {{run_name, "1375", "dcr.peak_hi.sigma"}, {peak1_lower ? f_gaus_1375->GetParameter(5) : f_gaus_1375->GetParameter(2), 0.}},
         });
 
-        mist::logger::info("[dark_count_rate] DCR fit results written to standard_results.root for run " + run_name);
+        mist::logger::info("[dark_count_rate] DCR fit results written to standard_results.toml for run " + run_name);
     }
 
     // ── Drawing ───────────────────────────────────────────────────────────────

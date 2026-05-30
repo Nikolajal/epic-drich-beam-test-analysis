@@ -1,0 +1,33 @@
+# 2026 full database of runs info
+# The first run defines the standard configuration,
+# all subsequent runs only specify fields that changed w.r.t the previous run.
+#
+# Source: bootstrap entries (2026-05-29) for the two local test runs in Data/.
+# Marked as `quality = "test"` so they sort distinctly from real beam runs.
+# Fields below carry placeholder values that mirror the 2025 standard
+# config; operators should overwrite with real values as the campaign
+# starts.
+
+[runs."20260528-182902"]
+beam_status = "off"
+particle = "pions"
+polarity = "positive"
+beam_energy = 0
+rdo_firmware = "rdo-v1.3.16"
+timing_firmware = "single-ext-std-tb2024-base.02"
+temperature = -28.0
+v_bias = 52.00
+n_spills = 10
+quality = "test"
+radiators = [
+  { type = "Aerogel", refindex = 1.021,  tag = "AG22-J001", depth = 2 },
+  { type = "Aerogel", refindex = 1.0207, tag = "AG22-J003", depth = 2, side = "B" }
+]
+notes = "[test] 2026 bootstrap entry — calibration + pulser QA only (no beam)"
+
+[runs."20260528-191848"]
+notes = "[test] 2026 bootstrap entry — calibration + lightdata, no beam"
+beam_energy = 35
+
+[schema]
+extra_fields = ["altai"]

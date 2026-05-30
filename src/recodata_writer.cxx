@@ -32,7 +32,9 @@
 #include "utility/circle_fit.h"
 #include "utility/config_dump.h"
 #include "utility/config_reader.h"
+#include "utility/qa_publish.h"            // util::qa::pdf_path + crop_pdf_inplace
 #include <set>
+#include <filesystem>
 #include <memory>
 #include <atomic>
 #include <future>
@@ -134,18 +136,45 @@ void recodata_writer(
                                 .Data());
         return;
     }
-    AlcorSpilldata *spilldata = new AlcorSpilldata();
+    //  C9.1: AlcorSpilldata owned by unique_ptr — was raw `new` with
+    //  no matching delete (leaked on every recodata run).  The arrow
+    //  syntax at every consumer site is unchanged; only the declaration
+    //  differs.  Stack-allocated would be cleaner still but the type
+    //  has no default constructor that initialises the link target
+    //  without `link_to_tree` being called after construction.
+    auto spilldata = std::make_unique<AlcorSpilldata>();
     spilldata->link_to_tree(lightdata_tree);
 
     //  Calibration file: TOML v3 only — ``fine_calib.toml`` in the
     //  run dir, produced by ``pulser_calib_writer``.  The legacy
     //  ``fine_calib.txt`` path has been retired (task #172);
     //  ``read_calib_from_file`` hard-errors on non-`.toml` inputs.
+    //
+    //  Sweep audit (2026-05-30): wrap in try/catch with fallback —
+    //  same correctness fix applied to the lightdata caller.  C4.4
+    //  promoted schema-mismatch + zero-entry from warning to
+    //  std::runtime_error; an uncaught throw here aborts the recodata
+    //  pipeline mid-run.  Fall back to "no calibration" (get_phase →
+    //  0 per channel); the error itself is still surfaced loudly.
     {
         namespace fs = std::filesystem;
         const fs::path run_dir   = fs::path(data_repository) / run_name;
         const fs::path toml_path = run_dir / "fine_calib.toml";
-        AlcorFinedata::read_calib_from_file(toml_path.string());
+        try
+        {
+            AlcorFinedata::read_calib_from_file(toml_path.string());
+        }
+        catch (const std::exception &e)
+        {
+            mist::logger::error(
+                "(recodata_writer) read_calib_from_file('" +
+                toml_path.string() + "') failed: " +
+                std::string(e.what()) +
+                " — proceeding with phase = 0 for every channel; "
+                "re-generate fine_calib.toml or fix the file then "
+                "re-run.  Coarse-domain plots will be correct; "
+                "only the sub-cc fine residual is lost.");
+        }
     }
 
     auto fine_time_calib_th2f = input_file->Get<TH2F>("h_fine_calib");
@@ -206,10 +235,10 @@ void recodata_writer(
 
     //  Cache channel positions from Mapping
 
-    // Phase 5: iterate (device, chip, channel) directly via the
-    // GlobalIndex overload and key the cache by `4 * channel_ordinal` —
-    // matches the position-cache convention in Mapping.cxx and the
-    // MIST HoughTransform `lut_key`.
+    // Iterate (device, chip, channel) directly via the GlobalIndex
+    // overload and key the cache by `4 * channel_ordinal` — matches the
+    // position-cache convention in Mapping.cxx and the MIST
+    // HoughTransform `lut_key`.
     std::map<int, std::array<float, 2>> index_to_hit_xy;
     {
         constexpr int kDeviceLo = 192;
@@ -269,15 +298,36 @@ void recodata_writer(
     h_frames_per_spill->GetYaxis()->SetBinLabel(3, "had edge trigger");
     h_frames_per_spill->GetYaxis()->SetBinLabel(4, "duplicate-rejected");
 
+    //  Y-axis upper edge is in NANOSECONDS — the fill below uses
+    //  current_trigger.fine_time (TriggerEvent::fine_time, documented as
+    //  ns in include/triggers/events.h:101).  Without the cc→ns multiply
+    //  the cap was framer_cfg.frame_size cc ≈ 1024 ns, and ~68 % of every
+    //  edge-rejected trigger landed in Y-overflow — silently defeating the
+    //  shifter QA whose whole point is to validate the 25 ns edge cut.
+    //  Same constant as the sibling line ~929 in this file.
     RootHist<TH2F> h_edge_trigger_position(
         "h_edge_trigger_position",
-        "Position of edge-rejected triggers;trigger;coarse time (cc)",
+        "Position of edge-rejected triggers;trigger;fine time (ns)",
         n_triggers, 0, n_triggers,
-        500, 0, framer_cfg.frame_size);
+        500, 0, framer_cfg.frame_size * BTANA_ALCOR_CC_TO_NS);
     for (int i = 0; i < n_triggers; ++i)
         h_edge_trigger_position->GetXaxis()->SetBinLabel(i + 1, registry.triggers[i].second.c_str());
 
     std::unordered_map<int, RootHist<TH1F>> h_trigger_time_diff_w_cherenkov;
+    //  Trigger-to-Cherenkov-hit Δt range: ±1 rollover, in ns.  The
+    //  previous ±500 ns was too narrow — it cut off any hit whose
+    //  rollover differed from the trigger's, so the long-Δt
+    //  population (DCR / out-of-spill / wrong-rollover-mapping)
+    //  silently overflowed.  One rollover (32768 cc × 3.125 ns/cc =
+    //  102400 ns) is the natural ceiling: anything beyond would imply
+    //  a multi-rollover ambiguity that the unwrapping logic should
+    //  have caught.  Bin width ≈ 41 ns (13 cc) — coarse enough for
+    //  the long-tail view, fine enough to resolve the trigger peak.
+    //  Constants come from alcor_data.h so any rollover-width revision
+    //  there propagates here automatically.
+    constexpr double kTriggerDtHalfRangeNs =
+        BTANA_ALCOR_ROLLOVER_TO_CC * BTANA_ALCOR_CC_TO_NS;
+    constexpr int    kTriggerDtBins      = 5000;
 
     // ─────────────────────────────────────────────────────────────────────
     //  Live-QA radiator pipeline
@@ -300,6 +350,11 @@ void recodata_writer(
     //  V1 scope: no φ-gap split, no sensor-model split, no time-window
     //  variants.  All deferred to a finer-analysis follow-up.
     auto recodata_cfg = recodata_conf_reader(recodata_conf);
+    //  Reuse the lightdata-side streaming/Hough QA knob for the centre
+    //  (c_x, c_y) QA half-range so both writers stay in lock-step.  We
+    //  only read the one field we need; the rest of streaming_hough_cfg
+    //  is consumed upstream by lightdata_writer on the cascade path.
+    auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf);
 
     //  Captured-once state for the per-frame, per-ring compute
     //  helpers (`compute_ring_fit`, `refit_and_fill_ring`).  Geometry +
@@ -402,9 +457,8 @@ void recodata_writer(
     //    * (cx, cy) per ring — beam centre + drift over the run.
     //
     //  Same R binning as h_radial_* so the two can be overlaid in
-    //  TBrowser.  cx/cy half-range hardcoded to 25 mm (matches the
-    //  lightdata-side `centre_xy_half_range_mm` default); tighten if
-    //  needed once beam stability is characterised.
+    //  TBrowser.  cx/cy half-range comes from streaming_hough_cfg
+    //  (`centre_xy_half_range_mm`), shared with the lightdata writer.
     RootHist<TH1F> h_R_first("h_R_first", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_R_second("h_R_second", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     //  Dual / solo splits for the first-ring fitted radius.  Same
@@ -427,11 +481,12 @@ void recodata_writer(
                                        kNHitsBins, kNHitsXLo, kNHitsXHi,
                                        radial_n_bins, radial_lo_mm, radial_hi_mm);
 
-    //  cx / cy half-range: hard-code to 25 mm for now; this is the
-    //  same default as the lightdata-side QA's `centre_xy_half_range_mm`.
-    //  Bin width 1 mm = generous for visual ring-centre clusters.
-    constexpr float kCentreXyHalfRangeMm = 25.f;
-    constexpr int kCentreXyBins = 50;
+    //  cx / cy half-range: read from streaming_hough_cfg so the
+    //  lightdata- and recodata-side centre-XY hists keep the same axis.
+    //  Bin width 1 mm = generous for visual ring-centre clusters; the
+    //  bin count tracks the half-range to keep the resolution constant.
+    const float kCentreXyHalfRangeMm = streaming_hough_cfg.centre_xy_half_range_mm;
+    const int kCentreXyBins = static_cast<int>(std::round(2.f * kCentreXyHalfRangeMm));
     RootHist<TH2F> h_centre_xy_first("h_centre_xy_first", ";c_{x} (mm);c_{y} (mm)",
                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
@@ -606,14 +661,13 @@ void recodata_writer(
                 for (auto current_lane : lanes)
                     for (auto i_channel = 0; i_channel < 8; ++i_channel)
                     {
-                        // Phase 5: construct the synthetic dead-lane Hit
-                        // with a new-layout GlobalIndex.  Split-in-two
-                        // trick is applied here at the construction
-                        // boundary.  The stored value is the new-layout
-                        // raw; the position-cache lookup uses
-                        // `4 * channel_ordinal` (the same dense-int key
-                        // the position cache was populated with — see the
-                        // top-of-function loop and `Mapping.cxx`).
+                        // Construct the synthetic dead-lane Hit with a
+                        // GlobalIndex; split-in-two trick is applied here
+                        // at the construction boundary.  The position-cache
+                        // lookup uses `4 * channel_ordinal` (the same
+                        // dense-int key the position cache was populated
+                        // with — see the top-of-function loop and
+                        // `Mapping.cxx`).
                         const int chip_raw = current_lane / 4;
                         const int channel_raw = 8 * (current_lane % 4) + i_channel;
                         const int chip_logical = ::gidx::kUsesSplitInTwo
@@ -688,7 +742,8 @@ void recodata_writer(
                                             registry.name_of(idx).c_str())
                                 .Data(),
                             ";#Delta_{t} (t_{Hit} - t_{trigger}) ns;Normalised entries",
-                            5e3, -500, 500);
+                            kTriggerDtBins,
+                            -kTriggerDtHalfRangeNs, +kTriggerDtHalfRangeNs);
                 h_trigger_time_diff_w_cherenkov[idx]->Fill(dt);
             }
 
@@ -868,226 +923,6 @@ void recodata_writer(
             AlcorLightdata current_lightdata(frames_in_spill[iframe]);
             drain_frame_result(frame_results[iframe], current_lightdata);
         }
-#if 0  // ─────────────── original loop body (Stage-1A baseline) ───────────────
-            h_frames_per_spill->Fill(i_spill, 0.5); // total
-
-            //  ── Trigger selection ───────────────────────────────────────────────
-            //  1. Triggers within 25 ns of either boundary → edge-rejected.
-            //     Frame not immediately discarded; type may still have a valid instance.
-            //  2. Two distinct valid instances of the same type → frame rejected.
-            //  3. Two valid instances of the same type within BTANA_TRIGGER_MIN_SEPARATION
-            //     cc → temporal duplicate, second dropped silently, frame kept.
-
-            bool frame_rejected = false;
-            bool had_edge = false;
-            std::map<uint8_t, TriggerEvent> accepted_triggers;
-
-            // Trigger selection order matters:
-            //   1. Skip the UNKNOWN sentinel.
-            //   2. Edge rejection — edge-rejected triggers do NOT count toward
-            //      the per-frame "we've seen this index already" set.
-            //   3. Duplicate check (against accepted_triggers from earlier
-            //      iterations of this same loop, i.e. earlier in the frame):
-            //      - within BTANA_TRIGGER_MIN_SEPARATION cc → temporal dup,
-            //        drop silently;
-            //      - else → distinct second firing of the same trigger →
-            //        reject the whole frame.
-            //   4. Otherwise: accept (insert into accepted_triggers), create
-            //      the time-diff histogram lazily, fill it.
-            // The previous version inserted at the top of the loop BEFORE the
-            // duplicate check, so the check at (3) was always true and every
-            // trigger was silently dropped on the temporal-duplicate branch.
-            for (const auto &current_trigger : current_lightdata.get_triggers())
-            {
-                if (current_trigger.index == _TRIGGER_UNKNOWN_)
-                    continue;
-
-                const int reg_bin = registry.index_of(current_trigger.index) + 0.5; // centre of bin
-
-                //  Both sides in ns.  `frame_size` is in clock cycles
-                //  by framer convention → convert to ns for the
-                //  comparison with `fine_time` (ns).
-                const float frame_size_ns =
-                    framer_cfg.frame_size * BTANA_ALCOR_CC_TO_NS;
-                bool is_edge = (current_trigger.fine_time < edge_rejection_ns) ||
-                               (current_trigger.fine_time > frame_size_ns - edge_rejection_ns);
-                if (is_edge)
-                {
-                    h_edge_trigger_position->Fill(reg_bin, current_trigger.fine_time);
-                    h_trigger_qa->Fill(reg_bin, 1.5); // edge-rejected
-                    had_edge = true;
-                    continue;
-                }
-
-                if (auto it = accepted_triggers.find(current_trigger.index);
-                    it != accepted_triggers.end())
-                {
-                    const auto &prev = it->second;
-                    if (std::fabs((float)current_trigger.coarse - (float)prev.coarse) < BTANA_TRIGGER_MIN_SEPARATION)
-                        continue; // temporal duplicate, drop silently
-
-                    h_trigger_qa->Fill(reg_bin, 2.5); // duplicate-rejected
-                    frame_rejected = true;
-                    break;
-                }
-
-                // First time seeing this trigger index in this frame — accept.
-                accepted_triggers[current_trigger.index] = current_trigger;
-                if (!h_trigger_time_diff_w_cherenkov.count(current_trigger.index))
-                    h_trigger_time_diff_w_cherenkov[current_trigger.index] =
-                        RootHist<TH1F>(
-                            TString::Format("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()).Data(),
-                            ";#Delta_{t} (t_{Hit} - t_{trigger}) ns;Normalised entries",
-                            5e3,
-                            -500,
-                            500);
-                for (const auto &current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
-                    h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(
-                        AlcorFinedata(current_cherenkov_hit_struct).get_time_ns() -
-                        current_trigger.fine_time);
-            }
-
-            if (frame_rejected)
-            {
-                n_duplicate++;
-                h_frames_per_spill->Fill(i_spill, 3.5); // duplicate-rejected
-                continue;
-            }
-
-            if (had_edge)
-            {
-                n_edge++;
-                h_frames_per_spill->Fill(i_spill, 2.5); // had edge trigger (frame kept)
-            }
-
-            for (auto &[index, trigger] : accepted_triggers)
-            {
-                h_trigger_qa->Fill(registry.index_of(index) + 0.5, 0.5); // accepted
-                recodata.add_trigger(trigger);
-            }
-
-            //  ── Per-spill physics counter for the spill-weighted
-            //     coverage map  A frame counts as
-            //     "physics" if it carries any accepted trigger except
-            //     the bookkeeping / sampling sentinels:
-            //
-            //       * TriggerFirstFrames (100)         — DCR sampling
-            //       * _TRIGGER_STREAMING_RING_FOUND_ (104) — internal
-            //                                              streaming trigger
-            //       * TriggerStartOfSpill (200)        — spill boundary marker
-            //       * _TRIGGER_UNKNOWN_ (255)          — sentinel
-            //
-            //     Everything else (luca_and_finger, broad_scintillator,
-            //     TIMING, TRACKING, RING_FOUND, HOUGH_RING_FOUND, …) is
-            //     a beam-defining or downstream-physics trigger and
-            //     contributes to the spill's physics weight.
-            //
-            //     Active-channel mask is populated separately at the
-            //     spill's StartOfSpill-marker construction (line ~660
-            //     above) directly from
-            //     `spilldata->get_not_dead_participants`.
-            {
-                bool frame_is_physics = false;
-                for (const auto &[idx, trig] : accepted_triggers)
-                {
-                    if (idx == TriggerFirstFrames)             continue;
-                    if (idx == _TRIGGER_STREAMING_RING_FOUND_) continue;
-                    if (idx == TriggerStartOfSpill)            continue;
-                    if (idx == _TRIGGER_UNKNOWN_)              continue;
-                    frame_is_physics = true;
-                    break;
-                }
-                if (frame_is_physics)
-                    ++n_physics_per_spill[i_spill];
-            }
-
-            //  ── Cherenkov hits ─────────────────────────────────────────────────
-            for (const auto &current_cherenkov_hit_struct : current_lightdata.get_cherenkov_hits_link())
-                recodata.add_hit(current_cherenkov_hit_struct);
-
-            //  ── Live-QA radiator fills ──────────────────────
-            //  Gated on the frame carrying a `_TRIGGER_HOUGH_RING_FOUND_`
-            //  trigger.  The lightdata-side Hough already mask-tagged
-            //  the contributing hits; we re-fit per ring on those tags
-            //  to recover (cx, cy, R) without a TriggerEvent schema bump.
-            //  Two rings are queried unconditionally — `refit_and_fill_ring`
-            //  short-circuits on `< min_hits_per_ring` matching the
-            //  ring's bit, so frames with only ring 1 still produce
-            //  no ring-2 fill.
-            if (accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_))
-            {
-                //  Detect "frame has a second ring" once, by scanning
-                //  hit masks.  Cheaper than counting hits and tagging
-                //  separately for each ring slot.  Used by the dual /
-                //  solo split logic below.
-                bool frame_has_second_ring = false;
-                for (const auto &hit_struct : current_lightdata.get_cherenkov_hits_link())
-                {
-                    AlcorFinedata fh(hit_struct);
-                    if (fh.has_mask_bit(HitmaskHoughRingTagSecond))
-                    {
-                        frame_has_second_ring = true;
-                        break;
-                    }
-                }
-
-                RingFillHists first_hists;
-                first_hists.h_nhits       = h_nhits_first.get();
-                first_hists.h_nphotons    = h_nphotons_first.get();
-                first_hists.h_fcov        = h_f_coverage_first.get();
-                first_hists.h_radial      = h_radial_first.get();
-                first_hists.h_R           = h_R_first.get();
-                first_hists.h_sigma       = h_sigma_first.get();
-                first_hists.h_R_vs_nhits  = h_R_vs_nhits_first.get();
-                first_hists.h_centre_xy   = h_centre_xy_first.get();
-                first_hists.h_residual_vs_n = h_residual_vs_n_first.get();
-                //  Split twins — fill (dual) when a second ring is
-                //  present in the frame, (solo) when it isn't.
-                first_hists.h_R_vs_nhits_split = frame_has_second_ring
-                    ? h_R_vs_nhits_first_dual.get()
-                    : h_R_vs_nhits_first_solo.get();
-                first_hists.h_residual_vs_n_split = frame_has_second_ring
-                    ? h_residual_vs_n_first_dual.get()
-                    : h_residual_vs_n_first_solo.get();
-                first_hists.h_radial_split = frame_has_second_ring
-                    ? h_radial_first_dual.get()
-                    : h_radial_first_solo.get();
-                first_hists.h_R_split = frame_has_second_ring
-                    ? h_R_first_dual.get()
-                    : h_R_first_solo.get();
-                //  Smeared sibling targets — same dual/solo predicate.
-                first_hists.h_radial_smeared        = h_radial_first_smeared.get();
-                first_hists.h_residual_vs_n_smeared = h_residual_vs_n_first_smeared.get();
-                first_hists.h_radial_split_smeared  = frame_has_second_ring
-                    ? h_radial_first_dual_smeared.get()
-                    : h_radial_first_solo_smeared.get();
-                first_hists.h_residual_vs_n_split_smeared = frame_has_second_ring
-                    ? h_residual_vs_n_first_dual_smeared.get()
-                    : h_residual_vs_n_first_solo_smeared.get();
-                refit_and_fill_ring(HitmaskHoughRingTagFirst, first_hists, current_lightdata, ring_ctx);
-
-                RingFillHists second_hists;
-                second_hists.h_nhits      = h_nhits_second.get();
-                second_hists.h_nphotons   = h_nphotons_second.get();
-                second_hists.h_fcov       = h_f_coverage_second.get();
-                second_hists.h_radial     = h_radial_second.get();
-                second_hists.h_R          = h_R_second.get();
-                second_hists.h_sigma      = h_sigma_second.get();
-                second_hists.h_R_vs_nhits = h_R_vs_nhits_second.get();
-                second_hists.h_centre_xy  = h_centre_xy_second.get();
-                second_hists.h_residual_vs_n = h_residual_vs_n_second.get();
-                //  Second ring is dual-by-definition — no split twin.
-                second_hists.h_radial_smeared        = h_radial_second_smeared.get();
-                second_hists.h_residual_vs_n_smeared = h_residual_vs_n_second_smeared.get();
-                refit_and_fill_ring(HitmaskHoughRingTagSecond, second_hists, current_lightdata, ring_ctx);
-            }
-
-            recodata_tree->Fill();
-            recodata.clear();
-            n_accepted++;
-            h_frames_per_spill->Fill(i_spill, 1.5); // accepted
-        }
-#endif // ── end original loop body, replaced by process+drain above ──
 
         mist::logger::info(TString::Format("Spill %i done — accepted: %i  had-edge: %i  duplicate-rejected: %i  total: %zu",
                                            i_spill, n_accepted, n_edge, n_duplicate, frames_in_spill.size())
@@ -1311,7 +1146,7 @@ void recodata_writer(
         //  to reduce `recodata_writer.cxx` from 2.2k lines (DISCUSSION
         //  modularisation pass).  See `writers/recodata/radial_fit.h`
         //  for the signature; behavior is identical, verified against
-        //  baseline `Data/20251111-164951/baseline_pre_refactor/`.
+        //  a baseline snapshot at extraction time (since pruned).
 
         //  Apply to every eff-corrected radial hist: first, second,
         //  and dual/solo splits for the first ring.  Second ring is
@@ -1555,6 +1390,81 @@ void recodata_writer(
     }
 
     //  ---
+    //  --- QA PDF emission (qa/recodata/*.pdf) — mirrors the
+    //  --- lightdata_writer pattern: square 1000×1000 TCanvas, draw
+    //  --- via class-appropriate option, save through util::qa::pdf_path
+    //  --- so the layout convention matches across writers, then
+    //  --- crop_pdf_inplace to strip ROOT's A4-portrait wrapper.
+    //
+    //  Curated set landing on the General overview's thematic rows:
+    //    01 frames_per_spill     — data-taking health (rate / spill)
+    //    02 trigger_qa           — accept / reject / duplicate per trigger
+    //    03 coverage_map_rphi    — geometric coverage (r, φ)
+    //    04 ring_centre_xy       — Cherenkov ring centroid map
+    //    05 N_gamma_per_ring     — per-ring N_γ summary
+    //
+    //  ``N_gamma_per_ring_summary`` is built inside ``build_radial_summary``
+    //  above and deleted after ``Write()`` — we read it back from the
+    //  open output_file via ``Get`` rather than refactoring the lambda.
+    //  ---
+    {
+        namespace fs = std::filesystem;
+        const fs::path run_dir = fs::path(data_repository) / run_name;
+
+        gStyle->SetOptStat(0);
+        gStyle->SetPaintTextFormat(".0f");
+
+        auto save_one = [&run_dir](int order, const std::string &name,
+                                   TH1 *h, const char *draw_opt) {
+            if (!h)
+                return;
+            TCanvas c(TString::Format("c_qa_recodata_%02d_%s",
+                                      order, name.c_str()),
+                      "", 1000, 1000);
+            //  Wider left/bottom margins so 2D bin-labelled hists
+            //  (trigger_qa, frames_per_spill) don't clip their long
+            //  trigger / outcome labels.  Other classes also benefit
+            //  from a touch more breathing room than the ROOT default.
+            c.SetLeftMargin(0.18);
+            c.SetBottomMargin(0.18);
+            c.SetTopMargin(0.08);
+            c.SetRightMargin(0.14);
+            h->Draw(draw_opt);
+            const auto path = util::qa::pdf_path(run_dir, "recodata", order, name);
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        };
+
+        //  01 frames_per_spill — TH2F with bin-labelled Y; "colz text"
+        //     so the per-(spill, outcome) counts are readable.
+        h_frames_per_spill->GetYaxis()->SetLabelSize(0.030);
+        save_one(1, "frames_per_spill", h_frames_per_spill.get(), "colz text");
+
+        //  02 trigger_qa — TH2F with X = trigger name, Y = outcome.
+        //     Use the same X-axis rotation idiom as the lightdata
+        //     trigger_matrix so long trigger names don't crowd.
+        h_trigger_qa->GetXaxis()->LabelsOption("v");
+        h_trigger_qa->GetXaxis()->SetLabelSize(0.028);
+        h_trigger_qa->GetYaxis()->SetLabelSize(0.030);
+        save_one(2, "trigger_qa", h_trigger_qa.get(), "colz text");
+
+        //  03 coverage_map_rphi — TH2F in (φ, R).  Out of immediate
+        //     scope here; reach into the open output file.
+        if (auto *cov = output_file->Get<TH2F>("Rings/h_coverage_map_rphi"))
+            save_one(3, "coverage_map_rphi", cov, "colz");
+
+        //  04 ring_centre_xy — first-ring centre map; same source.
+        if (auto *cxy = output_file->Get<TH2F>("Rings/h_centre_xy_first"))
+            save_one(4, "ring_centre_xy", cxy, "colz");
+
+        //  05 N_gamma_per_ring_summary — TH1F built inside the
+        //     build_radial_summary lambda above and deleted after
+        //     Write(); read back from the file.
+        if (auto *ng = output_file->Get<TH1F>("Rings/h_N_gamma_per_ring_summary"))
+            save_one(5, "N_gamma_per_ring_summary", ng, "hist text");
+    }
+
+    //  ---
     //  --- Publish cross-run scalars to AnalysisResults.
     //
     //  Same dual-backend store (<repo>/standard_results.{root,toml})
@@ -1563,12 +1473,12 @@ void recodata_writer(
     //  fits per sensor, which is downstream-macro work; the dashboard
     //  trend reader can already slice on "all".
     {
-        //  Sibling of the run directories — i.e. ``<repo>/standard_results.root``
+        //  Sibling of the run directories — i.e. ``<repo>/standard_results.toml``
         //  — so the cross-run aggregate lives next to the per-run data
         //  it summarises.  Earlier ``extData/`` literal was a stale
         //  hard-code from the legacy macro paths and failed to open
         //  whenever the dashboard launched from a different cwd.
-        AnalysisResults ar(data_repository + "/standard_results.root");
+        AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
             {{run_name, "all", "recodata.n_spills"},
              {static_cast<double>(all_spills), 0.0}},

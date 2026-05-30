@@ -30,8 +30,10 @@ button raises a clear error rather than silently doing nothing.
 
 from __future__ import annotations
 
+import re
 import shlex
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -217,11 +219,227 @@ def expected_local_path(cfg: RsyncConfig, run_id: str, repo_root: Path) -> Path:
     return local_dir / run_id
 
 
+# ---------------------------------------------------------------------------
+# Remote run listing — "what's available to download" for the picker dialog.
+# ---------------------------------------------------------------------------
+
+
+#  Run ids on disk are wall-clock timestamps from the DAQ — 8-digit
+#  date + dash + 6-digit time.  Anchored so we don't match
+#  partially-named or experimental directories.
+_RUN_ID_RE = re.compile(r"^\d{8}-\d{6}$")
+
+
+@dataclass
+class RemoteRun:
+    """One entry from the remote ``ls`` of run directories.
+
+    ``mtime_epoch`` is the directory's POSIX mtime as reported by
+    ``stat`` on the DAQ host — ``None`` when stat fell through (the
+    remote shell still prints the row so the operator at least sees
+    the id).  ``mtime_iso`` is the same value rendered in the local
+    timezone for display; we keep both since the picker dialog sorts
+    by epoch and shows the iso string.
+
+    ``local_present`` flags runs already mirrored under
+    ``local_data_dir/`` so the picker can grey-out / badge them.
+    """
+
+    run_id: str
+    mtime_epoch: int | None = None
+    mtime_iso: str | None = None
+    local_present: bool = False
+
+
+#  Sent to the DAQ host over ssh.  POSIX-only (``case`` glob + while
+#  read + the stat fallback chain), so it works on Linux + BSD + macOS
+#  without depending on GNU find -printf or coreutils -b.  Output is
+#  one ``<run_id>\t<mtime_epoch_or_dash>`` line per matching dir; a
+#  ``__ERR__:cd_failed`` sentinel on stdout lets the caller distinguish
+#  "remote_data_dir is wrong" from "ssh exploded entirely".
+_LIST_SCRIPT = r"""set -u
+cd %(dir)s 2>/dev/null || { echo "__ERR__:cd_failed"; exit 2; }
+ls -1A 2>/dev/null | while IFS= read -r d; do
+    [ -d "$d" ] || continue
+    case "$d" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+        *) continue ;;
+    esac
+    mtime=$(stat -c '%%Y' "$d" 2>/dev/null) \
+        || mtime=$(stat -f '%%m' "$d" 2>/dev/null) \
+        || mtime=
+    printf '%%s\t%%s\n' "$d" "${mtime:--}"
+done
+"""
+
+
+def _parse_listing(stdout: str) -> list[tuple[str, int | None]]:
+    """Turn the remote script's stdout into ``[(run_id, mtime_epoch | None), …]``.
+
+    Tolerant of trailing whitespace, blank lines, and the
+    ``mtime=-`` sentinel that the remote uses when ``stat`` fell
+    through.  Anything that doesn't match the run-id shape is
+    silently skipped — the script already filters by case glob, but
+    we re-validate here so a hostile / corrupted stream can't slip a
+    bogus id past us.
+    """
+    out: list[tuple[str, int | None]] = []
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("__ERR__:"):
+            continue
+        parts = line.split("\t", 1)
+        run_id = parts[0].strip()
+        if not _RUN_ID_RE.match(run_id):
+            continue
+        mtime: int | None = None
+        if len(parts) == 2:
+            tok = parts[1].strip()
+            if tok and tok != "-":
+                try:
+                    mtime = int(tok)
+                except ValueError:
+                    mtime = None
+        out.append((run_id, mtime))
+    return out
+
+
+def _iso_local(epoch: int | None) -> str | None:
+    """Render an epoch as ``YYYY-MM-DD HH:MM`` in the operator's local TZ."""
+    if epoch is None:
+        return None
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def list_remote_runs(
+    cfg: RsyncConfig,
+    repo_root: Path,
+    *,
+    timeout_s: int = 20,
+) -> tuple[list[RemoteRun], str]:
+    """SSH to the DAQ host and list run directories under ``remote_data_dir``.
+
+    Returns ``(entries, error_message)``:
+
+      - ``error_message`` is empty on success (including the empty-
+        listing case — zero runs is a valid answer, not an error).
+      - ``entries`` is sorted newest-first (run ids are timestamps so
+        lexical descending = chronological descending).
+      - ``local_present`` is set against the resolved ``local_data_dir``
+        so the picker can mark already-mirrored runs.
+
+    Common error shapes the message tries to be helpful about:
+
+      - rsync remote not configured (no ssh attempted)
+      - ssh binary missing on PATH
+      - host unreachable / DNS failure / auth refused (ssh stderr)
+      - ``remote_data_dir`` doesn't exist on the host
+        (script-emitted sentinel, not an ssh-level error)
+
+    The caller (the Run Manager's picker dialog) surfaces the message
+    inline and offers the typed-id fallback so the operator is never
+    blocked when the listing path fails.
+    """
+    import subprocess
+    if not cfg.is_configured:
+        return [], (
+            "rsync remote is not configured — set [rsync].remote_host "
+            "and [rsync].remote_data_dir in qa_quicklook/qa_quicklook.toml."
+        )
+
+    remote_dir = cfg.remote_data_dir.rstrip("/")
+    if not remote_dir:
+        return [], "remote_data_dir is empty"
+
+    #  shlex.quote so a directory with spaces or shell metacharacters
+    #  in [rsync].remote_data_dir doesn't tear the script open.
+    script = _LIST_SCRIPT % {"dir": shlex.quote(remote_dir)}
+
+    try:
+        proc = subprocess.run(
+            ["ssh",
+             "-o", "BatchMode=yes",
+             "-o", f"ConnectTimeout={max(2, timeout_s // 2)}",
+             "-o", "StrictHostKeyChecking=accept-new",
+             cfg.remote_host, script],
+            capture_output=True, text=True,
+            timeout=timeout_s,
+        )
+    except FileNotFoundError:
+        return [], "ssh binary not found on PATH"
+    except subprocess.TimeoutExpired:
+        return [], f"ssh listing timed out after {timeout_s}s"
+
+    stdout = proc.stdout or ""
+    if "__ERR__:cd_failed" in stdout:
+        return [], (
+            f"remote_data_dir {remote_dir!r} does not exist on "
+            f"{cfg.remote_host} — check the Settings-tab value."
+        )
+    if proc.returncode != 0:
+        err_lines = (proc.stderr or stdout or "").strip().splitlines()
+        first = err_lines[0] if err_lines else f"ssh exited {proc.returncode}"
+        return [], first
+
+    pairs = _parse_listing(stdout)
+
+    #  Build the local-present set off the resolved Data/ root.  An
+    #  iterdir is cheaper than per-id is_dir checks against tens of
+    #  candidates, and we already need the directory contents anyway.
+    local_dir = Path(cfg.local_data_dir)
+    if not local_dir.is_absolute():
+        local_dir = repo_root / local_dir
+    local_names: set[str] = set()
+    if local_dir.is_dir():
+        try:
+            local_names = {p.name for p in local_dir.iterdir() if p.is_dir()}
+        except OSError:
+            local_names = set()
+
+    entries = [
+        RemoteRun(
+            run_id=rid,
+            mtime_epoch=mtime,
+            mtime_iso=_iso_local(mtime),
+            local_present=rid in local_names,
+        )
+        for rid, mtime in pairs
+    ]
+    #  Newest first.  Run ids are zero-padded YYYYMMDD-HHMMSS, so
+    #  lexical sort matches chronological sort exactly.
+    entries.sort(key=lambda e: e.run_id, reverse=True)
+    return entries, ""
+
+
+def newest_run_id(entries: list["RemoteRun"]) -> str | None:
+    """Return the lex-newest (= chronologically latest) run id, or None.
+
+    Pure helper — shared by the picker live-run guard and the live
+    monitor.  Empty list → None.  Because run ids are YYYYMMDD-HHMMSS
+    the lex max IS the chronologically latest.
+
+    The "newest run is the dangerous one" check uses this:
+    that one might still be acquiring on the DAQ; downloading it
+    yields truncated files.  Anything older is sealed by construction
+    (a new run dir on the remote means the previous run's files
+    finished flushing).
+    """
+    if not entries:
+        return None
+    return max(e.run_id for e in entries)
+
+
 __all__ = [
+    "RemoteRun",
     "RsyncConfig",
     "build_argv",
     "expected_local_path",
+    "list_remote_runs",
     "load_config",
+    "newest_run_id",
     "probe_ssh_keyauth",
     "save_address",
 ]

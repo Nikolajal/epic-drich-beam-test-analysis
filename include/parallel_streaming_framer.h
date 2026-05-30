@@ -46,8 +46,13 @@
 /** @brief Number of clock cycles per frame */
 #define BTANA_FRAME_SIZE 1024
 
-/** @brief Frame duration in nanoseconds (3.125ns per clock cycle at 320MHz) */
-#define BTANA_FRAME_LENGTH_NS (BTANA_FRAME_SIZE * 3.125)
+/** @brief Frame duration in nanoseconds.
+ *
+ * Derived from @ref BTANA_FRAME_SIZE × @ref BTANA_ALCOR_CC_TO_NS so the
+ * single source of truth for the 3.125 ns/cc conversion lives in
+ * `alcor_data.h`.  A bench change of the ALCOR clock frequency (or a
+ * future rescaling of frame size) updates here automatically. */
+#define BTANA_FRAME_LENGTH_NS (BTANA_FRAME_SIZE * BTANA_ALCOR_CC_TO_NS)
 
 /** @brief Number of initial frames reserved for trigger synchronization */
 #define BTANA_FIRST_FRAMES_TRIGGER 5000
@@ -302,13 +307,16 @@ public:
      * dominant per-Hit contention points are addressed by isolating them per
      * worker:
      *
-     *  1. **`frame_map`** — a private `std::map<uint32_t, AlcorLightdataStruct>`
-     *     that the worker writes to without acquiring @c frame_mutexes_access.
-     *     The shared `frame_mutexes_access` lock used to serialise every Hit's
-     *     `frame_and_lightdata[]` insertion across all 16 worker threads; that
-     *     was the dominant bottleneck even after the QA-fill move.  At spill
-     *     end @ref next_spill merges every worker's `frame_map` into the master
-     *     `spilldata.frame_and_lightdata` via @ref merge_lightdata.
+     *  1. **`frame_map`** — a private `std::unordered_map<uint32_t,
+     *     AlcorLightdataStruct>` that the worker writes to without acquiring
+     *     @c frame_mutexes_access.  The shared `frame_mutexes_access` lock
+     *     used to serialise every Hit's `frame_and_lightdata[]` insertion
+     *     across all 16 worker threads; that was the dominant bottleneck even
+     *     after the QA-fill move.  At spill end @ref next_spill merges every
+     *     worker's `frame_map` into the master `spilldata.frame_and_lightdata`
+     *     via @ref merge_lightdata.  Iteration order is unspecified — the
+     *     merge step doesn't care, and the master-map post-merge
+     *     canonicalisation pass already sorts hit vectors deterministically.
      *  2. **`h2_fine_tune` / `h_afterpulse`** — clones of the master QA
      *     histograms, also filled lock-free by the worker and merged into the
      *     master via `TH1::Add` at spill end (then freed).
@@ -320,7 +328,7 @@ public:
     {
         TH2F *h2_fine_tune = nullptr;                       ///< Per-thread clone of @ref h2_fine_tune_distribution.
         TH1F *h_afterpulse = nullptr;                       ///< Per-thread clone of @ref h_afterpulse_dt.
-        std::map<uint32_t, AlcorLightdataStruct> frame_map; ///< Per-worker frame buffer; merged into master at spill end.
+        std::unordered_map<uint32_t, AlcorLightdataStruct> frame_map; ///< Per-worker frame buffer; merged into master at spill end.
     };
 
     /**

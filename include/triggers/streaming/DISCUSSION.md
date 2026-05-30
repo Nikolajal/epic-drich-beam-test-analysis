@@ -1,8 +1,7 @@
 # Streaming-trigger pipeline — design notes
 
 > 🧭 **Hub:** project-wide design log + index of satellites lives at
-> [`../../../DISCUSSION.md`](../../../DISCUSSION.md).  Open items
-> here also show up in the top-level [`BACKLOG.md`](../../../BACKLOG.md).
+> [`../../../DISCUSSION.md`](../../../DISCUSSION.md).
 > Parent satellite: [`../DISCUSSION.md`](../DISCUSSION.md).
 
 This document is the **community-facing** design reference for the
@@ -211,6 +210,93 @@ Set `n_sigma_threshold` to a large sentinel (e.g. 1000) to disable
 firing while still accumulating QA — useful for first runs on a new
 detector configuration.
 
+### 1.5.1  QA-mode disable + analyser threshold-setting (2026-05-29 audit)
+
+The audit landed two structural changes that operationalise the
+threshold-setting loop and decouple it from writer wall-time:
+
+1. **`conf/QA/streaming.toml` now disables firing** (`n_sigma_threshold
+   = 1e9`).  The QA-mode writer (`--QA`) accumulates the noise+data
+   score histograms in full but pays **0 s of Hough-cascade CPU**:
+   audit showed streaming+Hough was 290 s of a 358 s baseline; with
+   `--QA` the writer drops to ~55 s on 5 spills.  Operator gets the
+   full score distribution to read off without waiting for Hough work
+   that's going to be thrown away anyway.
+
+2. **`qa/lightdata/05_streaming_score.pdf`** — emitted by the
+   lightdata writer on every run (QA *or* production).  Red curve =
+   `h_streaming_score_noise` (first-frames noise sample), blue curve =
+   `h_streaming_score_data` (post-first-frames data sample).  Log-Y so
+   the bkg-vs-sig crossover is readable.
+
+**Analyser workflow** (replaces the old "1.5 Workflow" diagram for
+fresh runs):
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │  --QA writer run                                              │
+  │    streaming threshold = 1e9 → 0 fires, 0 Hough               │
+  │    score hists fill normally on every window                  │
+  │    writer ~55 s on 5 spills (vs ~358 s w/ default threshold) │
+  └────────────────────────────┬─────────────────────────────────┘
+                               │
+                               ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Operator inspects qa/lightdata/05_streaming_score.pdf       │
+  │    Where does data tail cross noise tail?                    │
+  │    What's the misfire rate at the proposed cut?              │
+  │    Is there a clean signal-tail-only region?                 │
+  └────────────────────────────┬─────────────────────────────────┘
+                               │
+              ┌────────────────┴───────────────┐
+              │                                │
+       no/marginal sig                      clear sig
+       run lives with                       set production
+       threshold = ∞                        n_sigma_threshold
+       (skip Hough cascade)                 (database hook — see § 1.5.2)
+              │                                │
+              ▼                                ▼
+       QA-only outputs              production writer w/ tuned n_σ
+```
+
+### 1.5.2  Per-run threshold field
+
+The analyser-chosen production threshold has a home: a per-run field in
+the run database.  All three options (TOML field, CLI flag, dashboard
+widget) are shipped.
+
+- **Option A — Per-run TOML field** (SHIPPED).
+  `run-lists/<year>.database.toml` accepts
+  `streaming_n_sigma_threshold = X` per run id, inherits from the
+  previous run when absent (same pattern as the other run-card
+  fields).  `lightdata_writer`'s CLI driver takes `--run-database
+  PATH`, looks the field up post-CLI-parse via
+  `RunInfo::get_run_info(run_name)`, and overrides
+  `streaming_trigger_cfg.n_sigma_threshold` before the writer
+  launches.  Clean separation: per-run physics, not per-campaign
+  config.  `0` (the default) leaves the streaming-conf value
+  untouched.
+- **Option B — CLI flag** `--n-sigma-threshold X` (SHIPPED).
+  Direct override that bypasses the rundb lookup.  Takes priority
+  over `--run-database` when both are supplied — convenient for
+  ad-hoc operator tuning without editing the rundb file.
+- **Option C — Annotation on the score PDF in the dashboard**
+  (SHIPPED).  Clicking the `h_streaming_score_noise` /
+  `h_streaming_score_data` thumbnail in QA → Full plots → Lightdata
+  opens the n_σ picker dialog (`_StreamingScorePickerDialog` in
+  `qa_quicklook/qa.py`): both samples overlay on a log-Y matplotlib
+  canvas, a draggable vertical line marks the candidate cut, a side
+  panel shows `P(misfire)` / `Acceptance` / `S/N above cut` /
+  `N(data) above cut` live.  Seed priority chain:  rundb-saved value
+  → noise/data crossover heuristic when the conf default is at the
+  QA-disable sentinel → conf default → 5.0 fallback (see
+  `qa_quicklook/streaming_picker.py :: seed_threshold`).
+  "Save to rundb" commits via `rundb.update_run_field` with
+  `auto_pin=True` so only the active run changes; downstream
+  inherit-from-prev runs are pinned to the OLD value so their
+  merged view is preserved.  Source-tagged
+  `"dashboard:streaming_picker"` in the audit log for provenance.
+
 ### 1.6  Deferred to v2
 
 Four improvements are explicitly **out of scope** for v1:
@@ -297,7 +383,7 @@ streaming-trigger event with fine_time = t★
 | `find_rings` | `min_active = ceil(0.004 · N_active)` | Minimum surviving hits for Hough to run | ✅ `[streaming_hough].hough_threshold_fraction` |
 | `find_rings` | `max_rings = 2` | Hard cap on rings returned per frame | ❌ hardcoded (physical: two radiators ⇒ max two concentric rings) |
 | `find_rings` | `collection_radius = 7.5 mm` | Width of ring band for hit association | ✅ `[streaming_hough].collection_radius` |
-| `fit_circle_init_{x,y,r}` | `init = {0, 0, 50}` | *Legacy* — fit moved to recodata_writer; knob retained for back-compat only | ⚠️ ignored at runtime |
+| ~~`fit_circle_init_{x,y,r}`~~ | — | **REMOVED 2026-05-30** (commit 87e8af2, CLEAN_OFF C3.5).  No live consumer — recodata seeds the per-ring refit from the Hough peak `(cx, cy, radius)` directly. | Reader emits one-shot deprecation warning per key still in config; tolerance removed in v2.1. |
 
 **Non-tunable rationale:**
 
@@ -493,8 +579,10 @@ consolidation plan):
   fit now lives in `recodata_writer`; the init-from-Hough-peak idea
   applies there.  See
   [`include/writers/DISCUSSION.md`](../../writers/DISCUSSION.md).
-  The legacy `[streaming_hough].fit_circle_init_{x,y,r}` knobs are
-  unused but retained for back-compat.
+  The legacy `[streaming_hough].fit_circle_init_{x,y,r}` knobs were
+  REMOVED 2026-05-30 (commit 87e8af2, CLEAN_OFF C3.5); existing
+  configs that still carry them log a one-shot deprecation warning
+  per key and are otherwise ignored.
 - **Hough threshold formula review.**  `hough_threshold = ceil(0.004 ×
   N_active_cherenkov)` (now `hough_threshold_fraction`) was tuned for
   the era when the streaming trigger didn't gate Hough entry.  Now that
@@ -631,6 +719,19 @@ consolidation plan):
   inflation magnitude (entries with-vs-without dedup); if the effect
   is small (<5 %) close as wontfix; if significant promote option 1
   to a config knob and ship.
+
+  **Decision (2026-05-30, CLEAN_OFF C0.3).**  Confirmed: prototype
+  option 3 (`tag_first_per_channel`) FIRST as a measurement gate,
+  before any full dedup.  Measure-before-build is this codebase's
+  established discipline — the same correction the
+  `generate_calibration` (P 1.20 → P 0.35) and `get_phase` (P 1.71)
+  estimates needed, both off by an order of magnitude until
+  instrumented.  Cluster C7 opens with the prototype: add the
+  one-bit-per-channel guard, run on a ring-rich run (20251119-040419
+  has all three trigger kinds firing), read the inflation off
+  `full_hitmap` before/after.  Only if the fraction is significant
+  (>5 %) does option 1 (writer-side dedup config knob) get built; if
+  small, close as wontfix with the prototype shipped as-is.
 
 - **Per-ring (X, Y, R) sanity cuts.**  Both `Hough rings/` and
   `Fit rings/` subfolders show long tails to unphysical values on
@@ -1044,3 +1145,78 @@ time-window splits, per-event eff(R), in-writer N_γ fit); § 2.5
 open items (time-aware ring assignment task #33, fit_circle init
 from Hough peak, threshold formula review, merge pass for
 duplicate rings).*
+
+---
+
+## Design decisions captured 2026-05-29
+
+A Q&A pass against the BACKLOG resolved the following open points.
+Treat them as committed unless a follow-up Q reverses them.
+
+### Hough — merge near-duplicate rings (before clamp to `max_rings=2`)
+
+**Criterion:** two found rings collapse to one iff `|Δc_x|`, `|Δc_y|`,
+and `|ΔR|` are all within one accumulator cell on the respective axis
+(i.e. they would have voted into the same Hough bin had the LUT
+discretisation been one cell coarser).  Cheaper than per-hit overlap
+fraction and aligns naturally with the Hough cell size already in
+config — no new tolerance knob.
+
+### Hough — per-ring (X, Y, R) sanity cuts
+
+Three independent guards, applied **after** find_rings returns and
+**before** the clamp / mask write-back:
+
+1. **NaN guard** — already in place (`hough.cxx:222` defensive check on
+   mean-time / centre-fit divisions).  Keep.
+2. **Geometry box** — ring centre `(c_x, c_y)` must fall inside the
+   *physical detector envelope* (sensor-plane bounding box from
+   `mapping`) plus a configurable margin.  Rings centred off-detector
+   are spurious — either Hough peak collisions or noise locks.
+3. **Quality-ratio floor** — `peak_votes / N_active` must clear a
+   minimum; rings that "win" their cell with almost no support are
+   noise.  Threshold lives in `streaming_hough_cfg`.
+
+### Hough — is "ring 2" an elliptic deformation of ring 1?
+
+`macros/examples/elliptic_investigation.cpp` V1 is ready as-is — the
+task is to **run + measure**, not extend code first.  Expected outcome
+is informative either way: if eccentricity tracks beam impact angle,
+the "two-rings" model is wrong and we should fit an ellipse instead;
+if not, ring-2 is a genuine second Cherenkov ring (different radiator
+/ different velocity).  Decision rule: run on three different beam
+angles, check eccentricity correlation.
+
+### DCR estimator (Streaming v2)
+
+The conservative 75th-percentile estimator is **not** pre-committed
+against median+MAD or other robust alternatives.  Pick on evidence:
+run both on a representative noise-dominated dataset, compare
+stability across runs, pick whichever has lower run-to-run variance
+on the gated trigger rate.
+
+### Time-aware hit handling (task #33)
+
+**Decided:** per-trigger Δt cut applied **at the writer** (lightdata)
+plus deduplication inside the Hough stage.  Rationale: the writer
+cut gives the Hough a cleaner sample (fewer DCR hits voting into
+cells); the Hough dedup catches the residual within-window doubles
+that the cut still admits.  Single-cut variants (cut only, dedup
+only) explicitly rejected — neither alone covers both failure modes.
+
+### Dynamic timing cuts in lightdata
+
+**Decided:** operator-set per campaign via `streaming.toml` knobs.
+*Not* per-spill fit-and-cut (avoids feedback loops where a spill with
+unusual physics drifts the cut and biases the next spill); *not* a
+per-run autofit (intra-campaign stability assumed).  Keeps the
+control surface deterministic and reviewable.
+
+### Recodata multiple time windows (QA)
+
+**Decided:** trigger-aligned windows — `±Δt around trigger`,
+`side-bands` (random-coincidence baseline), and `DCR` (out-of-spill or
+far-from-trigger reference).  *Not* prompt/early/DCR as the BACKLOG
+row originally suggested; the trigger-relative split is more useful
+because it lets us separate "in-time signal" from "in-spill random"
+from "noise floor" cleanly.

@@ -1,13 +1,21 @@
-"""Runlist tab — read-only scaffold (v1).
+"""Database tab — browse + edit the run database.
 
-Left:  filterable list of every run id in
-       ``run-lists/2025.database.toml``.
-Right: runcard showing the **merged** view (own + forward-inherited)
-       for the selected run, with a visual hint for inherited fields.
+Left:  filterable, colour-coded list of every run id in the active
+       ``run-lists/<year>.database.toml`` (quality chip · spill count ·
+       search-match indicator).
+Right: editable runcard showing the **merged** view (own +
+       forward-inherited) for the selected run.  Edits flow through
+       ``rundb.update_run_field`` with auto-pin on inheritance changes
+       so downstream merged views stay byte-identical unless the
+       operator explicitly cascades.
 
-Edit semantics, auto-pin on inheritance changes, "Detect runs" import
-from ``Data/``, tag search, and "save selection as runlist" are
-queued in the design docs and ship in later iterations.
+Top-bar affordances: **Detect runs** (scan ``Data/``, chronologically
+insert missing ids), **Save selection** (multi-select → named entry
+in ``<year>.runlists.toml``), search with "N of M matched" caption,
+and the database picker for multi-campaign setups.
+
+Tab label was renamed from "Runlist" to "Database" in task #96 —
+``RunlistView`` keeps the historical class name for import stability.
 """
 
 from __future__ import annotations
@@ -67,6 +75,24 @@ NOTES_FIELD = "notes"
 # Special-cased fields that get their own dedicated rendering instead
 # of the generic label/editor/unit/origin grid cell.
 RADIATORS_FIELD = "radiators"
+
+# Topical grouping for the runcard generic grid.  The card emits one
+# small sub-section per group, in this order; each sub-section runs the
+# same 2-column label/editor/unit/origin grid.  Fields that aren't
+# claimed by any explicit group fall through into the trailing "Other"
+# bucket so an extension field never disappears just because it wasn't
+# registered.
+#
+# Why three groups (not more): keeps the visual rhythm of the card
+# short — the operator scans Beam → Detector → Other on the way down
+# the column.  Sub-grouping further (e.g. splitting DAQ off Detector)
+# adds noise without separating things the operator picks differently.
+FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Beam",     ("beam_energy", "beam_status", "polarity", "particle")),
+    ("Detector", ("v_bias", "temperature", "deltathr", "mirror_mm",
+                  "opmode", "rdo_firmware", "timing_firmware")),
+    ("Other",    ("n_spills", "quality")),
+)
 
 
 def _schema_keys(records: list["rundb.RunRecord"]) -> set[str]:
@@ -248,9 +274,12 @@ class RunlistView(QtWidgets.QWidget):
         hh.setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
         hh.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
         # Reserve enough room for the widest chip text ("warning",
-        # "need QA") plus its rounded-rect padding.  Content-resize
-        # was clipping the chip's right edge on some rows.
-        self._table.setColumnWidth(1, 86)
+        # "need QA") plus its rounded-rect padding *and* its
+        # 4 px left/right contents-margin — the previous 86 px just
+        # missed the right edge for the longest labels on some font
+        # configs (the chip body was rendered, but the trailing
+        # character clipped against the cell boundary).
+        self._table.setColumnWidth(1, 110)
         hh.setMinimumSectionSize(64)
         self._table.setSortingEnabled(False)   # source order = chronological
         self._table.setStyleSheet(
@@ -1031,15 +1060,91 @@ class _RunCard(QtWidgets.QWidget):
         hint.setWordWrap(True)
         self._layout.addWidget(hint)
 
-        # Field grid — 2 cells across, each cell is label / input / unit / origin.
+        # ── Field sections grouped by topic ─────────────────────────
+        # One sub-section per FIELD_GROUPS entry; "Other" catches anything
+        # in the schema that no explicit group claimed (and anything still
+        # in FIELD_ORDER not otherwise placed).  Sections with zero
+        # rendered fields are skipped silently so a sparse schema doesn't
+        # show empty headers.
+        ordered = _ordered_keys(schema)
+
+        # Allocate each field to a group.  An explicit group entry wins
+        # over the "Other" fallback even if the field is also missing
+        # from FIELD_ORDER (so e.g. ``particle`` lands in Beam, not Other,
+        # even when it's the operator's first time seeing it).
+        claimed: set[str] = set()
+        for _title, members in FIELD_GROUPS:
+            claimed.update(members)
+
+        group_fields: list[tuple[str, list[str]]] = []
+        for title, members in FIELD_GROUPS:
+            present = [k for k in members if k in ordered]
+            if title == "Other":
+                # Append schema-extras the explicit groups didn't claim,
+                # preserving the canonical FIELD_ORDER sort for known
+                # fields and alphabetical for the rest.
+                leftovers = [k for k in ordered if k not in claimed
+                             and k not in present]
+                present = present + leftovers
+            if present:
+                group_fields.append((title, present))
+
+        for title, fields in group_fields:
+            self._layout.addWidget(self._build_field_section(
+                title, fields, record, highlight_field,
+            ))
+
+        # ── Radiators — dedicated rendering ────────────────────────
+        # Pulled out of the generic field grid because it's a list of
+        # inline tables (Aerogel + Gas + …), each with type / refindex
+        # / tag / depth columns — a flat str() into a line edit (the
+        # old default) was unreadable.  Rendered as a compact table.
+        self._layout.addWidget(self._build_radiators_section(record, highlight_field))
+
+        # Stretch eats any leftover space so the notes block stays
+        # *visually* anchored at the bottom of the card.
+        self._layout.addStretch(1)
+
+        # ── Notes section — full width, multi-line, anchored bottom ──
+        self._layout.addWidget(self._build_notes_section(record, schema, highlight_field))
+
+    # ---- per-topic field section ---------------------------------------
+
+    def _build_field_section(
+        self,
+        title: str,
+        fields: list[str],
+        record: rundb.RunRecord,
+        highlight_field: Optional[str],
+    ) -> QtWidgets.QWidget:
+        """One topical sub-card (Beam / Detector / Other).
+
+        Same 2-column label/editor/unit/origin grid the runcard used to
+        emit once, now scoped to a subset of fields and wrapped in a
+        framed card with a small header so the operator sees the
+        topical group at a glance.
+        """
+        holder = QtWidgets.QFrame()
+        holder.setObjectName("cardSurface")
+        v = QtWidgets.QVBoxLayout(holder)
+        v.setContentsMargins(12, 8, 12, 10)
+        v.setSpacing(4)
+
+        # Header — matches the Radiators section's visual weight so the
+        # card reads as a peer, not a louder/quieter sibling.
+        header = QtWidgets.QLabel(title)
+        tf = header.font()
+        tf.setBold(True)
+        tf.setPointSize(tf.pointSize() + 1)
+        header.setFont(tf)
+        v.addWidget(header)
+
         grid_holder = QtWidgets.QWidget()
         grid = QtWidgets.QGridLayout(grid_holder)
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(6)
-        grid.setContentsMargins(0, 8, 0, 0)
+        grid.setContentsMargins(0, 4, 0, 0)
         ncols = 2
-
-        ordered = _ordered_keys(schema)
 
         # 4 widgets per cell: label · editor · unit · origin
         for c in range(ncols * 4):
@@ -1047,7 +1152,7 @@ class _RunCard(QtWidgets.QWidget):
         for c in range(1, ncols * 4, 4):
             grid.setColumnStretch(c, 1)
 
-        for idx, key in enumerate(ordered):
+        for idx, key in enumerate(fields):
             row, col = divmod(idx, ncols)
             base_col = col * 4
 
@@ -1091,21 +1196,8 @@ class _RunCard(QtWidgets.QWidget):
 
             grid.addWidget(_origin_pill(origin), row, base_col + 3)
 
-        self._layout.addWidget(grid_holder)
-
-        # ── Radiators — dedicated rendering ────────────────────────
-        # Pulled out of the generic field grid because it's a list of
-        # inline tables (Aerogel + Gas + …), each with type / refindex
-        # / tag / depth columns — a flat str() into a line edit (the
-        # old default) was unreadable.  Rendered as a compact table.
-        self._layout.addWidget(self._build_radiators_section(record, highlight_field))
-
-        # Stretch eats any leftover space so the notes block stays
-        # *visually* anchored at the bottom of the card.
-        self._layout.addStretch(1)
-
-        # ── Notes section — full width, multi-line, anchored bottom ──
-        self._layout.addWidget(self._build_notes_section(record, schema, highlight_field))
+        v.addWidget(grid_holder)
+        return holder
 
     # ---- radiators section ---------------------------------------------
 

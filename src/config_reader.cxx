@@ -323,6 +323,26 @@ QaConfigStruct qa_conf_reader(std::string config_file)
                                    "lightdata_writer will seed each spill's calibration table "
                                    "from the framer's fine-tune distribution.");
         }
+        //  Accept both integer types: TOML's int is int64_t, but operators
+        //  may legitimately write `0` (unset) or larger periods.  Negative
+        //  values fall back to 0 (never retry) with a warning so a typo
+        //  doesn't silently produce undefined behaviour from an unsigned
+        //  wraparound.
+        if (auto v = (*qa_table)["generate_calibration_low_stats_retry_period"].value<int64_t>())
+        {
+            if (*v < 0)
+            {
+                mist::logger::warning(
+                    "(qa_conf_reader) generate_calibration_low_stats_retry_period < 0 — "
+                    "treating as 0 (never retry).");
+                cfg.generate_calibration_low_stats_retry_period = 0;
+            }
+            else
+            {
+                cfg.generate_calibration_low_stats_retry_period =
+                    static_cast<unsigned long>(*v);
+            }
+        }
 
         // Sanity warnings — windows must be non-empty and well-ordered.
         if (cfg.afterpulse_near_hi < cfg.afterpulse_near_lo)
@@ -605,6 +625,16 @@ void RunInfo::read_database(std::string filename)
             cur.aerogel_mirror = run_tbl->get("aerogel_mirror") ? run_tbl->get("aerogel_mirror")->value_or(0) : (prev() ? prev()->aerogel_mirror : 0);
             cur.gas_mirror = run_tbl->get("gas_mirror") ? run_tbl->get("gas_mirror")->value_or(0) : (prev() ? prev()->gas_mirror : 0);
 
+            //  Analyser-tuned trigger thresholds (per-run override).
+            //  Inherits from the preceding run when absent so a single
+            //  edit at the top of a calibration sweep carries forward
+            //  to subsequent runs without re-typing.  0 (the default)
+            //  means "use the streaming-conf default" — same semantic
+            //  as the field being absent.
+            cur.streaming_n_sigma_threshold = run_tbl->get("streaming_n_sigma_threshold")
+                ? static_cast<float>(run_tbl->get("streaming_n_sigma_threshold")->value_or(0.0))
+                : (prev() ? prev()->streaming_n_sigma_threshold : 0.f);
+
             //  Radiators
             if (auto rad_node = run_tbl->get("radiators"))
             {
@@ -718,6 +748,9 @@ streaming_trigger_conf_reader(std::string config_file)
             cfg.n_sigma_threshold = static_cast<float>(*v);
         if (auto v = (*st_table)["min_noise_hits"].value<double>())
             cfg.min_noise_hits = *v;
+        //  C7.6 — multiplicity upper-bound cut.  0 = disabled.
+        if (auto v = (*st_table)["max_hits_per_window"].value<int64_t>())
+            cfg.max_hits_per_window = static_cast<int>(*v);
 
         if (cfg.time_window_ns <= 0.f)
             mist::logger::warning("(streaming_trigger_conf_reader) time_window_ns must be > 0 — "
@@ -726,6 +759,12 @@ streaming_trigger_conf_reader(std::string config_file)
             mist::logger::warning("(streaming_trigger_conf_reader) min_noise_hits < 1 admits "
                                   "channels with zero or one observed hits — rate estimate "
                                   "is unreliable and the noise-score tail will inflate.");
+        if (cfg.max_hits_per_window < 0)
+        {
+            mist::logger::warning("(streaming_trigger_conf_reader) max_hits_per_window < 0 "
+                                  "is meaningless — clamping to 0 (cut disabled).");
+            cfg.max_hits_per_window = 0;
+        }
     }
     catch (const toml::parse_error &err)
     {
@@ -806,13 +845,25 @@ streaming_hough_conf_reader(std::string config_file)
         if (auto v = (*sh_table)["centre_padding_mm"].value<double>())
             cfg.centre_padding_mm = static_cast<float>(*v);
 
-        // fit_circle initial guess
-        if (auto v = (*sh_table)["fit_circle_init_x"].value<double>())
-            cfg.fit_circle_init_x = static_cast<float>(*v);
-        if (auto v = (*sh_table)["fit_circle_init_y"].value<double>())
-            cfg.fit_circle_init_y = static_cast<float>(*v);
-        if (auto v = (*sh_table)["fit_circle_init_r"].value<double>())
-            cfg.fit_circle_init_r = static_cast<float>(*v);
+        //  C3.5 — `fit_circle_init_{x,y,r}` are deprecated.  recodata_writer
+        //  seeds the per-ring refit from the Hough peak (cx, cy, radius);
+        //  no consumer ever read the config-supplied values.  Tolerated
+        //  for one release so existing TOMLs continue to load — log one
+        //  warning per key encountered.  Remove the warning (and this
+        //  block) in v2.1.
+        for (const char *key : {"fit_circle_init_x",
+                                "fit_circle_init_y",
+                                "fit_circle_init_r"})
+        {
+            if ((*sh_table)[key])
+            {
+                mist::logger::warning(TString::Format(
+                    "(streaming_hough_conf_reader) `%s` is deprecated and "
+                    "IGNORED (recodata seeds the fit from the Hough peak). "
+                    "Remove the key from your config to silence this warning.",
+                    key).Data());
+            }
+        }
 
         // Sanity warnings
         if (cfg.r_min < 0.f || cfg.r_max <= cfg.r_min)
@@ -871,9 +922,10 @@ streaming_hough_conf_reader(std::string config_file)
                                    ? "(default = r_max, full coverage)"
                                    : "(tight pad — accumulator shrunk)")
                                .Data());
+        //  C3.5 — fit_circle_init_{x,y,r} echo dropped along with the
+        //  fields themselves; centre_xy_half_range_mm now stands alone.
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) fit_circle init: x=%.2f y=%.2f r=%.2f; centre_xy_half_range=%.2f",
-                               cfg.fit_circle_init_x, cfg.fit_circle_init_y, cfg.fit_circle_init_r,
+                               "(streaming_hough_conf_reader) centre_xy_half_range_mm=%.2f",
                                cfg.centre_xy_half_range_mm)
                                .Data());
     }
@@ -910,7 +962,11 @@ recodata_conf_reader(std::string config_file)
 
     try
     {
-        toml::table tbl = toml::parse_file(config_file);
+        //  C2.3: route through ``toml_parse_with_cutoff`` so a ``##``
+        //  sentinel below the live config is honoured (matches every
+        //  other reader — see ``streaming_hough_conf_reader`` and
+        //  ``Mapping::load_calib``).
+        toml::table tbl = toml_parse_with_cutoff(config_file);
         mist::logger::info(TString::Format(
                                "(recodata_conf_reader) Reading recodata config: %s",
                                config_file.c_str())

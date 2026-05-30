@@ -1,21 +1,24 @@
 # Project design log
 
-Local, never-published notes covering four kinds of project state.  Each
-section is self-contained; entries are organised so any single one can be
-promoted to a GitHub issue when it's worth collaborating on.
+Project-wide design reference + hub.  This file is the **main entry
+point** for anyone reading the project's architectural thinking:
+satellite `DISCUSSION.md` files in each subsystem link back here, and
+this hub indexes them.  Published to the Doxygen site; lives in git;
+edit freely.
 
 | Section | What it holds | Removal trigger |
 |---|---|---|
 | [Satellite discussions](#satellite-discussions--hub) | Pointers to per-area `DISCUSSION.md` files scattered through the tree.  This file is the **hub** — every other DISCUSSION.md should be reachable from one click here. | Satellite file added / removed → update the hub. |
-| [Triage taxonomy](#triage-taxonomy) | Project-wide convention for tagging backlog items (Bug / Liability / Vulnerability / Patch / Feature / Schema) + the priority formula.  Defines the format used by [`BACKLOG.md`](BACKLOG.md). | Taxonomy change → update the chapter + retag BACKLOG.md. |
+| [Triage taxonomy](#triage-taxonomy) | Project-wide convention for tagging backlog items (Bug / Liability / Vulnerability / Patch / Feature / Schema) + the priority formula. | Taxonomy change → update the chapter. |
 | [Design discussions](#design-discussions) | Open architectural questions — **decision needed before any code change**.  Each `D-XX` is a self-contained proposal with options + recommendation. | Decision made → entry deleted (the resulting change goes into TODOs or directly into a PR). |
 | [TODOs](#todos--concrete-fixes-in-the-queue) | Concrete code-work items.  No design decision pending — just hands on the keyboard.  Source files carry `CODE_REVIEW §X.Y` breadcrumbs at the original finding sites. | Fix lands in `main` → row removed. |
 | [Attention points](#attention-points--latent-issues-to-be-careful-about) | Latent caveats in the codebase that don't need a design discussion but **do** need a heads-up so they don't get propagated or forgotten. | Caveat resolved or formally captured as a design question / TODO. |
 | [Coding conventions](#coding-conventions) | Naming + style reference for the project.  No removal trigger — this is reference material. |
 
-> File is `.gitignore`d (see `.gitignore`).  When an entry is worth
-> collaborating on, open a GitHub issue with the appropriate label
-> (`design` / `enhancement` / `bug`) and drop the entry from here.
+> A separate `BACKLOG.md` exists at the repo root tracking work items
+> with the taxonomy below.  It's a working-state file, not yet stable
+> enough to expose on the Doxygen site — read it locally for current
+> queue + priorities.
 
 ---
 
@@ -30,13 +33,14 @@ care about.  Whenever a new satellite lands, add a row.
 |---|---|---|
 | [`include/triggers/DISCUSSION.md`](include/triggers/DISCUSSION.md) | Community-facing reference for the **triggers subsystem** as a whole (TriggerEvent schema, registry, sequencing). | TriggerEvent's physical-origin limitation; future schema-extension proposal (GlobalIndex / device-fifo-channel triple). |
 | [`include/triggers/streaming/DISCUSSION.md`](include/triggers/streaming/DISCUSSION.md) | Deep-dive on the **DCR-weighted streaming + Hough trigger** stages.  Section refs match per-stage headings here. | D-12 v1 design + Hough §2.3 sub-cell refinement (sliding-window, SAT, padding); §2.6 live-QA pipeline (V1 shipped); §2.7 frames-within-spill multithreading. |
-| [`include/writers/DISCUSSION.md`](include/writers/DISCUSSION.md) | Open questions specific to the **writers** (pulser_calib, lightdata, recodata, recotrackdata). | Pulser ±0.5 cc satellite hypothesis; regime-2 slip vs coarse-edge quantisation; fine-band filter as IRLS candidate. |
-| [`qa_quicklook/DISCUSSION.md`](qa_quicklook/DISCUSSION.md) | Longer-term roadmap for the **operator dashboard**.  Items the dashboard *should* do but aren't pressing. | PDF publication contract; AnalysisResults dual-backend (ROOT → TOML); audit log + Show-history UI; cross-shifter sync candidates. |
+| [`include/writers/DISCUSSION.md`](include/writers/DISCUSSION.md) | Open questions specific to the **writers** (pulser_calib, lightdata, recodata, recotrackdata).  Companion [`README.md`](include/writers/README.md). | Pulser ±0.5 cc satellite hypothesis; regime-2 slip vs coarse-edge quantisation; fine-band filter as IRLS candidate. |
+| [`include/utility/DISCUSSION.md`](include/utility/DISCUSSION.md) | Design notes for the **utility helpers** (audit log, config dump, qa_publish, global_index, …).  Companion [`README.md`](include/utility/README.md). | ConfigDump convention; audit-log atomicity; `fit_circle` + `clip_phi` review items. |
+| [`qa_quicklook/DISCUSSION.md`](qa_quicklook/DISCUSSION.md) | Longer-term roadmap for the **operator dashboard**.  Items the dashboard *should* do but aren't pressing. | PDF publication contract; AnalysisResults TOML backend (shipped 2026-05-29); audit log + Show-history UI; Google Sheets cross-shifter sync (shipped 2026-05-29); writer-side per-run progress events still TBD. |
 
 **Conventions for the satellites:**
 
 - One satellite per major subdirectory (`include/triggers/`, `qa_quicklook/`, …) — not per file.
-- Open items in satellites should also appear in the hub-level [`BACKLOG.md`](BACKLOG.md) so the queue stays single-source.
+- Open items in satellites should also appear in the hub-level `BACKLOG.md` (working file at the repo root, not on the Doxygen site yet) so the queue stays single-source.
 - The satellite holds the *narrative* (why, options, history); the
   backlog row holds the *tag* + the *priority*.  Cross-link by
   free-text reference, not by mechanical sync.
@@ -281,6 +285,19 @@ ctor was reverted to `emplace_back` + conditional `pop_back` so the move
 never happens in the canonical path.  See the Attention-points table
 below for the full forensic note.  Future ROOT-bound wrapper classes
 should follow the AlcorSpilldata rule: **non-copyable + non-movable**.
+
+**Decision (2026-05-30, CLEAN_OFF C0.1).**  For `AlcorRecodata` /
+`AlcorRecotrackdata`: runtime `read_only_` flag (option 1, not a
+`ReadOnly` subclass), with copy + move ctors and assignment `= delete`
+on the **base class** — the double-bind corruption is an invariant of
+any ROOT-branch-bound wrapper, not a per-call-site precaution, so the
+prohibition lives where a subclass or downstream signature can't forget
+it.  The `read_only_` flag (set true by the reader factory, false by
+the writer ctor) makes every mutator `assert(!read_only_)`: deleted
+ctors stop the corruption at compile time, the guard catches writing
+through a read view at runtime.  The non-copyable/non-movable rule is
+codified as convention #1 in `include/writers/README.md`.
+Implementation lands in the reco cluster (CLEAN_OFF C9/C10).
 
 ---
 
@@ -577,6 +594,39 @@ _All open questions from the design pass have been resolved.  The next decision 
 
 ---
 
+### D-13 — CI strategy
+
+**Status:** decided (2026-05-30, CLEAN_OFF C0.5).  Gates cluster C13
+(CI re-enable — the `build.yml` workflow is currently `if: false`).
+
+**Decision: conda-pinned multi-OS.**  Pin ROOT via conda-forge, run the
+matrix over `ubuntu-latest` + `macos-latest`.
+
+Rationale:
+- **Multi-OS is not optional.**  Real cross-platform bugs bite here —
+  the ROOT TPDF MediaBox-is-always-A4 issue (fixed via pdfcrop) and the
+  `$ORIGIN` vs `@loader_path` install-RPATH split (CLEAN_OFF C1.3) were
+  both platform-specific; a Linux-only CI would have caught neither.
+- **conda-pinned over apt** — apt ROOT lags the lab version and isn't
+  available on macOS; conda-forge gives the same pinned ROOT on both
+  runners reproducibly.
+- **hosted over self-hosted** — a self-hosted lab runner is offline
+  exactly when the lab box is busy with data-taking, which is when CI
+  matters most.  Accept the conda solve-time cost for always-available
+  hosted runners.
+
+**Open follow-ups for C13 (non-blocking):**
+- Get the macros ACLiC-clean so a headless CI smoke can compile them.
+- `conf/` symlinks (CLEAN_OFF C1.4): kept; CI on `core.symlinks=true`
+  (git default on the hosted runners) materialises them correctly, so
+  no CI-specific handling.  A collapsed-to-text startup guard lands in
+  C2 with the `config_reader.h` work.
+- Test surface: the Python suite (`tests/`) always runs; the C++ ctest
+  surface depends on whether a canned 1-spill fixture is cheap enough
+  to ship.
+
+---
+
 ## TODOs — concrete fixes in the queue
 
 Code-work items that don't need a design decision — just hands on the keyboard
@@ -604,7 +654,7 @@ TOML shapes._
 | ID | What | Where |
 |----|------|-------|
 | §4.7 | `recodata_writer` does two full `GetEntry` passes over the spill tree — first to collect per-channel offsets, then to write.  **Minimum mitigation landed 2026-05-26**: 50 MB tree cache enabled before the first pass.  The proper fix (compute offsets in the same pass, or cache `(global_index, dt)` pairs to avoid re-reading the tree) is still open. | `src/recodata_writer.cxx` — cache setup near :659, two GetEntry sites at :666 (calibration loop) and inside the second loop at :736 |
-| §recodata-modularise | `recodata_writer.cxx` was 2152 lines (all in one function with 10 lambdas).  **Phase 1 landed 2026-05-27**: extracted the CB+pol3 radial fit and the one-param LOO σ(N) fit into `src/writers/recodata/{radial_fit,sigma_vs_n_fit}.cxx` (with declarations in matching headers under `include/writers/recodata/`).  File dropped to 1609 lines; bit-identical output verified vs `Data/20251111-164951/baseline_pre_refactor/`.  **Remaining work**: per-frame compute lambdas (`compute_ring_fit_pure`, `process_frame_pure`, `drain_frame_result`, `fill_ring_hists`) — tightly coupled to 30+ closures, needs context-struct design; lightdata_writer.cxx (1599 lines) follows the same shape. | `src/recodata_writer.cxx` (orchestrator); `include/writers/recodata/` + `src/writers/recodata/` (extracted helpers) |
+| §recodata-modularise | `recodata_writer.cxx` was 2152 lines (all in one function with 10 lambdas).  **Phase 1 landed 2026-05-27**: extracted the CB+pol3 radial fit and the one-param LOO σ(N) fit into `src/writers/recodata/{radial_fit,sigma_vs_n_fit}.cxx` (with declarations in matching headers under `include/writers/recodata/`).  File dropped to 1609 lines; bit-identical output was verified against a then-current baseline snapshot (since pruned).  **Remaining work**: per-frame compute lambdas (`compute_ring_fit_pure`, `process_frame_pure`, `drain_frame_result`, `fill_ring_hists`) — tightly coupled to 30+ closures, needs context-struct design; lightdata_writer.cxx (1599 lines) follows the same shape. | `src/recodata_writer.cxx` (orchestrator); `include/writers/recodata/` + `src/writers/recodata/` (extracted helpers) |
 
 ### Pervasive sweeps (multi-file)
 
@@ -641,6 +691,7 @@ Known caveats in the current codebase that don't need a design discussion but
 | `include/alcor_spilldata.h` — `AlcorSpilldata` is non-copyable AND non-movable | Branch addresses bound to the wrapper's `_ptr_` slots; any move would leave them dangling.  Same trap as the streamer row above, just enforced compile-time instead of patched-at-move. | Future ROOT-bound wrapper classes (post-D-08 migration for `AlcorRecodata`/`AlcorRecotrackdata`) should follow the same rule: non-copyable + non-movable, held by reference / `unique_ptr` / member.  Do not relax this without proving the branch-address-stability invariant. |
 | `include/writers/` has no umbrella header (and shouldn't get one) | The pattern `<subdir>/` ↔ `<subdir>.h` (e.g. `util/` ↔ `utility.h`, `triggers/` ↔ `triggers.h`) applies to subsystems with **cross-cutting types or helpers** that consumers want to pull in as one set.  `writers/` is a **category folder** for independent pipeline-stage entry points (`lightdata.h`, `recodata.h`, `recotrackdata.h`) that share no types and no interface — each is a `void <name>_writer(...)` taking its own config bundle.  Adding a `writers.h` umbrella would force-fit a pattern that has no payload here: there's nothing to re-export.  When in doubt, ask: *is there a shared type or symbol the umbrella would re-export?*  If no, leave the subdir flat. | Three organisational patterns coexist in this repo on purpose: (1) **umbrella + helpers** (`utility.h`/`util/`), (2) **subsystem types + algorithms** (`triggers.h`/`triggers/`), (3) **category grouping** (`writers/`).  Each fits its role; don't mechanically replicate (1)–(2) where (3) is correct. |
 | `tools/lint_codebase.py` + `tools/check_qa.py` | Two repository-side checks that catch the bug classes surfaced by the Phase-5 migration: histogram fills with the wrong GlobalIndex accessor (sparse packed values landing in overflow), debug-leftover histograms (`test`/`test2`), commented-out one-line function calls (silent disables), and legacy `/4`-style bit-bashing formulas.  See [README.md → Repository-side checks](README.md#repository-side-checks-tools). | **Run both after any change that touches histograms, GlobalIndex usage, or per-channel TProfile axes.**  The lint exits nonzero on findings; check_qa exits nonzero on any unexpected EMPTY / OVERFLOW.  Suppression markers: `// LINT-OK:` / `// LINT-OK-FILE:` (lint) and `--known-empty` / `--known-overflow` (check_qa).  These guards exist *because* the per-channel TProfile bugs slipped past local verification — re-run them on every PR that touches anything related. |
+| `src/lightdata_writer.cxx` calibration loading (2026-05-29) | `lightdata_writer` is now **calibration-optional**.  An empty `fine_calibration_config_file` argument logs a warning and skips `AlcorFinedata::read_calib_from_file` instead of crashing.  Every channel falls back to `get_phase() = 0.f` (no sub-cc fine correction) but coarse-domain plots (Δt_{trg} vs spill, trigger matrix, hitmaps) are fully valid.  CLI driver (`macros/utilities/lightdata_writer.cpp`) now auto-detects `<data>/<run>/fine_calibration.toml` after CLI parsing and falls through to the empty/skip path if absent.  Stale default `data_repository + "/" + run_name + "/fine_calibration.txt"` (always evaluated as `//fine_calibration.txt` because the variables are empty at construct-time, and `.txt` is rejected by the v3 schema gate) was deleted. | Lets the dashboard exercise the lightdata writer on fresh runs before a pulser-calib has produced the v3 TOML.  Operators wanting fine corrections must still pass `--fine-calib-conf` explicitly or place a `fine_calibration.toml` in the run directory. |
 
 ---
 
@@ -844,4 +895,27 @@ about the cost estimate not existing yet.
 | D-08 round 2 (AlcorRecodata) | Schema | 3 | 2 | 11 | 2.50 | 1000 | 3.00 | (3·2)/5.50 ≈ **1.09** |
 | Show-history UI (qa_quicklook) | Feature | 2 | 2 | 1 | 0.00 | 250 | 2.40 | (2·2)/2.40 ≈ **1.67** |
 | Run-info edit cascade prompt | Feature | 2 | 2 | 2 | 1.00 | 200 | 2.30 | (2·2)/3.30 ≈ **1.21** |
+
+### DISCUSSION-entry requirement
+
+A READY backlog row needs a DISCUSSION entry *before* it leaves
+READY iff **Sev ≥ 2 *and* Imp ≥ 2** — i.e. it's a
+Liability/Vulnerability/Feature/Schema (not a Bug or Patch) *and*
+it carries direct or significant impact (not a fringe knob).  The
+entry lives in the nearest area satellite (`include/<area>/DISCUSSION.md`,
+`qa_quicklook/DISCUSSION.md`, etc.), not here — this hub indexes the
+satellites, it doesn't host individual entries.
+
+The cutoff isn't arbitrary: the cost of a stale design note is *not*
+writing it; the cost of a missing one is reproducing a buried
+decision from git archaeology.  Sev≥2 says "the work is non-trivial
+enough that someone else needs to know why we made the call".  Imp≥2
+says "enough downstream consumers feel the decision that 'go read
+the row' isn't sufficient".  Either alone is fine — both together
+mean the row text is not enough; an entry must capture the open
+questions, the picked option, and the rejected alternatives.
+
+Patch rows and Sev≥2/Imp=1 rows skip the entry — their row text is
+the spec.  If a Patch ends up being larger than expected on pickup,
+re-tag it Feature (Sev 2) and add the entry then.
 

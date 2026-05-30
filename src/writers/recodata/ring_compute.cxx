@@ -7,8 +7,8 @@
  * @ref btana::recodata::RingComputeContext) from the in-function
  * `compute_ring_fit_pure`, `fill_ring_hists`, and `refit_and_fill_ring`
  * lambdas formerly inside `src/recodata_writer.cxx`.  Algorithms are
- * unchanged; bit-identical output verified against
- * `Data/20251111-164951/baseline_pre_refactor/recodata.root`.
+ * unchanged; bit-identical output was verified against a pre-refactor
+ * baseline snapshot at extraction time (snapshot since pruned).
  */
 
 #include "writers/recodata/ring_compute.h"

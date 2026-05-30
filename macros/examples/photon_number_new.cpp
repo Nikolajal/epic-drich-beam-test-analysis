@@ -1729,7 +1729,7 @@ void photon_number_new(std::string data_repository, std::string run_name,
             {"chi2_ndf", "chi2_ndf"},
         };
 
-        AnalysisResults analysis_results_store(data_repository + "/standard_results.root");
+        AnalysisResults analysis_results_store(data_repository + "/standard_results.toml");
         ResultMap quantities_to_store;
 
         for (const auto &[histogram_name, sensor_tag, scope_prefix] : kHistogramResultMap)
