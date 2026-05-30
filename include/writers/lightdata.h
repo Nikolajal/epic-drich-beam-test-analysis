@@ -45,6 +45,17 @@
  *                                 `include/triggers/streaming/DISCUSSION.md`
  *                                 and `conf/streaming.toml`.
  */
+/**
+ * @param streaming_n_sigma_threshold_override  Per-run override for the
+ *        `[streaming_trigger].n_sigma_threshold` in the streaming-conf
+ *        file.  When > 0, replaces `streaming_trigger_cfg.n_sigma_threshold`
+ *        after the config file is parsed and before the framer launches.
+ *        Default 0 = no override (use the streaming-conf default).  The
+ *        CLI driver populates this from
+ *        `RunInfoStruct::streaming_n_sigma_threshold` when
+ *        `--run-database <path>` is supplied; analyser-tuned per-run
+ *        threshold per `include/triggers/streaming/DISCUSSION.md §1.5.2`.
+ */
 void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
@@ -56,4 +67,5 @@ void lightdata_writer(
     std::string mapping_config_file = "conf/mapping_conf.toml",
     std::string fine_calibration_config_file = "",
     std::string framer_conf_file = "conf/framer_conf.toml",
-    std::string streaming_conf_file = "conf/streaming.toml");
+    std::string streaming_conf_file = "conf/streaming.toml",
+    float streaming_n_sigma_threshold_override = 0.f);

@@ -562,6 +562,21 @@ class RunManagerView(QtWidgets.QWidget):
         )
         self._inspect_btn.clicked.connect(self._on_inspect)
         top.addWidget(self._inspect_btn)
+        # ── QA pipeline ──
+        # Manually trigger the qa_pipeline cascade
+        # (lightdata → recodata → recotrackdata) on the selected run.
+        # Mirrors the livemon auto-trigger path; progress lands on the
+        # status-bar strip MainWindow already owns.  Skip-stage-if-output
+        # is on by default, so re-running a finished run is cheap.
+        self._qa_pipeline_btn = QtWidgets.QPushButton("▶  QA pipeline")
+        self._qa_pipeline_btn.setToolTip(
+            "Run the lightdata → recodata → recotrackdata cascade on the "
+            "selected run.  Stages with an existing output ROOT are skipped "
+            "(use --force-rebuild semantics by passing the writer's CLI flag "
+            "directly for a forced re-run)."
+        )
+        self._qa_pipeline_btn.clicked.connect(self._on_qa_pipeline)
+        top.addWidget(self._qa_pipeline_btn)
         # Progress bar — picks up % from writer / rsync progress
         # lines.  Indeterminate (busy stripes) while a job runs but no
         # % was parsed yet; hidden when idle.  Width-capped so it
@@ -1133,15 +1148,34 @@ class RunManagerView(QtWidgets.QWidget):
                 return
 
         default_run = self._run_combo.currentText().strip()
-        run_id, ok = QtWidgets.QInputDialog.getText(
-            self, "Download run",
-            "Run id to fetch (YYYYMMDD-HHMMSS):",
-            QtWidgets.QLineEdit.Normal,
-            default_run,
+        #  Try the listing-picker first — operator browses the DAQ
+        #  host's run directory, picks visually, already-mirrored runs
+        #  are badged so re-download mistakes are obvious.  The picker
+        #  has its own "Type id manually…" escape hatch and we also
+        #  fall back automatically when the listing never produced any
+        #  entries (e.g. ssh broken at exactly the moment of the click).
+        picker = _RemoteRunsPickerDialog(
+            cfg, self._repo_root,
+            default_run=default_run,
+            parent=self,
         )
-        if not ok or not run_id.strip():
-            return
-        run_id = run_id.strip()
+        if picker.exec() != QtWidgets.QDialog.Accepted:
+            return   # user cancelled
+        run_id = "" if picker.manual_entry else picker.selected_run_id
+
+        if not run_id:
+            #  Fallback path: typed-id input.  Either the operator
+            #  explicitly clicked "Type id manually…" or the picker
+            #  didn't yield a selection (rare race — kept for safety).
+            run_id, ok = QtWidgets.QInputDialog.getText(
+                self, "Download run",
+                "Run id to fetch (YYYYMMDD-HHMMSS):",
+                QtWidgets.QLineEdit.Normal,
+                default_run,
+            )
+            if not ok or not run_id.strip():
+                return
+            run_id = run_id.strip()
 
         # Refuse if a download is already going for this run id —
         # the joblock mutex would catch it anyway, but a clear
@@ -1174,10 +1208,48 @@ class RunManagerView(QtWidgets.QWidget):
         if confirm.exec() != QtWidgets.QMessageBox.Ok:
             return
 
+        # Retention sweep BEFORE the rsync lands — keeps disk free for
+        # the incoming run + grooms older tiers in one go.  Bubbles up
+        # to MainWindow which owns the config + status-bar; fail-quiet
+        # so a sweep error never blocks the download.
+        try:
+            mw = self.window()
+            if hasattr(mw, "_run_retention_sweep"):
+                mw._run_retention_sweep(reason="pre-download")
+        except Exception:  # noqa: BLE001
+            pass
+
         # Reuse the same launch path as writers so the Active runs
         # panel + log dock + per-run Stop all work out of the box.
         self._log.clear()
         self._set_running(True)
+
+        #  Sweep audit (2026-05-30) — three-state retention model.
+        #  Drop the `.qa_managed` marker into the run directory before
+        #  rsync starts populating it.  Two reasons:
+        #    1. The retention sweep (when enforce_qa_managed=True) uses
+        #       the marker to distinguish auto-downloaded runs from
+        #       user-managed ones.  Without the marker, the sweep
+        #       would treat this run as user-managed and never prune
+        #       it once it ages out.
+        #    2. Partial/failed downloads should be eligible for
+        #       cleanup; dropping the marker at launch time (not at
+        #       successful completion) lets the next sweep clean them.
+        try:
+            from qa_quicklook import retention as _retention
+            target_dir = _download.expected_local_path(
+                cfg, run_id, self._repo_root)
+            _retention.mark_qa_managed(target_dir)
+        except (OSError, ImportError) as exc:
+            #  Marker drop is best-effort — a failure here doesn't
+            #  block the download itself.  Surface in the log so the
+            #  operator knows retention won't see this run as managed.
+            self._log.appendPlainText(
+                f"[WARN] .qa_managed marker not dropped: {exc}; "
+                "this run won't be eligible for the retention sweep "
+                "until the marker is added (touch the file manually "
+                "or use `python -m qa_quicklook.retention pin`).")
+
         self._runner.launch(
             argv,
             default_source=_DOWNLOAD_WRITER_TAG,
@@ -1230,6 +1302,44 @@ class RunManagerView(QtWidgets.QWidget):
         self._log.appendPlainText(
             f"[inspect] qa_tbrowser launched on "
             f"{len(root_files)} file(s) from {run_dir.name}"
+        )
+
+    def _on_qa_pipeline(self) -> None:
+        """Manually launch the qa_pipeline cascade on the selected run.
+
+        Delegates to ``MainWindow._launch_qa_pipeline_manual`` so the
+        status-bar progress strip and the QProcess lifetime live with
+        the same owner that handles the livemon-auto path — no
+        duplicated stdout-parsing, finished-handler, or cleanup.
+
+        Skip-stage-when-output-exists is on by default in qa_pipeline;
+        the operator gets the cascade to skip what's already produced
+        rather than redo expensive work.  For a forced rebuild use the
+        per-writer Launch buttons with the writer's ``--force-rebuild``
+        flag in the launcher card.
+        """
+        run_id = self._run_combo.currentText().strip()
+        if not run_id:
+            self._log.appendPlainText(
+                "[ERROR] no run selected for QA pipeline"
+            )
+            return
+        run_dir = self._data_dir / run_id
+        if not run_dir.is_dir():
+            self._log.appendPlainText(
+                f"[ERROR] run directory missing: {run_dir}"
+            )
+            return
+        window = self.window()
+        if not hasattr(window, "_launch_qa_pipeline_manual"):
+            self._log.appendPlainText(
+                "[ERROR] dashboard missing qa_pipeline launcher — "
+                "older MainWindow version detected."
+            )
+            return
+        window._launch_qa_pipeline_manual(run_id)
+        self._log.appendPlainText(
+            f"[qa_pipeline] launched on {run_id}"
         )
 
     def _maybe_update_progress(self, line: str) -> None:
@@ -2168,6 +2278,285 @@ class _ActiveRunsPanel(QtWidgets.QFrame):
             finished_at=joblock.now_iso(),
         )
         self.refresh()
+
+
+# ---------------------------------------------------------------------------
+# Remote-runs picker — table view over the DAQ host's run directory,
+# so an operator can pick from "what's available now" instead of typing
+# a run id from memory.  Single-select; multi-select can graduate
+# later when batch-download is on the table.
+# ---------------------------------------------------------------------------
+
+
+class _RemoteRunsPickerDialog(QtWidgets.QDialog):
+    """Browse the DAQ host's run directory and pick one to rsync.
+
+    Three exit paths the caller distinguishes:
+
+      - ``Accept`` with a row selected → ``selected_run_id`` is the
+        picked id, ``manual_entry`` is False.
+      - ``Type id manually…`` button → ``manual_entry`` is True and
+        the caller should fall back to its ``QInputDialog.getText``
+        flow (the dialog also accepts).  Provided as an escape
+        hatch when the listing path fails or the operator already
+        knows the id.
+      - ``Cancel`` / dialog rejected → caller treats as user-abort.
+
+    The listing call is synchronous (``processEvents`` while it
+    runs) — matches the existing ``probe_ssh_keyauth`` pattern in
+    ``_prompt_for_rsync_address`` and keeps the dialog state
+    machine simple.  The 20 s hard timeout in ``list_remote_runs``
+    bounds the worst-case GUI freeze.
+    """
+
+    def __init__(
+        self,
+        cfg: "_download.RsyncConfig",
+        repo_root: Path,
+        *,
+        default_run: str = "",
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._cfg = cfg
+        self._repo_root = repo_root
+        self._default_run = default_run
+        self.selected_run_id: str = ""
+        self.manual_entry: bool = False
+
+        self.setWindowTitle(f"Available runs on {cfg.remote_host}")
+        self.resize(560, 480)
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setSpacing(8)
+
+        intro = QtWidgets.QLabel(
+            f"Listing <code>{cfg.remote_data_dir.rstrip('/')}/</code> "
+            f"on <code>{cfg.remote_host}</code>.  "
+            "Already-mirrored runs are tagged so you don't re-download "
+            "them by accident.",
+            self,
+        )
+        intro.setWordWrap(True)
+        intro.setTextFormat(QtCore.Qt.RichText)
+        outer.addWidget(intro)
+
+        #  Filter + refresh row.  Filter does substring-match on the
+        #  run id; refresh re-hits ssh.  Both leave the existing
+        #  selection alone when the row survives the new view.
+        controls = QtWidgets.QHBoxLayout()
+        self._filter = QtWidgets.QLineEdit(self)
+        self._filter.setPlaceholderText("filter (substring on run id)")
+        self._filter.textChanged.connect(self._apply_filter)
+        controls.addWidget(self._filter, 1)
+        self._refresh_btn = QtWidgets.QPushButton("Refresh", self)
+        self._refresh_btn.clicked.connect(self._refresh)
+        controls.addWidget(self._refresh_btn)
+        outer.addLayout(controls)
+
+        #  Status line — count of entries + last error, both lit up
+        #  by ``_refresh``.  Lives above the table so a 0-row error
+        #  is impossible to miss.
+        self._status = QtWidgets.QLabel("…fetching…", self)
+        self._status.setObjectName("muted")
+        self._status.setWordWrap(True)
+        outer.addWidget(self._status)
+
+        self._table = QtWidgets.QTableWidget(0, 3, self)
+        self._table.setHorizontalHeaderLabels(["Run id", "Modified (local)", "Status"])
+        self._table.setSelectionBehavior(QtWidgets.QTableWidget.SelectRows)
+        self._table.setSelectionMode(QtWidgets.QTableWidget.SingleSelection)
+        self._table.setEditTriggers(QtWidgets.QTableWidget.NoEditTriggers)
+        self._table.verticalHeader().setVisible(False)
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        #  Double-click on a row = OK with that row selected.  Same
+        #  affordance as every other picker in the dashboard.
+        self._table.itemDoubleClicked.connect(self._on_accept)
+        outer.addWidget(self._table, 1)
+
+        #  Live-run guard — when the user clicks the newest row, this
+        #  checkbox appears and the OK button stays disabled until it's
+        #  ticked.  Hidden for any other row (older runs are sealed by
+        #  construction).  ``_sync_ok_enabled`` controls visibility.
+        self._live_ack_check = QtWidgets.QCheckBox(
+            "I confirm data-taking has STOPPED on this run "
+            "(downloading a still-active run gives truncated files)",
+            self,
+        )
+        self._live_ack_check.setStyleSheet(
+            "QCheckBox { color: #E07B00; font-weight: 600; }"
+        )
+        self._live_ack_check.setVisible(False)
+        self._live_ack_check.toggled.connect(self._sync_ok_enabled)
+        outer.addWidget(self._live_ack_check)
+
+        #  Buttons.  "Type id manually…" sits on the left so it
+        #  doesn't read as a destructive alternative to Cancel.
+        btn_row = QtWidgets.QHBoxLayout()
+        self._manual_btn = QtWidgets.QPushButton("Type id manually…", self)
+        self._manual_btn.setToolTip(
+            "Skip the listing and enter a run id directly.  Useful "
+            "when the SSH listing is slow or you already know the id."
+        )
+        self._manual_btn.clicked.connect(self._on_manual)
+        btn_row.addWidget(self._manual_btn)
+        btn_row.addStretch(1)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            QtCore.Qt.Horizontal,
+            self,
+        )
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        self._ok_btn = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        self._ok_btn.setEnabled(False)
+        self._table.itemSelectionChanged.connect(self._sync_ok_enabled)
+        btn_row.addWidget(buttons)
+        outer.addLayout(btn_row)
+
+        #  Defer the first refresh to the next event-loop tick so the
+        #  dialog paints fully before we start blocking on ssh.
+        QtCore.QTimer.singleShot(0, self._refresh)
+
+    # ----- listing --------------------------------------------------
+
+    def _refresh(self) -> None:
+        self._refresh_btn.setEnabled(False)
+        self._status.setText(
+            f"…fetching listing from {self._cfg.remote_host}…"
+        )
+        QtWidgets.QApplication.processEvents()
+        try:
+            entries, err = _download.list_remote_runs(
+                self._cfg, self._repo_root,
+            )
+        finally:
+            self._refresh_btn.setEnabled(True)
+        self._all_entries = entries
+        if err:
+            #  Show the error but leave whatever table contents
+            #  survived from the previous refresh in place — operator
+            #  can still pick from a stale view if the SSH path
+            #  flapped.
+            self._status.setText(
+                f"<span style='color:#FF6B6B;'>listing failed:</span> {err}"
+            )
+            self._status.setTextFormat(QtCore.Qt.RichText)
+        else:
+            local_n = sum(1 for e in entries if e.local_present)
+            ts = time.strftime("%H:%M:%S")
+            self._status.setText(
+                f"{len(entries)} run(s) — {local_n} already local · "
+                f"fetched at {ts}"
+            )
+            self._status.setTextFormat(QtCore.Qt.PlainText)
+        self._apply_filter(self._filter.text())
+
+    def _apply_filter(self, needle: str) -> None:
+        needle = (needle or "").strip().lower()
+        rows = [
+            e for e in getattr(self, "_all_entries", [])
+            if not needle or needle in e.run_id.lower()
+        ]
+        self._table.setRowCount(len(rows))
+        default_selected_row = -1
+        #  The lex-max run id in the FULL listing (not the filtered
+        #  view) is the "newest" — might still be acquiring.  Computed
+        #  via download.newest_run_id so the picker + the live monitor
+        #  agree on "what counts as the latest".
+        self._newest_remote_id = _download.newest_run_id(
+            getattr(self, "_all_entries", [])
+        )
+        for r, entry in enumerate(rows):
+            is_newest = (entry.run_id == self._newest_remote_id)
+            #  Tag the newest row with a visible "LIVE?" marker — the
+            #  Unicode dot prefix is intentionally loud so the operator
+            #  can't miss it scanning the list.
+            id_text = f"🔴 {entry.run_id}" if is_newest else entry.run_id
+            id_item = QtWidgets.QTableWidgetItem(id_text)
+            id_item.setData(QtCore.Qt.UserRole, entry.run_id)
+            mtime_item = QtWidgets.QTableWidgetItem(entry.mtime_iso or "—")
+            if is_newest:
+                status_text = "latest — may still be acquiring"
+            elif entry.local_present:
+                status_text = "✓ local"
+            else:
+                status_text = "remote only"
+            status_item = QtWidgets.QTableWidgetItem(status_text)
+            if entry.local_present and not is_newest:
+                #  Muted so it reads as "already done", not as a
+                #  warning.  Same tone as the Active runs panel's
+                #  ``muted`` style.  Newest stays at full intensity
+                #  even when local — the LIVE? warning trumps the
+                #  "already done" cue.
+                muted = QtGui.QBrush(QtGui.QColor("#9B8E8E"))
+                for it in (id_item, mtime_item, status_item):
+                    it.setForeground(muted)
+            if is_newest:
+                #  Distinct foreground for the newest row so the warning
+                #  reads at a glance, paired with a tooltip explaining
+                #  the live-run-guard mechanism.
+                warn = QtGui.QBrush(QtGui.QColor("#E07B00"))
+                for it in (id_item, mtime_item, status_item):
+                    it.setForeground(warn)
+                    it.setToolTip(
+                        "Newest run on the remote — may still be acquiring. "
+                        "If you really want this run, tick the acknowledgement "
+                        "checkbox below before OK enables."
+                    )
+            self._table.setItem(r, 0, id_item)
+            self._table.setItem(r, 1, mtime_item)
+            self._table.setItem(r, 2, status_item)
+            if entry.run_id == self._default_run:
+                default_selected_row = r
+        if default_selected_row >= 0:
+            self._table.selectRow(default_selected_row)
+        self._sync_ok_enabled()
+
+    def _sync_ok_enabled(self) -> None:
+        items = self._table.selectedItems()
+        has_selection = len(items) > 0
+        #  Live-run guard: if the selected row IS the newest on the
+        #  remote, the shifter must tick the "data-taking is finished"
+        #  acknowledgement before OK enables.  For any other row OK
+        #  enables on selection as before — older runs are sealed by
+        #  construction.
+        selected_run = None
+        if has_selection:
+            id_item = self._table.item(items[0].row(), 0)
+            if id_item is not None:
+                selected_run = id_item.data(QtCore.Qt.UserRole)
+        newest_id = getattr(self, "_newest_remote_id", None)
+        is_newest_selected = (
+            selected_run is not None and selected_run == newest_id
+        )
+        ack = getattr(self, "_live_ack_check", None)
+        if ack is not None:
+            ack.setVisible(is_newest_selected)
+        if is_newest_selected and ack is not None:
+            self._ok_btn.setEnabled(has_selection and ack.isChecked())
+        else:
+            self._ok_btn.setEnabled(has_selection)
+
+    # ----- button handlers ------------------------------------------
+
+    def _on_manual(self) -> None:
+        self.manual_entry = True
+        self.accept()
+
+    def _on_accept(self, *_args) -> None:
+        items = self._table.selectedItems()
+        if not items:
+            return
+        row = items[0].row()
+        id_item = self._table.item(row, 0)
+        if id_item is None:
+            return
+        self.selected_run_id = id_item.data(QtCore.Qt.UserRole) or id_item.text()
+        self.accept()
 
 
 __all__ = ["RunManagerView"]

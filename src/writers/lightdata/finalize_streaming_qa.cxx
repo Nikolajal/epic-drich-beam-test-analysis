@@ -5,7 +5,8 @@
  *
  * Lifted verbatim (with the captured hist pointers + outfile replaced
  * by a single context struct).  Algorithm is unchanged; bit-identical
- * output verified vs `Data/20251111-164951/phaseG_baseline/lightdata.root`.
+ * output was verified vs a baseline snapshot at extraction time
+ * (since pruned).
  */
 
 #include "writers/lightdata/finalize_streaming_qa.h"

@@ -30,6 +30,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import cross_run_trends
 from . import rundb
 from . import thumbs
 
@@ -107,11 +108,15 @@ def _dark_theme_active() -> bool:
     return bg.lightness() < 128
 
 
-# One sub-tab per pipeline step.  Each entry is:
+# One ``STEPS`` entry per pipeline step.  Each entry is:
 #   (key, label, canonical_root, qa_subdir).
 # ``canonical_root`` is the file we walk for TH1/TH2 thumbnails;
 # ``qa_subdir`` is where we look for writer-emitted PDFs.  Order
 # matches the pipeline (raw → reco → reco-track → standalone calib).
+#
+# Used by the "Full plots" deep-dive sub-tab.  The topic-first surface
+# (Triggers / Pixel noise / Calibration / etc.) re-aggregates these
+# PDFs through ``TOPICS`` + ``topic_of`` below.
 STEPS: tuple[tuple[str, str, str, str], ...] = (
     ("lightdata",   "Lightdata",     "lightdata.root",       "qa/lightdata"),
     ("recodata",    "Recodata",      "recodata.root",        "qa/recodata"),
@@ -119,11 +124,111 @@ STEPS: tuple[tuple[str, str, str, str], ...] = (
     ("calibration", "Pulser calib",  "pulser_calib_qa.root", "qa/calibration"),
 )
 
+# ---------------------------------------------------------------------------
+# Topic-first taxonomy (operator-facing, 2026-05-29 reorg).
+#
+# A "topic" is a physics-level concern that lives across pipeline stages:
+# "trigger health" pulls from lightdata + recodata + recotrack, "pixel
+# noise" pulls from lightdata's DCR + afterpulse + crosstalk emissions,
+# and so on.  The shifter asks "is the trigger matrix healthy?", not
+# "is the lightdata sub-tab healthy?" — this taxonomy serves that.
+#
+# Each entry: (topic_key, label, description).  Order is the sub-tab
+# display order.  ``general`` and ``full_plots`` are special: General
+# is a curated overview (one representative plot per topic), Full plots
+# is the legacy pipeline-stage drill-down (Lightdata / Recodata / …).
+TOPICS: tuple[tuple[str, str, str], ...] = (
+    ("general",      "General",       "Curated overview — one plot per topic"),
+    ("triggers",     "Triggers",      "Trigger matrix, per-trigger Δt vs spill, streaming-score threshold setter, ring finder QA"),
+    ("noise",        "Pixel noise",   "DCR, afterpulse near/far, cross-talk physics/electrical"),
+    ("calibration",  "Calibration",   "Pulser anchor-Δt, fine-time calibration, timing alignment"),
+    ("full_plots",   "Full plots",    "Pipeline-stage drill-down: every PDF the writers emitted, grouped by writer"),
+)
+
+# ---------------------------------------------------------------------------
+# PDF → topic routing.
+#
+# Each rule is (compiled-regex on basename-without-prefix, topic_key).
+# Basename matching strips the leading ``NN_`` writer-order prefix so
+# the rule doesn't have to chase emission order changes.  First match
+# wins — order rules from specific → generic.  Unmatched PDFs fall
+# through to "full_plots only" (visible in the deep-dive but not in
+# any topic tab).
+import re as _re_topics
+_PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
+    # Streaming-trigger threshold setter — goes on Triggers.  Match
+    # BEFORE the generic "score" rule so it doesn't get reclassified.
+    (_re_topics.compile(r"^streaming_score(\..*)?$"),            "triggers"),
+    # Pulser-calib-side anchor-Δt vs spill (single canvas per run) →
+    # Calibration.  Match BEFORE the lightdata-side anchor_dt rule.
+    (_re_topics.compile(r"^anchor_dt_vs_spill(\..*)?$"),         "calibration"),
+    # Lightdata per-trigger anchor-Δt PDFs → Triggers.
+    (_re_topics.compile(r"^anchor_dt_.+(\..*)?$"),               "triggers"),
+    # Per-trigger time-difference w/ Cherenkov → Triggers.
+    (_re_topics.compile(r"^.*time_diff.*"),                      "triggers"),
+    # Trigger coincidence matrix → Triggers.
+    (_re_topics.compile(r"^trigger_matrix(\..*)?$"),             "triggers"),
+    # Ring finder QA from the Hough stage → Triggers.
+    (_re_topics.compile(r"^.*ring_finder.*"),                    "triggers"),
+    (_re_topics.compile(r"^.*hough.*"),                          "triggers"),
+    # Timing — chip-0/chip-1 alignment, ref-Δ.
+    (_re_topics.compile(r"^timing.*"),                           "calibration"),
+    (_re_topics.compile(r"^.*fine_calib.*"),                     "calibration"),
+    # Pixel noise — DCR, afterpulse, cross-talk.
+    (_re_topics.compile(r"^dcr.*"),                              "noise"),
+    (_re_topics.compile(r"^afterpulse.*"),                       "noise"),
+    (_re_topics.compile(r"^ct_.*"),                              "noise"),
+    (_re_topics.compile(r"^.*crosstalk.*"),                      "noise"),
+)
+
+
+def _strip_pdf_prefix(basename: str) -> str:
+    """Strip ``NN_`` writer-order prefix from a PDF basename.
+
+    ``"05_streaming_score.pdf"`` → ``"streaming_score.pdf"``.
+    Bare names (no prefix) pass through unchanged.  Used by
+    ``topic_of`` so the routing rules don't have to chase emission
+    order changes across writer revisions.
+    """
+    m = _re_topics.match(r"^\d+_(.+)$", basename)
+    return m.group(1) if m else basename
+
+
+def topic_of(pdf_basename: str) -> Optional[str]:
+    """Map a PDF basename to its topic key, or None if unmatched.
+
+    PDFs that don't match any topic rule are excluded from topic tabs
+    but remain accessible via the "Full plots" deep-dive sub-tab —
+    nothing is lost, just unsurfaced on the topic-first surface.
+
+    The function is pure: no I/O, just regex matches.  Reused both by
+    the dashboard (tab routing) and by tests (snapshot the topic map
+    for a fixed PDF set).
+    """
+    stripped = _strip_pdf_prefix(pdf_basename)
+    for pattern, topic in _PDF_TOPIC_RULES:
+        if pattern.match(stripped):
+            return topic
+    return None
+
 # Per-step cap on matplotlib thumbnails — too many at once chokes the
 # layout system.  PDFs are not capped (they're already curated by the
 # writer that emitted them).
 _MAX_THUMBS_PER_STEP = 12
-_GRID_COLS = 3
+
+#  Phase: responsive tile grid — minimum per-tile widths in px.  The
+#  ``_ResponsiveTileGrid`` rebalances columns on resize so a wider
+#  window shows more tiles per row (capped at 4) and a narrower one
+#  collapses to a single column.  Two values because PDF tiles (with
+#  filename header + 240 px thumb) are physically wider than the
+#  matplotlib histogram thumbs.
+_PDF_TILE_MIN_PX = 280
+_THUMB_TILE_MIN_PX = 220
+#  Cross-run trend tiles on the General tab — matplotlib line plots
+#  across the most-recent N runs.  Slightly wider than the histogram
+#  thumbs so 20+ run-id ticks on the x-axis stay readable.
+_TREND_TILE_MIN_PX = 320
+_TILE_GRID_MAX_COLS = 4
 
 
 class QaView(QtWidgets.QWidget):
@@ -145,21 +250,47 @@ class QaView(QtWidgets.QWidget):
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(8)
 
-        # ── Top bar: shared run picker + refresh ────────────────────
+        # ── Top bar: run picker + step tabs + actions ───────────────
+        # Layout mirrors the Run Manager pattern: identity (the run
+        # picker) on the left, navigation (step tabs) in the middle,
+        # actions (refresh / monitor / clear) on the right.  Old layout
+        # had the run picker stretching across the full width and the
+        # step tabs in a second row below — wasted vertical space and
+        # made the "pick a different step" gesture twice as far from
+        # the "pick a different run" gesture.
+        #
         # The run picker scans ``data_dir`` (NOT the database) so QA
         # offers the same set of runs the Run Manager does — only
-        # runs whose files are actually on disk are listed.  The
-        # refresh button forces the active sub-tab to invalidate its
-        # cache + re-read, which is the answer to "a writer just
-        # finished, where are its plots?" without making the operator
-        # re-select the run.
+        # runs whose files are actually on disk are listed.
         top_row = QtWidgets.QHBoxLayout()
         top_row.setSpacing(8)
         top_row.addWidget(QtWidgets.QLabel("Run:"))
         self._run_combo = QtWidgets.QComboBox()
-        self._run_combo.setMinimumWidth(260)
+        self._run_combo.setMinimumWidth(220)
+        # Fixed-ish width — give the step tab bar room to breathe in the
+        # middle.  The Run Manager uses the same proportion (picker fits
+        # one run-id width, actions on the right, expand-space between).
+        self._run_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred,
+            QtWidgets.QSizePolicy.Fixed,
+        )
         self._run_combo.currentTextChanged.connect(self._on_run_changed)
-        top_row.addWidget(self._run_combo, 1)
+        top_row.addWidget(self._run_combo)
+
+        # Step tab bar — drives ``self._sub_stack`` below.  Decoupling
+        # the bar from QTabWidget lets us put it on the same row as the
+        # run picker (a QTabWidget would force its bar into its own
+        # frame).  Document-mode styling matches the rest of the
+        # dashboard's tab look.
+        self._sub_tab_bar = QtWidgets.QTabBar()
+        self._sub_tab_bar.setDocumentMode(True)
+        self._sub_tab_bar.setExpanding(False)
+        self._sub_tab_bar.setDrawBase(False)
+        self._sub_tab_bar.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Fixed,
+        )
+        top_row.addWidget(self._sub_tab_bar, 1)
         #  Bigger refresh button (see runmanager.py for the rationale).
         self._refresh_btn = QtWidgets.QPushButton(" ⟳  Refresh ")
         f = self._refresh_btn.font(); f.setPointSize(f.pointSize() + 2)
@@ -179,12 +310,13 @@ class QaView(QtWidgets.QWidget):
         #
         # Visual state machine (operator complaint: tiny tool-button
         # was invisible at-a-glance):
-        #   - off    → grey, "● Monitor"
-        #   - on     → slow green pulse (≈1.6 s period — noticeable
-        #              without inducing seizures), "● Monitor (on)"
-        #   - error  → solid red, "● Monitor (err)"
-        # The pulse uses a separate QTimer flipping a phase bool;
-        # the stylesheet swap is cheap.
+        #   - off    → grey
+        #   - on     → slow green pulse (≈2.2 s half-cycle — noticeable
+        #              without inducing seizures)
+        #   - error  → faster red pulse (≈0.7 s half-cycle)
+        # Label stays " ●  Monitor " in every state — colour does the
+        # talking; a suffix would just make the button change width as
+        # state shifts.
         self._monitor_btn = QtWidgets.QPushButton(" ●  Monitor ")
         f = self._monitor_btn.font(); f.setPointSize(f.pointSize() + 2)
         self._monitor_btn.setFont(f)
@@ -198,6 +330,26 @@ class QaView(QtWidgets.QWidget):
         )
         self._monitor_btn.toggled.connect(self._on_monitor_toggled)
         top_row.addWidget(self._monitor_btn)
+
+        # ── Clear QA button — dev escape hatch ──────────────────────
+        # Stronger than Refresh: drops the process-wide PDF-thumbnail
+        # cache (``_PdfTile._THUMB_CACHE``) AND invalidates every
+        # step page's dedupe state.  Use when the QA rendering code
+        # itself changes (so on-disk artefacts are still valid but the
+        # in-process cache holds stale renders), or when "I don't know
+        # why this looks wrong, just rebuild everything from scratch".
+        self._clear_btn = QtWidgets.QPushButton(" 🗑  Clear QA ")
+        f = self._clear_btn.font(); f.setPointSize(f.pointSize() + 2)
+        self._clear_btn.setFont(f)
+        self._clear_btn.setToolTip(
+            "Drop all cached QA renders (PDF thumbnails + per-page "
+            "dedupe state) and force a clean rebuild of the active "
+            "sub-tab.  Use when the QA rendering code itself has "
+            "changed during development, or as a last-resort 'rebuild "
+            "from scratch'."
+        )
+        self._clear_btn.clicked.connect(self._on_clear_qa)
+        top_row.addWidget(self._clear_btn)
         outer.addLayout(top_row)
 
         # Polling state.  Last seen max-mtime of the current run dir;
@@ -223,24 +375,55 @@ class QaView(QtWidgets.QWidget):
         self._monitor_visual_state: str = "off"
         self._set_monitor_visual_state("off")
 
-        # ── Body: sub-tabs per pipeline step ────────────────────────
-        self._sub_tabs = QtWidgets.QTabWidget()
-        self._sub_tabs.setTabPosition(QtWidgets.QTabWidget.North)
-        self._sub_tabs.setDocumentMode(True)
-        self._sub_tabs.tabBar().setExpanding(False)
-        self._sub_tabs.currentChanged.connect(self._on_sub_tab_changed)
-        outer.addWidget(self._sub_tabs, 1)
+        # ── Body: stacked per-step pages, driven by the top-row tab bar ──
+        # The bar lives up in ``top_row`` (built above) — it just feeds
+        # ``currentChanged`` into this stack so picking a step switches
+        # the visible page.  Same UX as the old QTabWidget; the only
+        # difference is the bar location.
+        self._sub_stack = QtWidgets.QStackedWidget()
+        self._sub_tab_bar.currentChanged.connect(self._sub_stack.setCurrentIndex)
+        self._sub_tab_bar.currentChanged.connect(self._on_sub_tab_changed)
+        outer.addWidget(self._sub_stack, 1)
 
-        self._step_pages: dict[str, _StepQaPage] = {}
-        for key, label, root_name, qa_dir in STEPS:
-            page = _StepQaPage(label, root_name, qa_dir)
-            self._sub_tabs.addTab(page, label)
-            self._step_pages[key] = page
+        # Topic-first sub-tabs (2026-05-29 reorg).  Order matches the
+        # TOPICS tuple.  ``general`` and ``full_plots`` map to bespoke
+        # pages; the rest get a generic ``_TopicQaPage`` that pulls
+        # PDFs from every pipeline stage matching its topic key.
+        #
+        # _step_pages remains the canonical "iterate every stage's
+        # page" handle — re-used for cache-invalidate sweeps from
+        # ``_on_clear_qa``.  Stage pages now live INSIDE the
+        # ``_FullPlotsQaPage`` so we proxy through to its internal
+        # ``_stage_pages`` dict.
+        self._topic_pages: dict[str, QtWidgets.QWidget] = {}
+        for topic_key, label, description in TOPICS:
+            if topic_key == "general":
+                page: QtWidgets.QWidget = _GeneralQaPage()
+            elif topic_key == "full_plots":
+                page = _FullPlotsQaPage()
+                # Inject the active rundb path so the streaming-score
+                # n_σ picker (§1.5.2 Option C) inside the thumbnail
+                # tree knows where to commit on Save.  Threaded once
+                # here at construction; rebuilds on later run-changes
+                # pick it up via ``_StepQaPage._database_path``.
+                page.set_database_path(self._db_path)
+                # _step_pages is the legacy "all pipeline stages" handle;
+                # proxy through the FullPlots page so the rest of the
+                # QaView class doesn't have to know about the nesting.
+                self._step_pages: dict[str, _StepQaPage] = (
+                    page._stage_pages  # noqa: SLF001 — intentional access
+                )
+            else:
+                page = _TopicQaPage(topic_key, label, description)
+            self._sub_tab_bar.addTab(label)
+            self._sub_stack.addWidget(page)
+            self._topic_pages[topic_key] = page
 
         # Macros sub-tab — placeholder, fills in when bespoke macros
         # get a curated launcher.
         self._macros_page = _MacrosPlaceholder()
-        self._sub_tabs.addTab(self._macros_page, "Macros")
+        self._sub_tab_bar.addTab("Macros")
+        self._sub_stack.addWidget(self._macros_page)
 
         # Populate the run picker from the database.
         self.reload()
@@ -288,14 +471,41 @@ class QaView(QtWidgets.QWidget):
     def _on_sub_tab_changed(self, _idx: int) -> None:
         self._refresh_current_page()
 
+    def _on_clear_qa(self) -> None:
+        """Wipe every QA-side cache and force a clean rebuild.
+
+        Stronger than ``_on_refresh``: in addition to re-scanning the
+        run directory and invalidating the active step page, this also
+
+          - drops the process-wide PDF-thumbnail cache shared by every
+            ``_PdfThumbCard`` instance.  The cache keys on (path,
+            mtime), so on-disk artefacts that *haven't* changed are
+            otherwise served from RAM forever — wrong after a dev edit
+            to the rendering code itself.
+          - invalidates *every* step page, not just the visible one,
+            so switching tabs after a Clear forces those to rebuild too.
+        """
+        try:
+            _PdfTile._THUMB_CACHE.clear()
+        except (NameError, AttributeError):  # pragma: no cover
+            pass
+        # Invalidate every topic page (the FullPlots page proxies the
+        # invalidation through to each of its nested stage pages).
+        for page in self._topic_pages.values():
+            if hasattr(page, "invalidate_cache"):
+                page.invalidate_cache()
+        self._on_refresh()
+
     def _on_refresh(self) -> None:
         """Re-scan Data/ + force the active page to rebuild from disk."""
         self.reload()
         # ``reload`` already calls ``_refresh_current_page``; force the
-        # active step-page to forget its cache so the rebuild actually
+        # active sub-page to forget its cache so the rebuild actually
         # walks the disk (set_run dedupes when (run, dir) is unchanged).
-        page = self._sub_tabs.currentWidget()
-        if isinstance(page, _StepQaPage):
+        # Topic pages, general, and full-plots all implement the
+        # invalidate_cache + set_run protocol.
+        page = self._sub_stack.currentWidget()
+        if hasattr(page, "invalidate_cache") and hasattr(page, "set_run"):
             page.invalidate_cache()
             page.set_run(self._current_run_id, self._data_dir)
         # Reset the mtime baseline so the next monitor tick sees
@@ -338,8 +548,8 @@ class QaView(QtWidgets.QWidget):
             # Same machinery as the manual refresh button but kept
             # cheap — no run-picker rescan unless really needed
             # (use the explicit refresh button for that).
-            page = self._sub_tabs.currentWidget()
-            if isinstance(page, _StepQaPage):
+            page = self._sub_stack.currentWidget()
+            if hasattr(page, "invalidate_cache") and hasattr(page, "set_run"):
                 page.invalidate_cache()
                 page.set_run(self._current_run_id, self._data_dir)
 
@@ -377,14 +587,18 @@ class QaView(QtWidgets.QWidget):
 
         ``state`` ∈ {``"off"``, ``"on"``, ``"error"``}.
 
-          - off    → no animation, neutral theme colours, label
-                     "● Monitor".
+          - off    → no animation, neutral theme colours.
           - on     → smooth ping-pong between two greens, 2200 ms
                      per half-cycle, ease in/out.  Calm "alive"
-                     breathing.  Label "● Monitor (on)".
+                     breathing.
           - error  → smooth ping-pong between two reds, 700 ms per
                      half-cycle, linear.  Faster to flag attention
-                     without strobing.  Label "● Monitor (err)".
+                     without strobing.
+
+        The label stays ``" ●  Monitor "`` in every state; the dot's
+        colour does the talking.  An "(on)" / "(err)" suffix would be
+        redundant with the pulse animation and just makes the button
+        change width as state shifts.
 
         The animation runs in the Qt event loop so the polling
         timer and rendering both stay responsive.
@@ -398,7 +612,6 @@ class QaView(QtWidgets.QWidget):
             self._monitor_anim.setEasingCurve(QtCore.QEasingCurve.InOutSine)
             self._monitor_anim.setStartValue(QtGui.QColor("#1E8A45"))
             self._monitor_anim.setEndValue(QtGui.QColor("#2DBE60"))
-            self._monitor_btn.setText(" ●  Monitor (on) ")
             self._monitor_anim.start()
         elif state == "error":
             #  Faster red pulse: deep crimson ↔ brighter red.  Linear
@@ -408,13 +621,11 @@ class QaView(QtWidgets.QWidget):
             self._monitor_anim.setEasingCurve(QtCore.QEasingCurve.Linear)
             self._monitor_anim.setStartValue(QtGui.QColor("#8E2820"))
             self._monitor_anim.setEndValue(QtGui.QColor("#E74C3C"))
-            self._monitor_btn.setText(" ●  Monitor (err) ")
             self._monitor_anim.start()
         else:
             # Idle / off — drop the stylesheet so the theme reclaims
             # control of the button look.
             self._monitor_btn.setStyleSheet("")
-            self._monitor_btn.setText(" ●  Monitor ")
 
     def _current_run_max_mtime(self) -> float:
         """Largest mtime across all files in the current run dir.
@@ -452,8 +663,11 @@ class QaView(QtWidgets.QWidget):
         return best
 
     def _refresh_current_page(self) -> None:
-        page = self._sub_tabs.currentWidget()
-        if isinstance(page, _StepQaPage):
+        page = self._sub_stack.currentWidget()
+        # Duck-typed: topic pages, general, and full-plots all expose
+        # set_run(run_id, data_dir).  Macros placeholder doesn't and
+        # is correctly skipped.
+        if hasattr(page, "set_run"):
             page.set_run(self._current_run_id, self._data_dir)
 
 
@@ -483,6 +697,11 @@ class _StepQaPage(QtWidgets.QWidget):
         self._qa_subdir = qa_subdir
         self._current_run_id: Optional[str] = None
         self._current_data_dir: Optional[Path] = None
+        #  Injected post-construction by QaView (via
+        #  ``_FullPlotsQaPage.set_database_path``) so the streaming-
+        #  score n_σ picker that lives inside ``_ThumbnailTile`` can
+        #  reach the active rundb file.  None disables Save.
+        self._database_path: Optional[Path] = None
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 8, 0, 0)
@@ -513,6 +732,31 @@ class _StepQaPage(QtWidgets.QWidget):
         self._current_run_id = run_id
         self._current_data_dir = data_dir
         self._rebuild()
+
+    def set_database_path(self, path: Optional[Path]) -> None:
+        """Set the rundb file the streaming-score n_σ picker writes to.
+
+        Forwarded down through ``_build_histograms_section`` →
+        ``_CollapsibleDirCard`` → ``_ThumbnailTile`` so the picker
+        dialog has it ready to commit.  Forces a rebuild if the path
+        changes — otherwise tiles built before the path arrived would
+        keep their stale ``None``.  No-op when the value matches.
+        """
+        if path == self._database_path:
+            return
+        self._database_path = path
+        if self._current_run_id and self._current_data_dir is not None:
+            self.invalidate_cache()
+            self._rebuild_with_current()
+
+    def _rebuild_with_current(self) -> None:
+        """Re-fire ``set_run`` with the cached selection after the
+        dedupe was invalidated."""
+        run_id, data_dir = self._current_run_id, self._current_data_dir
+        if run_id and data_dir is not None:
+            self._current_run_id = None
+            self._current_data_dir = None
+            self.set_run(run_id, data_dir)
 
     def invalidate_cache(self) -> None:
         """Drop the dedupe state so the next ``set_run`` forces rebuild.
@@ -601,8 +845,10 @@ class _StepQaPage(QtWidgets.QWidget):
         head.addWidget(cap)
         v.addLayout(head)
 
-        for pdf in pdfs:
-            v.addWidget(_PdfTile(pdf, have_qt_pdf=have_qt_pdf))
+        tiles = [_PdfTile(pdf, have_qt_pdf=have_qt_pdf) for pdf in pdfs]
+        v.addWidget(_ResponsiveTileGrid(
+            tiles, tile_min_width=_PDF_TILE_MIN_PX,
+        ))
         return holder, len(pdfs)
 
     def _build_histograms_section(
@@ -680,12 +926,14 @@ class _StepQaPage(QtWidgets.QWidget):
             v.addWidget(_CollapsibleDirCard(
                 path, "(top level)", tree["hists"], {},
                 dark, FigureCanvas, Figure, depth=0,
+                database_path=self._database_path,
             ))
         # Sub-directories at the top level, in order.
         for subname, subnode in tree["subdirs"].items():
             v.addWidget(_CollapsibleDirCard(
                 path, subname, subnode["hists"], subnode["subdirs"],
                 dark, FigureCanvas, Figure, depth=0,
+                database_path=self._database_path,
             ))
         return holder, total
 
@@ -694,6 +942,99 @@ class _StepQaPage(QtWidgets.QWidget):
 # PDF tile: inline QtPdf rendering of one .pdf file, or "open externally"
 # fallback when PySide6.QtPdf isn't available.
 # ---------------------------------------------------------------------------
+
+
+class _ResponsiveTileGrid(QtWidgets.QWidget):
+    """Container that re-flows its child tiles when its width changes.
+
+    The QA tab used to hard-code grids at 3 columns (matplotlib thumbs)
+    or 1 column (PDF tiles stacked vertically).  Either choice wastes
+    horizontal space on wide screens and overflows the viewport on
+    narrow ones.  This widget watches its own width, computes how many
+    fixed-min-width tiles fit, and rebuilds the QGridLayout placement
+    when the answer changes.
+
+    Tile ordering is preserved on every reflow — the operator's
+    reading order stays the writer's emission order regardless of
+    column count.  Cap at ``_TILE_GRID_MAX_COLS`` (4) because beyond
+    that even a wide tile becomes too small to read the thumbnail.
+    """
+
+    def __init__(
+        self,
+        tiles: list[QtWidgets.QWidget],
+        *,
+        tile_min_width: int = _PDF_TILE_MIN_PX,
+        spacing: int = 8,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._tiles = list(tiles)
+        self._tile_min_width = tile_min_width
+        self._spacing = spacing
+        self._cur_cols = 0
+
+        self._grid = QtWidgets.QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(spacing)
+        self._grid.setVerticalSpacing(spacing)
+        #  Tiles take their natural width per column, no stretch.  The
+        #  trailing column(s) of the last row stay empty rather than
+        #  ballooning the right-most tile.
+        for i, tile in enumerate(self._tiles):
+            self._grid.addWidget(tile, 0, i)  # placeholder; real placement in _reflow
+        #  Initial reflow uses any size hint we already have; the
+        #  first resizeEvent triggered by the parent layout will hit
+        #  the genuine width and re-place if different.
+        self._reflow(max(self.width(), 1))
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        self._reflow(event.size().width())
+        super().resizeEvent(event)
+
+    def _cols_for_width(self, width: int) -> int:
+        if width <= 0:
+            return 1
+        #  n cols fit when n * tile_min_width + (n - 1) * spacing ≤ width
+        #  ⇒ n ≤ (width + spacing) / (tile_min_width + spacing)
+        cols = (width + self._spacing) // (self._tile_min_width + self._spacing)
+        return max(1, min(_TILE_GRID_MAX_COLS, int(cols)))
+
+    def _reflow(self, width: int) -> None:
+        cols = self._cols_for_width(width)
+        if cols != self._cur_cols:
+            self._cur_cols = cols
+            #  Detach every tile first so re-adding lands at the new (r, c).
+            for tile in self._tiles:
+                self._grid.removeWidget(tile)
+            for i, tile in enumerate(self._tiles):
+                r, c = divmod(i, cols)
+                self._grid.addWidget(tile, r, c)
+            # Make every column share equally so tile_w is uniform.
+            for c in range(cols):
+                self._grid.setColumnStretch(c, 1)
+        #  Even when ``cols`` didn't change, the available width per
+        #  tile did (the user dragged the splitter / resized the
+        #  window).  QGridLayout doesn't call ``heightForWidth`` on
+        #  children — we do it manually so each tile's row gets the
+        #  height its aspect-ratio thumbnail wants.  Without this the
+        #  tile box stays at whatever natural sizeHint the header gave
+        #  it and the preview shrinks / squishes inside.
+        if cols > 0:
+            tile_w = max(1, (width - (cols - 1) * self._spacing) // cols)
+            for tile in self._tiles:
+                has_hfw = (hasattr(tile, "hasHeightForWidth")
+                           and tile.hasHeightForWidth())
+                if not has_hfw:
+                    continue
+                h = tile.heightForWidth(tile_w)
+                if h > 0:
+                    #  setFixedHeight is atomic — separate
+                    #  setMinimumHeight + setMaximumHeight calls have
+                    #  an ordering bug when a resize moves h across
+                    #  the existing min/max range (the second call
+                    #  gets clamped against the first).
+                    tile.setFixedHeight(h)
 
 
 class _PdfTile(QtWidgets.QFrame):
@@ -720,20 +1061,45 @@ class _PdfTile(QtWidgets.QFrame):
     # the cache grows past the soft cap.
     _THUMB_CACHE: dict[tuple[str, int], QtGui.QPixmap] = {}
     _THUMB_CACHE_MAX = 64
-    _THUMB_HEIGHT_PX = 240
+    #  Cache the page at a HIGH resolution (800 px) and let the
+    #  ``_ClickableThumb`` label scale on each resize — keeps the
+    #  thumbnail crisp when the tile grid expands the column width
+    #  on a wide window.  240 px was fine for the fixed-size
+    #  previous behaviour but blurred as soon as the responsive
+    #  layout started stretching tiles.
+    _THUMB_HEIGHT_PX = 800
 
     def __init__(
         self,
         pdf_path: Path,
         *,
         have_qt_pdf: bool,
+        aspect_override: Optional[float] = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._pdf_path = pdf_path
         self._have_qt_pdf = have_qt_pdf
+        #  Optional H/W aspect forced on the embedded ``_ClickableThumb``.
+        #  Used by the General overview to keep every headline tile at
+        #  a single aspect (square = 1.0) regardless of the source PDF
+        #  page geometry — different writers emit different page sizes
+        #  and the natural per-tile aspect made the headline row look
+        #  ragged.  ``None`` falls back to source aspect (full-plots
+        #  view keeps that flexibility on purpose — heterogeneous PDFs
+        #  there are deliberate browse-all behaviour).
+        self._aspect_override = aspect_override
+        self._thumb: _ClickableThumb | None = None
         self.setObjectName("cardSurface")
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        #  Expanding horizontally; height tracks width via heightForWidth.
+        #  Without this the grid would give every tile the same equal
+        #  column width but each tile would stay at its (small) natural
+        #  sizeHint and the box wouldn't grow with the window.
+        sp = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                   QtWidgets.QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
 
         v = QtWidgets.QVBoxLayout(self)
         v.setContentsMargins(8, 8, 8, 8)
@@ -762,10 +1128,11 @@ class _PdfTile(QtWidgets.QFrame):
         # Thumbnail (cheap to render, cached).  Click → big modal.
         thumb = self._get_or_render_thumb()
         if thumb is not None:
-            tlabel = _ClickableThumb(thumb)
+            tlabel = _ClickableThumb(thumb, aspect_override=self._aspect_override)
             tlabel.clicked.connect(self._open_modal)
             tlabel.setToolTip("Click to open inline at full size")
-            v.addWidget(tlabel)
+            v.addWidget(tlabel, 1)
+            self._thumb = tlabel
         elif self._have_qt_pdf:
             err = QtWidgets.QLabel(
                 "(could not render preview — use Open ↗)"
@@ -783,6 +1150,35 @@ class _PdfTile(QtWidgets.QFrame):
             msg.setObjectName("muted")
             msg.setWordWrap(True)
             v.addWidget(msg)
+
+    # ----- responsive sizing --------------------------------------------
+
+    def hasHeightForWidth(self) -> bool:  # noqa: D401
+        return self._thumb is not None
+
+    def heightForWidth(self, w: int) -> int:
+        """Header + (square-ish) thumbnail height.
+
+        Total tile height = top/bottom margins + header row height +
+        layout spacing + heightForWidth(thumb_width) of the thumbnail.
+        thumb_width = w − left/right margins.  The grid uses this to
+        pick a row height that lets every tile in the row sit at the
+        natural aspect of its preview without clipping or stretching.
+        """
+        if self._thumb is None:
+            return w
+        margins = self.layout().contentsMargins()
+        inner_w = max(1, w - margins.left() - margins.right())
+        header_h = 0
+        item = self.layout().itemAt(0)
+        if item is not None and item.widget() is not None:
+            header_h = item.widget().sizeHint().height()
+        elif item is not None and item.layout() is not None:
+            header_h = item.layout().sizeHint().height()
+        spacing = self.layout().spacing()
+        return (margins.top() + margins.bottom() +
+                header_h + spacing +
+                self._thumb.heightForWidth(inner_w))
 
     # ----- thumbnail rendering + cache ----------------------------------
 
@@ -850,7 +1246,11 @@ class _PdfTile(QtWidgets.QFrame):
             return
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle(self._pdf_path.name)
-        dlg.resize(900, 700)
+        #  Sized for comfortable reading on a typical laptop screen
+        #  (was 900×700 — operator-reported as cramped, especially for
+        #  trigger_matrix / hitmap plots that already filled the
+        #  source canvas).  Stays well within a 13" 1440×900 panel.
+        dlg.resize(1280, 880)
         layout = QtWidgets.QVBoxLayout(dlg)
         layout.setContentsMargins(8, 8, 8, 8)
         try:
@@ -878,24 +1278,94 @@ class _PdfTile(QtWidgets.QFrame):
 
 
 class _ClickableThumb(QtWidgets.QLabel):
-    """``QLabel`` that emits ``clicked()`` on left-click.
+    """``QLabel`` that emits ``clicked()`` on left-click AND scales its
+    pixmap to fit its current size, preserving the source aspect ratio.
 
-    Shows the cursor as a pointing hand so the affordance is obvious.
+    Why the manual scaling?  The simple ``setPixmap`` + a fixed-size
+    cached image meant the tile never grew or shrank with the parent
+    grid's column width — once the responsive grid stretched the
+    column past 240 px, the thumbnail stayed pinned at 240 px and
+    the tile box collapsed around it.
+
+    Implementation: cache the high-res source pixmap once, override
+    ``resizeEvent`` to rescale into the label's current size, and
+    report ``heightForWidth(w)`` from the source aspect ratio so the
+    parent grid allocates a square (or whatever-aspect) row height
+    for each tile.
+
+    Cursor shown as a pointing hand so the affordance is obvious.
     """
 
     clicked = QtCore.Signal()
 
-    def __init__(self, pixmap: QtGui.QPixmap, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self,
+        pixmap: QtGui.QPixmap,
+        *,
+        aspect_override: Optional[float] = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setPixmap(pixmap)
+        self._src_pixmap = pixmap                # full-res source — never mutated
+        #  When set, ``heightForWidth`` reports ``w * aspect_override``
+        #  instead of using the source pixmap's natural H/W.  The
+        #  pixmap still scales preserving its own aspect inside the
+        #  fixed box, so a portrait PDF inside a square tile gets
+        #  letterboxed; a landscape one gets pillarboxed.  Cleaner
+        #  than cropping the thumbnail itself.
+        self._aspect_override = aspect_override
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setMinimumSize(80, 80)
+        #  Expanding width + height follows width via heightForWidth.
+        sp = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                   QtWidgets.QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
         # Border so the thumbnail reads as a button.
         self.setStyleSheet(
             "QLabel { border: 1px solid rgba(155,142,142,0.25);"
             "         border-radius: 3px; padding: 2px; }"
             "QLabel:hover { border-color: #FF6B6B; }"
         )
+        self._apply_scaled()
+
+    def hasHeightForWidth(self) -> bool:  # noqa: D401 — Qt convention
+        return True
+
+    def heightForWidth(self, w: int) -> int:
+        if self._aspect_override is not None and self._aspect_override > 0:
+            return int(round(w * self._aspect_override))
+        pm = self._src_pixmap
+        if pm is None or pm.isNull() or pm.width() <= 0:
+            return w
+        return int(round(w * pm.height() / pm.width()))
+
+    def sizeHint(self) -> QtCore.QSize:
+        pm = self._src_pixmap
+        if pm is None or pm.isNull():
+            return super().sizeHint()
+        # Hint at the current label width — Qt asks for sizeHint on
+        # first show before a heightForWidth round-trip happens.
+        w = max(self.width(), 200)
+        return QtCore.QSize(w, self.heightForWidth(w))
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        self._apply_scaled()
+        super().resizeEvent(event)
+
+    def _apply_scaled(self) -> None:
+        if self._src_pixmap is None or self._src_pixmap.isNull():
+            return
+        target = self.size()
+        if target.width() <= 0 or target.height() <= 0:
+            return
+        scaled = self._src_pixmap.scaled(
+            target,
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        super().setPixmap(scaled)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
@@ -922,6 +1392,17 @@ class _ThumbnailTile(QtWidgets.QFrame):
     # 220 px height + ~3:2 fig aspect = readable axes + room for tick labels.
     _THUMB_HEIGHT_PX = 220
 
+    #  Histograms whose modal we hijack with the Streaming-score
+    #  n_σ picker (§1.5.2 Option C).  Either hist clicked opens the
+    #  picker — both samples render on the same canvas anyway, so the
+    #  thumbnail the operator clicked is just the trigger.  Matched
+    #  on the bare basename so a future TDirectory subdir prefix
+    #  wouldn't silently break the dispatch.
+    _PICKER_HISTS = frozenset({
+        "h_streaming_score_noise",
+        "h_streaming_score_data",
+    })
+
     def __init__(
         self,
         root_path: Path,
@@ -931,6 +1412,7 @@ class _ThumbnailTile(QtWidgets.QFrame):
         Figure,
         *,
         dark: bool = False,
+        database_path: Optional[Path] = None,
     ) -> None:
         super().__init__()
         self._root_path = root_path
@@ -939,6 +1421,7 @@ class _ThumbnailTile(QtWidgets.QFrame):
         self._Figure = Figure
         self._FigureCanvas = FigureCanvas
         self._dark = dark
+        self._database_path = database_path
         self.setObjectName("cardSurface")
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         # Hover affordance so the operator knows the tile is clickable.
@@ -999,7 +1482,33 @@ class _ThumbnailTile(QtWidgets.QFrame):
         super().mousePressEvent(event)
 
     def _show_big(self) -> None:
-        """Pop the interactive plot dialog for this histogram."""
+        """Pop the interactive plot dialog for this histogram.
+
+        Streaming-score hists route to the n_σ picker (§1.5.2 Option
+        C) instead of the generic modal — same click target, different
+        dialog.  The picker still renders both noise + data even when
+        only one of them was the tile clicked.
+        """
+        basename = self._hist_path.split("/")[-1]
+        if basename in self._PICKER_HISTS:
+            #  Run id derives from the standard ``Data/<run>/foo.root``
+            #  layout; the rundb path is whatever the QaView injected
+            #  down the tree.  Both fall through to None when the
+            #  layout isn't honoured — the picker then disables Save
+            #  rather than crashing.
+            run_id = self._root_path.parent.name or None
+            dlg = _StreamingScorePickerDialog(
+                parent=self,
+                root_path=self._root_path,
+                database_path=self._database_path,
+                run_id=run_id,
+                Figure=self._Figure,
+                FigureCanvas=self._FigureCanvas,
+                dark=self._dark,
+            )
+            dlg.exec()
+            return
+
         hist = thumbs.load_histogram(self._root_path, self._hist_path)
         dlg = _InteractivePlotDialog(
             parent=self,
@@ -1066,7 +1575,10 @@ class _InteractivePlotDialog(QtWidgets.QDialog):
             self._numpy_data = None
 
         self.setWindowTitle(f"{root_path.name} · {hist_path}")
-        self.resize(1000, 720)
+        #  Larger default than before (was 1000×720) so the fit-stats
+        #  line at the bottom and the axis labels don't crowd on a
+        #  default open — operator-reported "still a bit small".
+        self.resize(1320, 900)
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -1363,6 +1875,440 @@ class _InteractivePlotDialog(QtWidgets.QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Streaming-score n_σ picker — interactive cut on the score canvas.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_streaming_conf_default(root_path: Path) -> float:
+    """Read ``[streaming_trigger].n_sigma_threshold`` from ``conf/streaming.toml``.
+
+    Resolves the repo root via the standard ``Data/<run>/foo.root``
+    layout (same walk as :func:`_spawn_root_canvas`) and follows the
+    symlink at ``conf/streaming.toml`` to the active config under
+    ``conf/working/`` or ``conf/QA/``.  Returns ``0.0`` when anything
+    in the chain is missing — the picker treats that as "no usable
+    default" and falls through to the crossover heuristic.
+    """
+    repo_root = root_path.parent.parent.parent
+    streaming_conf = repo_root / "conf" / "streaming.toml"
+    if not streaming_conf.is_file():
+        return 0.0
+    try:
+        import sys as _sys
+        if _sys.version_info >= (3, 11):
+            import tomllib as _tomllib
+        else:  # pragma: no cover
+            import tomli as _tomllib  # type: ignore
+        with streaming_conf.open("rb") as fh:
+            doc = _tomllib.load(fh)
+    except Exception:  # noqa: BLE001
+        return 0.0
+    trig = doc.get("streaming_trigger")
+    if not isinstance(trig, dict):
+        return 0.0
+    v = trig.get("n_sigma_threshold")
+    try:
+        return float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+class _StreamingScorePickerDialog(QtWidgets.QDialog):
+    """Interactive n_σ cut on the streaming-score canvas.
+
+    The shifter opens this by clicking the ``h_streaming_score_noise``
+    or ``h_streaming_score_data`` thumbnail in QA → Lightdata.  Both
+    hists overlay on a shared log-Y axis (red = noise / first-frames,
+    blue = data-taking — same scheme the C++ writer paints with).  A
+    draggable vertical line marks the candidate cut; the side panel
+    shows four live quantities (``P(misfire)``, ``Acceptance``, ``S/N``
+    above cut, raw data count above cut).  "Save to rundb" commits via
+    :func:`rundb.update_run_field` with ``auto_pin`` — only the active
+    run changes; downstream inherit-from-prev runs keep their merged
+    view.
+
+    Implements §1.5.2 Option C; see ``streaming_picker.py`` for the
+    integral / seed math.
+    """
+
+    _SAVE_FIELD = "streaming_n_sigma_threshold"
+
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None,
+        *,
+        root_path: Path,
+        database_path: Optional[Path],
+        run_id: Optional[str],
+        Figure,
+        FigureCanvas,
+        dark: bool,
+    ) -> None:
+        super().__init__(parent)
+        self._root_path = root_path
+        self._database_path = database_path
+        self._run_id = run_id
+        self._dark = dark
+        self._Figure = Figure
+        self._FigureCanvas = FigureCanvas
+
+        self.setWindowTitle(
+            f"Streaming-score n_σ picker · {root_path.parent.name}"
+        )
+        #  Side-panel needs ~280 px of headroom, canvas wants room
+        #  for the legend without overlapping the high-n_σ data tail
+        #  — bumped from 1180×700 to keep parity with the other
+        #  inspect dialogs.
+        self.resize(1440, 900)
+
+        # ── Load both hists ──────────────────────────────────────────
+        from . import streaming_picker as _sp
+        h_noise = thumbs.load_histogram(root_path, "h_streaming_score_noise")
+        h_data = thumbs.load_histogram(root_path, "h_streaming_score_data")
+        self._noise_counts, edges_n = self._to_arrays(h_noise)
+        self._data_counts, edges_d = self._to_arrays(h_data)
+        # Both hists share a booking — pick whichever edges exist.  If
+        # both are missing we still show the dialog with a single-bin
+        # placeholder so the operator sees what went wrong rather than
+        # a silent failure.
+        self._edges = edges_n if edges_n else edges_d or [0.0, 50.0]
+        if not self._noise_counts:
+            self._noise_counts = [0.0] * (len(self._edges) - 1)
+        if not self._data_counts:
+            self._data_counts = [0.0] * (len(self._edges) - 1)
+
+        # ── Seed the cut ────────────────────────────────────────────
+        self._rundb_saved_value = self._read_saved_rundb_value()
+        self._conf_default = _resolve_streaming_conf_default(root_path)
+        self._cut = _sp.seed_threshold(
+            rundb_value=self._rundb_saved_value,
+            conf_value=self._conf_default,
+            noise_counts=self._noise_counts,
+            data_counts=self._data_counts,
+            edges=self._edges,
+        )
+
+        # ── Layout ──────────────────────────────────────────────────
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(10)
+        outer.addLayout(body, 1)
+
+        # — Canvas (figure built but NOT painted yet — the first
+        #   ``_render_axes`` + ``_refresh_stats`` calls touch the side
+        #   panel labels, so they have to run after the panel below
+        #   has been constructed).
+        self._fig = Figure(figsize=(8.0, 5.5), dpi=110, tight_layout=True)
+        self._fig.patch.set_alpha(0.0)
+        self._ax = self._fig.add_subplot(111)
+        self._ax.patch.set_alpha(0.0)
+        self._canvas = FigureCanvas(self._fig)
+        body.addWidget(self._canvas, 1)
+
+        # — Side panel (stats + Save / Close)
+        panel = QtWidgets.QVBoxLayout()
+        panel.setSpacing(10)
+        body.addLayout(panel, 0)
+
+        self._cut_label = QtWidgets.QLabel()
+        f = self._cut_label.font(); f.setPointSize(f.pointSize() + 6); f.setBold(True)
+        self._cut_label.setFont(f)
+        panel.addWidget(self._cut_label)
+
+        intro = QtWidgets.QLabel(
+            "Drag the vertical line on the canvas to pick the n_σ "
+            "cut.  Numbers update live.  Save writes the value to "
+            "the per-run field in the active rundb."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("muted")
+        intro.setStyleSheet("font-style: italic; font-size: 11px;")
+        panel.addWidget(intro)
+
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignRight)
+        form.setFormAlignment(QtCore.Qt.AlignTop)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(6)
+        self._lbl_p_misfire = QtWidgets.QLabel("—")
+        self._lbl_acceptance = QtWidgets.QLabel("—")
+        self._lbl_sn = QtWidgets.QLabel("—")
+        self._lbl_n_above = QtWidgets.QLabel("—")
+        for lbl in (self._lbl_p_misfire, self._lbl_acceptance,
+                    self._lbl_sn, self._lbl_n_above):
+            sf = lbl.font(); sf.setPointSize(sf.pointSize() + 2); lbl.setFont(sf)
+        form.addRow("P(misfire):", self._lbl_p_misfire)
+        form.addRow("Acceptance:", self._lbl_acceptance)
+        form.addRow("S/N above cut:", self._lbl_sn)
+        form.addRow("N(data) above cut:", self._lbl_n_above)
+        panel.addLayout(form)
+
+        # Seed-provenance hint — operators have to know which of the
+        # three priority branches put the line where it is.
+        self._seed_note = QtWidgets.QLabel()
+        self._seed_note.setObjectName("muted")
+        self._seed_note.setStyleSheet("font-style: italic; font-size: 11px;")
+        self._seed_note.setWordWrap(True)
+        panel.addWidget(self._seed_note)
+        self._refresh_seed_note()
+
+        panel.addStretch(1)
+
+        # — Buttons
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setSpacing(8)
+        self._save_btn = QtWidgets.QPushButton("Save to rundb")
+        self._save_btn.setToolTip(
+            "Write the current cut to the active run's "
+            f"`{self._SAVE_FIELD}` field.  Downstream inherit-from-"
+            "prev runs are auto-pinned so only this run changes."
+        )
+        self._save_btn.clicked.connect(self._on_save)
+        self._save_btn.setEnabled(
+            self._database_path is not None and self._run_id is not None
+        )
+        if not self._save_btn.isEnabled():
+            self._save_btn.setToolTip(
+                "Save disabled: no rundb path / run id resolved for "
+                "this view."
+            )
+        btn_row.addWidget(self._save_btn)
+        btn_row.addStretch(1)
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        outer.addLayout(btn_row)
+
+        # ── Drag wiring ─────────────────────────────────────────────
+        self._dragging = False
+        self._cid_press = self._canvas.mpl_connect(
+            "button_press_event", self._on_press)
+        self._cid_motion = self._canvas.mpl_connect(
+            "motion_notify_event", self._on_motion)
+        self._cid_release = self._canvas.mpl_connect(
+            "button_release_event", self._on_release)
+
+        # First paint — runs AFTER the side-panel labels exist so
+        # ``_render_axes`` / ``_refresh_stats`` can populate them
+        # without an AttributeError.
+        self._render_axes()
+        self._refresh_stats()
+        self._canvas.draw_idle()
+
+    # ----- hist → arrays ---------------------------------------------------
+
+    @staticmethod
+    def _to_arrays(hist) -> tuple[list[float], list[float]]:
+        """``hist.to_numpy() → (counts list, edges list)``; ``([], [])``
+        when the hist is missing or unconvertible."""
+        if hist is None:
+            return [], []
+        try:
+            counts, edges = hist.to_numpy()
+        except Exception:  # noqa: BLE001
+            return [], []
+        return [float(c) for c in counts], [float(e) for e in edges]
+
+    # ----- rundb I/O -------------------------------------------------------
+
+    def _read_saved_rundb_value(self) -> float:
+        """Look up the currently-saved ``streaming_n_sigma_threshold``
+        for the active run; ``0.0`` when the rundb / run id is unknown
+        or the field has never been set."""
+        if self._database_path is None or self._run_id is None:
+            return 0.0
+        try:
+            records = rundb.load_database(self._database_path)
+        except Exception:  # noqa: BLE001
+            return 0.0
+        for r in records:
+            if r.run_id == self._run_id:
+                v = r.get(self._SAVE_FIELD)
+                try:
+                    return float(v) if v is not None else 0.0
+                except (TypeError, ValueError):
+                    return 0.0
+        return 0.0
+
+    # ----- rendering -------------------------------------------------------
+
+    def _render_axes(self) -> None:
+        """Initial paint — overlay the two step plots + place the cut
+        line and the saved-value ghost.  Re-runs only on construction;
+        subsequent updates touch just the cut-line artist."""
+        ax = self._ax
+        # Step hists.  ``where='post'`` mirrors how matplotlib renders
+        # bin counts as constant-on-bin-interval, same convention
+        # ``thumbs.render_histogram`` uses for TH1s.
+        centres = [
+            0.5 * (self._edges[i] + self._edges[i + 1])
+            for i in range(len(self._edges) - 1)
+        ]
+        ax.step(self._edges[:-1], self._noise_counts, where="post",
+                color="#D04A4A" if self._dark else "#B03030",
+                linewidth=1.6, label="noise (first-frames)")
+        ax.step(self._edges[:-1], self._data_counts, where="post",
+                color="#4A8BD0" if self._dark else "#1F4E8B",
+                linewidth=1.6, label="data-taking")
+        max_y = max([1.0, *self._noise_counts, *self._data_counts])
+        #  Log-Y is the natural axis for the score (heavy noise tail,
+        #  long data tail), but matplotlib emits a warning + flips to
+        #  lin internally when both samples are empty.  Pre-empt that
+        #  by staying on lin Y when there's literally nothing to show
+        #  — the operator sees an empty axes box, not a stack trace.
+        if max_y > 1.0:
+            ax.set_yscale("log")
+            ax.set_ylim(0.5, max_y * 2.0)
+        else:
+            ax.set_ylim(0.0, 1.0)
+        ax.set_xlabel("n_σ")
+        ax.set_ylabel("entries")
+        ax.set_xlim(self._edges[0], self._edges[-1])
+        ax.grid(True, which="both", alpha=0.25, linewidth=0.5)
+        ax.legend(loc="upper right", framealpha=0.85, fontsize=9)
+
+        # Ghost line — previously-saved rundb value, dimmed.  Skipped
+        # when nothing is saved yet.
+        self._ghost_artist = None
+        if self._rundb_saved_value > 0:
+            self._ghost_artist = ax.axvline(
+                self._rundb_saved_value,
+                color="#888888", linestyle=":", linewidth=1.2,
+                label=f"saved ({self._rundb_saved_value:.2f})",
+            )
+            ax.legend(loc="upper right", framealpha=0.85, fontsize=9)
+
+        # Live cut line — the one the operator drags.
+        self._cut_artist = ax.axvline(
+            self._cut,
+            color="#0BDA51", linestyle="-", linewidth=1.8,
+        )
+        # Touch label so the X coord shows in the initial paint.
+        self._cut_label.setText(f"n_σ  =  {self._cut:.2f}")
+
+    def _refresh_stats(self) -> None:
+        """Recompute the four side-panel quantities at the current cut."""
+        from . import streaming_picker as _sp
+        s = _sp.cut_stats(
+            self._noise_counts, self._data_counts, self._edges, self._cut,
+        )
+        self._lbl_p_misfire.setText(self._fmt_prob(s.p_misfire))
+        self._lbl_acceptance.setText(self._fmt_prob(s.acceptance))
+        self._lbl_sn.setText("—" if s.sn_ratio is None else f"{s.sn_ratio:.2f}")
+        self._lbl_n_above.setText(f"{s.n_above_data:.0f}")
+        self._cut_label.setText(f"n_σ  =  {self._cut:.2f}")
+
+    def _refresh_seed_note(self) -> None:
+        """Surface which priority branch put the line where it is."""
+        from . import streaming_picker as _sp
+        if self._rundb_saved_value > 0:
+            note = (f"Seeded from the saved rundb value "
+                    f"({self._rundb_saved_value:.2f}).")
+        elif 0 < self._conf_default < _sp.QA_DISABLE_SENTINEL:
+            note = (f"Seeded from `conf/streaming.toml` default "
+                    f"({self._conf_default:.2f}).")
+        else:
+            crossover = _sp.noise_data_crossover(
+                self._noise_counts, self._data_counts, self._edges,
+            )
+            if crossover is not None:
+                note = (f"Seeded from the noise/data crossover heuristic "
+                        f"({crossover:.2f}).")
+            else:
+                note = "No usable seed — line placed at 5.0 as a fallback."
+        self._seed_note.setText(note)
+
+    @staticmethod
+    def _fmt_prob(p: float) -> str:
+        if p <= 0:
+            return "0"
+        if p < 1e-4:
+            return f"{p:.2e}"
+        return f"{p * 100:.3f} %"
+
+    # ----- drag handling ---------------------------------------------------
+
+    def _on_press(self, event) -> None:
+        if event.inaxes is not self._ax or event.xdata is None:
+            return
+        if event.button != 1:  # left button only
+            return
+        # Tolerance: 5 % of the visible X span.  Generous enough that
+        # the operator doesn't have to pixel-snipe the line; tight
+        # enough that an accidental click far away doesn't snap it.
+        lo, hi = self._ax.get_xlim()
+        tol = 0.05 * (hi - lo)
+        if abs(event.xdata - self._cut) <= tol:
+            self._dragging = True
+            self._set_cut(event.xdata)
+
+    def _on_motion(self, event) -> None:
+        if not self._dragging or event.inaxes is not self._ax:
+            return
+        if event.xdata is None:
+            return
+        self._set_cut(event.xdata)
+
+    def _on_release(self, event) -> None:
+        self._dragging = False
+
+    def _set_cut(self, x: float) -> None:
+        # Clamp to the booked range — dragging off-canvas would put
+        # the saved value in nonsensical territory.
+        x = max(self._edges[0], min(self._edges[-1], x))
+        self._cut = x
+        self._cut_artist.set_xdata([x, x])
+        self._refresh_stats()
+        self._canvas.draw_idle()
+
+    # ----- save ------------------------------------------------------------
+
+    def _on_save(self) -> None:
+        if self._database_path is None or self._run_id is None:
+            return
+        try:
+            rundb.update_run_field(
+                self._database_path,
+                self._run_id,
+                self._SAVE_FIELD,
+                round(float(self._cut), 4),
+                auto_pin=True,
+                source="dashboard:streaming_picker",
+            )
+        except Exception as exc:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(
+                self, "Save failed",
+                f"Could not write `{self._SAVE_FIELD}` to "
+                f"{self._database_path.name}:\n\n{type(exc).__name__}: {exc}",
+            )
+            return
+
+        self._rundb_saved_value = float(self._cut)
+        # Move (or paint) the saved-value ghost so the operator sees
+        # confirmation without the dialog closing.
+        if self._ghost_artist is None:
+            self._ghost_artist = self._ax.axvline(
+                self._rundb_saved_value,
+                color="#888888", linestyle=":", linewidth=1.2,
+                label=f"saved ({self._rundb_saved_value:.2f})",
+            )
+            self._ax.legend(loc="upper right", framealpha=0.85, fontsize=9)
+        else:
+            self._ghost_artist.set_xdata([
+                self._rundb_saved_value, self._rundb_saved_value,
+            ])
+            self._ghost_artist.set_label(
+                f"saved ({self._rundb_saved_value:.2f})"
+            )
+            self._ax.legend(loc="upper right", framealpha=0.85, fontsize=9)
+        self._refresh_seed_note()
+        self._canvas.draw_idle()
+
+
+# ---------------------------------------------------------------------------
 # Macros placeholder — bespoke ROOT macros to land later.
 # ---------------------------------------------------------------------------
 
@@ -1431,6 +2377,7 @@ class _CollapsibleDirCard(QtWidgets.QFrame):
         Figure,
         *,
         depth: int = 0,
+        database_path: Optional[Path] = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -1441,6 +2388,10 @@ class _CollapsibleDirCard(QtWidgets.QFrame):
         self._FigureCanvas = FigureCanvas
         self._Figure = Figure
         self._depth = depth
+        #  Threaded down from QaView so the streaming-score picker
+        #  inside ``_ThumbnailTile`` knows which rundb file to write
+        #  to.  None disables Save in the picker dialog.
+        self._database_path = database_path
         # Lazy-build body the first time the operator expands the card,
         # so the page open cost is just headers (cheap).
         self._body_built = False
@@ -1514,23 +2465,21 @@ class _CollapsibleDirCard(QtWidgets.QFrame):
 
     def _build_body(self) -> None:
         """Populate the body with thumbnail grid + nested cards."""
-        # Histogram thumbnails for THIS directory.
+        # Histogram thumbnails for THIS directory — responsive grid
+        # so 1/2/3/4 thumbs per row tracks the dashboard window width.
         if self._hists:
-            grid = QtWidgets.QGridLayout()
-            grid.setContentsMargins(0, 0, 0, 0)
-            grid.setHorizontalSpacing(8)
-            grid.setVerticalSpacing(8)
-            for i, (hpath, classname) in enumerate(self._hists):
-                tile = _ThumbnailTile(
+            tiles = [
+                _ThumbnailTile(
                     self._root_path, hpath, classname,
                     self._FigureCanvas, self._Figure,
                     dark=self._dark,
+                    database_path=self._database_path,
                 )
-                r, c = divmod(i, _GRID_COLS)
-                grid.addWidget(tile, r, c)
-            grid_holder = QtWidgets.QWidget()
-            grid_holder.setLayout(grid)
-            self._body_layout.addWidget(grid_holder)
+                for hpath, classname in self._hists
+            ]
+            self._body_layout.addWidget(_ResponsiveTileGrid(
+                tiles, tile_min_width=_THUMB_TILE_MIN_PX,
+            ))
 
         # Nested sub-directory cards.
         for subname, subnode in self._subdirs.items():
@@ -1539,7 +2488,707 @@ class _CollapsibleDirCard(QtWidgets.QFrame):
                 subnode["hists"], subnode["subdirs"],
                 self._dark, self._FigureCanvas, self._Figure,
                 depth=self._depth + 1,
+                database_path=self._database_path,
             ))
+
+
+class _TopicQaPage(QtWidgets.QWidget):
+    """One topic sub-tab.  Aggregates PDFs from every pipeline stage
+    whose basename matches ``topic_of()`` for this topic.
+
+    Mirrors the lazy-rebuild + de-dup-on-set-run discipline of
+    ``_StepQaPage`` but operates on a *cross-stage* PDF set.  Each
+    matching PDF is shown under a small header that names the
+    originating writer (Lightdata / Recodata / …) so the operator
+    knows which writer to ping when a plot looks wrong.
+
+    No histogram thumbnails here by design — those live on the
+    "Full plots" deep-dive sub-tab, which is one level down.
+    """
+
+    def __init__(
+        self,
+        topic_key: str,
+        label: str,
+        description: str,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._topic_key = topic_key
+        self._label = label
+        self._description = description
+        self._current_run_id: Optional[str] = None
+        self._current_data_dir: Optional[Path] = None
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 8, 0, 0)
+        outer.setSpacing(8)
+
+        # Topic description line — operator sees what's grouped here.
+        self._desc = QtWidgets.QLabel(description)
+        self._desc.setObjectName("muted")
+        self._desc.setStyleSheet("font-style: italic; font-size: 11px;")
+        self._desc.setWordWrap(True)
+        outer.addWidget(self._desc)
+
+        # Compact status header — what's loaded right now.
+        self._status = QtWidgets.QLabel("(no run selected)")
+        self._status.setObjectName("muted")
+        self._status.setStyleSheet("font-style: italic; font-size: 11px;")
+        outer.addWidget(self._status)
+
+        # Scrollable body — one card per pipeline stage that contributed.
+        self._scroll = QtWidgets.QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._body = QtWidgets.QWidget()
+        self._body_layout = QtWidgets.QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(12)
+        self._body_layout.setAlignment(QtCore.Qt.AlignTop)
+        self._scroll.setWidget(self._body)
+        outer.addWidget(self._scroll, 1)
+
+    def set_run(self, run_id: Optional[str], data_dir: Path) -> None:
+        if run_id == self._current_run_id and data_dir == self._current_data_dir:
+            return
+        self._current_run_id = run_id
+        self._current_data_dir = data_dir
+        self._rebuild()
+
+    def invalidate_cache(self) -> None:
+        self._current_run_id = None
+        self._current_data_dir = None
+
+    def _rebuild(self) -> None:
+        # Wipe.
+        while self._body_layout.count():
+            item = self._body_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        run_id = self._current_run_id
+        data_dir = self._current_data_dir
+        if not run_id or data_dir is None:
+            self._status.setText("(no run selected)")
+            return
+        run_dir = data_dir / run_id
+        if not run_dir.is_dir():
+            self._status.setText(f"run directory not found: {run_dir}")
+            return
+
+        # Try the Qt PDF module — same fallback as _StepQaPage.
+        try:
+            from PySide6 import QtPdf, QtPdfWidgets  # noqa: F401
+            have_qt_pdf = True
+        except ImportError:
+            have_qt_pdf = False
+
+        # Walk every STEP, collect PDFs that route to THIS topic.
+        n_pdfs_total = 0
+        contributing_stages: list[str] = []
+        for _key, stage_label, _root, qa_subdir in STEPS:
+            stage_dir = run_dir / qa_subdir
+            if not stage_dir.is_dir():
+                continue
+            matching = sorted(
+                p for p in stage_dir.glob("*.pdf")
+                if topic_of(p.name) == self._topic_key
+            )
+            if not matching:
+                continue
+
+            # Per-stage card.
+            holder = QtWidgets.QFrame()
+            holder.setObjectName("cardSurface")
+            v = QtWidgets.QVBoxLayout(holder)
+            v.setContentsMargins(14, 12, 14, 14)
+            v.setSpacing(10)
+            head = QtWidgets.QHBoxLayout()
+            title = QtWidgets.QLabel(
+                f"<b>{self._label}</b>  ·  from <i>{stage_label}</i>")
+            title.setTextFormat(QtCore.Qt.RichText)
+            head.addWidget(title)
+            head.addStretch(1)
+            cap = QtWidgets.QLabel(f"{len(matching)}")
+            cap.setObjectName("muted")
+            cap.setStyleSheet("font-size: 11px;")
+            head.addWidget(cap)
+            v.addLayout(head)
+
+            tiles = [_PdfTile(p, have_qt_pdf=have_qt_pdf) for p in matching]
+            v.addWidget(_ResponsiveTileGrid(
+                tiles, tile_min_width=_PDF_TILE_MIN_PX,
+            ))
+            self._body_layout.addWidget(holder)
+            contributing_stages.append(stage_label)
+            n_pdfs_total += len(matching)
+
+        bits = [f"run: {run_id}"]
+        if n_pdfs_total:
+            bits.append(f"{n_pdfs_total} PDF(s) from {', '.join(contributing_stages)}")
+        else:
+            bits.append(f"no {self._label.lower()} plots yet — writer hasn't emitted any")
+        self._status.setText("  ·  ".join(bits))
+
+
+# ---------------------------------------------------------------------------
+# Cross-run trend tile — matplotlib line plot of one metric across the
+# most-recent N runs.  Lives on the General tab below the headline PDFs.
+# ---------------------------------------------------------------------------
+
+
+class _TrendTile(QtWidgets.QFrame):
+    """One observable plotted across the trend window.
+
+    Mirrors the ``_ThumbnailTile`` shell (cardSurface frame +
+    FigureCanvas + caption) so the General tab's two tile families
+    visually agree.  Differences from ``_ThumbnailTile``:
+
+      - data source is a :class:`cross_run_trends.TrendSeries`, not a
+        ROOT histogram — no uproot involvement, no modal "Open in
+        ROOT" path (trend data isn't in a TFile),
+      - we draw run-id ticks on the x-axis with the time portion only
+        (``HHMMSS``) so 20 ticks still fit on a ~320 px tile,
+      - "no data" is a first-class state: when the series has zero
+        points (writer hasn't published the metric yet) we draw a
+        muted placeholder instead of an empty axes — the operator's
+        question "is this metric live?" is answered at a glance.
+
+    Errorbars are drawn iff at least one point carries ``error > 0``.
+    A footer line summarises window-completeness ("18 / 20 runs · 2
+    missing") — silent gaps would let a slow-failing writer look like
+    flat steady-state data.
+    """
+
+    _TREND_HEIGHT_PX = 220
+
+    def __init__(
+        self,
+        series: cross_run_trends.TrendSeries,
+        FigureCanvas,
+        Figure,
+        *,
+        dark: bool = False,
+        window_size: int = cross_run_trends.DEFAULT_TREND_RUNS_N,
+    ) -> None:
+        super().__init__()
+        self._series = series
+        self._dark = dark
+        self.setObjectName("cardSurface")
+        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+
+        v = QtWidgets.QVBoxLayout(self)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.setSpacing(2)
+
+        #  Figure sized to match the histogram thumbs (3.6 × 2.4 @ 100
+        #  dpi) so a row mixing headline PDFs / histograms / trends
+        #  stays visually aligned.
+        fig = Figure(figsize=(3.6, 2.4), dpi=100, tight_layout=True)
+        fig.patch.set_alpha(0.0)
+        ax = fig.add_subplot(111)
+        ax.patch.set_alpha(0.0)
+        self._render_into_ax(ax)
+        canvas = FigureCanvas(fig)
+        canvas.setFixedHeight(self._TREND_HEIGHT_PX)
+        v.addWidget(canvas)
+
+        #  Caption: metric label + (#points / #window · missing-count).
+        n_pts = len(series.points)
+        n_missing = len(series.missing)
+        denom = max(n_pts + n_missing, window_size)
+        cap_text = (
+            f"<b>{series.metric.label}</b>  ·  {n_pts} / {denom} runs"
+        )
+        if n_missing:
+            cap_text += f"  ·  {n_missing} missing"
+        cap = QtWidgets.QLabel(cap_text)
+        cap.setObjectName("muted")
+        cap.setTextFormat(QtCore.Qt.RichText)
+        cap.setStyleSheet("font-size: 9px;")
+        cap.setWordWrap(True)
+        cap.setToolTip(
+            f"{series.metric.key}  ·  sensor={series.metric.sensor}\n"
+            "Most-recent runs left-to-right (oldest → newest)."
+        )
+        v.addWidget(cap)
+
+    def _render_into_ax(self, ax) -> None:
+        """Draw the trend line, or a 'no data yet' placeholder.
+
+        Theme-aware tick / label colour so the figure stays legible
+        on both the light and dark cards.  Run-id strings live on
+        the x-tick labels (compact ``HHMMSS`` slice) so the operator
+        can correlate a step / drift with a specific run without
+        leaving the tab.
+        """
+        fg = "#E8E8E8" if self._dark else "#2A2A2A"
+        muted = "#9CA0A6" if self._dark else "#6B6F76"
+
+        series = self._series
+        if not series.points:
+            ax.text(
+                0.5, 0.5,
+                "(no data yet)\n"
+                f"writer hasn't published\n{series.metric.key}",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=8, color=muted,
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            return
+
+        xs = list(range(len(series.points)))
+        ys = [p.value for p in series.points]
+        errs = [p.error for p in series.points]
+        any_err = any(e > 0 for e in errs)
+
+        if any_err:
+            ax.errorbar(
+                xs, ys, yerr=errs,
+                fmt="o-", markersize=3.5, linewidth=1.0,
+                capsize=2.0, elinewidth=0.8,
+                color=fg,
+            )
+        else:
+            ax.plot(
+                xs, ys,
+                marker="o", markersize=3.5, linewidth=1.0,
+                color=fg,
+            )
+
+        #  Compact x-tick labels: ``YYYYMMDD-HHMMSS`` → ``HHMMSS``.
+        #  Drop the date prefix because the trend window is short
+        #  enough that the time alone disambiguates; keeping the
+        #  date would crowd out every other tick on a 320 px tile.
+        labels = []
+        for p in series.points:
+            tail = p.run_id.split("-", 1)[-1] if "-" in p.run_id else p.run_id
+            labels.append(tail)
+        #  Thin the labels if the window is dense — show at most
+        #  ~8 ticks even at N = 20+.
+        stride = max(1, len(xs) // 8)
+        tick_idx = list(range(0, len(xs), stride))
+        ax.set_xticks(tick_idx)
+        ax.set_xticklabels(
+            [labels[i] for i in tick_idx],
+            rotation=45, ha="right", fontsize=7, color=fg,
+        )
+        ax.tick_params(axis="y", labelsize=7, colors=fg)
+        for spine in ax.spines.values():
+            spine.set_color(muted)
+        ax.set_ylabel(
+            series.metric.unit or "",
+            fontsize=7, color=fg,
+        )
+        if series.metric.y_floor_zero:
+            ax.set_ylim(bottom=0)
+        ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.5, color=muted)
+
+
+class _GeneralQaPage(QtWidgets.QWidget):
+    """The 'first thing the shifter sees' overview.
+
+    Organised into four thematic rows — each row answers a single
+    shifter question ("is anything happening?", "are the sensors OK?",
+    "is the physics there?", "are the clocks aligned?") with 2-3
+    curated PDFs.  A missing PDF is silently dropped from its row;
+    a row with zero hits is hidden entirely so the page never shows
+    an empty header.
+
+    Below the four thematic rows the page surfaces a dynamic
+    per-hardware-trigger anchor-Δt fan-out (one tile per registered
+    trigger that actually fired) and the cross-run trend section.
+
+    The selection is hard-coded (not regex-based) because each row's
+    membership is a deliberate editorial choice, not a rule.  Order
+    within a row dictates left-to-right tile order on a wide grid.
+    """
+
+    # Row layout — one card per row.  Each entry is
+    # ``(row_label, ordered tuple of PDF basenames)``.
+    # PDF basenames are matched after stripping the ``NN_`` writer-order
+    # prefix (same convention as ``topic_of``).
+    _GENERAL_ROWS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("Data-taking health", (
+            "trigger_matrix.pdf",
+            "frames_per_spill.pdf",
+            "trigger_qa.pdf",
+        )),
+        ("Sensor health", (
+            "dcr_hitmap.pdf",
+            "afterpulse_hitmap.pdf",
+            "coverage_map_rphi.pdf",
+        )),
+        ("Cherenkov physics", (
+            "ring_centre_xy.pdf",
+            "N_gamma_per_ring_summary.pdf",
+            "streaming_score.pdf",
+        )),
+        ("Timing / calibration", (
+            "timing_alignment.pdf",
+            "anchor_dt_vs_spill.pdf",
+        )),
+    )
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._current_run_id: Optional[str] = None
+        self._current_data_dir: Optional[Path] = None
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 8, 0, 0)
+        outer.setSpacing(8)
+
+        intro = QtWidgets.QLabel(
+            "Curated overview — one or two headline plots per topic.  "
+            "For everything else, jump to the topic tabs above, or "
+            "Full plots for the per-writer drill-down."
+        )
+        intro.setObjectName("muted")
+        intro.setStyleSheet("font-style: italic; font-size: 11px;")
+        intro.setWordWrap(True)
+        outer.addWidget(intro)
+
+        self._status = QtWidgets.QLabel("(no run selected)")
+        self._status.setObjectName("muted")
+        self._status.setStyleSheet("font-style: italic; font-size: 11px;")
+        outer.addWidget(self._status)
+
+        self._scroll = QtWidgets.QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._body = QtWidgets.QWidget()
+        self._body_layout = QtWidgets.QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(12)
+        self._body_layout.setAlignment(QtCore.Qt.AlignTop)
+        self._scroll.setWidget(self._body)
+        outer.addWidget(self._scroll, 1)
+
+    def set_run(self, run_id: Optional[str], data_dir: Path) -> None:
+        if run_id == self._current_run_id and data_dir == self._current_data_dir:
+            return
+        self._current_run_id = run_id
+        self._current_data_dir = data_dir
+        self._rebuild()
+
+    def invalidate_cache(self) -> None:
+        self._current_run_id = None
+        self._current_data_dir = None
+
+    def _rebuild(self) -> None:
+        while self._body_layout.count():
+            item = self._body_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        run_id = self._current_run_id
+        data_dir = self._current_data_dir
+        if not run_id or data_dir is None:
+            self._status.setText("(no run selected)")
+            return
+        run_dir = data_dir / run_id
+        if not run_dir.is_dir():
+            self._status.setText(f"run directory not found: {run_dir}")
+            return
+
+        try:
+            from PySide6 import QtPdf, QtPdfWidgets  # noqa: F401
+            have_qt_pdf = True
+        except ImportError:
+            have_qt_pdf = False
+
+        # Index every emitted PDF by its (stripped-prefix) basename so
+        # the headline picks are O(K) lookups instead of O(K·N) scans.
+        emitted: dict[str, Path] = {}
+        for _key, _label, _root, qa_subdir in STEPS:
+            stage_dir = run_dir / qa_subdir
+            if not stage_dir.is_dir():
+                continue
+            for p in stage_dir.glob("*.pdf"):
+                emitted[_strip_pdf_prefix(p.name)] = p
+
+        # Resolve thematic rows: per row, walk the configured PDF
+        # basenames and surface each one that exists on disk for this
+        # run.  Missing PDFs are silently dropped (not every writer
+        # has emitted every plot yet — e.g. a fresh run that hasn't
+        # been through recodata yet still shows its lightdata row).
+        # All tiles use square aspect so the four rows align visually.
+        rows_with_tiles: list[tuple[str, list[QtWidgets.QWidget]]] = []
+        total_headline_tiles = 0
+        for row_label, picks in self._GENERAL_ROWS:
+            row_tiles: list[QtWidgets.QWidget] = []
+            for pick in picks:
+                pdf = emitted.get(pick)
+                if pdf is None:
+                    continue
+                row_tiles.append(_PdfTile(
+                    pdf, have_qt_pdf=have_qt_pdf, aspect_override=1.0,
+                ))
+            if row_tiles:
+                rows_with_tiles.append((row_label, row_tiles))
+                total_headline_tiles += len(row_tiles)
+
+        #  Per-hardware-trigger anchor-Δt fan-out.  The lightdata writer
+        #  emits one PDF per registered hardware trigger (each filename
+        #  shaped ``NN_anchor_dt_<trigger_name>.pdf``); each shows the
+        #  trigger's same-frame Δt main pad together with the ±1 rollover
+        #  zoom pads filled by the rollover-lookup pass.  Discovery is
+        #  filesystem-driven rather than from `_GENERAL_HEADLINES`
+        #  because the trigger set is run-dependent (config-wired) and
+        #  hard-coding it would silently drop newly-added triggers.
+        #  Sorted alphabetically so the row order is stable across
+        #  re-renders.  Reuses the same square aspect as the static
+        #  headlines so the rows tile uniformly.
+        per_trigger_tiles: list[QtWidgets.QWidget] = []
+        for stripped, pdf in sorted(emitted.items()):
+            if not stripped.startswith("anchor_dt_"):
+                continue
+            # Skip the pulser one — that's already in the calibration
+            # headline.  Its stripped name is bare ``anchor_dt_vs_spill``;
+            # the lightdata per-trigger ones embed the trigger name.
+            if stripped == "anchor_dt_vs_spill.pdf":
+                continue
+            per_trigger_tiles.append(_PdfTile(
+                pdf, have_qt_pdf=have_qt_pdf, aspect_override=1.0,
+            ))
+
+        # One card per non-empty thematic row — each headed with the
+        # row label and the per-row tile count.  Cards stack vertically;
+        # within each, the responsive grid tiles wrap horizontally so
+        # a wide window collapses a 3-tile row onto one line.
+        for row_label, row_tiles in rows_with_tiles:
+            row_picks = next(
+                (picks for label, picks in self._GENERAL_ROWS
+                 if label == row_label),
+                (),
+            )
+            holder = QtWidgets.QFrame()
+            holder.setObjectName("cardSurface")
+            v = QtWidgets.QVBoxLayout(holder)
+            v.setContentsMargins(14, 12, 14, 14)
+            v.setSpacing(10)
+            head = QtWidgets.QLabel(
+                f"<b>{row_label}</b>  ·  "
+                f"{len(row_tiles)} of {len(row_picks)}")
+            head.setTextFormat(QtCore.Qt.RichText)
+            v.addWidget(head)
+            v.addWidget(_ResponsiveTileGrid(
+                row_tiles, tile_min_width=_PDF_TILE_MIN_PX,
+            ))
+            self._body_layout.addWidget(holder)
+
+        #  Per-hardware-trigger anchor-Δt section — only built when at
+        #  least one trigger fired enough to emit its anchor PDF.  Lives
+        #  in its own card under the headline row so the row count is
+        #  obvious and operators can scan the trigger fan-out at a
+        #  glance without it bleeding into the curated headlines.
+        if per_trigger_tiles:
+            trig_holder = QtWidgets.QFrame()
+            trig_holder.setObjectName("cardSurface")
+            tv = QtWidgets.QVBoxLayout(trig_holder)
+            tv.setContentsMargins(14, 12, 14, 14)
+            tv.setSpacing(10)
+            trig_head = QtWidgets.QLabel(
+                f"<b>Per-hardware-trigger anchor Δt</b>  ·  "
+                f"{len(per_trigger_tiles)} trigger(s) fired"
+            )
+            trig_head.setTextFormat(QtCore.Qt.RichText)
+            tv.addWidget(trig_head)
+            trig_sub = QtWidgets.QLabel(
+                "Same-frame Δt (main pad) + ±1 rollover zoom pads "
+                "(filled via the rollover lookup so the DCR baseline "
+                "around each away-side is visible). One tile per "
+                "registered hardware trigger that actually fired."
+            )
+            trig_sub.setObjectName("muted")
+            trig_sub.setStyleSheet("font-style: italic; font-size: 11px;")
+            trig_sub.setWordWrap(True)
+            tv.addWidget(trig_sub)
+            tv.addWidget(_ResponsiveTileGrid(
+                per_trigger_tiles, tile_min_width=_PDF_TILE_MIN_PX,
+            ))
+            self._body_layout.addWidget(trig_holder)
+
+        #  Cross-run trends — independent of headlines.  Even when a
+        #  fresh run hasn't emitted PDFs yet, the trend tiles still
+        #  surface what the writers DID publish to standard_results.toml
+        #  for this and the prior runs, so the operator can spot a
+        #  drift that the per-run PDFs can't show on their own.
+        n_trend_pts = self._append_trend_section(data_dir)
+
+        if (total_headline_tiles == 0
+                and not per_trigger_tiles
+                and n_trend_pts == 0):
+            self._status.setText(
+                f"run: {run_id}  ·  no headline plots emitted yet")
+            return
+
+        bits = []
+        if total_headline_tiles:
+            bits.append(
+                f"{total_headline_tiles} headline plot(s) "
+                f"in {len(rows_with_tiles)} row(s)")
+        if per_trigger_tiles:
+            bits.append(f"{len(per_trigger_tiles)} trigger anchor plot(s)")
+        if n_trend_pts:
+            bits.append(f"{n_trend_pts} trend point(s)")
+        self._status.setText(f"run: {run_id}  ·  " + "  ·  ".join(bits))
+
+    def _append_trend_section(self, data_dir: Path) -> int:
+        """Append the cross-run trend tiles to the body layout.
+
+        ``standard_results.toml`` lives next to the ``Data/`` directory
+        (i.e. ``data_dir.parent / standard_results.toml``) — that's
+        where the writers publish it.  Dashboard config knob
+        ``[qa_general] trend_runs_n`` (default 20) sets the window.
+
+        Returns the total number of trend points drawn across all
+        tiles — used by the caller to pick the right status text.
+        Returns 0 when matplotlib isn't installed (graceful degrade:
+        the headline section above still shows) or no metric has any
+        data — the trend section then renders nothing rather than an
+        empty card frame.
+        """
+        try:
+            import matplotlib  # noqa: F401
+            matplotlib.use("QtAgg", force=False)
+            from matplotlib.backends.backend_qtagg import FigureCanvas
+            from matplotlib.figure import Figure
+        except ImportError:
+            return 0
+
+        repo_root = data_dir.parent
+        results_path = repo_root / "standard_results.toml"
+        config_path = repo_root / "qa_quicklook" / "qa_quicklook.toml"
+        n_runs = cross_run_trends.read_trend_runs_n(config_path)
+        all_series = cross_run_trends.load_trends(
+            results_path, n_runs=n_runs,
+        )
+        if not all_series:
+            return 0
+
+        total_points = sum(len(s.points) for s in all_series)
+        if total_points == 0:
+            #  Every configured metric came back empty — no point
+            #  rendering a card full of "(no data yet)" placeholders
+            #  on the very first run of a campaign.  The status line
+            #  caller handles the "writers haven't published yet"
+            #  messaging.
+            return 0
+
+        dark = _dark_theme_active()
+        tiles = [
+            _TrendTile(s, FigureCanvas, Figure, dark=dark, window_size=n_runs)
+            for s in all_series
+        ]
+
+        holder = QtWidgets.QFrame()
+        holder.setObjectName("cardSurface")
+        v = QtWidgets.QVBoxLayout(holder)
+        v.setContentsMargins(14, 12, 14, 14)
+        v.setSpacing(10)
+        head = QtWidgets.QLabel(
+            f"<b>Cross-run trends</b>  ·  last {n_runs} runs  ·  "
+            f"{len(tiles)} metric(s)"
+        )
+        head.setTextFormat(QtCore.Qt.RichText)
+        v.addWidget(head)
+        sub = QtWidgets.QLabel(
+            "Sourced from <code>standard_results.toml</code> — what the "
+            "writers publish to <code>AnalysisResults</code>.  "
+            "Tiles read left-to-right as time (oldest → newest)."
+        )
+        sub.setObjectName("muted")
+        sub.setTextFormat(QtCore.Qt.RichText)
+        sub.setStyleSheet("font-size: 10px;")
+        sub.setWordWrap(True)
+        v.addWidget(sub)
+        v.addWidget(_ResponsiveTileGrid(
+            tiles, tile_min_width=_TREND_TILE_MIN_PX,
+        ))
+        self._body_layout.addWidget(holder)
+        return total_points
+
+
+class _FullPlotsQaPage(QtWidgets.QWidget):
+    """The legacy pipeline-stage view, demoted to a deep-dive sub-tab.
+
+    Wraps a nested QTabBar with one ``_StepQaPage`` per pipeline stage
+    (Lightdata / Recodata / Recotrack / Pulser calib) so power users
+    can still drill into a specific writer's output without leaving
+    the dashboard.  This is also where histograms live — the topic
+    tabs above show PDFs only, by design.
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._current_run_id: Optional[str] = None
+        self._current_data_dir: Optional[Path] = None
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 8, 0, 0)
+        outer.setSpacing(4)
+
+        intro = QtWidgets.QLabel(
+            "Deep dive: PDFs + TH* histograms per pipeline writer.  "
+            "Use this when the topic tabs don't surface what you need."
+        )
+        intro.setObjectName("muted")
+        intro.setStyleSheet("font-style: italic; font-size: 11px;")
+        intro.setWordWrap(True)
+        outer.addWidget(intro)
+
+        # Nested tab bar for the four stages.
+        self._stage_bar = QtWidgets.QTabBar()
+        self._stage_bar.setDocumentMode(True)
+        self._stage_bar.setExpanding(False)
+        outer.addWidget(self._stage_bar)
+        self._stage_stack = QtWidgets.QStackedWidget()
+        self._stage_bar.currentChanged.connect(self._stage_stack.setCurrentIndex)
+        self._stage_bar.currentChanged.connect(self._on_stage_changed)
+        outer.addWidget(self._stage_stack, 1)
+
+        self._stage_pages: dict[str, _StepQaPage] = {}
+        for key, label, root_name, qa_dir in STEPS:
+            page = _StepQaPage(label, root_name, qa_dir)
+            self._stage_bar.addTab(label)
+            self._stage_stack.addWidget(page)
+            self._stage_pages[key] = page
+
+    def set_run(self, run_id: Optional[str], data_dir: Path) -> None:
+        self._current_run_id = run_id
+        self._current_data_dir = data_dir
+        # Only forward to the visible stage; others are lazy.
+        self._refresh_visible_stage()
+
+    def set_database_path(self, path: Optional[Path]) -> None:
+        """Forward the active rundb path to every stage page so the
+        streaming-score picker (which lives inside the ``_StepQaPage``
+        thumbnail tree) can save back to the right file."""
+        for page in self._stage_pages.values():
+            page.set_database_path(path)
+
+    def invalidate_cache(self) -> None:
+        for page in self._stage_pages.values():
+            page.invalidate_cache()
+
+    def _refresh_visible_stage(self) -> None:
+        if not self._current_run_id or self._current_data_dir is None:
+            return
+        idx = self._stage_bar.currentIndex()
+        if idx < 0:
+            return
+        page = self._stage_stack.widget(idx)
+        if isinstance(page, _StepQaPage):
+            page.set_run(self._current_run_id, self._current_data_dir)
+
+    def _on_stage_changed(self, _idx: int) -> None:
+        self._refresh_visible_stage()
 
 
 __all__ = ["QaView"]

@@ -558,6 +558,50 @@ def results_load(path: Path) -> dict:
     return out
 
 
+def read_runlists_meta(path: Path) -> dict[str, dict]:
+    """Return ``{name: {"runs": [...], "campaign": "..."}}`` from a runlists TOML.
+
+    Like :func:`load_database`, this is a read-only TOML walk — pure
+    stdlib (``tomllib``) for speed.  Existing ``[runlists.<name>]``
+    tables that don't carry ``campaign`` get an empty string for
+    that field, so legacy runlists stay readable.
+
+    Distinct from the simpler ``{name: [run_ids]}`` shape that the
+    Runlists tab consumes via ``runlists._read_runlists`` (now kept
+    as a small back-compat wrapper around this richer view) — this
+    function is the one cross-shifter-sync calls so the Sheet's
+    Runlists worksheet can show a campaign-tag row.
+
+    ``[schema]`` keys that some operators want on runlists are
+    deliberately NOT pulled here — the campaign tag is the only
+    metadata field we support today.  Add more by extending the
+    explicit list below; don't blanket-copy every key (the Sheet
+    layout depends on a stable column set).
+    """
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("rb") as fh:
+            doc = _tomllib.load(fh)
+    except (OSError, _tomllib.TOMLDecodeError):
+        return {}
+    out: dict[str, dict] = {}
+    runlists = doc.get("runlists")
+    if not isinstance(runlists, dict):
+        return {}
+    for name, entry in runlists.items():
+        if not isinstance(entry, dict):
+            continue
+        runs = entry.get("runs")
+        if not isinstance(runs, list):
+            continue
+        out[str(name)] = {
+            "runs": [str(r) for r in runs],
+            "campaign": str(entry.get("campaign") or ""),
+        }
+    return out
+
+
 def save_selection_as_runlist(
     runlists_path: Path,
     name: str,
@@ -595,6 +639,7 @@ __all__ = [
     "delete_runs",
     "detect_new_runs",
     "load_database",
+    "read_runlists_meta",
     "read_schema_extras",
     "results_load",
     "save_selection_as_runlist",

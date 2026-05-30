@@ -10,6 +10,7 @@
 #include <fstream>
 #include <memory>
 #include <sstream>   // legacy text-format reader/writer
+#include <stdexcept> // std::runtime_error — C4.4 schema/empty hard errors
 
 // ---------------------------------------------------------------------------
 // Calibration file format selection.
@@ -46,12 +47,11 @@ bool path_has_toml_extension(const std::string &path)
 
 AlcorFinedataStruct::AlcorFinedataStruct(const AlcorDataStruct &d)
 {
-    // Phase 5: store the new-layout @ref GlobalIndex raw — TDC-level form
-    // with the validity bit set.  Split-in-two trick is applied here at the
-    // conversion boundary: legacy hardware (chip_raw 0–7, channel_raw 0–31)
-    // ↦ logical (chip 0–3, channel 0–63) for the current detector;
-    // identity transform for the final 64-ch chip (gated by
-    // ::gidx::kUsesSplitInTwo).
+    // Store the @ref GlobalIndex raw in TDC-level form with the validity
+    // bit set.  Split-in-two trick is applied here at the conversion
+    // boundary: hardware (chip_raw 0–7, channel_raw 0–31) ↦ logical
+    // (chip 0–3, channel 0–63) for the current detector; identity
+    // transform for the final 64-ch chip (gated by ::gidx::kUsesSplitInTwo).
     const int chip_raw = d.fifo / 4;
     const int channel_raw = d.pixel + 4 * d.column;
     const int chip_logical = ::gidx::kUsesSplitInTwo ? chip_raw / 2
@@ -67,6 +67,16 @@ AlcorFinedataStruct::AlcorFinedataStruct(const AlcorDataStruct &d)
     coarse = static_cast<uint16_t>(d.coarse);
     fine = static_cast<uint8_t>(d.fine);
     HitMask = d.HitMask;
+
+    //  Position fields are NOT touched by this ctor — geometry is wired
+    //  in later via Mapping::assign_position (src/mapping.cxx:103).  Until
+    //  then, default to the same -999.f sentinel Mapping itself uses for
+    //  unmapped channels.  Without this init, both floats are
+    //  indeterminate (struct ctor is = default) and propagate UB into the
+    //  TTree for timing_hits / tracking_hits / cherenkov_hits whenever
+    //  the framer emplaces a hit before assign_position has run.
+    hit_x = -999.f;
+    hit_y = -999.f;
 }
 
 // =============================================================================
@@ -240,28 +250,37 @@ void AlcorFinedata::read_calib_from_file(const std::string &filename, bool clear
         return;
     }
 
+    //  C4.4 — promote schema-mismatch + zero-entry from warning to
+    //  hard error.  `pulser_calib_writer` is the only emitter of v3 in
+    //  this codebase, so a wrong schema means somebody hand-edited the
+    //  file or copied in foreign data — silent best-effort parsing
+    //  there has historically produced calibration tables that load
+    //  but match nothing at lookup time (the published keys are wrong),
+    //  which is worse than failing fast.  Missing `schema` key is
+    //  still tolerated as a warning for old pre-v3 files.
     if (auto schema = parsed["schema"].value<std::string>())
     {
         if (*schema != kCalibTomlSchema)
-            mist::logger::warning(
+            throw std::runtime_error(
                 "(AlcorFinedata::read_calib_from_file) " + filename +
                 " declares schema '" + *schema + "' — expected '" +
-                kCalibTomlSchema + "'.  Attempting to parse anyway.");
+                kCalibTomlSchema + "'.  Refusing to load (C4.4).");
     }
     else
     {
         mist::logger::warning(
             "(AlcorFinedata::read_calib_from_file) " + filename +
-            " has no `schema` key — best-effort parse.");
+            " has no `schema` key — best-effort parse "
+            "(pre-v3 forward-compat).");
     }
 
     const auto *entries = parsed["entry"].as_array();
-    if (!entries)
+    if (!entries || entries->empty())
     {
-        mist::logger::warning(
-            "(AlcorFinedata::read_calib_from_file) no [[entry]] tables in " +
-            filename + " — nothing loaded.");
-        return;
+        throw std::runtime_error(
+            "(AlcorFinedata::read_calib_from_file) " + filename +
+            " has no [[entry]] tables — refusing to load an empty "
+            "calibration (C4.4).");
     }
     for (const auto &node : *entries)
     {
@@ -326,6 +345,37 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
             "(AlcorFinedata::generate_calibration) clearing previous calibration");
         calibration_parameters.clear();
         channel_calibration_method.clear();
+        //  A full overwrite invalidates the low-stats cache: callers
+        //  passing `overwrite=true` (offline `recodata_writer`, fresh
+        //  pulser-calib regeneration) expect every channel re-examined
+        //  from scratch, NOT inherited from a prior partial run.  Also
+        //  resets the retry counter so the first non-overwrite call
+        //  after this starts the retry-every-N clock at zero.
+        low_stats_keys_.clear();
+        low_stats_call_count_   = 0;
+        low_stats_cached_skips_ = 0;
+    }
+    else
+    {
+        //  Retry policy: drop the cache every N-th call so channels
+        //  that crossed the >=250 gate since their last skip get
+        //  re-examined.  `period == 0` disables retries (the default —
+        //  see header).  Increment first so the check below reads
+        //  "this is call number `count`": with period=N, clearing
+        //  happens at the start of calls N, 2N, 3N, ...  period=1
+        //  therefore means "always retry" (every call clears).
+        ++low_stats_call_count_;
+        if (low_stats_retry_period_ > 0 &&
+            (low_stats_call_count_ % low_stats_retry_period_) == 0)
+        {
+            mist::logger::info(
+                "(AlcorFinedata::generate_calibration) low-stats retry — "
+                "clearing " + std::to_string(low_stats_keys_.size()) +
+                " cached channels (call " +
+                std::to_string(low_stats_call_count_) + ", period " +
+                std::to_string(low_stats_retry_period_) + ")");
+            low_stats_keys_.clear();
+        }
     }
 
     //  Two-sigmoid edge model: rising edge at p[2], falling edge at p[3];
@@ -346,8 +396,10 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
 
     const auto calibrated_channels_before = calibration_parameters.size();
     long       n_skipped_low_stats        = 0;
+    long       n_skipped_low_stats_cached = 0;
     long       n_skipped_unconverged      = 0;
     long       n_skipped_no_global_index  = 0;
+    long       n_fit_exceptions           = 0;  // C4.5
 
     //  The histogram's x-axis is filled via `GlobalIndex::tdc_ordinal()`
     //  in parallel_streaming_framer.cxx, so xbin-1 is the dense
@@ -372,6 +424,18 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         if (!overwrite_calibration && calibration_parameters.count(key))
             continue;
 
+        //  Low-stats cache short-circuit — skip the 256-bin ProjectionY
+        //  allocation for channels we already know to be below the
+        //  >=250 gate.  This is the whole point of the cache; the
+        //  ProjectionY was the dominant cost on the per-spill --QA
+        //  cascade (see header §Low-stats channel cache).
+        if (!overwrite_calibration && low_stats_keys_.count(key))
+        {
+            ++n_skipped_low_stats_cached;
+            ++low_stats_cached_skips_;
+            continue;
+        }
+
         //  Per-channel projection of the (channel, fine) plane.
         //  unique_ptr handles every continue path including the
         //  convergence-skip branch below.
@@ -382,6 +446,11 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         if (projection->GetEntries() < 250)
         {
             ++n_skipped_low_stats;
+            //  Cache the channel so future calls skip the ProjectionY.
+            //  `overwrite=true` callers populate too: even though the
+            //  cache was just cleared above, the next non-overwrite
+            //  call benefits from a hot cache.
+            low_stats_keys_.insert(key);
             continue;
         }
 
@@ -407,20 +476,63 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         fine_dist_fit_function.SetParLimits(2, first_edge_seed - 3, first_edge_seed + 3);
         fine_dist_fit_function.SetParameter(3, last_edge_seed);
         fine_dist_fit_function.SetParLimits(3, last_edge_seed - 3, last_edge_seed + 3);
-        projection->Fit(&fine_dist_fit_function, "Q");
+        //  C4.5 — wrap TF1::Fit in try/catch.  ROOT can throw on a
+        //  degenerate projection (e.g. a histogram with a single
+        //  populated bin survives the >=250-entries gate via
+        //  pathological overflow but the fit still fails to set up).
+        //  An uncaught throw aborts the whole calibration; here we
+        //  drop just this channel and keep going.
+        try
+        {
+            projection->Fit(&fine_dist_fit_function, "Q");
+        }
+        catch (const std::exception &e)
+        {
+            ++n_fit_exceptions;
+            continue;
+        }
 
-        //  Iterate up to 5 times until the recovered edge span is
-        //  close to the expected 62.5 fine bins.
+        //  Iterate until the recovered edge span is close to the
+        //  expected 62.5 fine bins.  Each retry JITTERS the edge seeds
+        //  in opposite directions (first_edge_seed + δ, last_edge_seed
+        //  − δ) so Minuit lands in a different starting basin instead
+        //  of re-converging to the same point — the cap of 5 was a
+        //  no-op before this change because the fit is deterministic
+        //  from a fixed start.  Tightened cap to 3 after instrumented
+        //  measurement (2026-05-29) showed the jittered iterations
+        //  converge within 2–3 attempts in the cold-spill regime that
+        //  dominates total fit cost (see BACKLOG P 0.35).  Saves
+        //  ~1.5–2 s on the cold spill, negligible on warm spills.
         constexpr float kExpectedEdgeSpanFineBins = 62.5f;
         constexpr float kEdgeSpanTolerance        = 10.0f;
+        constexpr float kRetrySeedJitterFineBins  = 1.5f;
+        constexpr int   kFitRetryCap              = 3;
         float first_edge = static_cast<float>(fine_dist_fit_function.GetParameter(2));
         float last_edge  = static_cast<float>(fine_dist_fit_function.GetParameter(3));
-        for (int retry = 0; retry < 5; ++retry)
+        for (int retry = 0; retry < kFitRetryCap; ++retry)
         {
             if (std::fabs(last_edge - first_edge - kExpectedEdgeSpanFineBins)
                 < kEdgeSpanTolerance)
                 break;
-            projection->Fit(&fine_dist_fit_function, "Q");
+            //  Deterministic seed jitter — alternating sign per retry
+            //  drives the fit to opposite sides of the original seed
+            //  basin.  Bounded ParLimits keep the perturbation valid.
+            const float sign = (retry % 2 == 0) ? +1.f : -1.f;
+            const float dx = sign * static_cast<float>(retry + 1)
+                                   * kRetrySeedJitterFineBins;
+            fine_dist_fit_function.SetParameter(2, first_edge_seed + dx);
+            fine_dist_fit_function.SetParameter(3, last_edge_seed  - dx);
+            //  C4.5 — same try/catch as the initial fit; on exception
+            //  abandon the retry loop, treat as unconverged.
+            try
+            {
+                projection->Fit(&fine_dist_fit_function, "Q");
+            }
+            catch (const std::exception &e)
+            {
+                ++n_fit_exceptions;
+                break;
+            }
             first_edge = static_cast<float>(fine_dist_fit_function.GetParameter(2));
             last_edge  = static_cast<float>(fine_dist_fit_function.GetParameter(3));
         }
@@ -440,14 +552,16 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         std::to_string(calibrated_channels_after - calibrated_channels_before) +
         " channels  (before=" + std::to_string(calibrated_channels_before) +
         " after=" + std::to_string(calibrated_channels_after) +
-        ")  skipped: " + std::to_string(n_skipped_low_stats) + " low-stats, " +
+        ")  skipped: " + std::to_string(n_skipped_low_stats) + " low-stats (fresh), " +
+        std::to_string(n_skipped_low_stats_cached) + " low-stats (cached), " +
         std::to_string(n_skipped_unconverged) + " edge-span unconverged, " +
-        std::to_string(n_skipped_no_global_index) + " out-of-range ordinal");
+        std::to_string(n_fit_exceptions) + " TF1::Fit exceptions, " +
+        std::to_string(n_skipped_no_global_index) + " out-of-range ordinal" +
+        "  [cache_size=" + std::to_string(low_stats_keys_.size()) + "]");
 }
 
-// AlcorFinedata ring-finding adapter (`alcor_find_rings_hough`) removed
-// during Phase 3 of the streaming-trigger consolidation — the logic now
-// lives inline in `src/triggers/streaming/hough.cxx`, the only consumer.
+// The AlcorFinedata ring-finding adapter (`alcor_find_rings_hough`) lives
+// inline in `src/triggers/streaming/hough.cxx`, the only consumer.
 // See the header comment block at the top of `alcor_finedata.h` and
 // `include/triggers/streaming/DISCUSSION.md` § 2 for context.
 // =============================================================================

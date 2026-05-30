@@ -38,7 +38,7 @@ void my_test(
     }
 
     // ── Load analysis results ─────────────────────────────────────────────────
-    AnalysisResults ar(data_repository + "/standard_results.root");
+    AnalysisResults ar(data_repository + "/standard_results.toml");
     const ResultMap m_check = ar.load();
 
     for (const auto &run : run_names)

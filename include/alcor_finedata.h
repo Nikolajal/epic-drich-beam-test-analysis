@@ -28,6 +28,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <array>
 #include "TH2F.h"
 
@@ -70,13 +71,14 @@ enum HitMask : unsigned int; // defined in alcor_data.h
 class GlobalIndex;           // defined in utility/global_index.h
 
 /**
-     * @brief Raw decoded Hit data from an ALCOR TDC channel.
-     *
-     * Holds the timing components (rollover, coarse, fine) and the calibration
-     * index used to look up the corresponding fine-time calibration parameters.
-     *
-     * @todo Implement bit-wise manipulation for rollover, fine, and coarse encoding.
-     */
+ * @brief Raw decoded Hit data from an ALCOR TDC channel.
+ *
+ * Holds the timing components (rollover, coarse, fine) and the calibration
+ * index used to look up the corresponding fine-time calibration parameters.
+ *
+ * Timing components stay unpacked (one @c uint32_t each); identity packing
+ * lives in @ref GlobalIndex (@c utility/global_index.h), not here.
+ */
 struct AlcorFinedataStruct
 {
     /// @name Timing Components
@@ -149,7 +151,11 @@ struct AlcorFinedataStruct
  *
  * AlcorV2BaseCalib  — baseline linear interpolation between the two
  *                          sigmoid inflection points (parameters 0 and 1).
- * AlcorV2FitCalib   — reserved for a future fit-based correction.
+ * AlcorV2FitCalib   — fit-based phase correction (slope @c a + intercept
+ *                          @c -b + residual sigma @c sigma per channel).
+ *                          The production calibration method emitted by
+ *                          @c pulser_calib_writer and consumed by
+ *                          @c AlcorFinedata::get_phase.
  */
 enum class CalibrationMethod : uint8_t
 {
@@ -747,6 +753,78 @@ public:
         return default_calibration_method;
     }
 
+    // -------------------------------------------------------------------------
+    //  Low-stats channel cache (per-spill calibration fast-path)
+    // -------------------------------------------------------------------------
+    //
+    //  Cache key = `GlobalIndex::raw()` of a channel whose Y-projection
+    //  came back below the >=250-entries gate inside the last (or an
+    //  earlier) `generate_calibration` invocation.  On subsequent calls
+    //  with `overwrite_calibration=false` we skip the channel BEFORE the
+    //  256-bin `TH2F::ProjectionY` allocation — that projection was the
+    //  hot spot on the --QA cascade (~10–15 s/spill of redundant work
+    //  after spill 0 on a 5-spill run; see BACKLOG row P 1.20).
+    //
+    //  Trade-off: a channel that was below threshold last spill stays
+    //  uncalibrated for the rest of the run by default.  Use
+    //  @ref set_low_stats_retry_period to retry every N
+    //  `generate_calibration` calls.  Per-spill QA workflows accept the
+    //  staleness because the streaming-threshold pass operates in
+    //  coarse-counter space (the fine calibration doesn't move the
+    //  decision).  Offline reconstruction calls `generate_calibration`
+    //  with `overwrite=true` exactly once at startup, which clears the
+    //  cache anyway, so this knob has no effect on production output.
+
+    /// @brief Number of `generate_calibration(.., overwrite=false)` invocations
+    ///        between low-stats cache invalidations.
+    ///
+    ///  `0` (the default) = never invalidate — once a channel is cached
+    ///  as low-stats it stays cached for the whole process.  `N > 0` =
+    ///  clear the cache every N-th call so channels that crossed the
+    ///  >=250 gate since their last skip get re-examined.
+    static void set_low_stats_retry_period(unsigned long period) noexcept
+    {
+        std::unique_lock<std::shared_mutex> lock(calibration_mutex);
+        low_stats_retry_period_ = period;
+    }
+
+    /// @brief Returns the current low-stats retry period.  See
+    ///        @ref set_low_stats_retry_period.
+    static unsigned long get_low_stats_retry_period() noexcept
+    {
+        std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+        return low_stats_retry_period_;
+    }
+
+    /// @brief Returns the number of channels currently marked as low-stats.
+    ///        Exposed for tests and QA-side instrumentation.
+    static std::size_t get_low_stats_cache_size() noexcept
+    {
+        std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+        return low_stats_keys_.size();
+    }
+
+    /// @brief Returns the cumulative count of cache-driven early-exits
+    ///        across all `generate_calibration` invocations.  Resets to
+    ///        zero when @ref clear_low_stats_cache is called or when a
+    ///        call passes `overwrite_calibration=true`.
+    static unsigned long get_low_stats_cached_skips() noexcept
+    {
+        std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+        return low_stats_cached_skips_;
+    }
+
+    /// @brief Clear the low-stats cache and reset its instrumentation
+    ///        counters.  Called automatically on
+    ///        `generate_calibration(.., overwrite=true)`.
+    static void clear_low_stats_cache() noexcept
+    {
+        std::unique_lock<std::shared_mutex> lock(calibration_mutex);
+        low_stats_keys_.clear();
+        low_stats_call_count_   = 0;
+        low_stats_cached_skips_ = 0;
+    }
+
     /**
      * @brief Switch a channel to the linear fit calibration method (v2) and update its parameters.
      *
@@ -771,10 +849,9 @@ public:
     // wrapper around `mist::ring_finding::HoughTransform::find_rings` that
     // converted ALCOR hits to generic hits and wrote ring-tag mask bits back.
     // Its only consumer was the streaming-Hough trigger stage, so the logic
-    // moved inline into `src/triggers/streaming/hough.cxx` (Phase 3 of the
-    // streaming-trigger consolidation).  AlcorFinedata is back to being a
-    // pure per-hit value type with no algorithm dependencies on MIST's
-    // ring-finding subsystem.
+    // now lives inline in `src/triggers/streaming/hough.cxx`.  AlcorFinedata
+    // is back to being a pure per-hit value type with no algorithm
+    // dependencies on MIST's ring-finding subsystem.
     //
     // See `include/triggers/streaming/DISCUSSION.md` § 2 for the Hough
     // stage's current home and design.
@@ -815,6 +892,31 @@ private:
     /** @brief Fallback method for channels absent from channel_calibration_method.
      *  @note Protected by @c calibration_mutex. */
     inline static CalibrationMethod default_calibration_method = CalibrationMethod::AlcorV2BaseCalib;
+
+    /// @brief Per-channel low-stats skip cache for the per-spill
+    ///        @ref generate_calibration fast path.  See the
+    ///        public-side block above for semantics + trade-offs.
+    /// @note  Protected by @c calibration_mutex.
+    inline static std::unordered_set<uint32_t> low_stats_keys_ = {};
+
+    /// @brief Counter of `generate_calibration(.., overwrite=false)`
+    ///        invocations since the last cache reset, used to decide
+    ///        when the retry-every-N policy fires.
+    /// @note  Protected by @c calibration_mutex.
+    inline static unsigned long low_stats_call_count_ = 0;
+
+    /// @brief Cumulative count of cache-driven early-exits (channels
+    ///        skipped before the per-channel ProjectionY allocation).
+    ///        Exposed for tests and the `--QA` instrumentation log line.
+    /// @note  Protected by @c calibration_mutex.
+    inline static unsigned long low_stats_cached_skips_ = 0;
+
+    /// @brief Period (in `generate_calibration` calls) at which the
+    ///        low-stats cache is dropped to give marginal channels
+    ///        another chance.  `0` = never retry.  See
+    ///        @ref set_low_stats_retry_period.
+    /// @note  Protected by @c calibration_mutex.
+    inline static unsigned long low_stats_retry_period_ = 0;
 
     /**
      * @brief Reader-writer lock guarding all three static calibration members.

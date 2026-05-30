@@ -205,11 +205,13 @@ struct StreamingHoughQA
  *                                (NOT a knob in `cfg`;).
  * @param cfg                     Streaming-Hough config struct.  Supplies
  *                                `threshold_fraction`, `min_hits_slack`,
- *                                `collection_radius`, and the
- *                                `fit_circle_init_{x,y,r}` initial guess.
- *                                The LUT-geometry fields (`r_min` etc.)
- *                                are consumed by the caller when
- *                                constructing @p ring_finder, not here.
+ *                                and `collection_radius`.  The
+ *                                LUT-geometry fields (`r_min` etc.) are
+ *                                consumed by the caller when constructing
+ *                                @p ring_finder, not here.
+ *                                (`fit_circle_init_{x,y,r}` were removed
+ *                                in C3.5 — recodata seeds the per-ring
+ *                                refit from the Hough peak.)
  * @param qa                      QA histogram bundle (any field may be `nullptr`).
  */
 void run_streaming_hough_trigger(

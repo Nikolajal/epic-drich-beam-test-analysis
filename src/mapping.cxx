@@ -94,9 +94,9 @@ std::optional<std::array<float, 2>> Mapping::get_position_from_device_chip_eoch(
 
 void Mapping::assign_position(AlcorFinedataStruct &entry)
 {
-    // Phase 5: entry.GlobalIndex is the new-layout raw (stored).  Pass
-    // it explicitly through the value-type overload — clearer than
-    // relying on the int compat shim.
+    // entry.GlobalIndex holds the packed raw; pass it through the
+    // value-type overload explicitly rather than relying on the int
+    // compat shim.
     auto current_position = get_position_from_global_index(::GlobalIndex(entry.GlobalIndex));
     if (!current_position)
     {
@@ -122,9 +122,7 @@ std::optional<line_orientation_type> Mapping::get_hv_line_orientation(int matrix
 
 std::optional<HvChannelAddress> Mapping::get_hv_channel_from_global_index(int stored_raw) const
 {
-    // Phase 5: storage is now the new-layout @ref GlobalIndex raw.
-    // Direct construction (no @c from_legacy); the wrapper that used the
-    // legacy decoder is gone.
+    // Storage is the packed @ref GlobalIndex raw — direct construction.
     const auto gi = ::GlobalIndex(static_cast<uint32_t>(stored_raw));
     const int device = gi.device();
     const int chip = gi.real_chip();
@@ -187,6 +185,13 @@ void Mapping::load_calib(std::string filename, bool verbose)
     }
 
     // --- pdu_rotation -----------------------------------------------------------
+    //  Semantics (C2.5): a PDU absent from the map is treated as not rotated
+    //  by `get_position_from_pdu_matrix_eoch` (silent — that's the design).
+    //  A PDU present but with a non-bool value used to silently default to
+    //  `true` via `value_or(true)`, which masks a malformed mapping config.
+    //  Now: explicit `value<bool>()` probe — on type mismatch, log a warning
+    //  and leave the PDU out of the map (so it falls through to the silent
+    //  "missing → not rotated" branch).
     if (auto rotation_table = loaded_tables["pdu_rotation"].as_table())
     {
         mist::logger::info("(Mapping::load_calib) Found pdu_rotation table, loading contents");
@@ -194,9 +199,20 @@ void Mapping::load_calib(std::string filename, bool verbose)
         for (auto &[key, val] : *rotation_table)
         {
             int pdu_index = std::stoi(std::string(key));
-            bool rotation_flag = val.value<bool>().value_or(true);
-            if (pdu_index >= 1 && pdu_index <= 8)
-                pdu_rotation[pdu_index] = rotation_flag;
+            if (pdu_index < 1 || pdu_index > 8)
+                continue; //  out-of-range PDU — silently skip (legacy behaviour)
+
+            const auto rotation_flag_opt = val.value<bool>();
+            if (!rotation_flag_opt)
+            {
+                mist::logger::warning(
+                    TString::Format("(Mapping::load_calib) pdu_rotation[%d] is not a bool "
+                                    "(TOML type mismatch) — treating PDU %d as NOT rotated.",
+                                    pdu_index, pdu_index)
+                        .Data());
+                continue; //  malformed → fall through to "missing → false" at lookup time
+            }
+            pdu_rotation[pdu_index] = *rotation_flag_opt;
         }
         mist::logger::info(TString::Format("(Mapping::load_calib) pdu_rotation size: %zu",
                                            pdu_rotation.size())
@@ -266,9 +282,9 @@ void Mapping::build_index_to_position_cache(float origin_cut)
 
     int number_of_mapped_channels = 0;
 
-    // Phase 5: iterate (device, chip_logical, channel_logical) tuples
-    // directly and use the @ref GlobalIndex value-type overload of
-    // get_position_from_global_index.  The cache key remains
+    // Iterate (device, chip_logical, channel_logical) tuples directly
+    // and use the @ref GlobalIndex value-type overload of
+    // get_position_from_global_index.  The cache key is
     // `4 * channel_ordinal` — a small dense int that doubles as the
     // MIST HoughTransform `lut_key` plumbed through `index_to_hit_xy`.
     constexpr int kDeviceLo = 192;

@@ -4,6 +4,7 @@
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
 #include <unordered_map>
+#include <cassert>
 #include "utility/toml_utils.h"
 
 /**
@@ -294,12 +295,26 @@ public:
 
     /**
      * @brief Query the index → position cache.
-     * @param GlobalIndex Global TDC channel index.
+     *
+     * The cache is keyed by ``4 * GlobalIndex::channel_ordinal()`` — see
+     * @ref build_index_to_position_cache.  That formula collapses the four
+     * tdc values of a given physical channel onto a single slot, so callers
+     * must pass a key with the bottom two bits zero (i.e. the tdc=0
+     * representative).  Passing a key with @c key % 4 != 0 would silently
+     * miss the cache and return @c std::nullopt; the assertion below makes
+     * that bug loud in debug builds (release: silent miss preserved).
+     *
+     * @param channel_ordinal_times_four  Cache key, equal to
+     *                                    @c 4 * GlobalIndex::channel_ordinal()
+     *                                    for the queried physical channel.
      * @return Cached {x, y} in mm, or @c std::nullopt if not in cache.
      */
-    std::optional<std::array<float, 2>> get_cached_position(int GlobalIndex) const
+    std::optional<std::array<float, 2>> get_cached_position(int channel_ordinal_times_four) const
     {
-        auto it = index_to_hit_xy.find(GlobalIndex);
+        assert(channel_ordinal_times_four % 4 == 0 &&
+               "get_cached_position: key must be 4 * channel_ordinal "
+               "(the cache stores tdc=0 representatives only)");
+        auto it = index_to_hit_xy.find(channel_ordinal_times_four);
         return (it != index_to_hit_xy.end()) ? std::optional{it->second} : std::nullopt;
     }
 

@@ -17,13 +17,11 @@
  * (class) to keep ROOT I/O simple while allowing richer semantics
  * at the analysis level.
  *
- * @todo Implement bit-wise manipulation for global index encoding.
- * global index is a 32-bit integer, which count be used to contain:
- * device   (10-bit) [0-1023]
- * fifo     (7-bit) [0-127]
- * channel  (6-bit) [0-63]
- * tdc      (2-bit) [0-3]
- * unused   (7-bit)
+ * The bit-packed global identifier lives in
+ * @ref include/utility/global_index.h (see @ref GlobalIndex); its
+ * layout (device / fifo / chip / channel / tdc / validity) is
+ * documented there.  AlcorData stores the packed @c uint32_t and
+ * exposes the unpacked accessors below.
  */
 
 #include "TTree.h"
@@ -190,9 +188,8 @@ public:
     }
     int get_device_index() const { return get_eo_channel() + 64 * (get_chip() / 2); } ///< Flat per-device pixel index used for Mapping
 
-    /// @brief Packed **TDC-level** global index — new-layout `GlobalIndex::raw()`.
-    /// Phase 5: switched from the legacy arithmetic packing to
-    /// `GlobalIndex::from_components(device, fifo, chip_logical, channel_logical, tdc).raw()`.
+    /// @brief Packed **TDC-level** global index — `GlobalIndex::raw()` built
+    /// via `GlobalIndex::from_components(device, fifo, chip_logical, channel_logical, tdc)`.
     /// The split-in-two trick (`chip_logical = chip_raw / 2`,
     /// `channel_logical = channel_raw + 32 * (chip_raw % 2)`) is applied here
     /// at the conversion boundary.
@@ -271,8 +268,24 @@ public:
 
     /** @name Time utilities */
     ///@{
-    int coarse_time_clock() const { return get_coarse() + get_rollover() * rollover_to_clock; }             ///< Coarse time in clock counts (rollover × 32 768 + coarse)
-    double coarse_time_ns() const { return get_coarse() * coarse_to_ns + get_rollover() * rollover_to_ns; } ///< Coarse time converted to nanoseconds (× 3.125 ns/cc)
+    //  Cast get_rollover() to uint64_t / double BEFORE multiplying — without
+    //  it, `int * int` silently overflows past rollover ≈ 65 536 for the
+    //  clock variant (rollover_to_clock = 32 768) and past rollover ≈ 20 971
+    //  for the ns variant (rollover_to_ns = 102 400, an int).  Sort
+    //  comparators on this type (operator< below) walk over hits straddling
+    //  the boundary and silently mis-order them.  Same pattern that was
+    //  fixed in get_coarse_global_time() at line ~227 — this twin was
+    //  missed in that sweep.
+    uint64_t coarse_time_clock() const ///< Coarse time in clock counts (rollover × 32 768 + coarse)
+    {
+        return static_cast<uint64_t>(get_coarse()) +
+               static_cast<uint64_t>(get_rollover()) * rollover_to_clock;
+    }
+    double coarse_time_ns() const ///< Coarse time converted to nanoseconds (× 3.125 ns/cc)
+    {
+        return get_coarse() * coarse_to_ns +
+               static_cast<double>(get_rollover()) * rollover_to_ns;
+    }
     ///@}
 
     /** @name Mask utilities */

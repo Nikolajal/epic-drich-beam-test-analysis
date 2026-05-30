@@ -45,8 +45,11 @@ from tomlkit.toml_document import TOMLDocument
 
 # Sentinel passed into ``set_leaf`` to *delete* a key rather than
 # overwrite it.  Useful when a checkbox is unchecked and the schema
-# wants the key absent rather than ``false``.  Not used in v1 of the
-# Settings form, but the API stays open for it.
+# wants the key absent rather than ``false``.  Not exercised by the
+# current Settings form (every field round-trips a value, including
+# the "(unset)" combobox sentinel which writes ``""``); kept here
+# because ``set_leaf`` honours it and a future widget that wants
+# key-absent semantics can opt in by passing ``DELETE`` directly.
 DELETE = object()
 
 

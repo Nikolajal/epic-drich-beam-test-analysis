@@ -31,9 +31,21 @@
 # Stage 1 is left at production defaults — the QA bias comes from the
 # stage 2 (Hough) thresholds below.
 
+# QA-mode operating point (2026-05-29 audit): n_sigma_threshold raised
+# to a sentinel value (1e9) so the streaming trigger NEVER fires.  The
+# score histograms (h_streaming_score_noise red, h_streaming_score_data
+# blue) still accumulate inside run_streaming_trigger_weighted on every
+# scoring window — the threshold check only gates the *firing* path
+# downstream of the score.  Net effect: the QA writer is ~6× faster
+# (streaming/Hough cascade contributes ~0 s instead of ~290 s), AND the
+# analyser still gets the bkg-vs-sig score distribution on the QA
+# dashboard (emitted as ``qa/lightdata/05_streaming_score.pdf``).
+# Analyser workflow: inspect the score plot, decide a production
+# n_sigma_threshold from where the data tail crosses the noise tail,
+# then set it for the production run (without --QA).
 [streaming_trigger]
 time_window_ns      =   20.0
-n_sigma_threshold   =   10.0
+n_sigma_threshold   =   1.0e9   # disabled in QA mode — score hists still fill
 min_noise_hits      =   10.0
 
 [streaming_hough]
@@ -96,6 +108,5 @@ centre_xy_half_range_mm  =   25.0
 #  for two-ring separation.  Single-cell peak at 3 mm matches the
 #  pre-Q2-2026 production behaviour.
 aggregation_window_cells =   1
-fit_circle_init_x        =   0.0
-fit_circle_init_y        =   0.0
-fit_circle_init_r        =   50.0
+# fit_circle_init_{x,y,r} removed 2026-05-30 (C3.5) — recodata seeds the
+# refit from the Hough peak.  Tolerated for one release with a warning.

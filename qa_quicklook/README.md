@@ -76,8 +76,99 @@ writer's publish into `<repo>/standard_results.{root,toml}`, lands
 in a sibling `<file>.audit.toml` with the timestamp, source
 (`dashboard` / `lightdata` / `recodata` / `recotrack` / `calibration` /
 `legacy`), run id, field name, old value, and new value.
-`scripts/backfill_audit_legacy.py` is the one-shot migration that
-tags pre-history records with `source="legacy"`.
+Pre-history records (database entries that predated the audit log)
+were one-shot tagged with `source="legacy"` so they're
+distinguishable from genuine dashboard-sourced edits.
+
+## Cross-shifter sync (Google Sheets)
+
+Multiple operators see the same view of the run database, named
+runlists, joblock state, and recent audit edits by pushing them to
+a shared Google Sheet on a configurable cadence.  Push-only model
+from the dashboard side — the local TOML stays authoritative —
+**with** automatic reconciliation of cell edits made directly on
+the Sheet (those land in `<year>.database.audit.toml` with
+`source="sheet"`, same as a dashboard edit).  See
+[`DISCUSSION.md` → Cross-shifter sync](DISCUSSION.md#cross-shifter-sync)
+for the design rationale.
+
+### Setup (once per Sheet)
+
+1. **Create a GCP project.**  Sign in at <https://console.cloud.google.com>,
+   create a fresh project (the free tier is plenty — the Sheets API
+   quota is 300 read req/min/project, 60 write req/min/user, far
+   above anything this dashboard does).
+2. **Enable the Google Sheets API** on that project: APIs & Services
+   → Library → "Google Sheets API" → Enable.
+3. **Create a service account.**  IAM & Admin → Service Accounts →
+   Create.  Give it a name like `qa-shifter-sync`.  No roles needed
+   at the project level — the Sheet itself is the access boundary.
+4. **Generate a JSON key.**  Open the service account → Keys → Add
+   Key → JSON.  Save the downloaded file as
+   `~/.config/qa_quicklook/sheets-sa.json` (or wherever
+   `[sheets_sync] service_account` in `qa_quicklook.toml` points)
+   and `chmod 600` it.  **Never commit this file.**  The repo
+   `.gitignore` covers `*sa.json`, `*service-account*.json`,
+   `*-sheets-*.json` as belt-and-braces, but the file shouldn't be
+   inside the worktree in the first place.
+5. **Create the target Sheet** in Google Sheets (any blank one).
+   Copy its id from the URL (`docs.google.com/spreadsheets/d/<ID>/edit`).
+6. **Share the Sheet with the service-account email** as Editor.
+   The email is in the JSON key file's `client_email` field, e.g.
+   `qa-shifter-sync@<project>.iam.gserviceaccount.com`.  Editor is
+   the write-permission grant — every operator's pusher
+   authenticates as this same identity.  Add the human operators
+   too (Viewer is enough; Editor lets them edit cells, which the
+   reverse-merge then folds into the audit-logged database).
+7. **Wire it up** in `qa_quicklook/qa_quicklook.toml`:
+
+   ```toml
+   [sheets_sync]
+   enabled         = true
+   service_account = "~/.config/qa_quicklook/sheets-sa.json"
+   spreadsheet_id  = "<paste the URL id here>"
+   push_interval_s = 30
+   operator_tag    = ""    # empty → derives "$USER@$HOSTNAME"
+   ```
+
+8. **Install the optional Google libs** on whichever machine runs
+   the pusher (typically the operator who's on shift):
+
+   ```
+   .venv/bin/pip install google-api-python-client google-auth
+   ```
+
+   These stay optional so dashboards on other machines run untouched.
+
+### Verify
+
+```
+.venv/bin/python -m qa_quicklook.sheets_sync --dry-run --print-render
+```
+
+Emits the rendered worksheets as JSON on stdout (no network, no
+credentials) so you can confirm the snapshot shape before flipping
+`enabled = true`.  Drop the `--dry-run` flag once you're ready to
+push for real — the same command works headless from cron / launchd
+when the dashboard isn't running.
+
+When the dashboard is running with `[sheets_sync] enabled = true`,
+the push loop lives in a `QThread` (`qa_quicklook/sheets_worker.py`)
+and the status bar's right-hand slot shows the current state:
+`pushed at 14:32 — merged 0 Sheet edit(s)`, `error: …`, etc.
+
+### Rotating a leaked key
+
+If the JSON key turns up somewhere it shouldn't (Slack paste, lost
+laptop, anything else):
+
+1. **Revoke it immediately** — GCP console → Service Accounts →
+   the SA → Keys → trash the compromised key.
+2. **Generate a fresh key** (same SA, same email — the Sheet's
+   share-list doesn't change), distribute, swap into
+   `~/.config/qa_quicklook/sheets-sa.json` on each operator's box.
+3. No code change required.  The next push picks up the new key
+   transparently.
 
 ## Layout
 
@@ -99,11 +190,15 @@ qa_quicklook/
   joblock.py         Per-(writer, run) lock files for cross-instance state
   runner.py          QProcess wrapper (line / progress streaming)
   dbworker.py        Background TOML writer pool (keeps GUI responsive)
-  download.py        rsync wrapper + SSH key-auth probe + address persistence
+  download.py        rsync wrapper + SSH key-auth probe + remote-run listing
   conf_layout.py     Setting-set symlink / defaults / working overlay
   toml_form.py       Recursive bubble-card form widget
   toml_model.py      Pure tomlkit helpers (walker, setter, ##-cutoff, …)
   theme.py           Palette + light/dark QSS + system-follow
-  qa_quicklook.toml  Dashboard-local config (rsync, theme, plots_theme, vbias bands)
-  requirements.txt   PySide6 + tomlkit + uproot + matplotlib
+  sheets_sync.py     Google Sheets push — config, snapshot, render, reverse-merge
+  sheets_worker.py   QThread driver for the periodic Sheets push loop
+  _sheets_adapter.py Lazy-imported google-api adapter (push + pull)
+  _sheets_cli.py     `python -m qa_quicklook.sheets_sync` CLI
+  qa_quicklook.toml  Dashboard-local config (rsync, sheets_sync, theme, plots_theme, vbias bands)
+  requirements.txt   PySide6 + tomlkit + uproot + matplotlib (Sheets libs optional)
 ```

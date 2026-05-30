@@ -54,6 +54,7 @@
  */
 
 #include "writers/pulser_calib.h"
+#include "writers/anchor_dt_canvas.h"
 
 #include "alcor_data.h"
 #include "analysis_results.h"
@@ -1073,20 +1074,41 @@ void pulser_calib_writer(
     //  the shorter list — defensive; channels that missed a pulse
     //  still contribute their matched fraction.
     constexpr int kRollover = BTANA_ALCOR_ROLLOVER_TO_CC;
-    const int n_y_bins  = 2 * (kRollover + 100) + 1;          // 1 cc / bin
-    const double y_lo   = -(kRollover + 100) - 0.5;
-    const double y_hi   = +(kRollover + 100) + 0.5;
+    //  Variable-bin Y axis — see ``util::qa::make_anchor_dt_y_edges``
+    //  for the layout.  93× smaller than the uniform 65 737-bin
+    //  pattern, and the two "gap" bins make the off-canvas count
+    //  trivial to read.  Shared with lightdata_writer so the
+    //  canvas helper assumes one bin layout.
+    const auto kAnchorYEdges = util::qa::make_anchor_dt_y_edges(kRollover);
+    //  C5.6 — guard against `spills_seen == 0`.  Without the clamp the
+    //  X axis becomes `[-0.5, -0.5]` (zero-width), which TH2F accepts
+    //  silently but produces NaN/Inf bin edges that propagate into the
+    //  diagnostic file.  When no spills were seen we keep a single-bin
+    //  placeholder so the histogram exists (empty) without booby-trapping
+    //  downstream readers.  Re-applied after the 2026-05-30 pulser
+    //  refactor restored the bug pattern.
+    const int    anchor_n_x_bins = std::max(1, spills_seen);
+    const double anchor_x_hi     = (spills_seen > 0)
+                                       ? (spills_seen - 0.5)
+                                       : 0.5;
     auto h_anchor_dt_vs_spill = std::make_unique<TH2F>(
         "h_anchor_dt_vs_spill",
         //  TLatex codes (#Delta etc.) so the title renders properly —
         //  raw UTF-8 in TString::Format gets mangled by ROOT's text
         //  rendering on most fonts.
         TString::Format(
-            "#Deltac vs spill (channel - anchor [%d/%d/ch%d]);"
-            "spill;#Deltac (cc)  = c_{ch} - c_{anchor}",
+            //  ``#Deltat_{trg}`` — the value is a coarse-counter
+            //  difference (cc units, formula c_ch − c_anchor) but
+            //  operators read it as a trigger-relative time gap, so
+            //  the subscript ``trg`` makes the per-trigger nature
+            //  explicit while the X axis remains ``spill`` (the bin
+            //  index is per-spill).
+            "#Deltat_{trg} vs spill (channel - anchor [%d/%d/ch%d]);"
+            "spill;#Deltat_{trg} (cc)  = c_{ch} - c_{anchor}",
             cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel),
-        std::max(1, spills_seen), -0.5, spills_seen - 0.5,
-        n_y_bins, y_lo, y_hi);
+        anchor_n_x_bins, -0.5, anchor_x_hi,
+        static_cast<int>(kAnchorYEdges.size() - 1),
+        kAnchorYEdges.data());
     // Keep the histogram off the global ROOT directory list so the
     // automatic .root write at qa->Write() doesn't pick it up — we
     // place it explicitly under Diagnostics/ later.
@@ -1865,330 +1887,26 @@ void pulser_calib_writer(
             diag_dir->WriteObject(h_anchor_dt_vs_spill.get(),
                                   h_anchor_dt_vs_spill->GetName());
 
-            //  Per-pad under/overflow counts — *paramount* for reading
-            //  this plot, since the rollover-zone populations are the
-            //  whole point.  We split the Y axis into 7 named regions
-            //  and integrate each against the source histogram.  Each
-            //  pad's overlay then reports its in-window count + the
-            //  total of everything above and everything below its
-            //  window so leakage is impossible to miss.
-            struct Region
-            {
-                const char *latex;    // ROOT-codes label for in-canvas TLatex
-                const char *plain;    // plain ASCII for the log line
-                double y_lo;
-                double y_hi;
-                long long count;
-            };
-            // Edges (half-cc offsets so an entry exactly on the boundary
-            // attaches deterministically to the upper region, matching
-            // ROOT's bin "[low, high)" convention with .5-offset edges).
-            constexpr double E_top_hi = kRollover + 50.5;
-            constexpr double E_top_lo = kRollover - 50.5;
-            constexpr double E_main_hi = 250.5;
-            constexpr double E_main_lo = -250.5;
-            constexpr double E_bot_hi = -kRollover + 50.5;
-            constexpr double E_bot_lo = -kRollover - 50.5;
-            Region regions[] = {
-                {"#Delta > +rollover+50",                "Delta > +rollover+50",
-                 E_top_hi,  1e9,        0},
-                {"|#Delta #minus rollover| #leq 50",     "|Delta - rollover| <= 50",
-                 E_top_lo,  E_top_hi,   0},
-                {"+250 < #Delta < +rollover#minus50",    "+250 < Delta < +rollover-50",
-                 E_main_hi, E_top_lo,   0},
-                {"|#Delta| #leq 250 (main)",             "|Delta| <= 250 (main)",
-                 E_main_lo, E_main_hi,  0},
-                {"#minusrollover+50 < #Delta < #minus250", "-rollover+50 < Delta < -250",
-                 E_bot_hi,  E_main_lo,  0},
-                {"|#Delta + rollover| #leq 50",          "|Delta + rollover| <= 50",
-                 E_bot_lo,  E_bot_hi,   0},
-                {"#Delta < #minusrollover#minus50",      "Delta < -rollover-50",
-                 -1e9,      E_bot_lo,   0},
-            };
-            const int n_x = h_anchor_dt_vs_spill->GetNbinsX();
-            const auto *yax = h_anchor_dt_vs_spill->GetYaxis();
-            for (auto &r : regions)
-            {
-                const int b_lo = yax->FindFixBin(r.y_lo);
-                const int b_hi = yax->FindFixBin(r.y_hi) - 1;
-                r.count = static_cast<long long>(
-                    h_anchor_dt_vs_spill->Integral(1, n_x, b_lo, b_hi));
-            }
-            const long long n_total = std::accumulate(
-                std::begin(regions), std::end(regions), 0LL,
-                [](long long a, const Region &r) { return a + r.count; });
-
-            // Per-pad over/under helper: returns the number of entries
-            // OUTSIDE the pad's [y_lo, y_hi] window, split into below /
-            // above.  The pad's own SetRangeUser hides them visually;
-            // the overlay surfaces them numerically.
-            auto pad_uoflow = [&](double y_lo, double y_hi)
-                -> std::pair<long long, long long>
-            {
-                const int b_lo = yax->FindFixBin(y_lo);
-                const int b_hi = yax->FindFixBin(y_hi) - 1;
-                const long long below = static_cast<long long>(
-                    h_anchor_dt_vs_spill->Integral(1, n_x, 0, b_lo - 1));
-                const long long above = static_cast<long long>(
-                    h_anchor_dt_vs_spill->Integral(1, n_x,
-                                                   b_hi + 1, yax->GetNbins() + 1));
-                return {below, above};
-            };
-
-            // Log the breakdown — shows up in the writer's stdout so
-            // operators running on the CLI see it too.
-            mist::logger::info(TString::Format(
-                "(pulser_calib_writer) anchor-Δ region split (total %lld):",
-                n_total).Data());
-            for (const auto &r : regions)
-            {
-                const double pct = n_total > 0
-                    ? 100.0 * static_cast<double>(r.count)
-                            / static_cast<double>(n_total)
-                    : 0.0;
-                mist::logger::info(TString::Format(
-                    "(pulser_calib_writer)   %-30s : %lld (%.3f%%)",
-                    r.plain, r.count, pct).Data());
-            }
-
-            // Stats box off — we have our own custom overlay.  Saved
-            // + restored so we don't poison other writers that might
-            // run later in the same process.
-            const int prev_optstat = gStyle->GetOptStat();
-            gStyle->SetOptStat(0);
-
-            // Canvas layout — **equal px/cc** across the three plot
-            // pads so a 5-pixel vertical span means the same Δc
-            // everywhere.  Math:
-            //   Y data to render:  100 cc (top) + 500 cc (main) + 100 cc (bot)
-            //                   =  700 cc total
-            //   Available canvas:  100 % − banner 10 % − x-axis area 14 %  ≈ 76 %
-            //   px/cc fraction:    0.76 / 700  →  1 cc ≈ 0.00109 of canvas height
-            //
-            // Plot-area heights (canvas NDC) — pad bounds add inner
-            // top/bottom margins around these for axis labels:
-            //   top  plot ≈ 10.9 %
-            //   main plot ≈ 54.4 %
-            //   bot  plot ≈ 10.9 %  (+ 14 % for x-axis labels below)
-            //
-            //   banner : y = [0.90, 1.00]  10 %   (title + total only)
-            //   top    : y = [0.79, 0.90]  11 %   (+rollover ±50)
-            //   main   : y = [0.25, 0.79]  54 %   (±250)
-            //   bot    : y = [0.00, 0.25]  25 %   (-rollover ±50 + x-axis)
-            //
-            // Right margin sized for the colz palette (main only;
-            // shared z-range makes scale consistent across pads).
-            TCanvas c_anchor("c_anchor_dt_vs_spill", "", 1400, 950);
-            constexpr double kLeftMargin  = 0.10;
-            constexpr double kRightMargin = 0.09;
-
-            // Banner pad — borderless, used only as a TLatex canvas
-            // for the title and total-entries subtitle.  The per-region
-            // breakdown table moved out of the canvas; it's still in
-            // the writer's log output and the per-pad in/above/below
-            // overlays already convey "is this region populated?" at
-            // a glance.
-            TPad p_banner("p_banner", "", 0.0, 0.90, 1.0, 1.00);
-            p_banner.SetTopMargin(0.0);
-            p_banner.SetBottomMargin(0.0);
-            p_banner.SetLeftMargin(0.0);
-            p_banner.SetRightMargin(0.0);
-            p_banner.SetBorderMode(0);
-            p_banner.Draw();
-
-            // ── Inner margins zeroed where pads abut ──────────────
-            // Top.bottom = 0, Main.top = 0  → top and main touch.
-            // Main.bottom = 0, Bot.top = 0  → main and bot touch.
-            // Outer edges (top of canvas, bottom of canvas) keep
-            // their normal margins for ticks + x-axis title.
-            // ── Inner margins zeroed where pads abut ──────────────
-            // Top.bottom = 0, Main.top = 0  → top and main touch.
-            // Main.bottom = 0, Bot.top = 0  → main and bot touch.
-            // Outer edges keep their normal margins for ticks +
-            // x-axis title.  BorderMode(0) + BorderSize(0) hide the
-            // pad's decorative bevel; the histograms' own frames
-            // (thin, configured below) still provide the visible box.
-            auto configure_pad = [&](TPad &p, double top, double bot) {
-                p.SetTopMargin(top);
-                p.SetBottomMargin(bot);
-                p.SetLeftMargin(kLeftMargin);
-                p.SetRightMargin(kRightMargin);
-                p.SetBorderMode(0);
-                p.SetBorderSize(0);
-                p.SetFrameBorderMode(0);
-                p.SetFrameBorderSize(0);
-                p.Draw();
-            };
-            TPad p_top("p_top", "+rollover zoom", 0.0, 0.79, 1.0, 0.90);
-            configure_pad(p_top,  0.02, 0.00);
-            TPad p_main("p_main", "main", 0.0, 0.25, 1.0, 0.79);
-            configure_pad(p_main, 0.00, 0.00);
-            TPad p_bot("p_bot", "-rollover zoom", 0.0, 0.0, 1.0, 0.25);
-            configure_pad(p_bot,  0.00, 0.55);   // 0.55 of 25 % ≈ 14 % canvas for x-axis
-
-            // Shared z-range across all three pads — top and bottom
-            // zooms reuse the main pad's colour scale so a non-zero
-            // bin reads at the same hue everywhere on the canvas.
-            // Floor at 1 to keep empty bins blank instead of dark-end-
-            // of-palette.
-            const double z_min = 1.0;
-            const double z_max = std::max(
-                1.0, static_cast<double>(h_anchor_dt_vs_spill->GetMaximum()));
-
-            // Absolute (pixel) font sizes so tick labels look identical
-            // across pads of different heights.  Font code 43 = Helvetica
-            // with size in pixels (font precision 3); fraction-of-pad
-            // sizing (the default) would make slim-pad labels look
-            // microscopic vs the main pad's.
-            //
-            // Sizes tuned for the 1400×950 canvas — readable when the
-            // PDF is rendered at 100% zoom in a typical viewer.
-            constexpr int kFont       = 43;
-            constexpr int kLabelPx    = 20;   // axis tick labels
-            constexpr int kTitlePx    = 24;   // axis titles
-            constexpr int kOverlayPx  = 18;   // per-pad in/above/below
-            constexpr int kBannerPx   = 26;   // banner title
-            constexpr int kBannerSubPx = 16;  // banner subtitle / total
-            constexpr int kRegionPx   = 15;   // region breakdown lines
-
-            auto draw_in_pad = [&](TPad &pad, double y_lo_r, double y_hi_r,
-                                   bool show_xaxis, bool with_palette,
-                                   bool show_ytitle,
-                                   const char *in_label) {
-                pad.cd();
-                auto *h = static_cast<TH2F *>(
-                    h_anchor_dt_vs_spill->Clone(
-                        TString::Format("h_anchor_dt_pad_%s", pad.GetName())));
-                h->SetDirectory(nullptr);
-                h->SetStats(0);
-                h->SetTitle("");
-                h->GetYaxis()->SetRangeUser(y_lo_r, y_hi_r);
-                h->SetMinimum(z_min);
-                h->SetMaximum(z_max);
-                // Thinner frame line so the touching-pad boundaries
-                // read as a single clean line, not a doubled bar.
-                h->SetLineWidth(1);
-
-                auto *yax = h->GetYaxis();
-                yax->SetLabelFont(kFont);
-                yax->SetLabelSize(kLabelPx);
-                yax->SetTitleFont(kFont);
-                yax->SetTitleSize(kTitlePx);
-                yax->SetTitleOffset(1.7);   // room for 5-digit labels
-                if (!show_ytitle)
-                    yax->SetTitle("");
-                // Slim pads only span ~100 cc → 5 default labels are
-                // visually crowded.  3 major divisions is enough to
-                // convey the range without overlapping into adjacent
-                // pads at the touching edges.
-                if (&pad != &p_main)
-                    yax->SetNdivisions(503);
-
-                auto *xax = h->GetXaxis();
-                if (show_xaxis)
-                {
-                    xax->SetLabelFont(kFont);
-                    xax->SetLabelSize(kLabelPx);
-                    xax->SetTitleFont(kFont);
-                    xax->SetTitleSize(kTitlePx);
-                    xax->SetTitleOffset(2.4);
-                }
-                else
-                {
-                    xax->SetLabelSize(0);
-                    xax->SetTitle("");
-                    xax->SetTickLength(0.0);
-                }
-
-                // Suppress "×10^N" scientific notation on the Z palette
-                // so big integer bin counts (76 M total in this run)
-                // render as plain numbers — easier to compare at a
-                // glance against the in-pad count overlays.
-                h->GetZaxis()->SetMaxDigits(7);
-
-                // Only main pad gets the palette — shared z-range
-                // makes the visual scale consistent across the slim
-                // pads even without their own palette strip.
-                h->Draw(with_palette ? "colz" : "col");
-
-                // In-pad count overlay — JUST the in-window count.
-                // Per-pad "above/below" was redundant with the three
-                // pads themselves + the single banner "off-canvas"
-                // summary (drawn after the loop).  Keeping the
-                // overlay minimal so the slim pads stay clean.
-                const int b_lo = yax->FindFixBin(y_lo_r);
-                const int b_hi = yax->FindFixBin(y_hi_r) - 1;
-                const long long in_n = static_cast<long long>(
-                    h_anchor_dt_vs_spill->Integral(1, n_x, b_lo, b_hi));
-                TLatex tx;
-                tx.SetNDC();
-                tx.SetTextFont(43);
-                tx.SetTextSize(&pad == &p_main ? kOverlayPx
-                                              : std::max(12, kOverlayPx - 4));
-                tx.SetTextAlign(13);
-                tx.DrawLatex(0.13,
-                    &pad == &p_main ? 0.94 : 0.85,
-                    TString::Format("%s: %lld", in_label, in_n));
-            };
-            // Only the main pad shows the full Y title; slim pads stay
-            // clean (operator reads off the visible range labels).
-            draw_in_pad(p_top,  +kRollover - 50, +kRollover + 50,
-                        false, false, false, "+rollover #pm 50");
-            draw_in_pad(p_main, -250.0,          +250.0,
-                        false, true,  true,  "|#Delta| #leq 250");
-            draw_in_pad(p_bot,  -kRollover - 50, -kRollover + 50,
-                        true,  false, false, "#minusrollover #pm 50");
-
-            // ── Banner: title (left) + total-entries subtitle.
-            //  The per-region breakdown lives in the writer's log
-            //  output + the per-pad in/above/below overlays.  Trying
-            //  to also pack 7 region lines into the 10 % banner pad
-            //  made the rendering messy (line overlap at 1400 px
-            //  width), and the info is already redundant with the
-            //  per-pad overlays.
-            p_banner.cd();
-            TLatex bn;
-            bn.SetNDC();
-            bn.SetTextFont(kFont);
-            bn.SetTextSize(kBannerPx);
-            bn.SetTextAlign(13);   // top-left
-            bn.SetTextColor(kBlack);
-            bn.DrawLatex(0.01, 0.92,
-                TString::Format(
-                    "#Deltac vs spill   (channel #minus anchor [%d/%d/ch%d])",
-                    cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel));
-            // Off-canvas count: entries that fell in NONE of the three
-            // pad Y-windows (main ±250 / top +rollover±50 / bot
-            // -rollover±50).  This is the "stuff you'd miss without
-            // looking" number — the single one operator-relevant
-            // for "did anything weird happen?".  The four
-            // off-canvas regions are at indices 0, 2, 4, 6 of the
-            // regions[] table (defined by hand above; in-pad
-            // regions are at 1, 3, 5).
-            const long long n_off_canvas =
-                regions[0].count   // Δ > +rollover+50
-              + regions[2].count   // +250 < Δ < +rollover-50
-              + regions[4].count   // -rollover+50 < Δ < -250
-              + regions[6].count;  // Δ < -rollover-50
-            const double off_pct = n_total > 0
-                ? 100.0 * static_cast<double>(n_off_canvas)
-                        / static_cast<double>(n_total)
-                : 0.0;
-            bn.SetTextSize(kBannerSubPx);
-            bn.SetTextColor(n_off_canvas > 0 ? kRed + 1 : kGray + 3);
-            bn.DrawLatex(0.01, 0.30,
-                TString::Format(
-                    "Total: %lld   |   Off-canvas (in no pad): %lld (%.3f%%)",
-                    n_total, n_off_canvas, off_pct));
-
-            // PDF for the dashboard's QA Calibration sub-tab.
+            //  3-pad canvas rendering moved to ``util::qa::render_anchor_dt_canvas``
+            //  (see ``include/writers/anchor_dt_canvas.h``) so the
+            //  ``lightdata_writer`` can share the exact same look for
+            //  its per-trigger plots — backlog row P 1.61.  All the
+            //  layout / region-split / overlay logic that used to
+            //  live here is now in ``src/writers/anchor_dt_canvas.cxx``;
+            //  every tweak (log-z, alternate layouts, etc.) lands in
+            //  one place and benefits both writers automatically.
             const std::string pulser_run_dir = data_repository + "/" + run_name;
             const auto pdf = util::qa::pdf_path(
                 pulser_run_dir, "calibration", 5, "anchor_dt_vs_spill");
-            c_anchor.SaveAs(pdf.string().c_str());
-
-            // Restore the prior stats-box convention.
-            gStyle->SetOptStat(prev_optstat);
+            util::qa::AnchorDtCanvasOpts opts;
+            opts.rollover_cc = BTANA_ALCOR_ROLLOVER_TO_CC;
+            opts.title = TString::Format(
+                "#Deltat_{trg} vs spill   "
+                "(channel #minus anchor: device %d, chip %d, channel %d)",
+                cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel).Data();
+            opts.pdf_path = pdf.string();
+            opts.logger_prefix = "(pulser_calib_writer)";
+            util::qa::render_anchor_dt_canvas(*h_anchor_dt_vs_spill, opts);
         }
     }
 
@@ -2275,11 +1993,11 @@ void pulser_calib_writer(
     //  summary numbers the dashboard scoreboard needs.
     {
         //  Cross-run aggregate next to the run directories
-        //  (``<repo>/standard_results.root``).  Same convention as
+        //  (``<repo>/standard_results.toml``).  Same convention as
         //  the other three writers — stale ``extData/`` hard-code
         //  was failing because the dashboard launches with cwd at
         //  the repo root, where ``extData/`` doesn't exist.
-        AnalysisResults ar(data_repository + "/standard_results.root");
+        AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
             {{run_name, "all", "calibration.total_hits_read"},
              {static_cast<double>(total_hits_read), 0.0}},

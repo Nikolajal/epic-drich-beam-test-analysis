@@ -4,8 +4,8 @@
  *        the per-frame inner loop of `lightdata_writer()`.
  *
  * Algorithm unchanged from the in-function version; only captures are
- * replaced by explicit parameters.  Bit-identical output verified vs
- * `Data/20251111-164951/phaseF_baseline/lightdata.root`.
+ * replaced by explicit parameters.  Bit-identical output was verified
+ * vs a baseline snapshot at extraction time (since pruned).
  */
 
 #include "writers/lightdata/dcr_afterpulse_ct_qa.h"
@@ -36,9 +36,8 @@ void fill_dcr_afterpulse_ct_qa(
     const DcrAfterpulseCtHists &h)
 {
     //  Channel-by-channel Hit counting — start each frame from a clean
-    //  map so counts cannot accumulate across frames.
-    //  Phase 5: storage is new-layout raw.  The hit-side key must
-    //  match the active_sensors key type — channel_ordinal (dense
+    //  map so counts cannot accumulate across frames.  The hit-side key
+    //  must match the active_sensors key type — channel_ordinal (dense
     //  small int), NOT global_channel_raw (sparse packed millions,
     //  which would silently mismatch active_sensors entries AND
     //  overflow the per-channel TProfile axes).

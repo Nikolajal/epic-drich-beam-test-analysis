@@ -16,12 +16,22 @@ int main(int argc, char **argv)
     bool force_rebuild = false;
     bool force_upstream = false;
     bool qa_mode = false;
+    //  Sweep audit (2026-05-30): accept --threads as a no-op so the
+    //  uniform qa_pipeline.py invocation doesn't reject this stage.
+    //  recotrack doesn't yet plumb thread parallelism through; the
+    //  CLI just needs to swallow the flag.  Same parking pattern in
+    //  recodata.  See lightdata_writer for the live --threads path.
+    int n_threads_unused = 0;
 
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
     app.add_option("track_data_repository", track_data_repository);
     app.add_option("track_run_name", track_run_name);
     app.add_option("--max-spill", max_spill);
+    app.add_option("--threads", n_threads_unused,
+                   "[ACCEPTED, IGNORED] reserved for future per-stage "
+                   "thread plumbing — the qa_pipeline.py orchestrator "
+                   "passes this uniformly to all stages.");
     //  Uniform force-flag contract across all writers (see
     //  include/writers/*.h docstrings):
     //    --force-rebuild   → overwrite THIS writer's output (recotrackdata.root).

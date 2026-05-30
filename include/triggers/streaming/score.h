@@ -75,6 +75,19 @@ struct StreamingTriggerWeights
     /// diagnostic for logging.
     int n_channels_modelled = 0;
 
+    /// **C7.6 — multiplicity upper-bound cut.**  When `> 0`, any
+    /// streaming cluster whose peak hit count exceeds this value is
+    /// suppressed from trigger emission.  Pile-up events with many
+    /// hits (typically ≫ what two Cherenkov rings + noise produce)
+    /// look like a strong score signal but aren't physics; the cut
+    /// lets the operator carve them off without lowering the n_σ
+    /// threshold.  `0` (default) disables the cut — fully backwards
+    /// compatible until the operator opts in via
+    /// `[streaming_trigger].max_hits_per_window` in
+    /// `conf/streaming.toml`.  Caller (lightdata_writer) reads the
+    /// config knob and sets this field on the bundle.
+    int max_hits_per_window = 0;
+
     /// Convert a raw score to its standardised $n_\sigma$ deviation.
     [[nodiscard]] float n_sigma_of(float score) const noexcept
     {
@@ -165,12 +178,72 @@ struct StreamingTriggerWeights
  *
  * @see include/triggers/DISCUSSION.md § 2.
  */
+/**
+ * @brief Per-channel in-beam baseline contribution in "expected hits per
+ *        frame" units (same scaling as the DCR rate the score uses).
+ *
+ * Estimated by sampling Cherenkov hits in a left-side sideband of every
+ * non-synthetic, non-derived trigger fired in the current spill (see
+ * @ref compute_streaming_inbeam_rates).  Adds to the DCR baseline so the
+ * score's H_0 is "noise + in-beam diffuse activity" rather than DCR-only.
+ *
+ * Map key = channel ordinal (same key the DCR weights use).  Missing key
+ * means "this channel saw no in-beam sideband hits" → no contribution.
+ */
+using StreamingInBeamRates = std::unordered_map<int, float>;
+
+/**
+ * @brief Sample the per-channel in-beam Cherenkov rate from a left-side
+ *        sideband of every "real" trigger in the spill.
+ *
+ * For each trigger event in @p spill that is NOT in
+ * @p sideband_exclude_triggers, opens a window
+ * @c [t_trigger + sideband_lo_ns, t_trigger + sideband_hi_ns] (both
+ * negative — strictly to the left of the trigger so the right side's
+ * afterpulse train doesn't contaminate the baseline) and counts every
+ * non-afterpulse Cherenkov hit per channel.  The aggregate is then
+ * rescaled to "expected hits per frame" so it adds directly into the
+ * DCR rate inside @ref build_streaming_trigger_weights.
+ *
+ * @param spill                       Spill data to scan.  Iterated via
+ *                                    @c get_frame_link() — order doesn't
+ *                                    matter because counts aggregate.
+ * @param sideband_lo_ns              Lower bound of the sideband relative
+ *                                    to the trigger time (negative; e.g.
+ *                                    -300 ns).
+ * @param sideband_hi_ns              Upper bound of the sideband relative
+ *                                    to the trigger time (negative; e.g.
+ *                                    -50 ns to leave a 50 ns guard band
+ *                                    around the trigger edge).
+ * @param frame_length_ns             Frame duration [ns] — used to scale
+ *                                    hits-per-sideband into hits-per-frame
+ *                                    so the result composes additively
+ *                                    with the DCR rate.
+ * @param sideband_exclude_triggers   Trigger indices that must NOT serve
+ *                                    as sideband anchors.  At minimum:
+ *                                    @c TriggerFirstFrames (synthetic
+ *                                    first-frames marker),
+ *                                    @c TriggerStartOfSpill (boundary
+ *                                    marker), and the streaming/Hough
+ *                                    derived triggers (self-reference
+ *                                    if invoked after the score loop).
+ * @return Per-channel in-beam µ in hits-per-frame units.  Empty if no
+ *         sideband anchors were found.
+ */
+StreamingInBeamRates
+compute_streaming_inbeam_rates(AlcorSpilldata &spill,
+                               float sideband_lo_ns,
+                               float sideband_hi_ns,
+                               float frame_length_ns,
+                               const std::set<uint8_t> &sideband_exclude_triggers);
+
 StreamingTriggerWeights
 build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
                                 float time_window_ns,
                                 float frame_length_ns,
                                 double min_noise_hits = 5.0,
-                                const std::set<uint32_t> *active_channels = nullptr);
+                                const std::set<uint32_t> *active_channels = nullptr,
+                                const StreamingInBeamRates *in_beam_rates = nullptr);
 
 /**
  * @brief Evaluate the streaming trigger for a single frame and accumulate diagnostics.

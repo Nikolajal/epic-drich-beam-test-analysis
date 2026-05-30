@@ -5,9 +5,8 @@
  *        `src/recodata_writer.cxx`'s parallel-dispatch loop.
  *
  * Algorithm is unchanged; only captures are replaced by an explicit
- * `FrameProcessContext`.  Bit-identical output verified vs the
- * pre-extraction baseline at
- * `Data/20251111-164951/phaseG_baseline/recodata.root`.
+ * `FrameProcessContext`.  Bit-identical output was verified vs a
+ * pre-extraction baseline snapshot at extraction time (since pruned).
  */
 
 #include "writers/recodata/frame_pipeline.h"

@@ -14,6 +14,7 @@
 
 #include "triggers/streaming/hough.h"
 
+#include <algorithm>   // std::max, std::sort, std::remove_if (C3.1 + C3.4)
 #include <array>
 #include <cmath>
 #include <vector>
@@ -39,10 +40,25 @@ void run_streaming_hough_trigger(
     const StreamingHoughQA &qa)
 {
     auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
-    auto &triggers_in_frame = spilldata.get_frame_trigger_hits(frame_id);
+
+    //  SNAPSHOT the trigger list before we iterate — the body re-enters
+    //  add_trigger_to_frame() (HitmaskHoughRingTagFirst / *Second emissions
+    //  below) which push_back's into the SAME vector that
+    //  get_frame_trigger_hits(frame_id) returns by reference.  A range-for
+    //  over the live reference caches __begin/__end at loop entry; a
+    //  reallocation inside the body invalidates them and the loop walks
+    //  freed memory.  Triggered whenever the frame already carries a HW
+    //  trigger AND the score stage fired a streaming-ring trigger.
+    //
+    //  Fix: copy out the streaming-ring-found triggers once, drive the
+    //  loop from the snapshot.  The snapshot is small (typically 1–2
+    //  entries) and the copy cost is irrelevant compared to find_rings().
+    const std::vector<TriggerEvent> triggers_in_frame_snapshot(
+        spilldata.get_frame_trigger_hits(frame_id).begin(),
+        spilldata.get_frame_trigger_hits(frame_id).end());
 
     //  Loop on all triggers; process the streaming-ring-found ones.
-    for (auto current_trigger : triggers_in_frame)
+    for (auto current_trigger : triggers_in_frame_snapshot)
     {
         if (current_trigger.index != _TRIGGER_STREAMING_RING_FOUND_)
             continue;
@@ -82,8 +98,8 @@ void run_streaming_hough_trigger(
         //  config-driven via `cfg`.
         //
         //  Inline ALCOR → generic-Hit adapter (formerly
-        //  `AlcorFinedata::alcor_find_rings_hough`; relocated here in the
-        //  Phase 3 cleanup so AlcorFinedata is purely a per-hit value type).
+        //  `AlcorFinedata::alcor_find_rings_hough`, kept inline here so
+        //  AlcorFinedata stays a pure per-hit value type).
         //  generic_to_alcor[i] maps generic_hits[i] back to its ring_candidates
         //  index for the mask write-back below.
         std::vector<mist::ring_finding::Hit> generic_hits;
@@ -103,14 +119,18 @@ void run_streaming_hough_trigger(
             generic_to_alcor.push_back(i);
         }
 
-        //  NOTE: `min_active` was added to MIST's find_rings signature
-        //  between `min_hits` and `max_rings`; the pre-extraction call
-        //  pre-dated that change and was silently passing `max_rings=7`
-        //  (truncated from 7.5f) with `collection_radius` defaulted —
-        //  caught and fixed during Phase 4.  `min_hits` is derived from
+        //  NOTE: `min_active` lives between `min_hits` and `max_rings` in
+        //  MIST's find_rings signature.  `min_hits` is derived from
         //  `min_active` via the config slack ratio.
-        const int min_hits_per_ring =
-            static_cast<int>(min_active * cfg.min_hits_slack);
+        //
+        //  C3.1: floor at 1.  With `min_active == 1` (canonical low-occupancy
+        //  frame) and `min_hits_slack < 1` (any sane default), the
+        //  truncating cast would otherwise produce `min_hits == 0`, which
+        //  MIST's `find_rings` interprets as "accept any peak ≥ 0 hits" —
+        //  every accumulator cell becomes a candidate.  std::max keeps the
+        //  intended "at least one hit per ring" semantic.
+        const int min_hits_per_ring = std::max(
+            1, static_cast<int>(min_active * cfg.min_hits_slack));
         auto found_rings = ring_finder.find_rings(
             generic_hits,
             /*threshold_fraction*/ cfg.threshold_fraction,
@@ -119,6 +139,74 @@ void run_streaming_hough_trigger(
             /*max_rings*/ 2,
             /*collection_radius*/ cfg.collection_radius,
             /*aggregation_window_cells*/ cfg.aggregation_window_cells);
+
+        //  C3.4: post-find_rings sanity filter + near-duplicate dedup.
+        //
+        //  MIST's `find_rings` already applies min_hits / threshold_fraction
+        //  gates inside the peak finder, but the returned rings can still:
+        //   (a) carry NaN cx/cy/radius if a degenerate accumulator cell
+        //       slipped through (numerical edge case at LUT boundaries),
+        //   (b) sit outside [r_min, r_max] (rare but seen at the
+        //       aggregation-window seam — the SAT counter can land in the
+        //       outermost half-cell which is just outside the nominal
+        //       radius range), or
+        //   (c) be cell-boundary near-duplicates of each other (the same
+        //       ring split across two adjacent accumulator cells when the
+        //       true centre sits on a cell edge — two peaks separated by
+        //       one `cell_size` with effectively the same `radius`).
+        //
+        //  Drop (a)+(b); merge (c) keeping the higher-peak_votes survivor.
+        //  Quality-ratio floor (D-04 follow-up) deferred to a later pass —
+        //  needs a calibration sweep to pick the floor.
+        {
+            const auto is_invalid =
+                [&cfg](const mist::ring_finding::RingResult &r)
+            {
+                if (std::isnan(r.cx) || std::isnan(r.cy) || std::isnan(r.radius))
+                    return true;
+                if (r.radius < cfg.r_min || r.radius > cfg.r_max)
+                    return true;
+                return false;
+            };
+            found_rings.erase(
+                std::remove_if(found_rings.begin(), found_rings.end(), is_invalid),
+                found_rings.end());
+
+            if (found_rings.size() >= 2)
+            {
+                //  Sort by peak_votes descending so the dedup keeps the
+                //  strongest survivor of each cluster.
+                std::sort(found_rings.begin(), found_rings.end(),
+                          [](const mist::ring_finding::RingResult &a,
+                             const mist::ring_finding::RingResult &b)
+                          { return a.peak_votes > b.peak_votes; });
+
+                std::vector<mist::ring_finding::RingResult> deduped;
+                deduped.reserve(found_rings.size());
+                for (const auto &r : found_rings)
+                {
+                    bool is_dup = false;
+                    for (const auto &kept : deduped)
+                    {
+                        const float dx = r.cx - kept.cx;
+                        const float dy = r.cy - kept.cy;
+                        const float centre_dist =
+                            std::sqrt(dx * dx + dy * dy);
+                        //  Threshold: centres within one accumulator cell
+                        //  AND radii within one r_step → same ring.
+                        if (centre_dist < cfg.cell_size &&
+                            std::fabs(r.radius - kept.radius) < cfg.r_step)
+                        {
+                            is_dup = true;
+                            break;
+                        }
+                    }
+                    if (!is_dup)
+                        deduped.push_back(r);
+                }
+                found_rings = std::move(deduped);
+            }
+        }
 
         //  Write the per-ring mask bits back onto ring_candidates so the
         //  downstream loop can read them.  Ring index → mask bit lookup:
@@ -185,11 +273,13 @@ void run_streaming_hough_trigger(
 
         //  Emit Hough trigger events per ring.  Centre/radius
         //  refinement happens in `recodata_writer` on the mask-tagged
-        //  hits (full LOO + dual/solo splits + CB+pol3 radial fit);
-        //  all fit-derived observables live in `recodata.root`'s
-        //  `Rings/` subfolder.  The `fit_circle_init_{x,y,r}` knobs
-        //  in `[streaming_hough]` are unused at runtime but retained
-        //  for backwards compatibility with existing configs.
+        //  hit collection — full leave-one-out plus dual/solo splits
+        //  plus CB+pol3 radial fit.  All fit-derived observables live
+        //  in `recodata.root`'s `Rings/` subfolder.  The
+        //  `fit_circle_init_{x,y,r}` knobs in `[streaming_hough]` were
+        //  removed in C3.5 — recodata seeds the refit from the Hough
+        //  peak directly.  Configs that still carry the keys log a
+        //  one-shot deprecation warning per key (tolerance ends v2.1).
 
         //  |active| at each Hough pass — full pool for ring 1, pool
         //  minus ring-1 assignment for ring 2.  Used by the new

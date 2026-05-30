@@ -18,6 +18,25 @@ remote_data_dir  = "/data/2026-testbeam/preparation/testpulse/"         # Absolu
 local_data_dir   = "Data"     # Project-relative path where downloaded runs land.
 extra_args       = "-av"      # Extra flags forwarded to rsync (compression, partial, bandwidth limits, …).
 
+[sheets_sync]
+# Cross-shifter sync — push the run database, named runlists, joblock
+# state, and audit-log tail to a shared Google Sheet so every operator
+# at the beam test sees the same picture without touching git.  Push-
+# only: the dashboard's local TOML stays authoritative; the Sheet is
+# the observable surface.  See qa_quicklook/DISCUSSION.md → "Cross-
+# shifter sync" for the design rationale.
+#
+# Requires the optional google-api-python-client + google-auth packages
+# (``pip install google-api-python-client google-auth``).  When
+# ``enabled = false`` (default), the worker stays silent and no
+# dependencies are imported, so the dashboard runs untouched on
+# machines that don't carry the extras.
+enabled         = true                                      # Flip to true to start pushing; we keep the spreadsheet_id below so re-enabling is one keystroke.
+service_account = "~/.config/qa_quicklook/sheets-sa.json"   # Path to the service-account JSON key — never commit this file.
+spreadsheet_id  = "1-VjQZAa7za6RVeRLRTWLwcyfQYHa8Kjrm0fsjwEEDao"   # Google Sheets document id (the long token in the sheet URL).
+push_interval_s = 30                                        # Seconds between mtime-checks; a push only fires when something changed.
+operator_tag    = ""                                        # Optional label written to the "meta" sheet.  Empty → "$USER@$HOSTNAME".
+
 [detector]
 # Expected V_bias band per temperature window — drives the green/amber
 # chip next to the Detector row in the Run Manager run-info card.
@@ -32,3 +51,48 @@ vbias_check.bands = [
     { temp_min =   0, temp_max =  20, vbias_min = 48.0, vbias_max = 52.0 },  # room
     { temp_min =  20, temp_max =  40, vbias_min = 46.0, vbias_max = 50.0 },  # warm
 ]
+
+[retention]
+# Two-tier disk retention policy.  Shifter-friendly: nothing is irreversible
+# (every pruned run is still re-downloadable from the DAQ host).
+#
+# Tier 1: the last `full_keep_n` runs keep EVERYTHING — raw decoded device
+# files, lightdata.root, recodata.root, recotrackdata.root, PDFs, manifests.
+# These are the runs the shifter is most likely to inspect.
+#
+# Tier 2: runs older than full_keep_n but within qa_keep_n keep ONLY the
+# QA artefacts (recodata.root + qa/<step>/*.pdf + manifest; optionally
+# recotrackdata.root).  The bulk-on-disk raw decoded *.root per device gets
+# pruned — that's where the disk savings come from.
+#
+# Beyond qa_keep_n: the whole run directory is removed.  Anything beyond the
+# QA-only buffer is fully re-acquirable from the DAQ host, so this tier is
+# the safety net against unbounded disk growth across a campaign.
+full_keep_n           = 5      # Most-recent runs that keep everything.  Increase if you re-analyse heavily.
+qa_keep_n             = 50     # Total runs kept on disk.  Older than this → run dir removed entirely.
+keep_recotrackdata    = true   # In the QA-only tier, also keep recotrackdata.root alongside recodata.root + PDFs.
+sweep_on_startup      = true   # Run the cleanup sweep once when the dashboard launches.  Off → sweep only fires immediately before a new download.
+
+[qa_general]
+# Cross-run trend tiles on the QA → General sub-tab.  Source is
+# ``standard_results.toml`` (the writers' AnalysisResults publication);
+# tiles plot one observable per run across the most-recent window of
+# runs.  Twenty is the operator-validated default — small enough that
+# each x-tick is readable on a ~320 px tile, large enough that a
+# "drift since last shift" jumps out without scrolling.
+trend_runs_n   = 20    # Cross-run trend window — most-recent N runs.
+
+[livemon]
+# Background poller that watches the DAQ host for new runs.  When a new run
+# id appears at the top of the listing, the SECOND-from-top (now sealed by
+# construction) is auto-downloaded, qa_pipeline runs in --QA mode, and the
+# shifter gets a distinct notification ("auto-QA caught one for you").
+#
+# The latest run id is NEVER auto-pulled — that one might still be acquiring,
+# and downloading it would produce truncated files.  The manual download
+# picker covers the case where the shifter explicitly wants the latest.
+#
+# Off by default — explicit opt-in for the duration of a shift.
+enabled               = false  # Master toggle.  Off → polling never starts.
+poll_interval_s       = 20     # Seconds between SSH listings.  15-30 is the sweet spot; faster wastes handshakes, slower delays auto-QA after a run seals.
+notify_command        = ""     # Optional shell command run after each auto-QA completes; receives the run id as $1.  Empty → in-dashboard notification only.

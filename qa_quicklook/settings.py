@@ -131,6 +131,10 @@ SECTION_TITLES: dict[str, dict[tuple, str]] = {
     "recodata.toml": {
         ("recodata",): "Recodata",
     },
+    "qa_quicklook.toml": {
+        ("retention",): "Disk retention",
+        ("livemon",):   "Live monitor",
+    },
 }
 
 
@@ -166,6 +170,22 @@ PARAM_DESCRIPTIONS: dict[str, dict[tuple, str]] = {
         ("qa", "ct_elec_signal_lo"):                 "Electrical cross-talk window lower edge.",
         ("qa", "ct_elec_signal_hi"):                 "Electrical cross-talk window upper edge.",
     },
+    "qa_quicklook.toml": {
+        ("retention", "full_keep_n"):
+            "Last N runs that keep EVERYTHING (raw decoded device files + lightdata.root + recodata.root + PDFs).  Older runs are auto-pruned to QA-only artefacts.",
+        ("retention", "qa_keep_n"):
+            "Total runs kept on disk.  Older than full_keep_n but within qa_keep_n: QA artefacts only (recodata.root + PDFs + optional recotrackdata.root).  Beyond qa_keep_n: whole run dir removed.  Always re-downloadable from the DAQ host.",
+        ("retention", "keep_recotrackdata"):
+            "In the QA-only tier, also keep recotrackdata.root alongside recodata.root + PDFs.  Off → only recodata + PDFs survive.",
+        ("retention", "sweep_on_startup"):
+            "Run the cleanup sweep once when the dashboard launches.  Off → cleanup only fires immediately before a new download lands.",
+        ("livemon", "enabled"):
+            "Background poller that watches the DAQ host for new runs.  When a new run id appears, the previous (now-sealed) run is auto-downloaded, QA-processed, and the shifter gets a distinct notification.  The dashboard NEVER auto-pulls the run currently being acquired.",
+        ("livemon", "poll_interval_s"):
+            "Seconds between SSH listings while live monitor is on.  15-30 s is the sweet spot — faster wastes SSH handshakes, slower delays the auto-QA after a run seals.",
+        ("livemon", "notify_command"):
+            "Optional shell command run after each auto-QA completes; receives the run id as $1.  Pass via argv (no shell-string interpolation) — keep the value simple.  Empty → in-dashboard notification only.",
+    },
     "streaming.toml": {
         ("streaming_trigger", "time_window_ns"):     "Sliding-window width used by the streaming score.",
         ("streaming_trigger", "n_sigma_threshold"):  "Fire threshold for the streaming score, in σ above noise mean.",
@@ -181,9 +201,11 @@ PARAM_DESCRIPTIONS: dict[str, dict[tuple, str]] = {
         ("streaming_hough", "collection_radius"):    "Ring band width for hit assignment.",
         ("streaming_hough", "centre_xy_half_range_mm"): "Half-range of the centre search box.",
         ("streaming_hough", "aggregation_window_cells"): "Sub-cell aggregation window (1 = single-cell, 2 = aggregated).",
-        ("streaming_hough", "fit_circle_init_x"):    "Initial centre X for fit_circle (legacy; refinement runs in recodata).",
-        ("streaming_hough", "fit_circle_init_y"):    "Initial centre Y for fit_circle (legacy; refinement runs in recodata).",
-        ("streaming_hough", "fit_circle_init_r"):    "Initial radius for fit_circle (legacy; refinement runs in recodata).",
+        #  fit_circle_init_{x,y,r} keys removed 2026-05-30 (CLEAN_OFF C3.5).
+        #  No C++ reader consumes them anymore; the recodata refit seeds
+        #  from the Hough peak directly.  Configs that still carry the
+        #  keys log a one-shot deprecation warning per key (tolerance
+        #  ends v2.1).  Dashboard editing UI doesn't need to expose them.
     },
 }
 
@@ -194,6 +216,11 @@ PARAM_DESCRIPTIONS: dict[str, dict[tuple, str]] = {
 # numeric leaves render with "a.u." (arbitrary units) so the suffix
 # slot stays consistent across the page.
 PARAM_UNITS: dict[str, dict[tuple, str]] = {
+    "qa_quicklook.toml": {
+        ("retention", "full_keep_n"):   "runs",
+        ("retention", "qa_keep_n"):     "runs",
+        ("livemon",   "poll_interval_s"): "s",
+    },
     "framer_conf.toml": {
         ("framer", "frame_size"):                    "cc",
         ("framer", "first_frames_trigger"):          "frames",
@@ -221,9 +248,7 @@ PARAM_UNITS: dict[str, dict[tuple, str]] = {
         ("streaming_hough", "hough_threshold_fraction"): "",
         ("streaming_hough", "min_hits_slack"):       "hits",
         ("streaming_hough", "aggregation_window_cells"): "cells",
-        ("streaming_hough", "fit_circle_init_x"):    "mm",
-        ("streaming_hough", "fit_circle_init_y"):    "mm",
-        ("streaming_hough", "fit_circle_init_r"):    "mm",
+        #  fit_circle_init_{x,y,r} removed 2026-05-30 (CLEAN_OFF C3.5).
     },
     "recodata.toml": {
         ("recodata", "n_phi_bins_coverage"):         "bins",

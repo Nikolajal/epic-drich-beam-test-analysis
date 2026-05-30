@@ -281,16 +281,23 @@ class RunlistsView(QtWidgets.QWidget):
         # run ids from the matching database file (derived from the
         # current runlists file's name); remove drops the selected
         # rows on the right.
+        #
+        # Use full QPushButtons with explicit "Add runs" / "Remove"
+        # text and the same +2 point bump as the Refresh button — the
+        # earlier QToolButton with bare "＋ runs" glyph was easy to
+        # miss in the row of icons.  Add-runs is the primary action
+        # on this pane; it should look it.
         memb_row = QtWidgets.QHBoxLayout()
-        self._add_runs_btn = QtWidgets.QToolButton()
-        self._add_runs_btn.setText("＋ runs")
+        self._add_runs_btn = QtWidgets.QPushButton(" ＋  Add runs ")
+        f = self._add_runs_btn.font(); f.setPointSize(f.pointSize() + 2)
+        self._add_runs_btn.setFont(f)
         self._add_runs_btn.setToolTip(
             "Add runs from the matching database to this runlist"
         )
         self._add_runs_btn.clicked.connect(self._on_add_runs)
         memb_row.addWidget(self._add_runs_btn)
-        self._remove_runs_btn = QtWidgets.QToolButton()
-        self._remove_runs_btn.setText("− runs")
+        self._remove_runs_btn = QtWidgets.QPushButton(" −  Remove ")
+        self._remove_runs_btn.setFont(f)
         self._remove_runs_btn.setToolTip(
             "Remove the selected run(s) from this runlist"
         )

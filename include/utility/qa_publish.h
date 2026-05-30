@@ -33,6 +33,7 @@
 #ifndef BTANA_UTILITY_QA_PUBLISH_H
 #define BTANA_UTILITY_QA_PUBLISH_H
 
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
 #include <string>
@@ -84,6 +85,72 @@ inline std::filesystem::path pdf_path(const std::string &run_dir,
     basename << "_" << name << ".pdf";
 
     return dir / basename.str();
+}
+
+/**
+ * @brief Crop a ROOT-emitted PDF in-place to its content bounding box.
+ *
+ * ROOT's TPDF backend wraps every canvas in an A4-portrait page
+ * (MediaBox 595×842 pt, regardless of TCanvas size or
+ * @c gStyle->SetPaperSize() — verified on ROOT 6.40.00 / macOS).  The
+ * plot itself is drawn at canvas-pixel aspect ratio in the top of the
+ * page; the bottom is just whitespace.  Operators view the PDFs in
+ * the QA dashboard's tile grid where the surrounding whitespace makes
+ * every plot look portrait, defeating the equal-aspect canvas design.
+ *
+ * Post-process every emitted PDF through @c pdfcrop (from MacTeX /
+ * TeXLive) which rewrites the MediaBox to the actual content
+ * bounding box plus a small uniform margin.  The dashboard gallery
+ * then tiles uniformly because every PDF's MediaBox matches its
+ * content aspect.
+ *
+ * The crop is best-effort:
+ *  - If @c pdfcrop is not on PATH, the call is a silent no-op (the
+ *    PDF stays portrait-A4 but is still valid).  Returns @c false in
+ *    that case so callers can log if they want.
+ *  - If the crop fails for any reason (corrupt input, disk full,
+ *    permissions), the original PDF is left untouched.  Returns
+ *    @c false.
+ *
+ * @param pdf_path  Absolute path to the PDF to crop in place.  Must
+ *                  already exist on disk.
+ * @param margin_pt Uniform white-space margin around the content
+ *                  bounding box, in PDF points.  Default 5 pt keeps
+ *                  axis labels from touching the page edge in the
+ *                  dashboard's gallery view.
+ * @return @c true if the crop ran and overwrote the file successfully;
+ *         @c false if pdfcrop is missing, failed, or the file is
+ *         absent.  Never throws.
+ */
+inline bool crop_pdf_inplace(const std::filesystem::path &pdf_path,
+                             int margin_pt = 5)
+{
+    if (!std::filesystem::exists(pdf_path))
+        return false;
+
+    //  pdfcrop overwrites in-place when you pass the same path as
+    //  both input and output.  --margins clamps to a uniform
+    //  whitespace ring so labels don't touch the edge.  Quiet the
+    //  output so the writer log isn't peppered with pdfcrop's
+    //  per-file banner.
+    //
+    //  PATH injection — pdfcrop lives at /Library/TeX/texbin/pdfcrop
+    //  on macOS / MacTeX which is NOT in a forked C++ binary's
+    //  runtime PATH (only the interactive shell adds it).  Prepend
+    //  the common TeX locations so the call resolves even when the
+    //  writer is launched from cron / a desktop launcher.
+    //  pdfcrop has no --quiet flag (verified on MacTeX 2024 / pdfcrop
+    //  1.40); it's already non-verbose by default.  Redirect stdout +
+    //  stderr to /dev/null instead.
+    std::ostringstream cmd;
+    cmd << "PATH=\"/Library/TeX/texbin:/usr/local/texlive/2024/bin/universal-darwin:"
+        << "/usr/local/bin:/opt/homebrew/bin:${PATH:-}\" "
+        << "pdfcrop --margins " << margin_pt << ' '
+        << "'" << pdf_path.string() << "' "
+        << "'" << pdf_path.string() << "' "
+        << "> /dev/null 2>&1";
+    const int rc = std::system(cmd.str().c_str());
+    return rc == 0;
 }
 
 } // namespace util::qa

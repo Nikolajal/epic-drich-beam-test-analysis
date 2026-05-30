@@ -341,7 +341,7 @@ public:
     /// devices).  The formula matches the legacy `tdc_raw / 4` value
     /// **bit-exact** for the current 32-ch detector, so existing
     /// hitmap histograms binned on the legacy channel-level integer
-    /// continue to work after the Phase 5 storage migration — just
+    /// continue to work with the packed GlobalIndex storage — just
     /// substitute `gi.channel_ordinal()` for `legacy_tdc_raw / 4`.
     ///
     /// @note  Two ordinals refer to the same physical channel iff the

@@ -334,10 +334,12 @@ notes = "54.50V opmode=1 deltathr=10"
 [runs."20251112-023352"]
 v_bias = 54.75
 notes = "54.75V opmode=1 deltathr=10"
+polarity = "positive"
 
 [runs."20251112-025653"]
 v_bias = 55.00
 notes = "55.00V opmode=1 deltathr=10"
+polarity = "positive"
 
 [runs."20251112-030416"]
 v_bias = 55.25
@@ -1134,8 +1136,6 @@ notes = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALT
 
 [runs."20251119-040749"]
 notes = "Vbias=52.00 opmode=1 deltathreshold=10. Failed event alignment with ALTAI telescope"
-[runs.20231011-221500]
 
-[runs.20260527-073111]
-
-[runs.test]
+[schema]
+extra_fields = ["altai"]

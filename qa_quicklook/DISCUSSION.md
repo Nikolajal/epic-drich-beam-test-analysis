@@ -118,8 +118,8 @@ What's missing today:
     went per-step) wants exactly this — pick (sensor, quantity), pick
     a runlist filter, plot vs run-id or vs a scan variable.
   - **Per-campaign file isolation.**  Today the path is hardcoded
-    (``<data_repository>/standard_results.root`` — typically
-    ``Data/standard_results.root``).  With one database per
+    (``<data_repository>/standard_results.toml`` — typically
+    ``Data/standard_results.toml``).  With one database per
     year / beam test now landing in ``run-lists/<year>.database.toml``,
     the natural symmetry is ``run-lists/<year>.results.root`` (or
     similar).  The ``AnalysisResults`` ctor already takes a path; we
@@ -176,6 +176,29 @@ under Run Info → reflects the same data layer):
     or become first-class — pin via use cases, not speculation.
 
 ### Migrating ``AnalysisResults`` to TOML
+
+> **🟢 STATUS UPDATE 2026-05-30 — SHIPPED.**  The migration described
+> below LANDED in commit 76363b9 (via the 2026-05-29 dashboard / TOML
+> stash integration).  ``src/analysis_results.cxx`` now reads/writes
+> a single hand-readable ``standard_results.toml`` via toml++; the
+> ROOT TTree code path is gone.  Dashboard reader
+> ``qa_quicklook.rundb.results_load`` was already TOML-only.
+>
+> The text below is the **original migration proposal**, kept for
+> historical context (why the choice was made + what trade-offs were
+> evaluated).  A clean rewrite into a "shipped-feature summary +
+> current limitations + next steps" section is tracked as a Sunday
+> follow-up (see ``CLEAN_OFF.md``); for now this banner makes the
+> shipped status unambiguous on a casual read.
+>
+> Current open items (now-shipped section is below for reference):
+> * Atomic flock + tmp+rename for ``update()`` — concept from
+>   CLEAN_OFF C2.1, superseded by the TOML migration; re-apply on
+>   the TOML backend Sunday.
+> * ``rundb.results_update`` Python wrapper for operator overrides
+>   (BACKLOG row P 1.33, still READY).
+> * Right-click "Show history" popup → tail audit log for a
+>   ``(run, field)`` (BACKLOG row P 1.67, still READY).
 
 The ROOT-TTree backing was a fine choice when only ROOT macros
 touched the file, but with the dashboard becoming the primary
@@ -244,7 +267,7 @@ to ``rundb.load_database``.
   2. Migrate readers (one ROOT macro at a time) to read the TOML
      instead.
   3. Drop the ROOT-TTree path once nothing reads it.  Convert
-     ``<data_repository>/standard_results.root`` once via a one-shot
+     ``<data_repository>/standard_results.toml`` once via a one-shot
      script.
 
 Until step 3, ``.root`` and ``.toml`` are kept in sync, so a partial
@@ -355,12 +378,12 @@ their own name.
 
 ### Open questions
 
-  - ~~**Old entries with no provenance.**~~  **Landed** —
-    ``scripts/backfill_audit_legacy.py`` is the idempotent one-shot
-    migration that emits one ``[[entry]]`` per (run, field, value)
-    pair from existing ``run-lists/*.database.toml`` files with
+  - ~~**Old entries with no provenance.**~~  **Backfilled** —
+    a one-shot migration was run that emitted one ``[[entry]]`` per
+    (run, field, value) pair from ``run-lists/*.database.toml`` with
     ``source = "legacy"`` and the current value as ``new_value``.
-    Re-runs skip already-migrated tuples.
+    The audit log now distinguishes pre-history records from
+    dashboard-sourced ones.
   - **``rundb.results_update`` Python wrapper.**  Not built — the
     C++ writers feed AnalysisResults directly today.  When the
     dashboard ever needs to write results (e.g. operator-entered
@@ -420,3 +443,115 @@ doesn't get lost.
   - **Quality-tagging cockpit** integrated with the Runlist tab —
     set quality/notes from inside the dashboard; would slot into the
     runcard editor once it lands.
+
+---
+
+## Decisions captured 2026-05-29
+
+### Cross-shifter sync — Google Sheets push (shipped 2026-05-29)
+
+Implementation landed.  Five-worksheet push (`runs`, `runlists`,
+`jobs`, `audit`, `meta`), driven by a `QThread` worker
+(`qa_quicklook/sheets_worker.py`) that ticks every
+`[sheets_sync].push_interval_s` seconds and skips the network round-
+trip when no source file has changed.  Reverse-merge via cell-diff
+against a `~/.cache/qa_quicklook/sheets_last_pushed.json` baseline:
+Sheet-side edits that don't match the current local TOML get
+replayed through `rundb.update_run_field(..., source="sheet")` so
+they pick up the same audit log + Show-history surface as a
+dashboard edit.  Last-write-wins on conflicts.  Auth is a
+service-account JSON key shared with the Sheet as Editor —
+operator setup runbook lives in `qa_quicklook/README.md` →
+"Cross-shifter sync (Google Sheets)".
+
+**Column-add policy (2026-05-29):** new tracked quantities (= new
+columns on the runs worksheet) can ONLY be added from the dashboard,
+not from the Sheet.  Two enforcement layers:
+
+  1. The dashboard's runcard `+ Field` button calls
+     `rundb.add_schema_extra` which writes to `[schema] extra_fields`
+     in the year's database TOML.  The Sheet picks up the extension
+     on the next push because `Snapshot.schema_extras_by_year` drives
+     the per-year column list.
+  2. The Phase D.14 integrity check rejects Sheet-side column
+     additions (or renames) as `header drift on Runs (YYYY)`.  When
+     it fires, the push goes into hard-reset mode: skip the reverse-
+     merge, clear the snapshot, rewrite the canonical local state
+     over whatever the operator did on the Sheet.  Status bar +
+     audit log carry the trace.
+
+This keeps the schema mutations centralised + auditable while still
+letting the Sheet be a real edit surface for VALUES on existing
+columns.
+
+Deferred to follow-ups (not blockers for v1):
+
+  - **Editor identity** on Sheet-side edits — currently logged as
+    bare `source="sheet"`.  Adding `drive.metadata.readonly` scope
+    + a `revisions.list` query per push would let us attribute to
+    the Google user, at the cost of a wider IAM scope.  Re-open if
+    operators ask for per-edit attribution.
+  - **Structural fields** (`radiators`, etc.) skip the reverse-merge —
+    they're JSON-encoded into a single cell on push but the round-
+    trip risk for partial edits is too high for v1.  Operators
+    edit structural fields via the dashboard.  Add a parser pass
+    if the workflow demands editing them in the Sheet.
+  - **DeveloperMetadata** for per-cell push watermarks — the
+    cell-diff snapshot approach in the shipped design sidesteps
+    this entirely.  Worth revisiting only if the snapshot turns out
+    to be a fragility source (e.g. operators wipe `~/.cache`
+    routinely).
+
+### Cross-run trend plots — MVP
+
+**MVP plotset**: `N_γ per ring`, `σ_single`, `χ²/ndf` — all three vs
+run id, three independent figures.  These are the headline reco
+observables that track campaign health most directly.  *Not* a
+fully-operator-driven axis picker (would balloon the UI before we
+know what shifters actually scan).  Cadence: refresh on QA-tab
+focus + manual refresh button.  Source = AnalysisResults reader
+already plumbed in `qa_quicklook/rundb.py`.
+
+### "Show history" right-click on runcard fields
+
+UX/scope deferred to a follow-up DISCUSSION pass — the row was
+parked rather than decided.  Minimum we know: it tails the audit
+log filtered to `(run, field)`.  Open: popup-vs-modal, diff vs
+plain list, whether revert lives on the same widget.
+
+### Operator fit-override propagation (`rundb.results_update`)
+
+Scope deferred to follow-up DISCUSSION pass.  Open: per-field
+set/get only, or batch + diff-preview before commit; how the audit
+log records "operator override" vs "writer regeneration".
+
+**Decision (2026-05-30, CLEAN_OFF C0.4)** — covers both the
+"Show history" right-click and `results_update` above:
+
+1. **Show history = non-modal popup, read-only in v1.**  A small
+   frameless popup anchored under the clicked field, dismissed on
+   focus-out — the operator glances at the `(run, field)` history while
+   continuing to work; a modal would block the dashboard for a
+   read-only glance.  **No one-click revert in v1**: an accidental
+   click overwriting current data is a footgun, and the audit tail
+   already shows the prior value to copy-paste.  A guarded revert
+   (confirm dialog) can follow if operators ask.
+
+2. **`results_update` = per-field audit rows, with a source tag.**
+   One row per changed field, not a batched diff — the audit log's
+   purpose is field-level provenance ("who set beam=OFF on run X,
+   when"), which a single-row diff destroys.  Each row carries a
+   `source` discriminator (`operator` vs `writer`) so a manual
+   override is distinguishable from a writer regeneration; this is
+   what lets the history popup colour operator edits differently from
+   writer fills.
+
+CD-cluster steps for the right-click history (backlog.6) and the
+results reverse-merge (backlog.25) cite this.
+
+### Quality-tagging cockpit
+
+Shape deferred.  Two candidate shapes on the table:
+(a) **side panel in Runlist** with thumbnails + 1-key quality
+assignment ('g' / 'b' / 't'); (b) **modal launched from row** that
+runs the QA view inline.  Decision once the runcard editor lands.

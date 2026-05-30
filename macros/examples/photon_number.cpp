@@ -756,7 +756,7 @@ void photon_number(std::string data_repository, std::string run_name,
             {"chi2_ndf", "chi2_ndf"},
         };
 
-        AnalysisResults ar(data_repository + "/standard_results.root");
+        AnalysisResults ar(data_repository + "/standard_results.toml");
         ResultMap to_store;
 
         for (const auto &[hname, sensor, scope] : kHistMap)

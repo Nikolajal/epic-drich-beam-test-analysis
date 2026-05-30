@@ -6,9 +6,10 @@
  * Lifted verbatim (with the in-function lambda captures replaced by
  * explicit parameters) from the in-function `fit_radial_distribution`
  * lambda formerly inside `src/recodata_writer.cxx`'s QA-finalize
- * block.  Algorithm is unchanged; behavior is identical, verifiable
- * against the pre-refactor baseline in
- * `Data/20251111-164951/baseline_pre_refactor/recodata.root`.
+ * block.  Algorithm is unchanged; behavior was verified bit-identical
+ * against a pre-refactor baseline snapshot at extraction time
+ * (snapshot since pruned — regenerate by re-running recodata if a
+ * fresh comparison is needed).
  */
 
 #include "writers/recodata/radial_fit.h"
@@ -170,8 +171,8 @@ void fit_radial_distribution(TH1F *h,
     //
     //  ParLimits keep the peak σ in the same physical band [1.5, 5.0]
     //  mm so the result is comparable to the historical CB output.
-    //  The CB+pol3 results from the previous run remain a valid
-    //  benchmark in `Data/20251111-164951/post_refactor_phase1/`.
+    //  (The CB+pol3 path is a tracked backlog item — see BACKLOG
+    //  "restore Crystal-Ball + pol3 with explicit analytic CB integral".)
     static const char *kGaussPol3Formula =
         "[0]*exp(-0.5*((x-[1])/[2])*((x-[1])/[2]))"
         " + [3] + [4]*x + [5]*x*x + [6]*x*x*x";
