@@ -1,4 +1,4 @@
-# `include/writers/` — top-level writer entry points
+# include/writers/ — top-level writer entry points
 
 Four independent writer binaries land their public function signatures
 here.  Each header declares a single `btana::<name>_writer(...)` free

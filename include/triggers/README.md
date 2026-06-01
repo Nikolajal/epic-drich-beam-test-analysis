@@ -1,4 +1,4 @@
-# `include/triggers/` — trigger subsystem
+# include/triggers/ — trigger subsystem
 
 The trigger subsystem has two largely-orthogonal halves:
 

@@ -1,4 +1,4 @@
-# `include/utility/` — design notes
+# include/utility/ — design notes
 
 > 🧭 **Hub:** project-wide design log + index of satellites lives at
 > [`../../DISCUSSION.md`](../../DISCUSSION.md).
