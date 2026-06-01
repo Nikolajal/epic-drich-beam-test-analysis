@@ -5,7 +5,8 @@
  * @brief Per-frame Dark-Count-Rate / afterpulse / cross-talk QA fills.
  *
  * Extracted from the per-frame inner loop of `lightdata_writer()` —
- * the lightdata analog of `compute_ring_fit` in the recodata split.
+ * the lightdata analog of the recodata ring-compute split
+ * (`writers/recodata/ring_compute.cxx`).
  * Runs on the Cherenkov hits of a single (first-frames-tagged) frame,
  * fills:
  *

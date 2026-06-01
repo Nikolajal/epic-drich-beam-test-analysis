@@ -95,6 +95,23 @@ namespace gidx
 /// Flip to @c false (and rebuild) when the final 64-channel chip is
 /// deployed — the two helpers then collapse to the identity.
 static constexpr bool kUsesSplitInTwo = true;
+
+/// @brief Lowest ALCOR device id in the readout — the base from which
+/// the channel ordinal is derived (`channel_ordinal = (device - kFirstDevice) * …`).
+/// Cherenkov devices occupy @c [kFirstDevice, kTimingDeviceLo); the timing
+/// chip sits at @c kTimingDeviceLo.  Single source of truth for the 192
+/// base previously duplicated across the writers and @ref mapping.
+static constexpr int kFirstDevice = 192;
+
+/// @brief Boundary device id separating Cherenkov devices (@c < kTimingDeviceLo)
+/// from the timing chip (@c ≥ kTimingDeviceLo).  The canonical
+/// `device < kTimingDeviceLo` test for "is this a Cherenkov device".
+static constexpr int kTimingDeviceLo = 200;
+
+/// @brief Generous exclusive upper bound for device-iteration loops.
+/// @ref Mapping filters unmapped devices, so this only needs to bracket
+/// the populated range; it is intentionally loose, not a hard count.
+static constexpr int kDeviceUpperBound = 224;
 } // namespace gidx
 
 /**
@@ -241,7 +258,7 @@ public:
             constexpr int kChansPerDevice = 256;
             constexpr int kChansPerChip   = 32;
             const int device_offset       = channel_ord / kChansPerDevice;
-            const int device_id           = 192 + device_offset;
+            const int device_id           = gidx::kFirstDevice + device_offset;
             const int channel_in_device   = channel_ord % kChansPerDevice;
             const int real_chip_id        = channel_in_device / kChansPerChip;
             const int chip_local_chan     = channel_in_device % kChansPerChip;
@@ -262,7 +279,7 @@ public:
             constexpr int kChansPerDevice = 512;
             constexpr int kChansPerChip   = 64;
             const int device_offset     = channel_ord / kChansPerDevice;
-            const int device_id         = 192 + device_offset;
+            const int device_id         = gidx::kFirstDevice + device_offset;
             const int channel_in_device = channel_ord % kChansPerDevice;
             const int chip_id           = channel_in_device / kChansPerChip;
             const int channel_id        = channel_in_device % kChansPerChip;
@@ -361,19 +378,19 @@ public:
     ///   the final detector lands, re-evaluate whether to drop it.
     [[nodiscard]] constexpr int channel_ordinal() const noexcept
     {
-        // device() is uint16_t; subtracting 192 underflows wildly when the
-        // GlobalIndex is default-constructed (device() == 0).  Callers using
+        // device() is uint16_t; subtracting kFirstDevice underflows wildly when
+        // the GlobalIndex is default-constructed (device() == 0).  Callers using
         // the return value as a histogram bin would then index huge negative
         // bins  Guard with an assert (debug) and saturate
         // to 0 on the invalid case (release) so the bin index stays sensible.
-        assert(is_valid() && device() >= 192 &&
-               "channel_ordinal: requires is_valid() && device() >= 192");
-        if (!is_valid() || device() < 192)
+        assert(is_valid() && device() >= gidx::kFirstDevice &&
+               "channel_ordinal: requires is_valid() && device() >= kFirstDevice");
+        if (!is_valid() || device() < gidx::kFirstDevice)
             return 0;
         if constexpr (gidx::kUsesSplitInTwo)
-            return (device() - 192) * 256 + real_chip() * 32 + chip_local_channel();
+            return (device() - gidx::kFirstDevice) * 256 + real_chip() * 32 + chip_local_channel();
         else
-            return (device() - 192) * 512 + chip() * 64 + channel();
+            return (device() - gidx::kFirstDevice) * 512 + chip() * 64 + channel();
     }
 
     /// @brief Dense, counter-style per-TDC ordinal — `channel_ordinal * 4 + tdc`.
@@ -460,7 +477,7 @@ public:
     ///
     /// Returns `tdc + 4 * eo_channel + 128 * real_chip`.
     ///
-    /// @deprecated 2026-05-28 — this key omits the `device` field, so
+    /// @deprecated this key omits the `device` field, so
     /// multiple devices collide on the same value (a historical bug
     /// in the legacy fine_calib.txt format, since retired in task #172).
     /// Use @ref raw() as the calibration key instead — it encodes

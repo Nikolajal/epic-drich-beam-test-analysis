@@ -51,8 +51,31 @@ inline const std::set<std::string> lightdata_core_tags = {"timing", "tracking", 
 struct ReadoutConfigStruct
 {
     std::string name;                                      ///< Human-readable role name (e.g. @c "cherenkov").
-    std::string sensor_type;                               ///< SiPM model / sensor tag for this role (e.g. @c "1350", @c "1375", @c "mixed", @c ""=unspecified).
+    std::string sensor_type;                               ///< Role-level SiPM model / sensor tag (e.g. @c "1350", @c "1375", @c "mixed", @c ""=unspecified).  Per-device overrides live in @ref device_sensor.
     std::map<uint16_t, std::vector<uint16_t>> device_chip; ///< Active chips per device.
+    std::map<uint16_t, std::string> device_sensor;         ///< Optional PER-DEVICE sensor tag (from a device's @c sensor field).  Lets one role span two SiPM models (e.g. 1350 on rdo 192-195, 1375/Quetta on 196-199).  Absent device → falls back to @ref sensor_type.
+
+    // ── Timing-trigger coincidence (only meaningful for the "timing" role) ──
+    /// @brief Channels that must fire on each timing chip for the timing
+    /// trigger to be emitted (exact match).  Defaults reproduce the
+    /// previously hard-coded constants: chip 0 = 32, chip 1 = 31 (one dead ch).
+    int timing_chip0_alive_channels = 32;
+    int timing_chip1_alive_channels = 31;
+    /// @brief chip0 − chip1 mean-time-difference window for the timing
+    /// trigger: accepted when |Δt − center| < n_sigma · window [ns].
+    float timing_delta_center_ns = -0.5f;
+    float timing_delta_window_ns = 0.5f;
+    float timing_delta_n_sigma   = 3.0f;
+
+    /// @brief Sensor tag for @p device: the per-device override if set,
+    ///        else the role-level @ref sensor_type.
+    std::string sensor_for(uint16_t device) const
+    {
+        auto it = device_sensor.find(device);
+        return (it != device_sensor.end() && !it->second.empty())
+                   ? it->second
+                   : sensor_type;
+    }
 
     ReadoutConfigStruct() = default;
 
@@ -268,6 +291,15 @@ struct QaConfigStruct
     int ct_elec_signal_lo = -2;
     /// @brief Electrical-CT signal window upper edge (Δt cc, inclusive).
     int ct_elec_signal_hi = 10;
+    /// @brief Physical-CT neighbour radius [mm]: a hit pair counts as a
+    ///        physical-CT neighbour when their (x, y) separation is within
+    ///        this distance.  Shared by `dcr_afterpulse_ct_qa` and the
+    ///        `cross_talk_treatment` macro so the two never drift.
+    float ct_phys_radius_mm = 3.2f;
+    /// @brief CT sideband start offset [cc]: the far-Δt DCR-plateau window
+    ///        used for accidental-background subtraction begins this many cc
+    ///        after the trigger (mirrors `afterpulse_sideband_offset`).
+    int ct_sideband_offset = 512;
 
     // -------- QA-mode behavior toggles --------
     //  Section holds boolean knobs (not windows) that flip lightdata_writer
@@ -281,7 +313,7 @@ struct QaConfigStruct
     /// at the head of every spill iteration.
     ///
     /// Off by default: the canonical calibration path is the offline pass
-    /// via `macros/examples/fine_calibration_timing.cpp`.  Set true in
+    /// via the `fine_calibration_timing.cpp` macro.  Set true in
     /// `conf/QA/framer_conf.toml` so each spill seeds its calibration table
     /// from the channels that became active in the previous spill — useful
     /// only for an online-only mode where no offline calibration is available.
@@ -456,7 +488,7 @@ struct CalibConfigStruct
     double slip_max_snap_fraction = 0.30;
 
     //  Regime-1 (whole-TDC permanent slip) knobs intentionally
-    //  REMOVED 2026-05-27.  Permanent slip is naturally absorbed by
+    //  REMOVED.  Permanent slip is naturally absorbed by
     //  the fit's per-TDC intercept b — publishing the fitted b
     //  carries the slip into downstream's get_phase() correction
     //  exactly.  An earlier regime-1 implementation modified the
@@ -605,6 +637,18 @@ struct StreamingTriggerConfigStruct
     ///        spills.
     double min_noise_hits = 5.0;
 
+    /// @brief In-beam-background QA sample: the per-hit score window ends
+    ///        this many ns *before* each hardware trigger (a guard band
+    ///        ahead of the signal).  Tune to taste.  Default 40 ns.
+    float inbeam_pretrigger_offset_ns = 40.f;
+
+    /// @brief In-beam-background QA sample: width of the pre-trigger band
+    ///        sampled per hit (the band ends `inbeam_pretrigger_offset_ns`
+    ///        before the trigger).  Wider = more in-beam statistics.
+    ///        Default 600 ns (band runs −640 ns … −40 ns before the trigger
+    ///        at the default 40 ns offset).
+    float inbeam_sample_width_ns = 600.f;
+
     /// @brief **C7.6 — multiplicity upper-bound cut.**  Suppress
     ///        `_TRIGGER_STREAMING_RING_FOUND_` emission for any
     ///        cluster whose peak hit count exceeds this value.
@@ -616,6 +660,13 @@ struct StreamingTriggerConfigStruct
     /// ~150–250 for two Cherenkov rings + DCR floor on the
     /// dRICH detector; tune from the n_hits-per-cluster QA.
     int max_hits_per_window = 0;
+
+    /// @brief Fallback coincidence window [ns] for selecting hits around a
+    ///        non-Hough (hardware) trigger when the streaming/Hough
+    ///        self-trigger isn't tagging ring members.  Operators may
+    ///        widen/narrow it to match the Cherenkov light arrival spread.
+    ///        Default 50 ns.
+    float default_trigger_window_ns = 50.f;
 };
 
 /**
@@ -684,10 +735,10 @@ struct StreamingHoughConfigStruct
 
     /// @brief `min_active = ceil(this × N_active_cherenkov)`.  Both the
     /// "Hough may run at all" gate and the baseline for `min_hits_slack`.
-    float hough_threshold_fraction = 0.004f;
+    float hough_threshold_fraction = 0.0035f;
 
     /// @brief Ring band width [mm] for hit assignment.
-    float collection_radius = 7.5f;
+    float collection_radius = 2.f;
 
     /// @brief Half-range [mm] of the X/Y axis on the per-ring centre QA
     /// histograms (the hists span @c [-this, +this]).  Not consumed by
@@ -722,8 +773,8 @@ struct StreamingHoughConfigStruct
     /// value comfortably brackets the real ring centres.
     float centre_padding_mm = -1.f;
 
-    //  C3.5 — removed `fit_circle_init_{x,y,r}` fields and TOML knobs
-    //  (2026-05-30).  No live consumer existed: the centre/radius
+    //  C3.5 — removed `fit_circle_init_{x,y,r}` fields and TOML knobs.
+    //  No live consumer existed: the centre/radius
     //  refinement is done by `recodata_writer` from the Hough peak,
     //  not from a config-supplied seed.  TOMLs that still carry the
     //  keys are tolerated (warning + ignored) by
@@ -814,6 +865,15 @@ struct RecodataConfigStruct
     /// stage so the two are consistent.
     int min_hits_per_ring = 5;
 
+    /// @brief Coincidence window (ns, relative to a hardware trigger's
+    /// reference time) used to select cherenkov hits for the ring fit when
+    /// the Hough self-trigger isn't tagging them (QA mode).  A hit is kept
+    /// when `dt_min ≤ (t_hit − t_ref) ≤ dt_max` — asymmetric, since the
+    /// Cherenkov light sits in a specific window after the trigger.  See
+    /// `compute_ring_fit_timewindow`.  Defaults −30 … +30 ns.
+    float hardware_ring_dt_min_ns = -30.f;
+    float hardware_ring_dt_max_ns =  30.f;
+
     /// @brief Skip channels with `r_channel < this` when building the
     /// coverage map.  Default 0 = no extra filter (the loose
     /// `|x|<5 && |y|<5` filter from `index_to_hit_xy` construction
@@ -847,24 +907,42 @@ struct RecodataConfigStruct
     /// feedback).
     ///
     /// Default `false` keeps production behaviour intact; set to
-    /// `true` in `conf/QA/recodata.toml` to enable for `--QA` mode.
+    /// `true` in `conf/QA/streaming.toml`'s `[streaming_hough]` table
+    /// to enable for `--QA` mode.
     bool skip_loo_residuals = false;
 };
 
 /**
- * @brief Parse the @c [recodata] table from a TOML configuration file.
+ * @brief Populate a @ref RecodataConfigStruct from two TOML files.
  *
- * Missing keys fall back to the defaults in @ref RecodataConfigStruct.
- * The parser echoes loaded values via `mist::logger::info` at startup
- * — same "did my edit take effect?" diagnostic as
- * @ref streaming_hough_conf_reader.
+ * The former standalone `recodata.toml` was dismembered: its keys now
+ * live in the two files the recodata pipeline already reads, so there's
+ * no third config to keep in sync.
  *
- * @param config_file Path to the TOML configuration file
- *                    (defaults to @c "conf/recodata.toml").
+ *  - The 5 ring-reconstruction knobs (`hardware_ring_dt_min_ns`,
+ *    `hardware_ring_dt_max_ns`, `min_hits_per_ring`,
+ *    `delta_r_for_coverage_mm`, `skip_loo_residuals`) are read from the
+ *    @c [streaming_hough] table of @p streaming_file — they sit next to
+ *    the Hough geometry they must stay consistent with.
+ *
+ *  - The 8 coverage-map geometry keys (`n_phi_bins_coverage`,
+ *    `n_r_bins_coverage`, `r_min_coverage_mm`, `r_max_coverage_mm`,
+ *    `channel_half_width_mm`, `nominal_centre_x_mm`,
+ *    `nominal_centre_y_mm`, `min_channel_r_for_coverage_mm`) are read
+ *    from a @c [coverage] table in @p mapping_file — they're detector
+ *    geometry, same domain as the rest of `mapping_conf.toml`.
+ *
+ * Missing keys (or a missing table) fall back to the defaults in
+ * @ref RecodataConfigStruct.  Each file is parsed in its own try/catch
+ * and loaded values are echoed via `mist::logger::info` — same
+ * "did my edit take effect?" diagnostic as @ref streaming_hough_conf_reader.
+ *
+ * @param streaming_file Path to the streaming TOML (`[streaming_hough]`).
+ * @param mapping_file   Path to the mapping TOML (`[coverage]`).
  * @return Populated @ref RecodataConfigStruct.
  */
 RecodataConfigStruct
-recodata_conf_reader(std::string config_file = "conf/recodata.toml");
+recodata_conf_reader(std::string streaming_file, std::string mapping_file);
 
 // =========================================================================
 //  Run metadata

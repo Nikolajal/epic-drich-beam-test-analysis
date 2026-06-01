@@ -3,7 +3,7 @@
  * @brief Implementation of @ref util::radiator_efficiency helpers.
  *
  * See header for the API + physics interpretation.  Ported from the
- * offline `macros/examples/photon_number_new.cpp` start-of-spill
+ * offline `photon_number_new.cpp` start-of-spill
  * coverage-map fill loop and the `radial_efficiency` function, with
  * the φ-gap (kPhiGapRanges) split removed for V1 — that's a
  * finer-analysis concern surfaced in a follow-up.
@@ -159,6 +159,74 @@ TH2F *build_coverage_map(
 }
 
 // ============================================================
+//  build_coverage_map_xy
+// ============================================================
+
+TH2F *build_coverage_map_xy(
+    const std::map<int, std::array<float, 2>> &channel_xy,
+    int n_x_bins,
+    float x_min_mm,
+    float x_max_mm,
+    int n_y_bins,
+    float y_min_mm,
+    float y_max_mm,
+    float channel_half_width_mm,
+    const std::map<int, float> *channel_weights)
+{
+    static int counter = 0;
+    TH2F *coverage_map = new TH2F(
+        (std::string("h_coverage_map_xy_") + std::to_string(counter++)).c_str(),
+        ";c_{x} (mm);c_{y} (mm)",
+        n_x_bins, x_min_mm, x_max_mm,
+        n_y_bins, y_min_mm, y_max_mm);
+
+    //  Same weight + footprint convention as build_coverage_map, but
+    //  cartesian — each channel's ±channel_half_width pixel square is
+    //  rasterised by a plain bounding-box bin-centre containment test
+    //  (no polar Jacobian).  Bin value = Σ weight of covering channels.
+    for (const auto &[lut_key, position] : channel_xy)
+    {
+        float channel_weight = 1.f;
+        if (channel_weights)
+        {
+            auto it_w = channel_weights->find(lut_key);
+            if (it_w == channel_weights->end())
+                continue;  // unmapped → effectively masked
+            channel_weight = it_w->second;
+            if (channel_weight <= 0.f)
+                continue;  // dead channel
+        }
+
+        const float cx = position[0];
+        const float cy = position[1];
+        const int bin_x_lo = coverage_map->GetXaxis()->FindBin(cx - channel_half_width_mm);
+        const int bin_x_hi = coverage_map->GetXaxis()->FindBin(cx + channel_half_width_mm);
+        const int bin_y_lo = coverage_map->GetYaxis()->FindBin(cy - channel_half_width_mm);
+        const int bin_y_hi = coverage_map->GetYaxis()->FindBin(cy + channel_half_width_mm);
+        for (int bx = bin_x_lo; bx <= bin_x_hi; ++bx)
+        {
+            if (bx < 1 || bx > n_x_bins)
+                continue;
+            const float bx_centre = coverage_map->GetXaxis()->GetBinCenter(bx);
+            for (int by = bin_y_lo; by <= bin_y_hi; ++by)
+            {
+                if (by < 1 || by > n_y_bins)
+                    continue;
+                const float by_centre = coverage_map->GetYaxis()->GetBinCenter(by);
+                if (std::fabs(bx_centre - cx) > channel_half_width_mm ||
+                    std::fabs(by_centre - cy) > channel_half_width_mm)
+                    continue;
+                coverage_map->AddBinContent(
+                    coverage_map->GetBin(bx, by),
+                    static_cast<double>(channel_weight));
+            }
+        }
+    }
+    coverage_map->SetEntries(coverage_map->Integral());
+    return coverage_map;
+}
+
+// ============================================================
 //  radial_efficiency
 // ============================================================
 
@@ -220,7 +288,8 @@ float azimuthal_coverage_fraction(
     float cx,
     float cy,
     float R,
-    float delta_r_mm)
+    float delta_r_mm,
+    float channel_half_width_mm)
 {
     if (R <= 0.f || delta_r_mm <= 0.f || channel_xy.empty())
         return 0.f;
@@ -252,12 +321,11 @@ float azimuthal_coverage_fraction(
             continue;
 
         const float phi_ch = std::atan2(dy, dx);
-        // Half-extent in φ for this channel: pixel half-width
-        // converted to angular span at the channel's radius.
-        // Hardcoded 1.5 mm matches `channel_half_width_mm` default
-        // in build_coverage_map — kept consistent here so
-        // f_coverage and eff(R) describe the same geometry.
-        const float delta_phi = 1.5f / r_ch;
+        // Half-extent in φ for this channel: pixel half-width converted to an
+        // angular span at the channel's radius.  `channel_half_width_mm` is
+        // threaded from RecodataConfigStruct so f_coverage and
+        // build_coverage_map describe the same geometry from one config value.
+        const float delta_phi = channel_half_width_mm / r_ch;
         float phi_lo = phi_ch - delta_phi;
         float phi_hi = phi_ch + delta_phi;
 

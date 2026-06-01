@@ -499,7 +499,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         //  of re-converging to the same point — the cap of 5 was a
         //  no-op before this change because the fit is deterministic
         //  from a fixed start.  Tightened cap to 3 after instrumented
-        //  measurement (2026-05-29) showed the jittered iterations
+        //  measurement showed the jittered iterations
         //  converge within 2–3 attempts in the cold-spill regime that
         //  dominates total fit cost (see BACKLOG P 0.35).  Saves
         //  ~1.5–2 s on the cold spill, negligible on warm spills.
@@ -569,7 +569,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
 // =============================================================================
 //
 // Method bodies below were moved out of `include/alcor_finedata.h` during
-// the 2026-05-27 IWYU sweep on the theory that ROOT's dict autoparse
+// the IWYU sweep on the theory that ROOT's dict autoparse
 // needed the header to be self-sufficient.  That theory was a
 // misdiagnosis: the actual failures it chased (`HitMask` /
 // `BTANA_ALCOR_*` / `::GlobalIndex` unknown when a macro loads via

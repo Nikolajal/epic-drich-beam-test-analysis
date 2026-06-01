@@ -49,8 +49,8 @@ inline CircleFitResults fit_circle(std::vector<std::array<float, 2>> points,
     //  Chi2 minimisation for points in a circle
     auto chi2_function = [&](const double *parameters)
     {
-        float chi2 = 0;
-        for (int iPnt = 0; iPnt < points.size(); iPnt++)
+        double chi2 = 0;
+        for (size_t iPnt = 0; iPnt < points.size(); ++iPnt)
         {
             if (std::find(exclude_points.begin(), exclude_points.end(), iPnt) != exclude_points.end())
                 continue;

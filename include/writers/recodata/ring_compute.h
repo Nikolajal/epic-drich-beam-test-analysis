@@ -6,15 +6,13 @@
  *        in-function lambdas of `recodata_writer()` (Phase D of the
  *        modularization pass).
  *
- * The three free functions here form the inner core of the recodata
+ * The two free functions here form the inner core of the recodata
  * writer's main loop:
  *
- *  - @ref compute_ring_fit  — pure compute, no shared-state mutation;
- *                             safe to call from worker threads.
+ *  - @ref compute_ring_fit_timewindow — pure compute, no shared-state
+ *                             mutation; safe to call from worker threads.
  *  - @ref fill_ring_hists   — pure drain, mutates histograms only;
  *                             must run on a single thread.
- *  - @ref refit_and_fill_ring — convenience wrapper that composes the
- *                               two above for the serial code path.
  *
  * State that used to be captured by reference from the parent
  * function's scope is now passed explicitly via @ref RingComputeContext
@@ -55,29 +53,35 @@ struct RingComputeContext
 };
 
 /**
- * @brief Pure-compute single-ring fit.
+ * @brief Pure-compute single-ring fit by TIME WINDOW.
  *
- * Selects hits tagged with @p ring_bit from @p lightdata, runs
- * `fit_circle` for the centre + radius, computes the per-ring radial
- * residual RMS, and (optionally) the leave-one-out residual per hit.
+ * Selects every non-afterpulse cherenkov hit whose `(t_hit − t_ref_ns)`
+ * falls in `[dt_min_ns, dt_max_ns]`, runs `fit_circle` for the centre +
+ * radius, computes the per-ring radial residual RMS, and (optionally) the
+ * leave-one-out residual per hit.  This is how recodata reconstructs rings
+ * on hardware-trigger frames when the streaming/Hough self-trigger — which
+ * tags the ring hits — is disabled (e.g. QA mode).  The window is
+ * asymmetric on purpose (the Cherenkov light sits in a specific Δt band
+ * after the trigger).
  *
- * No shared state is mutated — safe to call from worker threads
- *  Caller pairs the returned @ref RingFitResult
- * with @ref fill_ring_hists in the drain phase.
+ * No shared state is mutated — safe to call from worker threads.  Caller
+ * pairs the returned @ref RingFitResult with @ref fill_ring_hists in the
+ * drain phase.
  *
- * @param ring_bit  Mask bit selecting which ring's hits to use.
- * @param lightdata Frame's lightdata view (read-only, but the link
- *                  member function isn't `const` in the schema).
+ * @param t_ref_ns  Hardware-trigger reference time [ns].
+ * @param dt_min_ns Lower edge of the acceptance window [ns] (rel. to ref).
+ * @param dt_max_ns Upper edge of the acceptance window [ns] (rel. to ref).
  * @param do_loo    When true, run the per-hit leave-one-out fit loop
- *                  (~N extra fit_circle calls).  False ⇒ leave
- *                  `out.loo_residuals` empty.  Gated by the QA path's
+ *                  (~N extra fit_circle calls).  Gated by the QA path's
  *                  `skip_loo_residuals` knob upstream.
  * @param ctx       Geometry + config bundle.
  */
-RingFitResult compute_ring_fit(HitMask ring_bit,
-                               AlcorLightdata &lightdata,
-                               bool do_loo,
-                               const RingComputeContext &ctx);
+RingFitResult compute_ring_fit_timewindow(float t_ref_ns,
+                                          float dt_min_ns,
+                                          float dt_max_ns,
+                                          AlcorLightdata &lightdata,
+                                          bool do_loo,
+                                          const RingComputeContext &ctx);
 
 /**
  * @brief Drain helper: replay the histogram fills implied by a
@@ -88,19 +92,5 @@ RingFitResult compute_ring_fit(HitMask ring_bit,
  * iff the caller serializes hist access.
  */
 void fill_ring_hists(const RingFitResult &r, const RingFillHists &h);
-
-/**
- * @brief Convenience wrapper for the serial code path: compute then
- *        fill in one call.
- *
- * Internally derives `do_loo` from whether @p h carries a non-null
- * residual histogram AND `ctx.cfg.skip_loo_residuals` is false.
- *
- * @return `true` iff the fit converged.
- */
-bool refit_and_fill_ring(HitMask ring_bit,
-                         const RingFillHists &h,
-                         AlcorLightdata &lightdata,
-                         const RingComputeContext &ctx);
 
 } // namespace btana::recodata

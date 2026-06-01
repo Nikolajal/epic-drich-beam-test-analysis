@@ -7,7 +7,7 @@
 # Mirrors production values for everything that affects framing geometry
 # or QA-window definitions; the only QA-specific knob is the
 # per-spill-calibration toggle at the bottom.  Following the same
-# convention as `conf/QA/recodata.toml` and `conf/QA/streaming.toml`:
+# convention as `conf/QA/streaming.toml`:
 # QA configs are self-contained mirrors of production, with deltas at
 # the end.
 
@@ -29,6 +29,8 @@ ct_phys_signal_lo             =   0
 ct_phys_signal_hi             =  10
 ct_elec_signal_lo             =  -2
 ct_elec_signal_hi             =  10
+ct_phys_radius_mm             = 3.2
+ct_sideband_offset            = 512
 
 # Calibration-update toggle — DROPPED from --QA bundle (2026-05-29 audit).
 #

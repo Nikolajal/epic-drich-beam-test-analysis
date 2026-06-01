@@ -29,6 +29,7 @@ the named-selection itself.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,36 @@ if sys.version_info >= (3, 11):
     import tomllib as _tomllib
 else:  # pragma: no cover
     import tomli as _tomllib  # type: ignore
+
+
+def _runlist_year_tag(run_ids: list[str]) -> str:
+    """Campaign tag for a runlist, derived from its member run ids.
+
+    Each run id is ``YYYYMMDD-HHMMSS`` so the campaign year is the first
+    four characters.  All members in one year → that year (e.g.
+    ``"2026"``); members spanning two or more years → ``"mixed"`` (a
+    cross-campaign list); an empty runlist → ``"empty"``.  Lets the
+    operator tell at a glance which campaign a runlist belongs to.
+    """
+    years = {r[:4] for r in run_ids if len(r) >= 4 and r[:4].isdigit()}
+    if not years:
+        return "empty"
+    if len(years) == 1:
+        return next(iter(years))
+    return "mixed"
+
+
+#  Campaign-tag foreground colours for the runlists table — "mixed"
+#  flagged amber (cross-campaign), "empty" muted, single years tinted.
+#  Unknown years fall through to the theme default (no entry → no tint).
+_RUNLIST_TAG_COLOURS: dict[str, str] = {
+    "2023": "#6FA8DC",
+    "2024": "#76C7A0",
+    "2025": "#E0C46C",
+    "2026": "#7AC0E0",
+    "mixed": "#E0A050",
+    "empty": "#9B8E8E",
+}
 
 
 def _read_runlists(path: Path) -> dict[str, list[str]]:
@@ -93,7 +124,6 @@ def _create_runlist(path: Path, name: str) -> bool:
     new_text = tomlkit.dumps(doc)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, path)
     return True
 
@@ -119,7 +149,6 @@ def _set_runlist_runs(path: Path, name: str, run_ids: list[str]) -> bool:
     new_text = tomlkit.dumps(doc)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, path)
     return True
 
@@ -136,7 +165,6 @@ def _delete_runlist(path: Path, name: str) -> bool:
     new_text = tomlkit.dumps(doc)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, path)
     return True
 
@@ -159,7 +187,6 @@ def _rename_runlist(path: Path, old_name: str, new_name: str) -> bool:
     new_text = tomlkit.dumps(doc)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, path)
     return True
 
@@ -214,10 +241,24 @@ class RunlistsView(QtWidgets.QWidget):
         cap.setObjectName("muted")
         lv.addWidget(cap)
 
-        self._list = QtWidgets.QListWidget()
+        #  Aligned table (mirrors the Database tab): name · campaign tag
+        #  (colour-coded, like the quality chip) · run count (like the
+        #  spill count).  Single-row select; name stretches.
+        self._list = QtWidgets.QTableWidget(0, 3)
+        self._list.setHorizontalHeaderLabels(["Runlist", "Campaign", "Runs"])
+        self._list.verticalHeader().setVisible(False)
+        self._list.setShowGrid(False)
+        self._list.setAlternatingRowColors(True)
+        self._list.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectRows)
         self._list.setSelectionMode(
-            QtWidgets.QAbstractItemView.SingleSelection
-        )
+            QtWidgets.QAbstractItemView.SingleSelection)
+        self._list.setEditTriggers(
+            QtWidgets.QAbstractItemView.NoEditTriggers)
+        _hh = self._list.horizontalHeader()
+        _hh.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        _hh.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        _hh.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
         self._list.currentItemChanged.connect(self._on_runlist_picked)
         lv.addWidget(self._list, 1)
 
@@ -320,21 +361,39 @@ class RunlistsView(QtWidgets.QWidget):
         current_name = None
         item = self._list.currentItem()
         if item is not None:
-            current_name = item.text()
+            current_name = self._item_name(item)
         self._list.blockSignals(True)
-        self._list.clear()
-        for name in sorted(self._runlists.keys()):
-            it = QtWidgets.QListWidgetItem(name)
-            it.setToolTip(f"{len(self._runlists[name])} run(s)")
-            self._list.addItem(it)
+        self._list.setRowCount(0)
+        names = sorted(self._runlists.keys())
+        self._list.setRowCount(len(names))
+        for row, name in enumerate(names):
+            runs = self._runlists[name]
+            tag = _runlist_year_tag(runs)
+            #  Canonical runlist name lives in UserRole on every cell so
+            #  selection lookups work from whichever column is clicked
+            #  and the tag never leaks into name lookups (rename/delete).
+            name_item = QtWidgets.QTableWidgetItem(name)
+            tag_item = QtWidgets.QTableWidgetItem(tag)
+            tag_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            colour = _RUNLIST_TAG_COLOURS.get(tag)
+            if colour:
+                tag_item.setForeground(QtGui.QBrush(QtGui.QColor(colour)))
+            count_item = QtWidgets.QTableWidgetItem(str(len(runs)))
+            count_item.setTextAlignment(
+                QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            tip = f"{len(runs)} run(s)  ·  campaign: {tag}"
+            for col, it in enumerate((name_item, tag_item, count_item)):
+                it.setData(QtCore.Qt.UserRole, name)
+                it.setToolTip(tip)
+                self._list.setItem(row, col, it)
         self._list.blockSignals(False)
         if current_name:
-            for i in range(self._list.count()):
-                if self._list.item(i).text() == current_name:
-                    self._list.setCurrentRow(i)
+            for i in range(self._list.rowCount()):
+                if self._item_name(self._list.item(i, 0)) == current_name:
+                    self._list.selectRow(i)
                     return
-        if self._list.count() > 0:
-            self._list.setCurrentRow(0)
+        if self._list.rowCount() > 0:
+            self._list.selectRow(0)
         else:
             self._show_empty()
 
@@ -350,10 +409,11 @@ class RunlistsView(QtWidgets.QWidget):
         if current is None:
             self._show_empty()
             return
-        name = current.text()
+        name = self._item_name(current)
         runs = self._runlists.get(name, [])
+        tag = _runlist_year_tag(runs)
         self._head.setText(name)
-        self._subhead.setText(f"{len(runs)} run(s)")
+        self._subhead.setText(f"{len(runs)} run(s)  ·  campaign: {tag}")
         self._runs.clear()
         for r in runs:
             self._runs.addItem(r)
@@ -386,9 +446,18 @@ class RunlistsView(QtWidgets.QWidget):
 
     # ----- rename / delete ----------------------------------------------
 
+    @staticmethod
+    def _item_name(item) -> Optional[str]:
+        """Canonical runlist name for a list item — the UserRole value
+        (set in ``reload``), falling back to the display text for any
+        item created before the tag was added."""
+        if item is None:
+            return None
+        name = item.data(QtCore.Qt.UserRole)
+        return name if name else item.text()
+
     def _selected_name(self) -> Optional[str]:
-        it = self._list.currentItem()
-        return None if it is None else it.text()
+        return self._item_name(self._list.currentItem())
 
     def _matching_database(self) -> Path:
         """Path of the database file paired with the current runlists.

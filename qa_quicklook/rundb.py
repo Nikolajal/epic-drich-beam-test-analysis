@@ -12,12 +12,104 @@ no Qt.  The Runlist tab consumes ``RunRecord`` instances.
 
 from __future__ import annotations
 
+import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import tomlkit
+
+
+#  Run-id convention: YYYYMMDD-HHMMSS.  Same shape used by retention,
+#  download, and qa_pipeline — kept here too so the run-discovery
+#  helpers below don't have to import any of those.
+_RUN_ID_RE = re.compile(r"^\d{8}-\d{6}$")
+
+#  Filesystem entries that don't count as real run content when
+#  deciding whether a run directory is "populated" vs a phantom.
+#  ``.DS_Store`` is macOS metadata; the retention markers are
+#  bookkeeping dotfiles, not data.  A run dir holding ONLY these is a
+#  phantom (e.g. a fully-pruned run whose directory was left behind,
+#  or an interrupted download) and must not surface as a local run.
+_NON_CONTENT_NAMES: frozenset[str] = frozenset({
+    ".DS_Store",
+    ".qa_managed",
+    ".qa_persistent",
+})
+
+
+def is_populated_run_dir(run_dir: Path) -> bool:
+    """True iff ``run_dir`` is a real, locally-held run worth listing.
+
+    A run dir qualifies when its name matches the ``YYYYMMDD-HHMMSS``
+    convention AND it holds at least one entry that isn't pure
+    bookkeeping (see ``_NON_CONTENT_NAMES``).  A genuinely empty dir —
+    or one left holding only a ``.DS_Store`` / retention marker after a
+    prune — is a PHANTOM and returns False, so the dashboard never
+    lists it as a run that exists locally.
+
+    Deliberately shallow + cheap: it stops at the first content entry
+    via ``iterdir`` (no recursive walk), so it's fine to call on every
+    picker refresh across dozens of run dirs.
+    """
+    if not run_dir.is_dir() or not _RUN_ID_RE.match(run_dir.name):
+        return False
+    try:
+        for child in run_dir.iterdir():
+            if child.name not in _NON_CONTENT_NAMES:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def list_populated_runs(data_dir: Path) -> list[str]:
+    """Run ids under ``data_dir`` that are real local runs, newest-first.
+
+    Filters out phantom (empty / marker-only) directories and anything
+    not matching the run-id convention.  Newest-first because run ids
+    are timestamps and the lexical reverse sort is reverse-chronological.
+    """
+    if not data_dir.is_dir():
+        return []
+    return sorted(
+        (p.name for p in data_dir.iterdir() if is_populated_run_dir(p)),
+        reverse=True,
+    )
+
+
+#  Campaign files are named ``YYYY.<kind>.toml`` (e.g. ``2026.database.toml``,
+#  ``2026.runlists.toml``).  The dashboard defaults to the NEWEST campaign
+#  present so a new year's database becomes the default automatically —
+#  no hard-coded year to bump (and no stale default silently pointing at
+#  last campaign's runs).
+_CAMPAIGN_FILE_RE = re.compile(r"^(20\d{2})\.(database|runlists)\.toml$")
+
+
+def newest_campaign_file(
+    run_lists_dir: Path, kind: str, *, fallback_year: int = 2025,
+) -> Path:
+    """Path to the newest ``YYYY.<kind>.toml`` under ``run_lists_dir``.
+
+    ``kind`` is ``"database"`` or ``"runlists"``.  Scans for the
+    campaign files, returns the highest-year one.  When none exist the
+    path for ``fallback_year`` is returned (it may not exist yet — the
+    caller's downstream code already tolerates a missing database).
+    """
+    best_year = -1
+    best: Optional[Path] = None
+    if run_lists_dir.is_dir():
+        for p in run_lists_dir.iterdir():
+            m = _CAMPAIGN_FILE_RE.match(p.name)
+            if m and m.group(2) == kind:
+                year = int(m.group(1))
+                if year > best_year:
+                    best_year, best = year, p
+    if best is not None:
+        return best
+    return run_lists_dir / f"{fallback_year}.{kind}.toml"
 
 # Read path: stdlib tomllib is ~600× faster than tomlkit on the
 # ~260-entry production database (3 ms vs 1700 ms).  We use it for
@@ -188,7 +280,6 @@ def append_runs(database_path: Path, new_run_ids: list[str]) -> int:
     new_text = tomlkit.dumps(doc)
     tmp = database_path.with_suffix(database_path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, database_path)
     return added
 
@@ -332,13 +423,21 @@ def update_run_field(
             runs[pin_id][field] = old_merged_value
             break
 
-    # Apply the actual edit on the target run.
-    runs[run_id][field] = new_value
+    # Apply the actual edit on the target run.  A ``None`` new value
+    # means the operator CLEARED the field — tomlkit can't serialise
+    # None (it raises ConvertError), and the right semantics anyway is
+    # to drop the per-run override so the field falls back to forward-
+    # inheritance.  So delete the key rather than writing None.  (The
+    # auto-pin above already preserved any downstream merged view.)
+    if new_value is None:
+        if field in runs[run_id]:
+            del runs[run_id][field]
+    else:
+        runs[run_id][field] = new_value
 
     new_text = tomlkit.dumps(doc)
     tmp = database_path.with_suffix(database_path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, database_path)
 
     # Provenance log — written *after* the primary file lands so a
@@ -421,7 +520,6 @@ def delete_runs(
     new_text = tomlkit.dumps(doc)
     tmp = database_path.with_suffix(database_path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, database_path)
     return removed
 
@@ -487,7 +585,6 @@ def add_schema_extra(database_path: Path, field_name: str) -> bool:
     new_text = tomlkit.dumps(doc)
     tmp = database_path.with_suffix(database_path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, database_path)
     return True
 
@@ -627,7 +724,6 @@ def save_selection_as_runlist(
     new_text = tomlkit.dumps(doc)
     tmp = runlists_path.with_suffix(runlists_path.suffix + ".tmp")
     tmp.write_text(new_text)
-    import os
     os.replace(tmp, runlists_path)
 
 

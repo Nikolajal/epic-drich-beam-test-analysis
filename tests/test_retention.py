@@ -42,13 +42,22 @@ def _make_run(
     with_recodata: bool = True,
     with_recotrack: bool = True,
     with_pdfs: bool = True,
+    qa_managed: bool = True,
 ) -> Path:
     """Create a single fake run directory under ``data_dir``.
 
     Each file is non-empty so the bytes-freed report is exercised.
+
+    ``qa_managed`` defaults True so the tier-logic tests exercise a
+    run the sweep is actually allowed to touch — the sweep NEVER
+    prunes a run without the ``.qa_managed`` marker (see the
+    exemption test).  Pass ``qa_managed=False`` to build a
+    hand-placed / externally-acquired run.
     """
     run_dir = data_dir / run_id
     run_dir.mkdir(parents=True)
+    if qa_managed:
+        (run_dir / retention.QA_MANAGED_MARKER).touch()
     if with_raw_decoded:
         for rdo in ("rdo-196", "rdo-197"):
             decoded = run_dir / rdo / "decoded"
@@ -116,6 +125,47 @@ class TestSweep:
         assert plan["full_keep"] == []
         assert plan["qa_only"] == []
         assert plan["fully_pruned"] == []
+
+    def test_non_qa_managed_runs_never_touched(self, tmp_path: Path) -> None:
+        """THE core invariant: a run without ``.qa_managed`` is NEVER
+        pruned/demoted, regardless of age, no matter how far past the
+        keep window it sits.  This is the whole reason the old
+        ``enforce_qa_managed`` escape hatch was removed — hand-placed
+        runs are the downloader's responsibility, full stop."""
+        #  10 hand-placed runs (no .qa_managed), full_keep_n=1, qa_keep_n=2
+        #  — under the old behaviour 8 of these would be fully pruned and
+        #  1 demoted.  Now: ALL land in user_managed, none touched.
+        for i in range(1, 11):
+            _make_run(tmp_path, f"2026010{i // 10}-{i % 10:02d}0000",
+                      qa_managed=False)
+        plan = retention.sweep(tmp_path, full_keep_n=1, qa_keep_n=2)
+        assert plan["full_keep"] == []
+        assert plan["qa_only"] == []
+        assert plan["fully_pruned"] == []
+        assert len(plan["user_managed"]) == 10
+
+    def test_qa_managed_marker_survives_qa_only_demotion(
+        self, tmp_path: Path,
+    ) -> None:
+        """A QA-only demotion must NOT delete the ``.qa_managed`` /
+        ``.qa_persistent`` markers — stripping them would un-manage /
+        unpin the run on the next sweep."""
+        _make_run(tmp_path, "20260101-100000")  # newest, full-keep
+        older = _make_run(tmp_path, "20259901-100000")  # demoted to qa-only
+        retention.pin_persistent(older)  # also drop .qa_persistent
+        # pin moves it to the persistent bucket, so build a separate
+        # non-pinned older run to exercise the demotion delete-list.
+        older2 = _make_run(tmp_path, "20259801-100000")
+        plan = retention.sweep(tmp_path, full_keep_n=1, qa_keep_n=50)
+        demote = next(
+            (e for e in plan["qa_only"]
+             if e["run"] == str(older2)), None)
+        assert demote is not None
+        names = {Path(p).name for p in demote["delete"]}
+        assert retention.QA_MANAGED_MARKER not in names
+        assert retention.QA_PERSISTENT_MARKER not in names
+        # and the raw decoded + lightdata.root ARE in the delete list.
+        assert "lightdata.root" in names
 
     def test_all_within_full_keep(self, tmp_path: Path) -> None:
         runs = _build_campaign(tmp_path, n_runs=3)

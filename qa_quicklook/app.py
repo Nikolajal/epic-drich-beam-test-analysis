@@ -25,12 +25,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
+from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import qa_pipeline as _qa_pipeline
+from . import rundb
 from . import theme
 from .dbworker import DbWorker
 from . import sheets_sync as _sheets_sync
@@ -43,7 +46,7 @@ from .settings import SettingsView
 
 # Top-level tab order (visual left-to-right).  "Advanced QA" is the
 # conditional one and slots between "QA" and "Settings" when enabled.
-_TAB_ORDER = ("run_info", "qa", "advanced_qa", "settings")
+_TAB_ORDER = ("run_info", "qa", "trends", "advanced_qa", "settings")
 
 
 # ---------------------------------------------------------------------------
@@ -378,15 +381,24 @@ class MainWindow(QtWidgets.QMainWindow):
             extras.append(calib_conf)
         settings = SettingsView(conf_dir, extra_files=extras)
 
+        # Default campaign = the NEWEST run-lists/YYYY.{database,runlists}.toml
+        # present, so a new year's files become the default automatically
+        # (no hard-coded year to bump, no stale default pointing at last
+        # campaign).  The operator can still switch in the Database /
+        # Runlists selectors.
+        run_lists_dir = self._repo_root / "run-lists"
+        default_db = rundb.newest_campaign_file(run_lists_dir, "database")
+        default_runlists = rundb.newest_campaign_file(run_lists_dir, "runlists")
+
         # Run Manager — real interface for launching writers.
         run_manager = RunManagerView(
             repo_root=self._repo_root,
             data_dir=self._repo_root / "Data",
-            database_path=self._repo_root / "run-lists" / "2025.database.toml",
+            database_path=default_db,
             db_worker=self._db_worker,
         )
         qa = QaView(
-            database_path=self._repo_root / "run-lists" / "2025.database.toml",
+            database_path=default_db,
             data_dir=self._repo_root / "Data",
         )
         advanced_qa = _PlaceholderTab(
@@ -399,13 +411,13 @@ class MainWindow(QtWidgets.QMainWindow):
             bullets=[],   # intentionally empty; spec to follow
         )
         runlist = RunlistView(
-            database_path=self._repo_root / "run-lists" / "2025.database.toml",
+            database_path=default_db,
             data_dir=self._repo_root / "Data",
-            runlists_path=self._repo_root / "run-lists" / "2025.runlists.toml",
+            runlists_path=default_runlists,
             db_worker=self._db_worker,
         )
         runlists = RunlistsView(
-            runlists_path=self._repo_root / "run-lists" / "2025.runlists.toml",
+            runlists_path=default_runlists,
             db_worker=self._db_worker,
         )
 
@@ -418,18 +430,46 @@ class MainWindow(QtWidgets.QMainWindow):
             runlists=runlists,
         )
 
+        #  Multi-run scatter — a first-level QA quantity vs a beam-info
+        #  condition across a runlist (e.g. N_γ vs V_bias, coloured by
+        #  mirror position).
+        from .scatter_view import MultiRunScatterView
+        trends = MultiRunScatterView(
+            data_dir=self._repo_root / "Data",
+            database_path=default_db,
+            runlists_path=default_runlists,
+        )
+
         self._tab_widgets = {
             "run_info": run_info,
             "qa": qa,
+            "trends": trends,
             "advanced_qa": advanced_qa,
             "settings": settings,
         }
         self._tab_titles = {
             "run_info": "Run Info",
             "qa": "QA",
+            "trends": "Multi-run",
             "advanced_qa": "Advanced QA",
             "settings": "Settings",
         }
+
+        # ── Cross-tab run sync ───────────────────────────────────────
+        #  Keep the same run selected in the Run Manager and the QA tab,
+        #  so acting on run X in one and switching to the other lands on
+        #  X.  Each view broadcasts genuine picker changes via
+        #  ``run_selected``; we cache the last one and push it onto the
+        #  other view (the views guard against re-broadcast, so no
+        #  ping-pong).  A run present in one picker but not the other
+        #  (e.g. a QA-only run absent from the Run Manager's on-disk
+        #  list) is a silent no-op on the side that lacks it.
+        self._run_manager_view = run_manager
+        self._qa_view = qa
+        self._current_run: Optional[str] = None
+        run_manager.run_selected.connect(self._on_run_selected_global)
+        qa.run_selected.connect(self._on_run_selected_global)
+        self._tabs.currentChanged.connect(self._sync_run_into_current_tab)
 
     def _rebuild_tab_bar(self) -> None:
         """Insert tabs in ``_TAB_ORDER``, honouring the Advanced QA toggle.
@@ -465,6 +505,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self._tabs.widget(i) is target_widget:
                     self._tabs.setCurrentIndex(i)
                     break
+
+    def _on_run_selected_global(self, run_id: str) -> None:
+        """Cache the run an operator picked and mirror it onto the
+        other run-aware view immediately (so a later tab switch is
+        instant, and a side-by-side layout stays consistent)."""
+        if not run_id or run_id == self._current_run:
+            return
+        self._current_run = run_id
+        self._run_manager_view.set_selected_run(run_id)
+        self._qa_view.set_selected_run(run_id)
+
+    def _sync_run_into_current_tab(self, _idx: int) -> None:
+        """On a top-level tab switch, push the cached run onto whichever
+        run-aware view just became visible — so 'I was on run X, now I'm
+        on the QA tab' lands on X."""
+        if not self._current_run:
+            return
+        current = self._tabs.currentWidget()
+        if current is self._qa_view:
+            self._qa_view.set_selected_run(self._current_run)
+        elif current is self._tab_widgets.get("run_info"):
+            self._run_manager_view.set_selected_run(self._current_run)
 
     def _read_ui_config(self) -> dict:
         """Parse the ``[ui]`` table from ``qa_quicklook.toml`` once."""
@@ -1239,26 +1301,32 @@ class MainWindow(QtWidgets.QMainWindow):
         #  Wrapped in try/except because invokeMethod throws if the
         #  worker has already been deleteLater'd or the connection is
         #  cross-thread-broken at shutdown.
+        #  Close is not a crucial path — don't block the operator on it.
+        #  Use a NON-blocking stop (queued, so we don't wait behind an
+        #  in-flight Sheets network op) and a brief wait budget: idle,
+        #  QTimer-driven workers drain their event loop in well under this,
+        #  so close is effectively instant; the short cap just avoids hanging
+        #  if a worker is mid-op.
+        kCloseWaitMs = 300
         if self._sheets_thread is not None:
             try:
                 QtCore.QMetaObject.invokeMethod(
                     self._sheets_worker, "stop",
-                    QtCore.Qt.BlockingQueuedConnection,
+                    QtCore.Qt.QueuedConnection,
                 )
             except Exception:  # noqa: BLE001
                 pass
             self._sheets_thread.quit()
-            self._sheets_thread.wait(2000)
+            self._sheets_thread.wait(kCloseWaitMs)
             self._sheets_thread = None
             self._sheets_worker = None
 
         #  Remote-watcher: RemoteWatcherWorker doesn't expose a public
         #  ``stop`` slot — it's QTimer-driven on its own thread, so
-        #  thread.quit() drains the event loop and the timer dies with
-        #  it.  Same 2 s wait budget.
+        #  thread.quit() drains the event loop and the timer dies with it.
         if self._livemon_thread is not None:
             self._livemon_thread.quit()
-            self._livemon_thread.wait(2000)
+            self._livemon_thread.wait(kCloseWaitMs)
             self._livemon_thread = None
             self._livemon_worker = None
 

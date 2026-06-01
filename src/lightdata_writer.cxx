@@ -10,9 +10,7 @@
 #include "mapping.h"
 #include <mist/ring_finding/hough_transform.h>
 #include "TROOT.h"
-#include "TProfile2D.h"
-#include "TNamed.h"
-#include "TParameter.h"
+#include "TProfile.h"
 #include "analysis_results.h"
 #include "utility/config_dump.h"
 #include "utility/qa_publish.h"
@@ -20,44 +18,23 @@
 #include "TLegend.h"
 #include "TLine.h"
 #include "TLatex.h"
+#include "TMarker.h"
 #include "TStyle.h"
+#include "TF1.h"
+#include "TMath.h"
+#include "TH1.h"
 #include <algorithm>
 #include <numeric>
 
-// ── Same-channel-offset calibration: per-chip alive-channel counts ─────────
-//
-// The same-channel-offset calibration (further below) only uses events where
-// every alive channel on a given timing chip fires.  These two constants
-// encode the "expected alive channel count per chip" for the current beam-
-// test detector:
-//
-//   - kTimingChip0AliveChannels = 32 → all 32 channels of the first timing
-//     chip are alive.
-//   - kTimingChip1AliveChannels = 31 → one known-dead channel on the second
-//     timing chip; coincidence threshold lowered accordingly.
-//
-// Hardcoded here because the dead-channel layout changes ~once per
-// beam-test campaign — a TOML schema bump for a single int per chip is not
-// worth the indirection.  The chip IDs themselves (0 and 2) are NOT
-// hardcoded any more: they are resolved at runtime from the readout config
-// via framer.get_readout_config().find_by_name("timing").
-// Update these two constants directly when the dead-channel map changes.
-//
-// Guard: the mean-of-others formula divides by (alive_channels - 1), so
-// both constants must be >= 2.
-constexpr int kTimingChip0AliveChannels = 32;
-constexpr int kTimingChip1AliveChannels = 31;
-static_assert(kTimingChip0AliveChannels >= 2, "kTimingChip0AliveChannels must be >= 2 to avoid divide-by-zero");
-static_assert(kTimingChip1AliveChannels >= 2, "kTimingChip1AliveChannels must be >= 2 to avoid divide-by-zero");
-
-// ── Calibration-window tuning knobs (NOT geometry) ─────────────────────────
-// Centre, half-width and Nσ for the same-channel-offset Δt cut.  These are
-// analysis tuning, not detector layout, so they do not belong in the
-// readout config.  Move to a dedicated calibration block (or pass-through
-// arg) only if more knobs accumulate.
-constexpr float kDeltaTimingCenter = -0.5f;
-constexpr float kDeltaTimingWindow = 0.5f;
-constexpr float kDeltaTimingNSigma = 3.0f;
+// ── Timing-trigger coincidence params ─────────────────────────────────────
+// The per-chip alive-channel counts (the same-channel-offset calibration +
+// the timing trigger only use events where every alive channel on a chip
+// fires) and the chip0−chip1 Δt acceptance window (centre, half-width, Nσ)
+// now live in the readout config's [readout.timing] section
+// (ReadoutConfigStruct::timing_chip{0,1}_alive_channels + timing_delta_*),
+// captured into locals at the chip-id resolution block below.  Note: the
+// mean-of-others calibration divides by (alive_channels − 1), so the config
+// values must be ≥ 2.
 
 void lightdata_writer(
     const std::string &data_repository,
@@ -146,7 +123,7 @@ void lightdata_writer(
         sorted_devices.push_back({dev_num, current_device});
     }
     std::sort(sorted_devices.begin(), sorted_devices.end());
-    //  Zero-data guard (added 2026-05-29 after a retention-pruned run
+    //  Zero-data guard (added after a retention-pruned run
     //  silently produced an empty lightdata.root and reported success).
     //  No devices == no raw decoded data on disk == nothing to process.
     //  This typically means the run dir was demoted by the dashboard's
@@ -178,10 +155,10 @@ void lightdata_writer(
                 fifo_numbers.push_back(std::stoi(current_file.substr(start + 5, end - (start + 5))));
         }
         std::sort(fifo_numbers.begin(), fifo_numbers.end());
-        std::cout << "[Device: " << current_device << "] Found fifos: ";
+        std::string fifo_list;
         for (auto n : fifo_numbers)
-            std::cout << n << " ";
-        std::cout << std::endl;
+            fifo_list += " " + std::to_string(n);
+        mist::logger::info("[Device: " + current_device + "] Found fifos:" + fifo_list);
     }
     //  ---
     //  End: Input files
@@ -253,6 +230,16 @@ void lightdata_writer(
     }
     auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf_file);
 
+    //  Per-trigger in-window Cherenkov hitmaps use the SAME timing cut as the
+    //  recodata ring reconstruction ([streaming_hough] hardware_ring_dt_min/max_ns),
+    //  so they agree with the recodata ring hitmap on which hits are "in time".
+    //  Both knobs now live where the recodata pipeline reads them: the ring-reco
+    //  knobs in streaming.toml's [streaming_hough] table, the coverage geometry
+    //  in mapping_conf.toml's [coverage] table — both writer params already.
+    auto recodata_cfg = recodata_conf_reader(streaming_conf_file, mapping_config_file);
+    const float kTrigCherDtMin = recodata_cfg.hardware_ring_dt_min_ns;
+    const float kTrigCherDtMax = recodata_cfg.hardware_ring_dt_max_ns;
+
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
     framer.set_qa_config(qa_cfg); // enable afterpulse near/far Hit-mask tagging
@@ -267,6 +254,12 @@ void lightdata_writer(
     // its per-chip branch when the corresponding ID is < 0.
     int timing_chip_0_id = -1;
     int timing_chip_1_id = -1;
+    //  Timing-trigger coincidence params from the readout config
+    //  ([readout.timing]); defaults match the historical hard-coded
+    //  32/31 channels and the −0.5 ± 0.5 ns × 3σ Δt window.
+    int timing_chip0_alive = 32, timing_chip1_alive = 31;
+    float timing_delta_center = -0.5f, timing_delta_window = 0.5f,
+          timing_delta_nsigma = 3.0f;
     if (const auto *timing_cfg = framer.get_readout_config().find_by_name("timing");
         timing_cfg && !timing_cfg->device_chip.empty())
     {
@@ -284,6 +277,11 @@ void lightdata_writer(
                                       "Extend the calibration loop if more timing chips become active.",
                                       chips.size())
                                       .Data());
+        timing_chip0_alive = timing_cfg->timing_chip0_alive_channels;
+        timing_chip1_alive = timing_cfg->timing_chip1_alive_channels;
+        timing_delta_center = timing_cfg->timing_delta_center_ns;
+        timing_delta_window = timing_cfg->timing_delta_window_ns;
+        timing_delta_nsigma = timing_cfg->timing_delta_n_sigma;
     }
     else
     {
@@ -313,7 +311,7 @@ void lightdata_writer(
     //  lost.  Trade-off: yes-warn, don't-crash.
     if (!fine_calibration_config_file.empty())
     {
-        //  Sweep audit (2026-05-30): wrap read_calib_from_file in a
+        //  Sweep audit: wrap read_calib_from_file in a
         //  try/catch with fallback.  C4.4 promoted schema-mismatch +
         //  zero-entry from warning to std::runtime_error; an uncaught
         //  throw here aborts the entire QA cascade.  We'd rather fall
@@ -393,6 +391,11 @@ void lightdata_writer(
     std::unordered_map<int, RootHist<TH1F>> h_trigger_frame_population;
     std::unordered_map<int, RootHist<TH1F>> h_trigger_time_diff_w_cherenkov;
     std::unordered_map<int, RootHist<TH2F>> h_trigger_full_hitmap;
+    //  Per-trigger in-window Cherenkov hitmap: (x, y) of every cherenkov hit
+    //  inside [kTrigCherDtMin, kTrigCherDtMax] of the trigger (the config
+    //  timing cut) — the in-time trigger-Cherenkov occupancy, one map per
+    //  trigger for the dashboard's per-trigger row.
+    std::unordered_map<int, RootHist<TH2F>> h_trigger_window_hitmap;
     std::unordered_map<int, std::array<RootHist<TH1F>, 2>> h_trigger_hit_multiplicity;
     std::unordered_map<int, RootHist<TH2F>> h_trigger_dt;
     //  Pairwise Δt within a frame, keyed by ((lo << 8) | hi) where lo,hi
@@ -427,6 +430,13 @@ void lightdata_writer(
     //  in their run (expected ≈ frame_size / rollover ≈ 3 % of pairs).
     long long n_anchor_dt_rollover_wrap = 0;
 
+    //  In-beam QA-sample accounting: how many hardware triggers were
+    //  eligible for an in-beam pre-trigger sample vs how many were dropped
+    //  because the band ran off the front of the frame.  Surfaced on the
+    //  streaming-score plot so the operator sees the missed fraction.
+    long long n_inbeam_triggers_total   = 0;
+    long long n_inbeam_triggers_skipped = 0;
+
     //  Log-spaced Y-axis edges (Δt in ns) shared across all per-trigger TH2Fs.
     //  Range: 1 ns → 1e10 ns (≈10 s, comfortably covers a 5 s spill at 320 MHz).
     constexpr int kTriggerDtNBinsY = 60;
@@ -439,7 +449,7 @@ void lightdata_writer(
     RootHist<TH1F> h_timing_ref_delta("h_timing_ref_delta", ";timing chip 0 - timing chip 1", 250, -5, 5);
     RootHist<TH1F> h_timing_ref_delta_sel("h_timing_ref_delta_sel", ";timing chip 0 - timing chip 1", 250, -5, 5);
 
-    //  C6 addendum (2026-05-30): track whether the run actually saw any
+    //  C6 addendum: track whether the run actually saw any
     //  decoded timing data so we can skip the Timing/ directory + the
     //  timing_alignment canvas when it'd be empty.  Today an empty
     //  card on the dashboard reads as a broken run; better to omit it
@@ -453,8 +463,16 @@ void lightdata_writer(
     //  trigger fires they self-skip — no separate guard needed here.
     bool timing_data_seen = false;
     //  ---
+    //  Per-channel QA axis: one bin per Cherenkov channel ordinal.  The
+    //  ordinal packs `kChansPerCherenkovDevice` channels per device across
+    //  the Cherenkov device span [kFirstDevice, kTimingDeviceLo) — derived
+    //  here from the gidx device bounds rather than a bare literal so it
+    //  tracks the split-in-two → flat layout flip automatically.
+    constexpr int kChansPerCherenkovDevice    = gidx::kUsesSplitInTwo ? 256 : 512;
+    constexpr int kCherenkovDeviceCount       = gidx::kTimingDeviceLo - gidx::kFirstDevice;
+    constexpr int kMaxCherenkovChannelOrdinal = kCherenkovDeviceCount * kChansPerCherenkovDevice;
     //  --- DCR
-    RootHist<TProfile> h_dcr_per_channel("h_dcr_per_channel", ";channel;DCR [kHz];", 2048, 0, 2048);
+    RootHist<TProfile> h_dcr_per_channel("h_dcr_per_channel", ";channel;DCR [kHz];", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     //  Smeared DCR hitmap — one fill per cherenkov Hit during noise (first-frames)
     //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Bin
     //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
@@ -466,11 +484,11 @@ void lightdata_writer(
     //  Near = afterpulse signal + DCR baseline ; far = DCR sideband only.
     //  Subtracted (true afterpulse) = signed-weight fill on the same Hit set.
     RootHist<TProfile> h_afterpulse_near_per_channel("h_afterpulse_near_per_channel",
-                                                     ";channel;Near-window same-channel probability (%);", 2048, 0, 2048);
+                                                     ";channel;Near-window same-channel probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     RootHist<TProfile> h_afterpulse_far_per_channel("h_afterpulse_far_per_channel",
-                                                    ";channel;Far-window same-channel probability (%);", 2048, 0, 2048);
+                                                    ";channel;Far-window same-channel probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     RootHist<TProfile> h_afterpulse_per_channel("h_afterpulse_per_channel",
-                                                ";channel;Afterpulse probability (DCR-subtracted) (%);", 2048, 0, 2048);
+                                                ";channel;Afterpulse probability (DCR-subtracted) (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     //  Smeared 2D hitmaps — per primary Hit we deposit 100 fills at independent
     //  ±1.5 mm smeared positions when the Hit lies in the relevant window.  Density
     //  in the resulting TH2F is therefore proportional to the corresponding
@@ -488,9 +506,9 @@ void lightdata_writer(
     h_afterpulse_hitmap->Sumw2(); // signed-weight fills → needs squared-weight tracking
     //  --- Cross-talk per-channel profiles
     RootHist<TProfile> h_phys_ct_per_channel("h_phys_ct_per_channel",
-                                             ";channel;Physical CT probability (%);", 2048, 0, 2048);
+                                             ";channel;Physical CT probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     RootHist<TProfile> h_elec_ct_per_channel("h_elec_ct_per_channel",
-                                             ";channel;Electrical CT probability (%);", 2048, 0, 2048);
+                                             ";channel;Electrical CT probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     //  Smeared CT hitmaps — n_ct_neighbours × 100 fills per primary Hit, each at
     //  an independent ±1.5 mm smeared position.  Density ∝ CT rate per spatial bin.
     RootHist<TH2F> h_phys_ct_hitmap("h_phys_ct_hitmap",
@@ -609,8 +627,8 @@ void lightdata_writer(
     //  1D `|r_hit − R_ring|` per assigned hit, per ring slot.  Range
     //  bound to [0, 2 × collection_radius] so the threshold line at
     //  x = cfg.collection_radius sits at the midpoint of the axis.
-    //  Bin width = collection_radius / 30  (~0.25 mm with the default
-    //  7.5 mm collection_radius).
+    //  Bin width = collection_radius / 30  (~0.067 mm at the default
+    //  2 mm collection_radius).
     constexpr int kArcDistBinsPerSide = 30;
     const int ringArc_nbins = 2 * kArcDistBinsPerSide;
     const float ringArc_hi = 2.f * streaming_hough_cfg.collection_radius;
@@ -644,8 +662,13 @@ void lightdata_writer(
     //  the rest of the spill.  Same n_σ axis so the misfire and acceptance
     //  integrals at any threshold are directly comparable.  See
     //  include/triggers/DISCUSSION.md § 2.3.  Binning history: 500 → 250
-    //  (Q2/2026 first pass) → 125 bins / [0,50] (0.4 n_σ/bin) — finer
-    //  binning was just visual noise on the operating-point overlay.
+    //  (Q2/2026 first pass) → 125 bins / [0,50] (0.4 n_σ/bin) → 200 bins /
+    //  [0,1000] (1 n_σ/bin, linear) → 200 LOG-spaced bins / [0.1,1000]
+    //  (equal-width on the log-x axis the canvas draws on).  The score
+    //  distributions are log-normal in n_σ (Gaussian in log10), so
+    //  log-spaced bins sample the bump and its heavy right tail evenly
+    //  and keep the per-bin probabilities comparable across all three
+    //  decades the log-Gaussian overlay fit lives on.
     //  Both hists are filled with the SAME standardised n_σ
     //  (`n_sigma = (S - E[S]) / σ_S`, see score.cxx::run_streaming_
     //  trigger_weighted) computed against the noise-built weight
@@ -654,22 +677,43 @@ void lightdata_writer(
     //  these titles was misleading on the overlay canvas (only one
     //  title can render).  Per-sample identification lives in the
     //  legend.
+    //  Log-spaced edges: 200 bins over [0.1, 1000] — FOUR decades
+    //  (log10: −1 → 3), each equal-width in log10 so the bins render
+    //  uniform on the canvas's log-x axis.  Shared by all three score
+    //  hists.  (The span factor is 4.0, not 3.0: 0.1→1000 is four
+    //  decades; a 3.0 factor capped the top edge at 100 and the axis
+    //  rendered [0.1,100] instead of the requested [0.1,1000].)
+    double kScoreEdges[201];
+    for (int i = 0; i <= 200; ++i)
+        kScoreEdges[i] = 0.1 * std::pow(10.0, 4.0 * i / 200.0);
     RootHist<TH1F> h_streaming_score_noise(
         "h_streaming_score_noise",
-        ";n_{#sigma};entries",
-        125, 0.f, 50.f);
+        ";n_{#sigma};probability per bin",
+        200, kScoreEdges);
     RootHist<TH1F> h_streaming_score_data(
         "h_streaming_score_data",
-        ";n_{#sigma};entries",
-        125, 0.f, 50.f);
+        ";n_{#sigma};probability per bin",
+        200, kScoreEdges);
+    //  Third score sample — the in-beam background.  Scored on a
+    //  fixed window positioned just before each hardware trigger
+    //  (see the fill site below): in-beam-but-pre-signal activity,
+    //  distinct from the first-frames DCR (noise) and the
+    //  post-first-frames data samples.  Lets the analyser read the
+    //  in-beam baseline separately when picking the production cut.
+    RootHist<TH1F> h_streaming_score_inbeam(
+        "h_streaming_score_inbeam",
+        ";n_{#sigma};probability per bin",
+        200, kScoreEdges);
     //  Colour scheme for the overlay canvas written further down:
-    //  noise (first-frames) = red, data-taking = blue.  Set at hist
-    //  creation so the colours stick whether you draw the individual
-    //  hists or the overlay.
-    h_streaming_score_noise->SetLineColor(kRed);
-    h_streaming_score_data->SetLineColor(kBlue);
+    //  DCR / noise (first-frames) = blue, signal / data-taking = red,
+    //  in-beam bkg (pre-trigger) = violet.  Set at hist creation so the
+    //  colours stick whether you draw the individual hists or the overlay.
+    h_streaming_score_noise->SetLineColor(kBlue);
+    h_streaming_score_data->SetLineColor(kRed);
+    h_streaming_score_inbeam->SetLineColor(kViolet);
     h_streaming_score_noise->SetLineWidth(2);
     h_streaming_score_data->SetLineWidth(2);
+    h_streaming_score_inbeam->SetLineWidth(2);
     //  (No timing-QA histograms remain after the 2026-Q2 QA sweep.  The
     //  full list of dropped hists — delta_t_leading_edge / half_centroid /
     //  first_half / second_half, h_delta_median_vs_window, the
@@ -689,11 +733,9 @@ void lightdata_writer(
     std::map<int, std::array<float, 2>> index_to_hit_xy;
     std::map<std::array<float, 2>, int> hit_to_index_xy;
     {
-        constexpr int kDeviceLo = 192;
-        constexpr int kDeviceHi = 224;
         const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
         constexpr int kChannelHi = 64;
-        for (int device = kDeviceLo; device < kDeviceHi; ++device)
+        for (int device = ::gidx::kFirstDevice; device < ::gidx::kDeviceUpperBound; ++device)
             for (int chip = 0; chip < max_chip; ++chip)
                 for (int channel = 0; channel < kChannelHi; ++channel)
                 {
@@ -757,8 +799,8 @@ void lightdata_writer(
 
         //  --- Per-spill online calibration update ---
         //
-        //  The canonical calibration path is the offline pass via
-        //  macros/examples/fine_calibration_timing.cpp.  When the QA toggle
+        //  The canonical calibration path is the offline pass via the
+        //  fine_calibration_timing.cpp macro.  When the QA toggle
         //  `per_spill_calibration_update` is set (typically in
         //  `conf/QA/framer_conf.toml`), this call seeds each spill's
         //  calibration table from the channels that became active during the
@@ -777,7 +819,7 @@ void lightdata_writer(
         auto lanes_participating = spilldata.get_not_dead_participants();
         int n_active_cherenkov_channels = 0;
         for (auto [device, lanes] : lanes_participating)
-            if (device < 200)
+            if (device < ::gidx::kTimingDeviceLo)
                 for (auto current_lane : lanes)
                     for (auto i_channel = 0; i_channel < 8; ++i_channel)
                     {
@@ -880,7 +922,7 @@ void lightdata_writer(
 
                 // Only process full-occupancy events
                 if (timing_chip_0_id >= 0 &&
-                    seen_channels_0.size() == static_cast<size_t>(kTimingChip0AliveChannels))
+                    seen_channels_0.size() == static_cast<size_t>(timing_chip0_alive))
                 {
                     float mean_0 = 0.f;
                     for (auto &[gi, time] : tdc_time_0)
@@ -895,7 +937,7 @@ void lightdata_writer(
                     }
                 }
                 if (timing_chip_1_id >= 0 &&
-                    seen_channels_1.size() == static_cast<size_t>(kTimingChip1AliveChannels))
+                    seen_channels_1.size() == static_cast<size_t>(timing_chip1_alive))
                 {
                     float mean_1 = 0.f;
                     for (auto &[gi, time] : tdc_time_1)
@@ -1070,9 +1112,9 @@ void lightdata_writer(
                 h_timing_ref_delta->Fill(delta_timing);
 
                 const bool timing_available =
-                    (timing_hits_0 == kTimingChip0AliveChannels) &&
-                    (timing_hits_1 == kTimingChip1AliveChannels) &&
-                    (std::fabs(delta_timing - kDeltaTimingCenter) < kDeltaTimingNSigma * kDeltaTimingWindow);
+                    (timing_hits_0 == timing_chip0_alive) &&
+                    (timing_hits_1 == timing_chip1_alive) &&
+                    (std::fabs(delta_timing - timing_delta_center) < timing_delta_nsigma * timing_delta_window);
 
                 if (timing_available)
                 {
@@ -1177,6 +1219,56 @@ void lightdata_writer(
                 h_score_for_this_frame,
                 framer_cfg.frame_length_ns());
 
+            //  ── In-beam background score sample ──────────────────────
+            //  For each HARDWARE trigger in this frame, score a fixed
+            //  window of width time_window_ns ending 50 ns before the
+            //  trigger time — the in-beam-but-pre-signal activity just
+            //  ahead of a real external trigger.  Fills the green curve
+            //  on the score canvas, distinct from the first-frames DCR
+            //  (red) and post-first-frames data (blue) samples.  Only
+            //  genuine external triggers anchor the window: synthetic
+            //  markers (FirstFrames / StartOfSpill / UNKNOWN) and the
+            //  derived ring triggers (streaming / Hough) are skipped.
+            {
+                //  Sampling band: ends inbeam_offset before the trigger,
+                //  inbeam_width wide (both config knobs), scored PER HIT with
+                //  the SAME sliding window (win_w) + SAME bundle
+                //  (streaming_weights) as the noise/data curves — so all three
+                //  share one n_σ axis and the recommended cut applies.  Per-hit
+                //  conditioning means empty windows aren't counted, so the
+                //  in-beam curve sits at/above the first-frames DCR baseline as
+                //  it physically must (in-beam = DCR + beam-induced ≥ DCR).
+                const float inbeam_offset =
+                    streaming_trigger_cfg.inbeam_pretrigger_offset_ns;
+                const float inbeam_width =
+                    streaming_trigger_cfg.inbeam_sample_width_ns;
+                const float win_w = streaming_trigger_cfg.time_window_ns;
+                for (const auto &trg : spilldata.get_frame_trigger_hits(frame_id))
+                {
+                    const uint8_t tidx = trg.index;
+                    if (tidx == TriggerFirstFrames ||
+                        tidx == TriggerStartOfSpill ||
+                        tidx == static_cast<uint8_t>(_TRIGGER_UNKNOWN_) ||
+                        tidx == static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_) ||
+                        tidx == static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_))
+                        continue;
+                    ++n_inbeam_triggers_total;
+                    const float t_hi = trg.fine_time - inbeam_offset;
+                    const float t_lo = t_hi - inbeam_width;
+                    if (t_lo < 0.f)
+                    {
+                        //  Band runs off the front of the frame — this
+                        //  trigger's in-beam sample is dropped.  Counted so the
+                        //  operator sees how many events are missed.
+                        ++n_inbeam_triggers_skipped;
+                        continue;
+                    }
+                    fill_window_score_samples(
+                        spilldata, frame_id, streaming_weights,
+                        t_lo, t_hi, win_w, h_streaming_score_inbeam.get());
+                }
+            }
+
             //  ---
             if (!spilldata.has_trigger(frame_id))
             {
@@ -1228,6 +1320,12 @@ void lightdata_writer(
                 //  alongside the synthetic markers.  TODO(operator-
                 //  review): revisit once the streaming-vs-Hough
                 //  separation is more clearly defined.
+                //  NOTE: TIMING (and TRACKING) are HARDWARE triggers and
+                //  are deliberately NOT listed here — they get the full
+                //  per-trigger QA treatment + in-beam-window anchoring
+                //  like any external trigger.  Only the synthetic frame
+                //  markers and the derived streaming-ring trigger are
+                //  filtered out of the per-trigger plots.
                 auto is_synthetic_marker = [](uint8_t idx) {
                     return idx == TriggerFirstFrames ||
                            idx == TriggerStartOfSpill ||
@@ -1279,9 +1377,10 @@ void lightdata_writer(
                         h_trigger_frame_population[current_trigger.index] = RootHist<TH1F>(TString::Format("h_trigger_frame_population_%s", registry.name_of(current_trigger.index).c_str()).Data(), TString::Format(";frame number; %s;", registry.name_of(current_trigger.index).c_str()).Data(), 5e3, 0, 5e6);
                         h_trigger_time_diff_w_cherenkov[current_trigger.index] = RootHist<TH1F>(TString::Format("h_trigger_time_diff_w_cherenkov_%s", registry.name_of(current_trigger.index).c_str()).Data(), ";#Delta_{t} (t_{Hit} - t_{trigger}) ns;Normalised entries / acceptance", 5e3, -frame_length_ns_q, frame_length_ns_q);
                         h_trigger_full_hitmap[current_trigger.index] = RootHist<TH2F>(TString::Format("h_trigger_full_hitmap_%s", registry.name_of(current_trigger.index).c_str()).Data(), ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
+                        h_trigger_window_hitmap[current_trigger.index] = RootHist<TH2F>(TString::Format("h_trigger_window_hitmap_%s", registry.name_of(current_trigger.index).c_str()).Data(), ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
                         h_trigger_hit_multiplicity[current_trigger.index][0] = RootHist<TH1F>(TString::Format("h_trigger_hit_multiplicity_in_time_%s", registry.name_of(current_trigger.index).c_str()).Data(), ";n_{Hit}; events;", 100, 0, 100);
                         h_trigger_hit_multiplicity[current_trigger.index][1] = RootHist<TH1F>(TString::Format("h_trigger_hit_multiplicity_out_of_time_%s", registry.name_of(current_trigger.index).c_str()).Data(), ";n_{Hit}; events;", 100, 0, 100);
-                        //  Sweep audit (2026-05-30): X axis ranges over
+                        //  Sweep audit: X axis ranges over
                         //  the spill indices the loop actually visits —
                         //  `for (ispill = 0; ispill < max_spill; ++ispill)`
                         //  yields spill values 0…max_spill-1.  Previously
@@ -1295,7 +1394,7 @@ void lightdata_writer(
                         //  per-frame loop, which is inside the per-spill
                         //  loop, so at least one spill has been visited.
                         //
-                        //  Validation-run regression (2026-05-30 evening):
+                        //  Validation-run regression:
                         //  recotrack's `--force-upstream` cascade invokes
                         //  lightdata with the framework default `max_spill =
                         //  INT_MAX` (no cap).  Without the same bin cap the
@@ -1311,7 +1410,10 @@ void lightdata_writer(
                             std::min(max_spill, kTriggerDtMaxXBins);
                         h_trigger_dt[current_trigger.index] = RootHist<TH2F>(
                             TString::Format("h_trigger_dt_%s", registry.name_of(current_trigger.index).c_str()).Data(),
-                            TString::Format(";spill index;#Delta_{t} between consecutive %s triggers (ns);entries",
+                            //  No Z-axis title — a bare "entries" colour-bar
+                            //  label carries no information the operator
+                            //  needs.  X / Y titles only.
+                            TString::Format(";spill index;#Delta_{t} between consecutive %s triggers (ns)",
                                             registry.name_of(current_trigger.index).c_str())
                                 .Data(),
                             n_trigger_dt_x_bins, -0.5, max_spill - 0.5,
@@ -1371,7 +1473,11 @@ void lightdata_writer(
                     trigger_last_global_cc[current_trigger.index] = global_cc;
                     //  Time difference of trigger with cherenkov hits
                     std::array<int, 2> hit_counter = {0, 0};
-                    auto window_size = (current_trigger.index == _TRIGGER_HOUGH_RING_FOUND_) || (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_) ? time_window_ns : 50.;
+                    //  Centre offset [ns] of the out-of-time multiplicity
+                    //  bucket relative to the in-time bucket (partner fills
+                    //  hit_counter[1]).
+                    constexpr double kOutOfTimeOffsetNs = 100.;
+                    auto window_size = (current_trigger.index == _TRIGGER_HOUGH_RING_FOUND_) || (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_) ? time_window_ns : streaming_trigger_cfg.default_trigger_window_ns;
                     for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
                     {
                         AlcorFinedata current_hit(current_cherenkov_hit_struct);
@@ -1379,12 +1485,17 @@ void lightdata_writer(
                         {
                             auto current_delta_time = current_hit.get_time_ns() - current_trigger.fine_time;
                             h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(current_delta_time);
+                            //  In-window hitmap: hits inside the config timing
+                            //  cut [kTrigCherDtMin, kTrigCherDtMax] (asymmetric,
+                            //  the same cut recodata uses for ring reco).
+                            if (current_delta_time >= kTrigCherDtMin && current_delta_time <= kTrigCherDtMax)
+                                h_trigger_window_hitmap[current_trigger.index]->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                             if (fabs(current_delta_time) < window_size)
                             {
                                 hit_counter[0]++;
                                 h_trigger_full_hitmap[current_trigger.index]->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
                             }
-                            else if (fabs(current_delta_time + 100) < window_size)
+                            else if (fabs(current_delta_time + kOutOfTimeOffsetNs) < window_size)
                             {
                                 hit_counter[1]++;
                             }
@@ -1808,6 +1919,8 @@ void lightdata_writer(
     }
     for (auto &[key, val] : h_trigger_full_hitmap)
         write_in(key, val.get());
+    for (auto &[key, val] : h_trigger_window_hitmap)
+        write_in(key, val.get());
     for (auto &[key, val] : h_trigger_dt)
     {
         val->Scale(1., "width");
@@ -1899,6 +2012,7 @@ void lightdata_writer(
         ctx.outfile = outfile.get();
         ctx.h_streaming_score_noise = h_streaming_score_noise.get();
         ctx.h_streaming_score_data = h_streaming_score_data.get();
+        ctx.h_streaming_score_inbeam = h_streaming_score_inbeam.get();
         ctx.h_streaming_trigger_full_hitmap = h_streaming_trigger_full_hitmap.get();
         ctx.h_streaming_trigger_time_cut_hitmap = h_streaming_trigger_time_cut_hitmap.get();
         ctx.h_streaming_trigger_ring_finder_nrings = h_streaming_trigger_ring_finder_nrings.get();
@@ -2061,7 +2175,7 @@ void lightdata_writer(
         //  off-diagonal coincidences are what the operator needs to
         //  compare exactly, not as colour bands).
         h2_trigger_matrix->SetMarkerSize(1.4);
-        gStyle->SetPaintTextFormat(".0f");
+        gStyle->SetPaintTextFormat(".5g");  // scientific when > 99999
         //  Bespoke save (not via the generic save_one lambda) so we
         //  can rotate the X-axis labels and breathe out the pad
         //  margins.  Default ROOT auto-rotation crowds long trigger
@@ -2102,11 +2216,289 @@ void lightdata_writer(
         //  same `timing_data_seen` flag that gates the Timing/ ROOT
         //  directory above.
         if (timing_data_seen)
+        {
             save_one(2, "timing_alignment", h_timing_ref_delta.get(), "hist");
+            // 02 Timing chip-coincidence map: # channels firing on chip 0 vs
+            //    chip 1 per frame.  The timing trigger accepts only the
+            //    (alive_chip0, alive_chip1) corner — this map shows how close
+            //    the data sits to that corner (and where the dead channel pulls
+            //    chip 1 down).
+            //
+            //  Bespoke save: scan for the highest-occupancy cell EXCLUDING the
+            //  (0,0) no-coincidence corner (which always dominates), drop a
+            //  marker on it, and label it "chip 0 = N ch / chip 1 = M ch".
+            //  That cell is the working point the timing trigger should be
+            //  configured for — i.e. the value to put in [readout.timing]
+            //  alive_channels.
+            {
+                TH2 *hm = h_timing_hit_map.get();
+                int best_ix = 0, best_iy = 0;
+                double best_c = -1.0;
+                for (int ix = 1; ix <= hm->GetNbinsX(); ++ix)
+                    for (int iy = 1; iy <= hm->GetNbinsY(); ++iy)
+                    {
+                        if (ix == 1 && iy == 1)
+                            continue; // skip the (0,0) bin
+                        const double c = hm->GetBinContent(ix, iy);
+                        if (c > best_c)
+                        {
+                            best_c = c;
+                            best_ix = ix;
+                            best_iy = iy;
+                        }
+                    }
+                const double bx = hm->GetXaxis()->GetBinCenter(best_ix);
+                const double by = hm->GetYaxis()->GetBinCenter(best_iy);
+                const int best_n0 = static_cast<int>(bx); // bin centre .5 → channel count
+                const int best_n1 = static_cast<int>(by);
+
+                TCanvas c("c_qa_lightdata_02_timing_hit_map", "", 1000, 1000);
+                c.SetRightMargin(0.14);
+                hm->Draw("colz");
+                TMarker mk(bx, by, 29 /*filled star*/);
+                mk.SetMarkerColor(kRed + 1);
+                mk.SetMarkerSize(2.4);
+                if (best_c > 0)
+                    mk.Draw();
+                TLatex txt;
+                txt.SetNDC();
+                txt.SetTextSize(0.030);
+                txt.SetTextColor(kRed + 1);
+                if (best_c > 0)
+                    txt.DrawLatex(0.16, 0.92,
+                                  TString::Format("best: chip 0 = %d ch,  chip 1 = %d ch  (%.0f frames)",
+                                                  best_n0, best_n1, best_c));
+                const auto path = util::qa::pdf_path(run_dir, "lightdata", 2, "timing_hit_map");
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
+            }
+        }
         // 03 Single-pixel DCR hitmap — surfaces hot / dead channels.
         save_one(3, "dcr_hitmap",           h_dcr_hitmap.get(),            "colz");
-        // 04 Afterpulse hitmap (subtracted) — diagnostic for AP cleaning.
-        save_one(4, "afterpulse_hitmap",    h_afterpulse_hitmap.get(),     "colz");
+        // 06 Per-channel DCR rate (kHz) + averages over all channels,
+        //    per device (rdo), and per sensor.  Surfaced for the
+        //    General overview's Sensor-health row.  Numbered 06 so it
+        //    doesn't collide with the per-trigger fan-out (now 07+).
+        //    Device for channel ordinal o is 192 + o/256 (the
+        //    GlobalIndex channel-ordinal layout); sensor comes from the
+        //    readout config's per-device sensor_type (e.g. 1350 / Quetta).
+        {
+            TProfile *dcr = h_dcr_per_channel.get();
+            //  device → sensor from the readout config (const view).
+            //  Uses the per-device sensor_for() so a single cherenkov
+            //  role spanning two SiPM models (1350 / 1375) maps each
+            //  device to its own sensor.
+            std::map<int, std::string> device_to_sensor;
+            for (const auto &cfg : framer.get_readout_config().all())
+                for (const auto &dc : cfg.device_chip)
+                {
+                    const std::string sen = cfg.sensor_for(dc.first);
+                    if (!sen.empty())
+                        device_to_sensor[dc.first] = sen;
+                }
+
+            //  Channels per device follows the GlobalIndex layout
+            //  (256 under the split-in-two packing, 512 otherwise) so
+            //  the per-device grouping stays correct if the detector
+            //  flips ``gidx::kUsesSplitInTwo``.
+            constexpr int kChansPerDevice = gidx::kUsesSplitInTwo ? 256 : 512;
+            double all_sum = 0.0;
+            long all_n = 0;
+            std::map<int, std::pair<double, long>> by_device;
+            std::map<std::string, std::pair<double, long>> by_sensor;
+            for (int b = 1; b <= dcr->GetNbinsX(); ++b)
+            {
+                if (dcr->GetBinEntries(b) <= 0)
+                    continue;  // dead / absent channel — excluded
+                const double rate = dcr->GetBinContent(b);
+                const int ordinal = b - 1;
+                const int device = ::gidx::kFirstDevice + ordinal / kChansPerDevice;
+                all_sum += rate;
+                ++all_n;
+                auto &d = by_device[device];
+                d.first += rate;
+                ++d.second;
+                const auto sit = device_to_sensor.find(device);
+                const std::string sensor =
+                    (sit != device_to_sensor.end()) ? sit->second : "?";
+                auto &s = by_sensor[sensor];
+                s.first += rate;
+                ++s.second;
+            }
+
+            TCanvas c("c_qa_lightdata_06_dcr_per_channel", "", 1400, 900);
+            c.SetLeftMargin(0.10);
+            c.SetRightMargin(0.04);
+            c.SetBottomMargin(0.12);
+            dcr->Draw("hist");
+            TLatex txt;
+            txt.SetNDC();
+            txt.SetTextFont(42);
+            txt.SetTextSize(0.022);
+            txt.SetTextColor(kBlack);
+            //  Two-column tabular layout (label left, value right at a fixed
+            //  offset so the rates align as a table).  Left column = overall
+            //  + per-sensor averages; right column = per-device averages.
+            //  Anchored high (linear Y — the DCR bulk sits low, leaving the
+            //  upper band clear).
+            constexpr double kColAlbl = 0.13, kColAval = 0.27;  // left column
+            constexpr double kColBlbl = 0.46, kColBval = 0.60;  // right column
+            constexpr double kRowDy = 0.030;
+            const double y_top = 0.88;
+            TLatex hdr;
+            hdr.SetNDC();
+            hdr.SetTextFont(62);  // bold for the category headers
+            hdr.SetTextSize(0.022);
+
+            //  ── Column A: all + per-sensor ──
+            double ya = y_top;
+            hdr.DrawLatex(kColAlbl, ya, "avg DCR (all)");
+            txt.DrawLatex(kColAval, ya, TString::Format("%.2f kHz",
+                all_n ? all_sum / all_n : 0.0));
+            ya -= kRowDy * 1.5;
+            hdr.DrawLatex(kColAlbl, ya, "per sensor");
+            ya -= kRowDy;
+            for (const auto &[sen, sn] : by_sensor)
+            {
+                txt.DrawLatex(kColAlbl + 0.02, ya, sen.c_str());
+                txt.DrawLatex(kColAval, ya, TString::Format("%.2f kHz",
+                    sn.second ? sn.first / sn.second : 0.0));
+                ya -= kRowDy;
+            }
+
+            //  ── Column B: per-device ──
+            double yb = y_top;
+            hdr.DrawLatex(kColBlbl, yb, "per device");
+            yb -= kRowDy;
+            for (const auto &[dev, sn] : by_device)
+            {
+                txt.DrawLatex(kColBlbl + 0.02, yb, TString::Format("rdo-%d", dev));
+                txt.DrawLatex(kColBval, yb, TString::Format("%.2f kHz",
+                    sn.second ? sn.first / sn.second : 0.0));
+                yb -= kRowDy;
+            }
+            const auto path = util::qa::pdf_path(
+                run_dir, "lightdata", 6, "dcr_per_channel");
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        }
+        // 06 Per-channel afterpulse probability (DCR-subtracted, %) +
+        //    averages over all channels / per device / per sensor — same
+        //    treatment as the DCR per-channel plot above.  Linear Y (the
+        //    subtracted value can dip negative on low-stats channels, so
+        //    log won't take it).  Surfaced in the Sensor-health row between
+        //    the two hitmaps.
+        {
+            TProfile *ap = h_afterpulse_per_channel.get();
+            std::map<int, std::string> device_to_sensor;
+            for (const auto &cfg : framer.get_readout_config().all())
+                for (const auto &dc : cfg.device_chip)
+                {
+                    const std::string sen = cfg.sensor_for(dc.first);
+                    if (!sen.empty())
+                        device_to_sensor[dc.first] = sen;
+                }
+            constexpr int kChansPerDevice = gidx::kUsesSplitInTwo ? 256 : 512;
+            double all_sum = 0.0;
+            long all_n = 0;
+            std::map<int, std::pair<double, long>> by_device;
+            std::map<std::string, std::pair<double, long>> by_sensor;
+            for (int b = 1; b <= ap->GetNbinsX(); ++b)
+            {
+                if (ap->GetBinEntries(b) <= 0)
+                    continue;  // dead / absent channel — excluded
+                const double val = ap->GetBinContent(b);
+                const int ordinal = b - 1;
+                const int device = ::gidx::kFirstDevice + ordinal / kChansPerDevice;
+                all_sum += val;
+                ++all_n;
+                auto &d = by_device[device];
+                d.first += val;
+                ++d.second;
+                const auto sit = device_to_sensor.find(device);
+                const std::string sensor =
+                    (sit != device_to_sensor.end()) ? sit->second : "?";
+                auto &s = by_sensor[sensor];
+                s.first += val;
+                ++s.second;
+            }
+
+            TCanvas c("c_qa_lightdata_06_afterpulse_per_channel", "", 1400, 900);
+            c.SetLeftMargin(0.10);
+            c.SetRightMargin(0.04);
+            c.SetBottomMargin(0.12);
+            ap->Draw("hist");
+            TLatex txt;
+            txt.SetNDC();
+            txt.SetTextFont(42);
+            txt.SetTextSize(0.022);
+            txt.SetTextColor(kBlack);
+            constexpr double kColAlbl = 0.13, kColAval = 0.27;  // left column
+            constexpr double kColBlbl = 0.46, kColBval = 0.60;  // right column
+            constexpr double kRowDy = 0.030;
+            const double y_top = 0.88;
+            TLatex hdr;
+            hdr.SetNDC();
+            hdr.SetTextFont(62);
+            hdr.SetTextSize(0.022);
+
+            //  ── Column A: all + per-sensor ──
+            double ya = y_top;
+            hdr.DrawLatex(kColAlbl, ya, "avg AP (all)");
+            txt.DrawLatex(kColAval, ya, TString::Format("%.2f %%",
+                all_n ? all_sum / all_n : 0.0));
+            ya -= kRowDy * 1.5;
+            hdr.DrawLatex(kColAlbl, ya, "per sensor");
+            ya -= kRowDy;
+            for (const auto &[sen, sn] : by_sensor)
+            {
+                txt.DrawLatex(kColAlbl + 0.02, ya, sen.c_str());
+                txt.DrawLatex(kColAval, ya, TString::Format("%.2f %%",
+                    sn.second ? sn.first / sn.second : 0.0));
+                ya -= kRowDy;
+            }
+
+            //  ── Column B: per-device ──
+            double yb = y_top;
+            hdr.DrawLatex(kColBlbl, yb, "per device");
+            yb -= kRowDy;
+            for (const auto &[dev, sn] : by_device)
+            {
+                txt.DrawLatex(kColBlbl + 0.02, yb, TString::Format("rdo-%d", dev));
+                txt.DrawLatex(kColBval, yb, TString::Format("%.2f %%",
+                    sn.second ? sn.first / sn.second : 0.0));
+                yb -= kRowDy;
+            }
+            const auto path = util::qa::pdf_path(
+                run_dir, "lightdata", 6, "afterpulse_per_channel");
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        }
+        // 04 Afterpulse hitmap (sideband-subtracted) — diagnostic for AP
+        //    cleaning.  The map is a sideband subtraction: near-window
+        //    hits fill +100, the DCR far-sideband fills −100, so a bin
+        //    holds 100·(N_near − N_far).  In low-stats bins the far
+        //    sideband can statistically exceed the near window, driving
+        //    the bin NEGATIVE — that's an estimator fluctuation, not a
+        //    physical negative afterpulse rate (which can't exist).  We
+        //    clamp those to 0 FOR DISPLAY ONLY: a non-destructive clone
+        //    has its negative bins zeroed and its colour floor pinned at
+        //    0, so the QA plot never shows the unphysical negative band.
+        //    The RAW subtracted hist is still written to the ROOT file
+        //    and still drives the n_afterpulse_hits integral below
+        //    (clamping there would bias the afterpulse count high).
+        {
+            std::unique_ptr<TH2F> ap_disp(
+                static_cast<TH2F *>(h_afterpulse_hitmap->Clone(
+                    "h_afterpulse_hitmap_display")));
+            ap_disp->SetDirectory(nullptr);
+            const int n_cells = ap_disp->GetNcells();
+            for (int b = 0; b < n_cells; ++b)
+                if (ap_disp->GetBinContent(b) < 0.0)
+                    ap_disp->SetBinContent(b, 0.0);
+            ap_disp->SetMinimum(0.0);  // colour floor at 0 too
+            save_one(4, "afterpulse_hitmap", ap_disp.get(), "colz");
+        }
 
         // 05 Streaming-trigger score: bkg (noise, red) vs sig (data, blue)
         //    + recommendation overlay (vertical line at FP = 1e-6
@@ -2126,13 +2518,24 @@ void lightdata_writer(
         {
             auto *h_noise = h_streaming_score_noise.get();
             auto *h_data  = h_streaming_score_data.get();
+            auto *h_inbeam = h_streaming_score_inbeam.get();
+            const bool have_inbeam =
+                h_inbeam && h_inbeam->GetEntries() > 0;
             if (h_noise && h_data)
             {
                 TCanvas c("c_qa_lightdata_05_streaming_score",
                           "Streaming-trigger score: noise vs data",
                           1000, 1000);
                 c.SetLogy();
-                //  Sweep audit (2026-05-30): give the X-axis title room
+                //  Log X too: the score hists now span [0.1,1000] n_σ
+                //  on 200 log-spaced bins and the interesting structure —
+                //  the noise bump near a few n_σ and the signal bump out
+                //  past 40 — is bunched at low n_σ on a linear axis.
+                //  Displayed range pinned to [0.1,1000] matching the bin
+                //  edges; the log-spaced binning has no n_σ≈0 turn-on bin
+                //  to hide, so the full support renders on the log-x axis.
+                c.SetLogx();
+                //  Sweep audit: give the X-axis title room
                 //  to render — operator screenshot showed the
                 //  "n_{#sigma} (first-frames sample)" label cropped at
                 //  the bottom edge.  Y axis margin nudged similarly so
@@ -2147,8 +2550,10 @@ void lightdata_writer(
                 //  visible pad regardless of how the histograms are
                 //  normalised (integer counts at low statistics vs
                 //  probability-per-bin once the score gets renormalised).
-                const double max_content = std::max(h_noise->GetMaximum(),
-                                                    h_data->GetMaximum());
+                double max_content = std::max(h_noise->GetMaximum(),
+                                              h_data->GetMaximum());
+                if (have_inbeam)
+                    max_content = std::max(max_content, h_inbeam->GetMaximum());
                 const double min_pos_noise = h_noise->GetMinimum(1e-300);
                 const double min_pos_data  = h_data->GetMinimum(1e-300);
                 const double min_pos = std::min(min_pos_noise, min_pos_data);
@@ -2158,12 +2563,443 @@ void lightdata_writer(
                 const double y_max = 1.5 * max_content;
                 h_noise->SetMinimum(y_min);
                 h_noise->SetMaximum(y_max);
+                //  Displayed X range [0.1,1000] n_σ (log-x; matches the
+                //  log-spaced bin edges, no turn-on bin to hide).
+                h_noise->GetXaxis()->SetRangeUser(0.1, 1000.0);
                 h_noise->Draw("HIST");
                 h_data->Draw("HIST SAME");
+                //  In-beam (pre-trigger) sample overlaid in violet.
+                if (have_inbeam)
+                    h_inbeam->Draw("HIST SAME");
 
-                //  Recommendation block — compute the (1 − target_FP)
-                //  percentile of the noise histogram, treat it as the
-                //  recommended cut, then read the noise/data tail
+                //  Component-fit block (GATED OFF — see kEnableScoreFit below).
+                //  Models the score curves as a MIXED 3-population overlay:
+                //    DCR / null      = 1 LOG-Gaussian  [0..2] — dark counts are
+                //                      log-normal in n_σ: A·exp(−½·((log10 x −
+                //                      m)/s)²), bump at n_σ = 10^m.
+                //    in-beam, signal = LINEAR Gaussians [3..5], [6..8] — Poisson
+                //                      photon-count populations, Gaussian in
+                //                      LINEAR n_σ: A·exp(−½·((x − μ)/σ)²), bump
+                //                      at n_σ = μ; the signal runs broad (σ ≳ μ)
+                //                      as the pedestal under the whole tail.
+                //  Cascade: fit DCR on the noise sample (focused [0.3,30]
+                //  window) → carry its SHAPE (mean+width) FIXED, norm ±10%, into
+                //  the in-beam fit (+ one free linear bump) → carry both shapes
+                //  fixed (in-beam norm FREE) into the data fit (+ one free broad
+                //  signal bump).  Bump means are data-driven (tail local maxima)
+                //  and floored ≫ the population below.  Full rationale + why this
+                //  is parked: include/triggers/streaming/DISCUSSION.md § 1.4.1.
+                //
+                //  TF1s are stack-allocated at this scope so they outlive the
+                //  SaveAs below (no ->Write(); the only consumer is the PDF
+                //  render).  Drawn "SAME" over the (already-drawn) HIST curves;
+                //  fit "RQ0".  Fit range = full log-spaced support [0.1,1000].
+                constexpr double kFitLo = 0.1;
+                constexpr double kFitHi = 1000.0;
+                //  Per-component single Gaussians drawn (dotted, same colour as
+                //  the parent curve) on top of each summed fit so the operator
+                //  can SEE the DCR (log-Gaussian) + in-beam/signal (linear-
+                //  Gaussian) sub-components.
+                //  Held here, reserved for the worst case (1+2+3 = 6), so
+                //  every component outlives the SaveAs at the end of the
+                //  block — a TF1 destroyed before the canvas write vanishes
+                //  from the PDF.  Reserve up front so no reallocation
+                //  invalidates an already-Draw()n component's address.
+                std::vector<TF1> score_components;
+                score_components.reserve(6);
+                //  Fitted noise (DCR) peak amplitude — the downstream DCR term's
+                //  normalisation is leashed to ±10% of this.  NaN until the
+                //  noise fit lands.
+                double a_noise =
+                    std::numeric_limits<double>::quiet_NaN();
+                //  Bump width band (log10 units) shared by the in-beam and
+                //  signal log-Gaussians: wide enough for the broad signal bump,
+                //  floored so a term can't collapse into a delta-spike (s→0).
+                //  The DCR term's own width is fit on the clean noise sample
+                //  (stage 1) and then held FIXED in the downstream fits.
+                constexpr double kWidthSeed = 0.25;
+                constexpr double kWidthLo   = 0.10;
+                constexpr double kWidthHi   = 0.55;
+                //  Fitted log10-means surfaced to the annotation block as
+                //  n_σ = 10^m.  NaN / false means "fit unavailable" →
+                //  annotation skipped (no NaN displayed, no crash).
+                double noise_m0   = std::numeric_limits<double>::quiet_NaN();
+                //  Fitted noise WIDTH (log10 units) — the DCR component is
+                //  pinned wholesale (mean + width) into the downstream in-beam
+                //  / data fits; only its normalisation floats there.  NaN until
+                //  the noise fit lands.
+                double noise_s0   = std::numeric_limits<double>::quiet_NaN();
+                double inbeam_m1  = std::numeric_limits<double>::quiet_NaN();
+                double inbeam_m2  = std::numeric_limits<double>::quiet_NaN();
+                double data_m1    = std::numeric_limits<double>::quiet_NaN();
+                double data_m2    = std::numeric_limits<double>::quiet_NaN();
+                double data_m3    = std::numeric_limits<double>::quiet_NaN();
+                double sig_m      = std::numeric_limits<double>::quiet_NaN();
+                double sig_s      = std::numeric_limits<double>::quiet_NaN();
+                double sig_loss_frac =
+                    std::numeric_limits<double>::quiet_NaN();
+                bool have_noise_fit = false;
+                bool have_inbeam_fit = false;
+                bool have_data_fit = false;
+
+                //  TFormula strings (serialisation-safe) summing
+                //  A_i·exp(-0.5·((log10(x)−m_i)/s_i)^2) terms.  Param order
+                //  per term: [A, m, s].
+                //  MIXED model (physically motivated):
+                //    DCR / null     = LOG-Gaussian   [0..2]: random dark counts
+                //                     are log-normal in n_σ (Gaussian in
+                //                     log10 x); m,s are in log10 space, bump at
+                //                     n_σ = 10^m.
+                //    in-beam, signal = LINEAR Gaussians [3..5], [6..8]: these
+                //                     are Poisson photon-count populations, so
+                //                     Gaussian in LINEAR n_σ; μ,σ are in n_σ
+                //                     directly (bump at n_σ = μ).  The signal
+                //                     term runs broad (σ ≳ μ) and acts as the
+                //                     pedestal under the whole high-n_σ tail.
+                //  DCR kernel uses log10(x) − log10([1]) (NOT log10(x) − [1]):
+                //  this makes the DCR mean param [1] read DIRECTLY as the peak
+                //  position in n_σ (peak where x = [1]), instead of [1] being a
+                //  log you must exponentiate.  ([2] stays a log10-space width =
+                //  decades.)  The in-beam/signal terms are LINEAR Gaussians, so
+                //  their means [4]/[7] are already n_σ directly.
+                TF1 f_noise("f_qa_noise",
+                            "[0]*exp(-0.5*((log10(x)-log10([1]))/[2])^2)",
+                            kFitLo, kFitHi);
+                TF1 f_inbeam("f_qa_inbeam",
+                             "[0]*exp(-0.5*((log10(x)-log10([1]))/[2])^2) + "
+                             "[3]*exp(-0.5*((x-[4])/[5])^2)",
+                             kFitLo, kFitHi);
+                TF1 f_data("f_qa_data",
+                           "[0]*exp(-0.5*((log10(x)-log10([1]))/[2])^2) + "
+                           "[3]*exp(-0.5*((x-[4])/[5])^2) + "
+                           "[6]*exp(-0.5*((x-[7])/[8])^2)",
+                           kFitLo, kFitHi);
+
+                //  ── Score component-fit: GATED OFF ─────────────────────────
+                //  The 3-population overlay (DCR log-Gaussian + in-beam & signal
+                //  LINEAR Gaussians) is preserved but DISABLED: with the flag
+                //  false it neither runs nor draws anything.  The model is not
+                //  yet robust enough to ship — it does not converge onto the
+                //  three populations reliably across runs/normalisations (full
+                //  writeup: include/triggers/streaming/DISCUSSION.md, "Streaming-
+                //  score overlay fit").  The recommendation cut line further
+                //  down is independent of this block and still drawn.  Flip to
+                //  true only for offline experimentation.
+                constexpr bool kEnableScoreFit = false;
+
+                //  In-beam bump width — carried from stage 2 into stage 3's
+                //  FIXED in-beam shape.  NaN until the in-beam lands.
+                [[maybe_unused]] double inbeam_s2 =
+                    std::numeric_limits<double>::quiet_NaN();
+
+                //  Locate the most prominent log-normal bump (local maximum of
+                //  the lightly-smoothed hist) at n_σ ≥ floor_nsig; returns its
+                //  log10(n_σ), or `fallback_log10` if none is found.  Smoothing
+                //  tames per-bin noise without erasing the ~0.3-decade bumps;
+                //  the local-max test (taller than the bins ±W away on BOTH
+                //  sides) ignores the monotone DCR tail and keys on genuine
+                //  turning points regardless of absolute height — so the data-
+                //  driven seed lands on the real bump, not the DCR shoulder.
+                [[maybe_unused]] auto find_bump_log10 =
+                    [](TH1F *h, double floor_nsig, double fallback_log10) -> double
+                {
+                    if (!h || h->GetEntries() <= 0)
+                        return fallback_log10;
+                    std::unique_ptr<TH1F> sm(static_cast<TH1F *>(
+                        h->Clone(TString::Format("%s_qa_bump_smooth", h->GetName()))));
+                    sm->SetDirectory(nullptr);
+                    sm->Smooth(3);
+                    const int nb = sm->GetNbinsX();
+                    const int first =
+                        std::max(1, sm->GetXaxis()->FindBin(floor_nsig));
+                    constexpr int W = 8;  // ≈0.16 decade at 50 bins/decade
+                    double best_c = 0.0;
+                    int best_b = -1;
+                    for (int b = first; b <= nb; ++b)
+                    {
+                        const double c = sm->GetBinContent(b);
+                        if (c <= 0.0)
+                            continue;
+                        const double lft = sm->GetBinContent(std::max(1, b - W));
+                        const double rgt = sm->GetBinContent(std::min(nb, b + W));
+                        if (c > lft && c > rgt && c > best_c)
+                        {
+                            best_c = c;
+                            best_b = b;
+                        }
+                    }
+                    if (best_b < 0)
+                        return fallback_log10;
+                    return std::log10(sm->GetXaxis()->GetBinCenter(best_b));
+                };
+
+                //  --- stage 1: DCR on the clean noise sample (1 log-Gaussian).
+                //      Fixes the DCR SHAPE (mean+width) reused downstream. ---
+                if (kEnableScoreFit && h_noise->GetEntries() > 0)
+                {
+                    const double m0_seed = 2.0;           // DCR peak, n_σ (linear)
+                    const double a0_seed = std::max(
+                        h_noise->GetBinContent(h_noise->FindBin(m0_seed)),
+                        1e-12);
+                    f_noise.SetParameters(a0_seed, m0_seed, 0.28);
+                    f_noise.SetParLimits(0, 0.0, 1e12);
+                    f_noise.SetParLimits(1, 1.0, 10.0);   // DCR mean, n_σ (linear)
+                    f_noise.SetParLimits(2, 0.12, 0.60);  // DCR width (log10 decades)
+                    //  Fit the DCR on a window around its bump — [0.3,30] n_σ —
+                    //  NOT the full [0.1,1000] support.  The noise sample carries
+                    //  a sparse high-n_σ tail that, if included, pulls a single
+                    //  log-Gaussian off the bump (mean drifts low, width wrong),
+                    //  which then poisons the whole cascade (the in-beam term
+                    //  rushes to fill the resulting shoulder).  This window lands
+                    //  on the known-good DCR shape (≈0.24 mean, ≈0.28 width on
+                    //  this detector); both sit inside the par limits above.
+                    //  Accept on finite params rather than a strict MINUIT
+                    //  status==0 — these fits routinely return status 3
+                    //  (HESSE not pos-def / param near a limit) while
+                    //  yielding usable means.  A NaN / out-of-range mean
+                    //  (genuine failure) still bails out.
+                    h_noise->Fit(&f_noise, "RQ0", "", 0.3, 30.0);
+                    const double m0 = f_noise.GetParameter(1);
+                    if (std::isfinite(m0))
+                    {
+                        noise_m0 = m0;  // DCR peak in n_σ (linear) — [1] reads direct
+                        //  Fitted DCR width — pinned (with the mean) into the
+                        //  downstream fits' first term.
+                        noise_s0 = f_noise.GetParameter(2);
+                        //  Fitted DCR amplitude — the downstream DCR term's norm
+                        //  is leashed to ±10% of this.
+                        a_noise = f_noise.GetParameter(0);
+                        have_noise_fit = true;
+                        f_noise.SetLineColor(kBlue);
+                        f_noise.SetLineStyle(2);
+                        f_noise.SetLineWidth(2);
+                        f_noise.Draw("SAME");
+                        //  Single-component overlay (noise has 1 term, so
+                        //  this duplicates the summed fit, but drawing it
+                        //  dotted keeps the visual scheme uniform across
+                        //  the three curves).
+                        score_components.emplace_back(
+                            "f_qa_noise_comp0",
+                            "[0]*exp(-0.5*((log10(x)-log10([1]))/[2])^2)",
+                            kFitLo, kFitHi);
+                        TF1 &comp = score_components.back();
+                        comp.SetParameters(f_noise.GetParameter(0),
+                                           f_noise.GetParameter(1),
+                                           f_noise.GetParameter(2));
+                        comp.SetLineColor(kBlue);
+                        comp.SetLineStyle(3);
+                        comp.SetLineWidth(1);
+                        comp.Draw("SAME");
+                    }
+                }
+
+                //  --- stage 2: in-beam = DCR(shape FIXED, norm ±10%) + one
+                //      FREE bump seeded on the in-beam tail's local maximum. ---
+                if (kEnableScoreFit && have_inbeam && h_inbeam->GetEntries() > 0)
+                {
+                    //  Tail floor: 3 DCR widths above the DCR mean — above this
+                    //  the DCR is spent, so any bump is the in-beam population.
+                    //  noise_m0 is now the DCR mean in linear n_σ, noise_s0 a
+                    //  log10 width, so the floor is mean × 10^(3·width).
+                    const double floor_ns = have_noise_fit
+                        ? noise_m0 * std::pow(10.0, 3.0 * noise_s0)
+                        : 10.0;
+                    const double m1_seed = have_noise_fit ? noise_m0 : 2.0;
+                    //  Data-driven seed for the in-beam bump (local maximum of
+                    //  the smoothed tail), with a sensible fallback.
+                    const double m2_seed = find_bump_log10(
+                        h_inbeam, floor_ns,
+                        have_noise_fit ? noise_m0 + 1.0 : 1.4);
+                    //  Floor the in-beam bump a full decade (×10) above the DCR
+                    //  mean — the DCR→in-beam separation is ~20× on this
+                    //  detector, so a 10× floor keeps the free term off the
+                    //  low DCR shoulder (where it otherwise rails to a few n_σ)
+                    //  while still leaving it free to land on the real bump.
+                    const double m2_lo = have_noise_fit ? noise_m0 + 1.0 : 1.2;
+                    const double a1_seed =
+                        (have_noise_fit && std::isfinite(a_noise) && a_noise > 0.0)
+                            ? a_noise : 1e-3;
+                    const double a2_seed = std::max(
+                        h_inbeam->GetBinContent(
+                            h_inbeam->FindBin(std::pow(10.0, m2_seed))),
+                        1e-12);
+                    f_inbeam.SetParameters(a1_seed, m1_seed, kWidthSeed,
+                                           a2_seed, m2_seed, kWidthSeed);
+                    //  Term 1 = DCR: SHAPE (mean+width) FIXED to the noise fit;
+                    //  normalisation free only within ±10% of the noise norm
+                    //  (the dark-count rate barely moves between samples).  Fall
+                    //  back to a free first term if the noise stage failed.
+                    if (have_noise_fit)
+                    {
+                        f_inbeam.FixParameter(1, noise_m0);
+                        f_inbeam.FixParameter(2, noise_s0);
+                        f_inbeam.SetParLimits(0, 0.9 * a_noise, 1.1 * a_noise);
+                    }
+                    else
+                    {
+                        f_inbeam.SetParLimits(0, 0.0, 1e12);
+                        f_inbeam.SetParLimits(1, 0.0, 1.0);
+                        f_inbeam.SetParLimits(2, 0.12, 0.60);
+                    }
+                    //  Term 2 = in-beam bump: fully free above the DCR.
+                    f_inbeam.SetParLimits(3, 0.0, 1e12);
+                    f_inbeam.SetParLimits(4, m2_lo, 3.0);
+                    f_inbeam.SetParLimits(5, kWidthLo, kWidthHi);
+                    h_inbeam->Fit(&f_inbeam, "RQ0");
+                    const double m1 = f_inbeam.GetParameter(1);
+                    const double m2 = f_inbeam.GetParameter(4);
+                    if (std::isfinite(m1) && std::isfinite(m2))
+                    {
+                        inbeam_m1 = m1;
+                        inbeam_m2 = m2;
+                        inbeam_s2 = f_inbeam.GetParameter(5);
+                        have_inbeam_fit = true;
+                        f_inbeam.SetLineColor(kViolet);
+                        f_inbeam.SetLineStyle(2);
+                        f_inbeam.SetLineWidth(2);
+                        f_inbeam.Draw("SAME");
+                        //  Per-component overlay: the in-beam fit is a SUM of
+                        //  2 log-Gaussians but the summed curve alone hides
+                        //  that structure.  Draw each term (params [0..2] and
+                        //  [3..5]) as a dotted single log-Gaussian in the same
+                        //  violet so the operator can SEE the two bumps.  Held
+                        //  in `score_components` (reserved up front) so each
+                        //  outlives the SaveAs below.
+                        for (int t = 0; t < 2; ++t)
+                        {
+                            const int p = 3 * t;  // term param base
+                            score_components.emplace_back(
+                                TString::Format("f_qa_inbeam_comp%d", t),
+                                "[0]*exp(-0.5*((log10(x)-[1])/[2])^2)",
+                                kFitLo, kFitHi);
+                            TF1 &comp = score_components.back();
+                            comp.SetParameters(f_inbeam.GetParameter(p),
+                                               f_inbeam.GetParameter(p + 1),
+                                               f_inbeam.GetParameter(p + 2));
+                            comp.SetLineColor(kViolet);
+                            comp.SetLineStyle(3);
+                            comp.SetLineWidth(1);
+                            comp.Draw("SAME");
+                        }
+                    }
+                }
+
+                //  --- stage 3: data = DCR(shape FIXED, norm ±10%) + in-beam
+                //      (shape FIXED, norm FREE) + one FREE signal bump seeded on
+                //      the data tail's local maximum above the in-beam.  The
+                //      in-beam norm floats here because its fraction differs
+                //      between the pre-trigger window and the full spill, while
+                //      its SHAPE (position+width in n_σ) is universal. ---
+                if (kEnableScoreFit && h_data->GetEntries() > 0)
+                {
+                    const double m1_seed = have_noise_fit ? noise_m0 : 0.4;
+                    const double m2_seed = have_inbeam_fit ? inbeam_m2 : 1.4;
+                    const double s2_fix =
+                        std::isfinite(inbeam_s2) ? inbeam_s2 : kWidthSeed;
+                    //  Signal floor: above the in-beam bump (2 in-beam widths
+                    //  up) so the finder keys on the signal bump, not the
+                    //  in-beam one.
+                    const double sig_floor_ns = have_inbeam_fit
+                        ? std::pow(10.0, inbeam_m2 + 2.0 * s2_fix)
+                        : 60.0;
+                    const double m3_seed = find_bump_log10(
+                        h_data, sig_floor_ns,
+                        have_inbeam_fit ? inbeam_m2 + 0.6 : 1.8);
+                    const double m3_lo =
+                        have_inbeam_fit ? inbeam_m2 + 0.3 : 1.3;
+                    const double a1_seed =
+                        (have_noise_fit && std::isfinite(a_noise) && a_noise > 0.0)
+                            ? a_noise : 1e-3;
+                    const double a2_seed = std::max(
+                        h_data->GetBinContent(
+                            h_data->FindBin(std::pow(10.0, m2_seed))),
+                        1e-12);
+                    const double a3_seed = std::max(
+                        h_data->GetBinContent(
+                            h_data->FindBin(std::pow(10.0, m3_seed))),
+                        1e-12);
+                    f_data.SetParameters(a1_seed, m1_seed, kWidthSeed,
+                                         a2_seed, m2_seed, s2_fix,
+                                         a3_seed, m3_seed, kWidthSeed);
+                    //  Term 1 = DCR: SHAPE FIXED, norm ±10% of the noise norm.
+                    if (have_noise_fit)
+                    {
+                        f_data.FixParameter(1, noise_m0);
+                        f_data.FixParameter(2, noise_s0);
+                        f_data.SetParLimits(0, 0.9 * a_noise, 1.1 * a_noise);
+                    }
+                    else
+                    {
+                        f_data.SetParLimits(0, 0.0, 1e12);
+                        f_data.SetParLimits(1, 0.0, 1.0);
+                        f_data.SetParLimits(2, 0.12, 0.60);
+                    }
+                    //  Term 2 = in-beam: SHAPE (mean+width) FIXED from stage 2,
+                    //  normalisation FREE (its fraction differs from the in-beam
+                    //  sample).
+                    f_data.SetParLimits(3, 0.0, 1e12);
+                    if (have_inbeam_fit)
+                    {
+                        f_data.FixParameter(4, inbeam_m2);
+                        f_data.FixParameter(5, s2_fix);
+                    }
+                    else
+                    {
+                        f_data.SetParLimits(4, 0.0, 3.0);
+                        f_data.SetParLimits(5, kWidthLo, kWidthHi);
+                    }
+                    //  Term 3 = signal: fully free above the in-beam.
+                    f_data.SetParLimits(6, 0.0, 1e12);
+                    f_data.SetParLimits(7, m3_lo, 3.0);
+                    f_data.SetParLimits(8, kWidthLo, kWidthHi);
+                    h_data->Fit(&f_data, "RQ0");
+                    const double m1 = f_data.GetParameter(1);
+                    const double m2 = f_data.GetParameter(4);
+                    const double m3 = f_data.GetParameter(7);
+                    const double s3 = f_data.GetParameter(8);
+                    if (std::isfinite(m1) && std::isfinite(m2) &&
+                        std::isfinite(m3) && std::isfinite(s3))
+                    {
+                        data_m1 = m1;
+                        data_m2 = m2;
+                        data_m3 = m3;
+                        //  Signal = the THIRD (free) log-Gaussian.
+                        sig_m = m3;
+                        sig_s = s3;
+                        have_data_fit = true;
+                        f_data.SetLineColor(kRed);
+                        f_data.SetLineStyle(2);
+                        f_data.SetLineWidth(2);
+                        f_data.Draw("SAME");
+                        //  Per-component overlay: the data fit is a SUM of 3
+                        //  log-Gaussians (terms [0..2], [3..5], [6..8] — the
+                        //  third is the free SIGNAL bump).  Draw each as a
+                        //  dotted single log-Gaussian in the same red so the
+                        //  operator can SEE all three bumps, not just the
+                        //  envelope.  Held in `score_components` (reserved up
+                        //  front) so each outlives the SaveAs below.
+                        for (int t = 0; t < 3; ++t)
+                        {
+                            const int p = 3 * t;  // term param base
+                            score_components.emplace_back(
+                                TString::Format("f_qa_data_comp%d", t),
+                                "[0]*exp(-0.5*((log10(x)-[1])/[2])^2)",
+                                kFitLo, kFitHi);
+                            TF1 &comp = score_components.back();
+                            comp.SetParameters(f_data.GetParameter(p),
+                                               f_data.GetParameter(p + 1),
+                                               f_data.GetParameter(p + 2));
+                            comp.SetLineColor(kRed);
+                            comp.SetLineStyle(3);
+                            comp.SetLineWidth(1);
+                            comp.Draw("SAME");
+                        }
+                    }
+                }
+
+                //  Recommendation block — place the recommended cut where the
+                //  in-beam background histogram first runs out (its first empty
+                //  bin above the peak), then read the noise/data tail
                 //  populations above the cut to surface the trade-off.
                 //
                 //  Inlined here (not in score.cxx) per design call:
@@ -2174,52 +3010,99 @@ void lightdata_writer(
                 //  different one based on the visible S/N).
                 constexpr double kTargetFpPerWindow = 1e-6;
                 double rec_score = std::numeric_limits<double>::quiet_NaN();
-                long long noise_tail_count = 0;
-                long long data_tail_count  = 0;
+                //  Doubles, NOT long long: the score hists are
+                //  normalised to probability-per-bin, so each bin
+                //  content is < 1.0.  Accumulating the tail into a
+                //  long long truncated every contribution to 0 — that's
+                //  why the "above the line" tallies read 0/N even when
+                //  the data curve clearly has content above the cut.
+                double noise_tail_count = 0.0;
+                double data_tail_count  = 0.0;
                 double noise_total = 0.0;
                 double data_total  = 0.0;
                 {
                     const int n_bins = h_noise->GetNbinsX();
-                    //  Walk noise right-to-left, accumulating tail
-                    //  until we cross target_fp × total.  Include
-                    //  under/overflow in the totals.
+                    //  Background the trigger must not fire on = DCR
+                    //  (first-frames) + in-beam pre-trigger.  Combine in
+                    //  RAW counts (un-normalise via GetEntries) so the two
+                    //  populations are weighted by their true window counts,
+                    //  then compute the recommended cut + FP on the union.
+                    TH1F *h_bg = static_cast<TH1F *>(
+                        h_noise->Clone("h_streaming_score_bg_tmp"));
+                    h_bg->SetDirectory(nullptr);
+                    h_bg->Scale(h_noise->GetEntries());             // → raw DCR counts
+                    if (have_inbeam && h_inbeam->GetEntries() > 0)
+                        h_bg->Add(h_inbeam, h_inbeam->GetEntries()); // + raw in-beam
+
                     for (int b = 0; b <= n_bins + 1; ++b)
                     {
-                        noise_total += h_noise->GetBinContent(b);
+                        noise_total += h_bg->GetBinContent(b);
                         data_total  += h_data->GetBinContent(b);
                     }
                     if (noise_total > 0.0)
                     {
-                        const double target_cumulative =
-                            kTargetFpPerWindow * noise_total;
-                        double cumulative = 0.0;
-                        for (int b = n_bins + 1; b >= 0; --b)
+                        //  Primary: the recommended cut = the FIRST EMPTY BIN of
+                        //  the in-beam background histogram, scanning rightward
+                        //  from its peak (the DCR bulk).  Physics: above the
+                        //  highest-n_σ in-beam-background window there is no
+                        //  beam-correlated background left, so a cut placed
+                        //  where the in-beam distribution first hits zero fires
+                        //  only on genuine signal.  Directly interpretable and
+                        //  operator-facing, and it replaces the FP-extrapolation
+                        //  as the primary.  Scanning from the peak (not bin 1)
+                        //  skips the sparse sub-1-n_σ region, whose low stats can
+                        //  otherwise leave isolated empty bins.  ``rec_score`` is
+                        //  the low edge of that first empty bin — i.e. just past
+                        //  the last populated in-beam bin.
+                        if (have_inbeam && h_inbeam->GetEntries() > 0)
                         {
-                            cumulative += h_noise->GetBinContent(b);
-                            if (cumulative >= target_cumulative)
+                            const int ib_bins = h_inbeam->GetNbinsX();
+                            const int ib_peak = h_inbeam->GetMaximumBin();
+                            for (int b = ib_peak + 1; b <= ib_bins; ++b)
+                                if (h_inbeam->GetBinContent(b) <= 0.0)
+                                {
+                                    rec_score =
+                                        h_inbeam->GetXaxis()->GetBinLowEdge(b);
+                                    break;
+                                }
+                        }
+                        //  Fallback (no in-beam sample, or no empty bin found):
+                        //  an empirical right-to-left walk on the combined
+                        //  background to a FP = 1e-6 target.  Coarse — it can
+                        //  pin to a far-tail outlier — but only reached when the
+                        //  in-beam-derived cut is unavailable.
+                        if (!std::isfinite(rec_score))
+                        {
+                            const double target_cumulative =
+                                kTargetFpPerWindow * noise_total;
+                            double cumulative = 0.0;
+                            for (int b = n_bins + 1; b >= 0; --b)
                             {
-                                rec_score = (b == 0)
-                                    ? h_noise->GetXaxis()->GetXmin()
-                                    : h_noise->GetXaxis()->GetBinLowEdge(b);
-                                break;
+                                cumulative += h_bg->GetBinContent(b);
+                                if (cumulative >= target_cumulative)
+                                {
+                                    rec_score = (b == 0)
+                                        ? h_bg->GetXaxis()->GetXmin()
+                                        : h_bg->GetXaxis()->GetBinLowEdge(b);
+                                    break;
+                                }
                             }
                         }
                     }
-                    //  Tail integrals above the recommended cut — drop
-                    //  one to GetBinLowEdge convention: bins whose low
-                    //  edge ≥ rec_score are above the line.
+                    //  Tail integrals above the recommended cut — bins whose
+                    //  low edge ≥ rec_score are above the line.  noise_* are
+                    //  now RAW combined-background counts; data_* stay as the
+                    //  normalised data fractions.
                     if (std::isfinite(rec_score))
                     {
-                        const int cut_bin =
-                            h_noise->GetXaxis()->FindBin(rec_score);
+                        const int cut_bin = h_bg->GetXaxis()->FindBin(rec_score);
                         for (int b = cut_bin; b <= n_bins + 1; ++b)
                         {
-                            noise_tail_count +=
-                                static_cast<long long>(h_noise->GetBinContent(b));
-                            data_tail_count +=
-                                static_cast<long long>(h_data->GetBinContent(b));
+                            noise_tail_count += h_bg->GetBinContent(b);
+                            data_tail_count  += h_data->GetBinContent(b);
                         }
                     }
+                    delete h_bg;
                 }
 
                 //  CRITICAL: the histograms are filled with the
@@ -2235,14 +3118,56 @@ void lightdata_writer(
                 //  unambiguous; the variable identity is preserved.
                 const double rec_n_sigma = rec_score;
 
-                //  Vertical dashed line at the recommended cut.  Spans
-                //  the actual visible Y range computed above so the
-                //  line touches both pad edges under log Y regardless
-                //  of normalisation.
-                if (std::isfinite(rec_score))
+                //  Cut-loss readout for the data SIGNAL log-Gaussian (the
+                //  third, free term of the data fit).  Fraction below the
+                //  cut c is ∫₁^c term / ∫₁^1000 term (the amplitude
+                //  cancels).  Build a single-term log-Gaussian TF1 with the
+                //  fitted signal mean + width and integrate 1→c over
+                //  1→1000.  This is a MODEL extrapolation of the signal bump
+                //  below the cut, not a direct count.
+                if (have_data_fit && std::isfinite(rec_n_sigma) &&
+                    rec_n_sigma > 0.0 && std::isfinite(sig_m) &&
+                    std::isfinite(sig_s) && sig_s > 0.0)
                 {
+                    //  Signal is a LINEAR Gaussian (μ=sig_m, σ=sig_s in n_σ),
+                    //  so its cut-loss kernel is linear too.
+                    TF1 f_sig("f_qa_sig_g1",
+                              "exp(-0.5*((x-[0])/[1])^2)",
+                              1.0, 1000.0);
+                    f_sig.SetParameter(0, sig_m);
+                    f_sig.SetParameter(1, sig_s);
+                    const double full = f_sig.Integral(1.0, 1000.0);
+                    const double below = f_sig.Integral(1.0, rec_n_sigma);
+                    if (std::isfinite(full) && full > 0.0 &&
+                        std::isfinite(below))
+                        sig_loss_frac = below / full;
+                }
+                //  One-line echo of every fitted mean (as n_σ = 10^m) + the
+                //  loss %, gated so unavailable fits print NaN-free.
+                if (have_noise_fit || have_inbeam_fit || have_data_fit)
+                    mist::logger::info(TString::Format(
+                        "(lightdata_writer) 05_streaming_score fits (n_σ): "
+                        "noise=%.2f  in-beam=%.2f,%.2f  "
+                        "data=%.2f,%.2f,%.2f  signal=%.2f  "
+                        "signal lost below cut (n_sigma=%.2f) = %.1f%%",
+                        noise_m0, inbeam_m1, inbeam_m2,
+                        data_m1, data_m2, data_m3, sig_m,
+                        rec_n_sigma, 100.0 * sig_loss_frac).Data());
+
+                //  Vertical dashed line at the recommended cut.  Stops
+                //  BELOW the annotation/legend block instead of running
+                //  the full height — otherwise it cuts straight through
+                //  the text.  On the log-Y axis NDC fraction f maps to
+                //  y = y_min·(y_max/y_min)^f.  The annotation text runs
+                //  down to NDC ≈ 0.55 (legend 0.78–0.90 sits above it), so
+                //  stop the line at f = 0.52 — just under the lowest text
+                //  row — so it never crosses the box whatever the cut x.
+                if (std::isfinite(rec_score) && y_min > 0.0 && y_max > y_min)
+                {
+                    const double y_line_top =
+                        y_min * std::pow(y_max / y_min, 0.52);
                     TLine *line = new TLine(
-                        rec_score, y_min, rec_score, y_max);
+                        rec_score, y_min, rec_score, y_line_top);
                     line->SetLineColor(kBlack);
                     line->SetLineStyle(2);
                     line->SetLineWidth(2);
@@ -2251,16 +3176,26 @@ void lightdata_writer(
 
                 //  Inline legend so the operator doesn't have to flip
                 //  to the TBrowser to know which colour is which.
-                //  Sweep audit (2026-05-30): legend + annotation block
+                //  Sweep audit: legend + annotation block
                 //  shifted left by 0.15 NDC (X anchor 0.65 → 0.50;
                 //  inner-indent 0.67 → 0.52) — operator screenshot
                 //  showed the right column being clipped at the pad
                 //  edge.  Y range / dimensions unchanged.
-                TLegend leg(0.50, 0.81, 0.77, 0.90);
+                TLegend leg(0.50, 0.78, 0.77, 0.90);
                 leg.SetBorderSize(0);
                 leg.SetFillStyle(0);
                 leg.AddEntry(h_noise, "noise (first-frames window)", "l");
                 leg.AddEntry(h_data,  "data (post first-frames)",    "l");
+                if (have_inbeam)
+                    leg.AddEntry(h_inbeam,
+                                 "in-beam bkg (20 ns win, #minus50 ns)", "l");
+                if (have_noise_fit)
+                    leg.AddEntry(&f_noise, "DCR fit (log-Gauss)", "l");
+                if (have_inbeam_fit)
+                    leg.AddEntry(&f_inbeam, "in-beam fit (log-G + linear-G)", "l");
+                if (have_data_fit)
+                    leg.AddEntry(&f_data,
+                                 "data fit (log-G + 2 linear-G)", "l");
                 //  C6.2: stack-allocated TLine.  The legend stores a
                 //  raw pointer for its swatch; the line just needs to
                 //  outlive `leg.Draw()` and the canvas write below.
@@ -2274,7 +3209,7 @@ void lightdata_writer(
                     legline.SetLineStyle(2);
                     legline.SetLineWidth(2);
                     leg.AddEntry(&legline,
-                                 "recommended cut (FP = 1e-6)", "l");
+                                 "recommended cut (in-beam bkg #rightarrow 0)", "l");
                 }
                 leg.Draw();
 
@@ -2283,7 +3218,7 @@ void lightdata_writer(
                 //  (all of the above).  Placed top-right under the
                 //  legend so it doesn't overlap the score curves.
                 //
-                //  Sweep audit (2026-05-30): the previous tail
+                //  Sweep audit: the previous tail
                 //  computation used `noise_total = Σ bin_content` and
                 //  cast bin contents to `long long`.  If the
                 //  histogram was normalised (probability per bin) the
@@ -2296,58 +3231,70 @@ void lightdata_writer(
                 //  unnormalised histograms.
                 if (std::isfinite(rec_score))
                 {
-                    const double noise_entries = h_noise->GetEntries();
-                    const double data_entries  = h_data->GetEntries();
+                    //  noise_* are RAW combined-background (DCR + in-beam)
+                    //  counts; data_* are the normalised data fraction × the
+                    //  data window count.
+                    const double bg_windows   = noise_total;  // N_DCR + N_in-beam
+                    const double data_entries = h_data->GetEntries();
                     const double noise_frac_above = (noise_total > 0.0)
                         ? static_cast<double>(noise_tail_count) / noise_total
                         : 0.0;
                     const double data_frac_above = (data_total > 0.0)
                         ? static_cast<double>(data_tail_count) / data_total
                         : 0.0;
-                    const long long noise_above_n =
-                        static_cast<long long>(noise_frac_above * noise_entries);
-                    const long long data_above_n =
-                        static_cast<long long>(data_frac_above * data_entries);
+                    const double noise_above_n = noise_tail_count;  // raw count
+                    const double data_above_n  = data_frac_above * data_entries;
 
+                    //  Compact annotation — kept terse so the longest line
+                    //  (with scientific-notation counts) clears the right
+                    //  pad edge.  Starts at NDC x=0.45, small font.
                     TLatex txt;
                     txt.SetNDC();
                     txt.SetTextFont(42);
-                    txt.SetTextSize(0.024);
+                    txt.SetTextSize(0.020);
                     txt.SetTextColor(kBlack);
-                    double y_cursor = 0.78;
+                    double y_cursor = 0.73;  // below the legend
                     const double y_step = 0.030;
-                    txt.DrawLatex(0.50, y_cursor,
-                        TString::Format(
-                            "Recommended n_{#sigma} = %.2f", rec_n_sigma));
+                    txt.DrawLatex(0.45, y_cursor, TString::Format(
+                        "rec. n_{#sigma} = %.2f   (in-beam #rightarrow 0)",
+                        rec_n_sigma));
                     y_cursor -= y_step;
-                    txt.DrawLatex(0.50, y_cursor,
-                        TString::Format(
-                            "  (target FP = 10^{-6})"));
+                    txt.DrawLatex(0.45, y_cursor, "above cut:");
                     y_cursor -= y_step;
-                    txt.DrawLatex(0.50, y_cursor,
-                        TString::Format(
-                            "Above the line:"));
+                    txt.DrawLatex(0.47, y_cursor, TString::Format(
+                        "bkg  %.2g / %.2g  (%.1e)",
+                        noise_above_n, bg_windows, noise_frac_above));
                     y_cursor -= y_step;
-                    txt.DrawLatex(0.52, y_cursor,
-                        TString::Format(
-                            "noise: %lld / %.0f windows (%.2e)",
-                            noise_above_n, noise_entries, noise_frac_above));
+                    txt.DrawLatex(0.47, y_cursor, TString::Format(
+                        "data %.2g / %.2g  (%.2f%%)",
+                        data_above_n, data_entries, 100.0 * data_frac_above));
                     y_cursor -= y_step;
-                    txt.DrawLatex(0.52, y_cursor,
-                        TString::Format(
-                            "data: %lld / %.0f windows (%.2f%%)",
-                            data_above_n, data_entries,
-                            100.0 * data_frac_above));
-                    y_cursor -= y_step;
-                    const double sn = (noise_above_n > 0)
-                        ? static_cast<double>(data_above_n) / noise_above_n
-                        : 0.0;
-                    if (noise_above_n > 0)
-                        txt.DrawLatex(0.52, y_cursor,
-                            TString::Format("S/N: %.1f", sn));
+                    //  S/N from the FRACTIONS (count-based goes to ∞ when the
+                    //  noise count rounds to 0 at a high cut).
+                    if (noise_frac_above > 0.0)
+                        txt.DrawLatex(0.47, y_cursor, TString::Format(
+                            "S/N %.0f", data_frac_above / noise_frac_above));
                     else
-                        txt.DrawLatex(0.52, y_cursor,
-                            "S/N: #infty (no noise above)");
+                        txt.DrawLatex(0.47, y_cursor, "S/N #infty");
+                    y_cursor -= y_step;
+                    txt.DrawLatex(0.45, y_cursor, TString::Format(
+                        "in-beam %.2g trig (%.2g dropped)",
+                        static_cast<double>(n_inbeam_triggers_total -
+                                            n_inbeam_triggers_skipped),
+                        static_cast<double>(n_inbeam_triggers_skipped)));
+                    y_cursor -= y_step;
+                    //  Signal log-Gaussian position (n_σ = 10^m) +
+                    //  model-based cut loss (the third, free term of the
+                    //  data 3-logGauss fit).
+                    if (have_data_fit && std::isfinite(sig_loss_frac))
+                    {
+                        txt.DrawLatex(0.45, y_cursor, TString::Format(
+                            "m_{sig} = %.1f n_{#sigma}", sig_m));
+                        y_cursor -= y_step;
+                        txt.DrawLatex(0.45, y_cursor, TString::Format(
+                            "signal lost below cut: %.1f%%",
+                            100.0 * sig_loss_frac));
+                    }
                 }
 
                 const auto path = util::qa::pdf_path(
@@ -2369,7 +3316,7 @@ void lightdata_writer(
             fired_trigger_ids.push_back(k);
         std::sort(fired_trigger_ids.begin(), fired_trigger_ids.end());
 
-        int trg_order = 6;
+        int trg_order = 7;  // 06 is taken by dcr_per_channel above
         for (int trigger_idx : fired_trigger_ids)
         {
             auto &hist = h_trigger_anchor_dt[trigger_idx];
@@ -2401,13 +3348,175 @@ void lightdata_writer(
             opts.logger_prefix = "(lightdata_writer)";
             util::qa::render_anchor_dt_canvas(*hist.get(), opts);
         }
+
+        //  Per-trigger consecutive-Δt vs spill — the SAME standardised
+        //  TH2F (X = spill index, Y = Δt between consecutive firings of
+        //  this trigger, log-spaced from 1 ns to 1e10 ns) for every
+        //  hardware trigger, so the dashboard tiles them uniformly.
+        //  ``h_trigger_dt`` is only booked inside the per-trigger loop's
+        //  is_secondary + is_synthetic_marker gate, so this map already
+        //  excludes secondaries, the FirstFrames/StartOfSpill markers,
+        //  and the UNKNOWN / STREAMING_RING_FOUND derived triggers —
+        //  no extra filtering needed here.  Enumerate + sort so the file
+        //  order is deterministic by registry index (continues the
+        //  ``trg_order`` counter so these land after the anchor-Δt PDFs).
+        std::vector<int> dt_trigger_ids;
+        dt_trigger_ids.reserve(h_trigger_dt.size());
+        for (const auto &[k, _] : h_trigger_dt)
+            dt_trigger_ids.push_back(k);
+        std::sort(dt_trigger_ids.begin(), dt_trigger_ids.end());
+        for (int trigger_idx : dt_trigger_ids)
+        {
+            auto &hist = h_trigger_dt[trigger_idx];
+            if (!hist)
+                continue;
+            const std::string trig_name = registry.name_of(trigger_idx);
+            TCanvas c(TString::Format("c_qa_lightdata_trigdt_%s",
+                                      trig_name.c_str()),
+                      "", 1000, 1000);
+            //  Log Y so the log-spaced Δt bins render at uniform width;
+            //  log Z for the wide per-bin dynamic range.  Right margin
+            //  widened to seat the colour palette.
+            c.SetLeftMargin(0.14);
+            c.SetRightMargin(0.16);
+            c.SetLogy();
+            c.SetLogz();
+            hist->Draw("colz");
+
+            //  Per-spill Poisson-rate annotation.  The Δt between
+            //  consecutive firings of a Poisson process is exponentially
+            //  distributed: p(Δt) = λ·e^{−λΔt}.  So for each spill
+            //  column we project the Δt distribution and fit ``expo``
+            //  (= e^{p0+p1·Δt}); the decay constant λ = −p1 is the
+            //  Poisson firing rate.  The fit slope is normalisation-
+            //  independent, so the earlier ``Scale(1,"width")`` (which
+            //  un-distorts the log-spaced Y bins into a true density)
+            //  doesn't bias it.  λ is in 1/ns; ×1e9 → Hz.  Printed at
+            //  90° at the top of each spill's column.
+            std::vector<std::unique_ptr<TLatex>> rate_labels;  // keep alive until SaveAs
+            {
+                TH2F *h2 = hist.get();
+                const int nx = h2->GetNbinsX();
+                //  Anchor the rate labels at 65 % up the (log) Y axis —
+                //  lower than the previous near-top placement, sitting
+                //  in the mid-upper headroom where they read clearly
+                //  without crowding the top edge.  On a log axis, the
+                //  value at fraction f is y_min·(y_max/y_min)^f.
+                const double y_axis_lo = h2->GetYaxis()->GetXmin();
+                const double y_axis_hi = h2->GetYaxis()->GetXmax();
+                const double y_label =
+                    (y_axis_lo > 0.0 && y_axis_hi > y_axis_lo)
+                        ? y_axis_lo * std::pow(y_axis_hi / y_axis_lo, 0.80)
+                        : y_axis_hi * 0.30;
+                constexpr double kMinEntriesForFit = 10.0;
+                for (int xb = 1; xb <= nx; ++xb)
+                {
+                    std::unique_ptr<TH1D> proj(
+                        h2->ProjectionY(
+                            TString::Format("_py_%s_%d", trig_name.c_str(), xb),
+                            xb, xb));
+                    if (!proj || proj->GetEntries() < kMinEntriesForFit)
+                        continue;
+                    //  Quiet, no-draw, no-store fit over the populated range.
+                    const int fit_status =
+                        proj->Fit("expo", "Q0");
+                    TF1 *fexpo = proj->GetFunction("expo");
+                    if (fit_status != 0 || !fexpo)
+                        continue;
+                    const double p1 = fexpo->GetParameter(1);  // = −λ (1/ns)
+                    const double lambda_per_ns = -p1;
+                    if (!(lambda_per_ns > 0.0) || !std::isfinite(lambda_per_ns))
+                        continue;
+                    const double rate_hz = lambda_per_ns * 1.0e9;
+                    //  Human-friendly unit.
+                    TString rate_txt;
+                    if (rate_hz >= 1.0e6)
+                        rate_txt = TString::Format("%.2f MHz", rate_hz / 1.0e6);
+                    else if (rate_hz >= 1.0e3)
+                        rate_txt = TString::Format("%.2f kHz", rate_hz / 1.0e3);
+                    else
+                        rate_txt = TString::Format("%.1f Hz", rate_hz);
+                    const double x_centre = h2->GetXaxis()->GetBinCenter(xb);
+                    auto lbl = std::make_unique<TLatex>(
+                        x_centre, y_label, rate_txt.Data());
+                    lbl->SetTextAngle(90);
+                    lbl->SetTextAlign(12);   // left-bottom along the rotated axis
+                    lbl->SetTextSize(0.018);
+                    lbl->SetTextColor(kBlack);
+                    lbl->Draw();
+                    rate_labels.push_back(std::move(lbl));
+                }
+            }
+
+            const auto path = util::qa::pdf_path(
+                run_dir, "lightdata", trg_order++,
+                std::string("trigger_dt_") + trig_name);
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        }
+
+        //  Per-trigger trigger↔cherenkov coincidence — Δt of cherenkov hits
+        //  relative to each hardware trigger (the in-time peak shows the
+        //  trigger fires together with cherenkov light).  One PDF per
+        //  trigger, same enumerate+sort so the dashboard tiles them
+        //  uniformly; continues the trg_order counter so they land after
+        //  the consecutive-Δt PDFs.
+        std::vector<int> cher_trigger_ids;
+        cher_trigger_ids.reserve(h_trigger_time_diff_w_cherenkov.size());
+        for (const auto &[k, _] : h_trigger_time_diff_w_cherenkov)
+            cher_trigger_ids.push_back(k);
+        std::sort(cher_trigger_ids.begin(), cher_trigger_ids.end());
+        for (int trigger_idx : cher_trigger_ids)
+        {
+            auto &hist = h_trigger_time_diff_w_cherenkov[trigger_idx];
+            if (!hist || hist->GetEntries() <= 0)
+                continue;
+            const std::string trig_name = registry.name_of(trigger_idx);
+            TCanvas c(TString::Format("c_qa_lightdata_trigcher_%s",
+                                      trig_name.c_str()),
+                      "", 1000, 1000);
+            c.SetLeftMargin(0.13);
+            c.SetBottomMargin(0.12);
+            c.SetLogy();  // tails span orders of magnitude below the peak
+            hist->SetLineColor(kAzure + 1);
+            hist->SetLineWidth(2);
+            //  Zoom to the in-time coincidence region; the full frame range
+            //  buries the peak.
+            hist->GetXaxis()->SetRangeUser(-100., 100.);
+            hist->Draw("hist");
+            const auto path = util::qa::pdf_path(
+                run_dir, "lightdata", trg_order++,
+                std::string("trigcher_dt_") + trig_name);
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+
+            //  Companion in-window hitmap for the same trigger: (x, y) of the
+            //  cherenkov hits inside the config timing cut [kTrigCherDtMin,
+            //  kTrigCherDtMax] — the in-time trigger-Cherenkov occupancy.
+            auto hm_it = h_trigger_window_hitmap.find(trigger_idx);
+            if (hm_it != h_trigger_window_hitmap.end() && hm_it->second &&
+                hm_it->second->GetEntries() > 0)
+            {
+                TCanvas ch(TString::Format("c_qa_lightdata_trigcherhm_%s",
+                                           trig_name.c_str()),
+                           "", 1000, 1000);
+                ch.SetRightMargin(0.14);
+                hm_it->second->Draw("colz");
+                const auto path_hm = util::qa::pdf_path(
+                    run_dir, "lightdata", trg_order++,
+                    std::string("trigcher_hitmap_") + trig_name);
+                ch.SaveAs(path_hm.string().c_str());
+                util::qa::crop_pdf_inplace(path_hm);
+            }
+        }
     }
 
     //  ---
     //  --- Publish curated scalars to AnalysisResults (cross-run store)
     //
-    //  TOML-backed (since 2026-05-29): AnalysisResults::update reads + writes
-    //  ``<repo>/standard_results.toml``.  Dashboard consumer is
+    //  TOML-backed: AnalysisResults::update reads + writes
+    //  ``<data_repository>/standard_results.toml`` (= ``Data/``, NOT the
+    //  git repo root).  Dashboard consumer is
     //  ``qa_quicklook.rundb.results_load``; sibling audit log at
     //  ``standard_results.audit.toml``.
     //  (the new dashboard-friendly format).  See DISCUSSION.md.
@@ -2426,7 +3535,7 @@ void lightdata_writer(
         }
 
         //  Cross-run aggregate lives next to the run directories
-        //  (``<repo>/standard_results.toml``).  The legacy
+        //  (``<data_repository>/standard_results.toml`` = ``Data/``).  The legacy
         //  ``extData/`` hard-code failed whenever the writer was
         //  launched from a cwd that didn't happen to have an
         //  ``extData/`` directory — the dashboard does exactly that.

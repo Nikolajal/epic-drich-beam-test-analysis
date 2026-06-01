@@ -746,7 +746,7 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
         //  published calibration then had no slip information, so
         //  downstream apply at production time (where the slip is
         //  still in the hardware) silently went off by the slip
-        //  magnitude.  Removed 2026-05-27.
+        //  magnitude.  Removed.
 
         for (int tdc_idx = 0; tdc_idx < 4; ++tdc_idx)
             result.tdc[tdc_idx].n_slipped_hits = slipped_hits_per_tdc[tdc_idx];
@@ -1085,7 +1085,7 @@ void pulser_calib_writer(
     //  silently but produces NaN/Inf bin edges that propagate into the
     //  diagnostic file.  When no spills were seen we keep a single-bin
     //  placeholder so the histogram exists (empty) without booby-trapping
-    //  downstream readers.  Re-applied after the 2026-05-30 pulser
+    //  downstream readers.  Re-applied after the pulser
     //  refactor restored the bug pattern.
     const int    anchor_n_x_bins = std::max(1, spills_seen);
     const double anchor_x_hi     = (spills_seen > 0)
@@ -1993,10 +1993,11 @@ void pulser_calib_writer(
     //  summary numbers the dashboard scoreboard needs.
     {
         //  Cross-run aggregate next to the run directories
-        //  (``<repo>/standard_results.toml``).  Same convention as
-        //  the other three writers — stale ``extData/`` hard-code
-        //  was failing because the dashboard launches with cwd at
-        //  the repo root, where ``extData/`` doesn't exist.
+        //  (``<data_repository>/standard_results.toml`` = ``Data/``).
+        //  Same convention as the other three writers — stale
+        //  ``extData/`` hard-code was failing because the dashboard
+        //  launches with cwd at the git repo root; the store lives
+        //  under data_repository (``Data/``), NOT the repo root.
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
             {{run_name, "all", "calibration.total_hits_read"},

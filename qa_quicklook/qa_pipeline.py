@@ -43,13 +43,12 @@ import os
 import platform
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Optional
 
 from . import joblock
 
@@ -304,8 +303,28 @@ def _new_pdfs(
 # Notification — distinct from the manual flow.
 # ---------------------------------------------------------------------------
 
+def _fmt_duration(seconds: float) -> str:
+    """Human-readable duration: 90 → '1m 30s', 45 → '45s', 3661 → '1h 1m 1s'."""
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}m {s}s" if s else f"{m}m"
+    h, m = divmod(m, 60)
+    out = f"{h}h"
+    if m:
+        out += f" {m}m"
+    if s:
+        out += f" {s}s"
+    return out
+
+
 def _notify_macos(title: str, body: str) -> None:
     try:
+        #  Plain FYI banner.  osascript's `display notification` is
+        #  fire-and-forget — its "Show" button is inert by design — and
+        #  that's fine: the operator opens the run in the dashboard.
         subprocess.Popen([
             "osascript", "-e",
             f'display notification "{body}" with title "{title}"',
@@ -330,7 +349,7 @@ def _notify_linux(title: str, body: str) -> None:
 
 
 def _notify_file(run_dir: Path, body: str) -> None:
-    """Touch a ``.qae_done`` marker the dashboard's fs-watcher can pick up."""
+    """Touch a ``.qa_pipeline_done`` marker the dashboard's fs-watcher can pick up."""
     marker = run_dir / "qa" / ".qa_pipeline_done"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(body + "\n", encoding="utf-8")
@@ -347,14 +366,22 @@ def _fire_notifications(
     body: str,
     summary_line: str,
     run_dir: Path,
+    banner: bool = True,
 ) -> None:
-    """Multiplex the notification across the operator's chosen backends."""
+    """Multiplex the notification across the operator's chosen backends.
+
+    ``banner=False`` suppresses only the system banner (macOS/Linux) while
+    still emitting the stdout line and the ``.qa_pipeline_done`` file marker.
+    Used for the whole-pipeline wrap-up when a single stage ran — its own
+    per-stage banner already announced completion, so a second banner would
+    just be noise.
+    """
     sysname = platform.system()
     if "stdout" in backends or "all" in backends:
         _notify_stdout(summary_line)
     if "file" in backends or "all" in backends:
         _notify_file(run_dir, summary_line)
-    if "macos" in backends or "all" in backends:
+    if banner and ("macos" in backends or "all" in backends):
         if sysname == "Darwin":
             _notify_macos(title, body)
         elif sysname == "Linux":
@@ -363,6 +390,46 @@ def _fire_notifications(
             _notify_linux(title, body)
         #  Windows / headless: silently fall through; stdout + file
         #  still carry the news.
+
+
+def _fire_stage_notification(
+    *,
+    backends: set[str],
+    stage_name: str,
+    result: "StageResult",
+    run_id: str,
+) -> None:
+    """Per-writer system banner — ping as each individual stage finishes.
+
+    Covers single-writer runs (``--stages lightdata``) and gives per-stage
+    progress on a full cascade.  Fires ONLY the system banner: stdout already
+    carries the ``[stage] done in …`` line from :func:`_run_stage`, and the
+    ``.qa_pipeline_done`` file marker is reserved for whole-pipeline
+    completion (the dashboard's fs-watcher keys off it), so neither is
+    duplicated here.
+    """
+    #  Only announce stages that actually ran.  Dry-run / excluded stages
+    #  have no wall time, so there's nothing to report (and _fmt_duration
+    #  would choke on a None).
+    if result.wall_s is None:
+        return
+    if result.state == "ok":
+        n = len(result.new_pdfs)
+        title = f"✓ {stage_name} done · {run_id}"
+        body = (f"{stage_name} finished in {_fmt_duration(result.wall_s)}"
+                f" · {n} new PDF{'s' if n != 1 else ''}")
+    elif result.state == "failed":
+        title = f"✗ {stage_name} failed · {run_id}"
+        body = f"{stage_name} failed (exit {result.exit_code})"
+    else:
+        return  # not_run / skipped — nothing to announce
+    if not ("macos" in backends or "all" in backends):
+        return
+    sysname = platform.system()
+    if sysname == "Darwin":
+        _notify_macos(title, body)
+    elif sysname == "Linux":
+        _notify_linux(title, body)
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +526,7 @@ def _run_stage(
 
     run_dir = opts.data_repo / opts.run_id
     new_pdfs = _new_pdfs(run_dir, name, pdf_snapshot_before)
-    log(f"[{name}] done in {wall_s:.1f}s — {len(new_pdfs)} new PDF(s)")
+    log(f"[{name}] done in {_fmt_duration(wall_s)} — {len(new_pdfs)} new PDF(s)")
     return StageResult(
         name=name, state="ok", exit_code=0, wall_s=wall_s, new_pdfs=new_pdfs,
     )
@@ -578,6 +645,18 @@ def run_pipeline(
                 "wall_s": result.wall_s,
                 "new_pdfs": result.new_pdfs,
             })
+            #  Per-writer banner: only for an explicit single-writer run
+            #  (`--stages lightdata`).  In a full cascade the individual
+            #  stages are an implementation detail — the operator wants ONE
+            #  "QA done" banner at the end (fired by the wrap-up below), not a
+            #  separate ping as each writer finishes.  The wrap-up banner is
+            #  reciprocally suppressed for single-stage runs (banner=n_ran>1),
+            #  so exactly one banner fires either way.
+            if len(opts.stages) == 1:
+                _fire_stage_notification(
+                    backends=opts.notify, stage_name=stage["name"],
+                    result=result, run_id=opts.run_id,
+                )
             if result.state == "failed":
                 overall_exit = result.exit_code or stage["exit_base"]
                 break  # stop-on-first-failure
@@ -599,7 +678,7 @@ def run_pipeline(
         #  expanding the notification.
         if success:
             title = f"✓ QA done · {opts.run_id}"
-            body = f"qa_pipeline finished in {int(wall_s)}s"
+            body = f"qa_pipeline finished in {_fmt_duration(wall_s)}"
         else:
             failed = next(
                 (s for s in stage_results if s.state == "failed"), None,
@@ -613,11 +692,17 @@ def run_pipeline(
             f"stages={sum(1 for s in stage_results if s.state == 'ok')}"
             f"/{len(stage_results)} "
             f"pdfs={sum(len(s.new_pdfs) for s in stage_results)} "
-            f"wall={int(wall_s)}s"
+            f"wall={_fmt_duration(wall_s)}"
         )
+        #  Whole-pipeline wrap-up.  The file marker (.qa_pipeline_done) and the
+        #  stdout summary always fire; the system banner is suppressed when only
+        #  a single stage ran, since its own per-stage banner already announced
+        #  the result and a second "QA done" banner would just be noise.
+        n_ran = sum(1 for s in stage_results if s.state in ("ok", "failed"))
         _fire_notifications(
             backends=opts.notify, title=title, body=body,
             summary_line=summary, run_dir=run_dir,
+            banner=n_ran > 1,
         )
 
     return PipelineResult(

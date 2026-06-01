@@ -67,16 +67,19 @@ from typing import Any
 _RUN_ID_RE = re.compile(r"^\d{8}-\d{6}$")
 
 #  Three-state retention model (sweep audit 2026-05-30).  Markers are
-#  hidden zero-byte files at the run-dir root:
+#  hidden zero-byte files at the run-dir root.  The partition is
+#  UNCONDITIONAL — there is no switch to disable it:
 #    .qa_managed     — auto-downloaded by the dashboard's Download
-#                      flow; eligible for the tier rules below.
+#                      flow; the ONLY runs the sweep may ever touch.
+#                      Subject to the tier rules below.
 #    .qa_persistent  — operator-pinned baseline (right-click pin or
 #                      `python -m qa_quicklook.retention pin <RUN>`).
 #                      Exempt from sweep even when .qa_managed is also
 #                      present.
 #    (neither)       — user-managed run (manual rsync / cp); totally
-#                      out of QA's purview.  Never appears in any
-#                      plan bucket when ``enforce_qa_managed`` is True.
+#                      out of QA's purview.  NEVER pruned, demoted, or
+#                      removed — it lands in the ``user_managed`` bucket
+#                      (reported, untouched).
 QA_MANAGED_MARKER: str = ".qa_managed"
 QA_PERSISTENT_MARKER: str = ".qa_persistent"
 
@@ -113,8 +116,8 @@ def mark_qa_managed(run_dir: Path) -> None:
 def pin_persistent(run_dir: Path) -> None:
     """Drop the ``.qa_persistent`` marker — pin the run as a baseline.
 
-    Idempotent.  After this call ``sweep()`` will exempt the run from
-    all deletion buckets (when ``enforce_qa_managed`` is True).
+    Idempotent.  After this call ``sweep()`` exempts the run from all
+    deletion buckets (lands it in ``persistent``).
     """
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / QA_PERSISTENT_MARKER).touch(exist_ok=True)
@@ -167,6 +170,13 @@ def _qa_only_prune_targets(run_dir: Path, keep_recotrackdata: bool) -> list[Path
     keep = set(_QA_KEEP_ALWAYS)
     if keep_recotrackdata:
         keep.add("recotrackdata.root")
+    #  The retention markers themselves MUST survive a QA-only demotion.
+    #  Deleting ``.qa_managed`` would silently un-manage the run (it'd
+    #  become ``user_managed`` on the next sweep and never be cleaned up
+    #  again); deleting ``.qa_persistent`` would unpin a baseline.  Both
+    #  are tiny dotfiles with no disk cost.
+    keep.add(QA_MANAGED_MARKER)
+    keep.add(QA_PERSISTENT_MARKER)
     targets: list[Path] = []
     try:
         for child in run_dir.iterdir():
@@ -185,9 +195,22 @@ def sweep(
     full_keep_n: int,
     qa_keep_n: int,
     keep_recotrackdata: bool = True,
-    enforce_qa_managed: bool = False,
 ) -> dict[str, Any]:
     """Compute a retention plan.  Read-only on the filesystem.
+
+    HARD INVARIANT — the sweep only ever touches runs the QA system
+    itself downloaded, i.e. runs carrying the ``.qa_managed`` marker.
+    A run WITHOUT that marker is managed by whoever put it on disk and
+    is NEVER pruned, demoted, or removed — full stop.  This is not a
+    toggle; the previous ``enforce_qa_managed=False`` escape hatch was
+    a footgun (it pruned hand-placed runs by age, and on 2026-05-30 it
+    deleted a benchmark run's raw data on a dashboard startup sweep).
+
+    The ``.qa_managed`` marker is dropped by the dashboard's Download
+    flow (``mark_qa_managed`` after a successful rsync) — see
+    ``runmanager.py``.  Manually-copied / externally-acquired runs
+    never get it and are therefore always in the ``user_managed``
+    (untouched) bucket.
 
     Parameters
     ----------
@@ -195,39 +218,27 @@ def sweep(
         Path containing run directories (typically ``Data/`` relative
         to the project root, or whatever ``rsync.local_data_dir`` points to).
     full_keep_n
-        Number of most-recent runs that keep everything.  Must be ≥ 0.
-        ``0`` means no full-keep tier — every run is QA-only or pruned.
+        Number of most-recent QA-MANAGED runs that keep everything.
+        Must be ≥ 0.  ``0`` means no full-keep tier.
     qa_keep_n
-        Total number of runs to keep on disk (inclusive of the
-        ``full_keep_n``).  Must be ≥ ``full_keep_n`` and ≥ 0.  ``0``
-        means delete every run that isn't in the full-keep tier.
+        Total number of QA-managed runs to keep on disk (inclusive of
+        the ``full_keep_n``).  Must be ≥ ``full_keep_n`` and ≥ 0.
     keep_recotrackdata
         Whether ``recotrackdata.root`` survives the QA-only demotion.
-    enforce_qa_managed
-        When True, the sweep filters by the three-state marker model
-        before applying the tier rules:
-          * runs without ``.qa_managed`` → ``user_managed`` (untouched)
-          * runs with ``.qa_persistent`` → ``persistent`` (kept whole)
-          * remaining qa-managed runs → subject to tier rules
-        Default False keeps the legacy behaviour (every run dir is in
-        scope) so existing tests + back-compat configs continue to work.
-        Production callers (dashboard startup sweep, pre-download
-        sweep) flip this on once they're confident every run dir has
-        an explicit marker.
 
     Returns
     -------
     dict
         ``{"data_dir", "full_keep_n", "qa_keep_n", "keep_recotrackdata",``
-        ``"enforce_qa_managed",``
         ``"full_keep": [run_dir, ...], "qa_only": [{"run", "delete": [...]}, ...],``
         ``"fully_pruned": [run_dir, ...],``
         ``"persistent": [run_dir, ...], "user_managed": [run_dir, ...]}``.
 
         ``full_keep`` entries are untouched; ``qa_only`` entries get
         their ``delete`` list removed by ``apply()``; ``fully_pruned``
-        entries get ``rm -rf``-ed; ``persistent`` and ``user_managed``
-        are reported for transparency but never modified.
+        entries get ``rm -rf``-ed; ``persistent`` (``.qa_persistent``-
+        pinned) and ``user_managed`` (no ``.qa_managed`` marker) are
+        reported for transparency but NEVER modified.
 
     Notes
     -----
@@ -244,7 +255,6 @@ def sweep(
         "full_keep_n": full_keep_n,
         "qa_keep_n": qa_keep_n,
         "keep_recotrackdata": keep_recotrackdata,
-        "enforce_qa_managed": enforce_qa_managed,
         "full_keep": [],
         "qa_only": [],
         "fully_pruned": [],
@@ -252,21 +262,18 @@ def sweep(
         "user_managed": [],
     }
 
-    #  Three-state partition (sweep audit 2026-05-30).
-    #  When `enforce_qa_managed` is False (default), the partition
-    #  collapses to "everything is qa-managed-transient" — preserves
-    #  the legacy behaviour the tests already exercise.
-    if enforce_qa_managed:
-        runs_in_scope: list[Path] = []
-        for run in all_runs:
-            if not is_qa_managed(run):
-                plan["user_managed"].append(str(run))
-            elif is_persistent(run):
-                plan["persistent"].append(str(run))
-            else:
-                runs_in_scope.append(run)
-    else:
-        runs_in_scope = all_runs
+    #  Three-state partition — UNCONDITIONAL (the only safe behaviour):
+    #    * no ``.qa_managed`` marker → ``user_managed``, never touched.
+    #    * ``.qa_persistent`` pinned → ``persistent``, kept whole.
+    #    * remaining qa-managed runs → subject to the tier rules below.
+    runs_in_scope: list[Path] = []
+    for run in all_runs:
+        if not is_qa_managed(run):
+            plan["user_managed"].append(str(run))
+        elif is_persistent(run):
+            plan["persistent"].append(str(run))
+        else:
+            runs_in_scope.append(run)
 
     for idx, run in enumerate(runs_in_scope):
         if idx < full_keep_n:
@@ -425,17 +432,18 @@ def format_plan_summary(plan: dict[str, Any]) -> str:
         n_qa=len(plan.get("qa_only", [])),
         n_pruned=len(plan.get("fully_pruned", [])),
     )
-    #  Surface the marker-state buckets when enforce_qa_managed is on
-    #  so operators see "5 user-managed + 2 baseline runs exempt" rather
-    #  than wonder why the plan looks shorter than they expected.
-    if plan.get("enforce_qa_managed"):
-        extras = []
-        if plan.get("user_managed"):
-            extras.append(f"{len(plan['user_managed'])} user-managed")
-        if plan.get("persistent"):
-            extras.append(f"{len(plan['persistent'])} baseline-pinned")
-        if extras:
-            base += "  ·  exempt: " + ", ".join(extras)
+    #  Always surface the exempt-bucket counts so operators see
+    #  "5 user-managed + 2 baseline runs exempt" rather than wonder why
+    #  the plan looks shorter than they expected.  Both buckets are
+    #  load-bearing now that the qa-managed filter is unconditional —
+    #  user-managed (no .qa_managed marker) is the common case.
+    extras = []
+    if plan.get("user_managed"):
+        extras.append(f"{len(plan['user_managed'])} user-managed")
+    if plan.get("persistent"):
+        extras.append(f"{len(plan['persistent'])} baseline-pinned")
+    if extras:
+        base += "  ·  exempt: " + ", ".join(extras)
     return base
 
 

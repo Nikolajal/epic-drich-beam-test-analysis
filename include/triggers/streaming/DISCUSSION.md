@@ -59,7 +59,7 @@ parent doc).  Both consume the configuration sections of
 
 ## 1.  Score stage  (`triggers/streaming/score.{h,cxx}`)
 
-> **Status as of 2026-05-26:**  **v1 shipped.**  The score stage is
+> **Status:**  **v1 shipped.**  The score stage is
 > operational and being tuned in production runs (current operating
 > point: `n_sigma_threshold ≈ 15`, `time_window_ns = 20`).
 
@@ -169,18 +169,120 @@ $n_\sigma^\star$ is set in
 > literal "standard deviations above zero".  Don't expect the noise QA
 > hist to be centred at zero or Gaussian-shaped.
 
-**Two QA histograms** are filled **always**, regardless of whether the
-threshold is crossed.  Both are normalised by entry count at write
-time, so the y-axis is **probability per bin**:
+**Three QA histograms** are filled **always**, regardless of whether the
+threshold is crossed.  All are normalised by entry count at write time
+(`Scale(1/GetEntries())` in `finalize_streaming_qa`), so the y-axis is
+**probability per bin**, and all share the same 200 log-spaced bins over
+`[0.1, 1000]` n_σ:
 
 | Histogram | When filled | What it tells you |
 |---|---|---|
-| `h_streaming_score_noise` | First-frames (noise) window | Pure-noise n_σ distribution.  $\int_{n_\sigma \geq n_\sigma^\star}$ → **misfire probability** |
-| `h_streaming_score_data`  | Data-taking window           | Signal+noise.  Integral above threshold → **acceptance** |
+| `h_streaming_score_noise`  | First-frames (noise) window      | Pure-noise n_σ distribution.  $\int_{n_\sigma \geq n_\sigma^\star}$ → **misfire probability** |
+| `h_streaming_score_data`   | Data-taking window               | Signal+noise.  Integral above threshold → **acceptance** |
+| `h_streaming_score_inbeam` | Fixed window just before each hardware trigger | In-beam, pre-signal background.  Its first empty bin sets the recommendation cut (§1.4.1) |
 
-A pre-made overlay canvas `c_streaming_score_overlay` (red noise + blue
-data, log-Y, axis 0–50) is written alongside for visual threshold
-tuning.
+The published `05_streaming_score.pdf` (lightdata writer) overlays all
+three on a **log-x / log-y** canvas over `[0.1, 1000]` — noise **blue**,
+data **red**, in-beam **violet** — with the recommendation cut line. (A
+legacy `c_streaming_score_overlay` ROOT canvas is also written.)
+
+### 1.4.1  Streaming-score overlay fit  *(modelled, GATED OFF — `kEnableScoreFit = false`)*
+
+**Status (parked).** The `05_streaming_score.pdf` QA plot carries an
+optional **component-fit overlay** that models the score distribution as
+a sum of physical populations. The model and its fitting machinery are
+fully implemented in `src/lightdata_writer.cxx` but **disabled behind a
+compile-time flag** (`constexpr bool kEnableScoreFit = false`): the block
+neither runs nor draws. The plot ships with the three histograms +
+the (independent, histogram-derived) recommendation cut line only. Flip
+the flag to `true` to re-enable for offline experimentation. This note
+records the model, what was tried, and why it isn't shipped, so the next
+person doesn't re-derive it from scratch.
+
+**What the data is.** On a real run (benchmark `20251111-164951`, QA mode,
+log-spaced 200 bins over `[0.1, 1000]` n_σ, normalised to probability per
+bin) the `data` curve is **three populations**, not a single bump:
+
+| population | n_σ | physics |
+|---|---|---|
+| DCR / null      | ~1.7 | random dark counts (no event) |
+| in-beam bkg     | ~35  | beam-correlated background, pre-signal |
+| Cherenkov signal| broad, ~80–200, tail to ~600 | ring photons |
+
+**The model (physically motivated).**
+- **DCR = log-Gaussian**, parametrised `A·exp(−½·((log10 x − log10 μ)/s)²)`
+  (code uses `log10([1])`, **not** `[1]`) — dark counts are log-normal in n_σ
+  (symmetric bump on the log-x axis). Written this way, the mean param **μ is
+  the peak position directly in n_σ** (peak at `x = μ`), not a log you must
+  exponentiate. `s` stays a log10-space width (decades).
+- **in-beam & signal = LINEAR Gaussians** `A·exp(−½·((x − μ)/σ)²)` — each
+  is a Poisson **photon-count** population, so Gaussian in *linear* n_σ
+  (μ, σ in n_σ directly). On the log-x axis a linear Gaussian renders
+  *skewed* (steeper low side). The signal term runs **broad** (σ ≳ μ) and
+  acts as the pedestal under the whole high-n_σ tail — this is what lets
+  the model track the tail out to ~600, which a log-Gaussian cannot.
+
+**The fit recipe (cascade, validated in batch).**
+1. Fit the **DCR** log-Gaussian on the *clean* `h_noise` sample over a
+   **focused window** `[0.3, 30]` n_σ (NOT the full support — the noise
+   sample's sparse high-n_σ tail otherwise pulls the single Gaussian off
+   the bump). Records the DCR **shape** (m, s) + norm.
+2. Fit **in-beam** = `h_inbeam` as DCR(shape **fixed**, norm free within
+   **±10 %**) + one free linear Gaussian, seeded **data-driven** (local
+   maximum of the smoothed tail) with mean floored a **decade (×10)**
+   above the DCR.
+3. Fit **data** = `h_data` as DCR(fixed, ±10 %) + in-beam(shape **fixed**,
+   norm **free** — its fraction differs between the pre-trigger window and
+   the full spill) + free broad signal linear Gaussian.
+   Each lower component's **mean & width are hard-fixed**; only its
+   normalisation breathes (DCR ±10 %, bumps free). Means are enforced
+   **incremental** (each new bump ≫ the one below).
+
+**Why it's gated off.** The model is correct and fits *one* run
+beautifully (DCR 1.7 / in-beam ~40 / broad signal tracking the tail), but
+it is **not robust enough to ship unattended**:
+- **Normalisation sensitivity.** The ±10 % DCR-norm leash and the χ²
+  landscape assume the three samples are on a comparable
+  probability-per-bin scale. The same fit that converges on the *saved*
+  (normalised) histograms in a batch macro **diverges in the writer**
+  (in-beam railed to a low shoulder, signal mislabelled) — strong sign of
+  a normalisation/weighting mismatch at fit time that wasn't fully run to
+  ground.
+- **χ² is near-meaningless here.** ~10⁸ data entries ⇒ minuscule per-bin
+  errors ⇒ χ²/ndf in the millions; the optimiser chases the bulk and
+  abandons the small tail bumps, and falls into narrow-spike local minima.
+  A Poisson **log-likelihood on raw counts** (option `"L"`, pre-norm) is
+  the right tool and was *not* yet wired in.
+- **Bound-railing.** Bumps repeatedly parked on their mean/width limits,
+  so the reported component n_σ were boundary artefacts, not fits.
+- **Cross-run validation** (the model holding on runs other than the
+  benchmark) was never done.
+
+**To resume** (checklist for whoever picks this up): fit on **raw counts
+with `"L"`** then normalise only for display; confirm the writer fits the
+*same* histogram state the batch macro does; keep the DCR window focused
+(`[0.3,30]`); keep the cascade (DCR log-G fixed → in-beam linear-G →
+broad signal linear-G) with data-driven seeds + the ×10 DCR→in-beam mean
+floor; leave the signal **broad** (don't bound its width); validate on
+≥3 runs before flipping `kEnableScoreFit` back on.
+
+> ⚠️ **Parked code is mid-migration.** The DCR term + the readout (logger
+> echo, cut-loss) are coherent: the DCR log-Gaussian uses `log10([1])` so
+> `[1]` is the DCR mean directly in n_σ, the DCR-derived tail floor is
+> linear, and all echoed means/cut-loss are linear. **Still to reconcile**
+> on resume: the in-beam/signal **linear**-Gaussian terms in stages 2–3
+> still carry log10-era seeds, mean floors, and width bands (e.g.
+> `find_bump_*` returns log10, `m2_lo`/`m3_lo` and `kWidth*` are log10
+> values, and the in-beam/signal component-overlay TF1s use a log-Gaussian
+> formula). Convert those to linear n_σ (mirror the validated batch values:
+> in-beam μ≈40 σ≈10, signal μ broad σ≳100) before re-enabling.
+
+The histogram-derived
+**recommendation cut** (primary: the **first empty bin of the in-beam
+background histogram** above its peak — where beam-correlated background
+runs out; fallback for runs with no in-beam sample: an FP = 1e-6 walk on
+the combined background) is a separate, shipped computation and does
+**not** depend on the gated fit.
 
 ### 1.5  Workflow
 
@@ -374,16 +476,16 @@ streaming-trigger event with fine_time = t★
 
 | Where | Current value | What it controls | Tunable? |
 |---|---|---|---|
-| `HoughTransform` ctor | `r_min = 20 mm`, `r_max = 120 mm` | Radius scan range | ✅ `[streaming_hough].r_min/r_max` |
-| `HoughTransform` ctor | `r_step = 1 mm` | Radius granularity in the accumulator | ✅ `[streaming_hough].r_step` |
-| `HoughTransform` ctor | `cell_size = 3 mm` | Accumulator XY cell size — **sets the discrete centre resolution** (see §2.3) | ✅ `[streaming_hough].cell_size` |
+| `HoughTransform` ctor | `r_min = 35 mm`, `r_max = 105 mm` | Radius scan range | ✅ `[streaming_hough].r_min/r_max` |
+| `HoughTransform` ctor | `r_step = 1.5 mm` | Radius granularity in the accumulator | ✅ `[streaming_hough].r_step` |
+| `HoughTransform` ctor | `cell_size = 1.5 mm` | Accumulator XY cell size — **sets the discrete centre resolution** (see §2.3) | ✅ `[streaming_hough].cell_size` |
 | Time pre-cut          | inherited from streaming-score window | Hits selected around `fine_time` (`|t_hit − t_streaming| < time_window_ns`) | ❌ inherited from `[streaming_trigger].time_window_ns` |
 | `find_rings` | `threshold_fraction = 0.33` | Min fraction of active hits in peak cell | ✅ `[streaming_hough].threshold_fraction` |
 | `find_rings` | `min_hits = min_active × 0.75` | Absolute min vote count (slack on min_active) | ✅ `[streaming_hough].min_hits_slack` |
-| `find_rings` | `min_active = ceil(0.004 · N_active)` | Minimum surviving hits for Hough to run | ✅ `[streaming_hough].hough_threshold_fraction` |
+| `find_rings` | `min_active = ceil(0.0035 · N_active)` | Minimum surviving hits for Hough to run | ✅ `[streaming_hough].hough_threshold_fraction` |
 | `find_rings` | `max_rings = 2` | Hard cap on rings returned per frame | ❌ hardcoded (physical: two radiators ⇒ max two concentric rings) |
-| `find_rings` | `collection_radius = 7.5 mm` | Width of ring band for hit association | ✅ `[streaming_hough].collection_radius` |
-| ~~`fit_circle_init_{x,y,r}`~~ | — | **REMOVED 2026-05-30** (commit 87e8af2, CLEAN_OFF C3.5).  No live consumer — recodata seeds the per-ring refit from the Hough peak `(cx, cy, radius)` directly. | Reader emits one-shot deprecation warning per key still in config; tolerance removed in v2.1. |
+| `find_rings` | `collection_radius = 2 mm` | Width of ring band for hit association | ✅ `[streaming_hough].collection_radius` |
+| ~~`fit_circle_init_{x,y,r}`~~ | — | **REMOVED 2026-05-30** (commit 87e8af2, CLEAN_OFF C3.5).  No live consumer — recodata seeds the per-ring refit from the Hough peak `(cx, cy, radius)` directly. | Reader emits one-shot deprecation warning per key still in config; tolerance to be removed in a later release. |
 
 **Non-tunable rationale:**
 
@@ -408,7 +510,7 @@ position.
 
 #### 2.3.1  Sliding-window aggregation in the peak finder  *(MIST patch — **shipped**)*
 
-> **Status (2026-05-26):** both halves of this section are
+> **Status:** both halves of this section are
 > implemented, tested, and active in the current writer binary.
 > The active TOML recipe:
 > `r_step = cell_size = 1.5 mm`, `aggregation_window_cells = 2`.
@@ -483,7 +585,7 @@ Knob plumbing: `aggregation_window_cells` in MIST (default 1 = legacy
 single-cell; 2 = active recipe).  Surfaced to the writer via
 `[streaming_hough].aggregation_window_cells` in `conf/streaming.toml`
 and `StreamingHoughConfigStruct::aggregation_window_cells` in
-`include/util/config_reader.h`.
+`include/utility/config_reader.h`.
 
 **Part D — tight LUT padding (`centre_padding_mm`)** *(shipped 2026-05-26)*:
 After SAT, the dominant per-event cost shifted to memory bandwidth on
@@ -537,7 +639,7 @@ natural direction:
      (or, equivalently, the centroid of their intersection points) is
      the true centre.
    - **Least-squares circle fit** on the assigned hits via the existing
-     [`fit_circle`](../../util/circle_fit.h) (see §2.4 for the audit).
+     [`fit_circle`](../../utility/circle_fit.h) (see §2.4 for the audit).
    - **Iterative re-association**: refine centre → re-collect hits
      within `collection_radius` → refine again → converge.
    - **MIST's planned `nn_transform`** (NN-based ring finder, listed in
@@ -560,7 +662,7 @@ refinement happens in `recodata_writer` on the mask-tagged hits — see
 remaining audit items (initial-value validation, `fix_XY` granularity,
 named-struct return with chi²/ndf/status, round-trip test) which
 follow the consumer.  The util header itself
-([`include/util/circle_fit.h`](../../util/circle_fit.h)) is unchanged.
+([`include/utility/circle_fit.h`](../../utility/circle_fit.h)) is unchanged.
 
 ### 2.5  Open items (gated on extraction + config)
 
@@ -638,8 +740,14 @@ consolidation plan):
   rings, but RING 2 specifically is genuinely an ELLIPSE — MIST
   fits it as a circle because that's the only shape it knows.
 
-  Macro: `macros/examples/elliptic_investigation.cpp` —
-  **functional V1, two-layer test:**
+  **CONFIRMED REQUIREMENT (user, next campaign):** the *next dataset will
+  contain elliptical rings.*  This is no longer a hypothesis to test but an
+  upcoming requirement — both the Hough finder (circles only) and the
+  recodata ring fit (currently a circle + Gaussian-radial fit) will need a
+  genuine **ellipse model** `(cx, cy, a, b, θ)`.  The investigation macro
+  below is the starting point for that work.
+
+  Macro: `macros/examples/elliptic_investigation.cpp` — **two-layer test:**
 
   *Layer 1 — correlation cross-check.*  For dual-ring frames,
   re-fit each ring as a circle and fill:
@@ -751,14 +859,32 @@ consolidation plan):
 
 ### 2.6  Live-QA pipeline (recodata-side, downstream of Hough)
 
-**Status (2026-05-26):**  V1 **shipped**.  Foundation helper module
-(`util/radiator_efficiency`), `[recodata]` config block (struct +
+**Status:**  V1 **shipped**.  Foundation helper module
+(`utility/radiator_efficiency`), `[recodata]` config block (struct +
 parser + TOML + values-dump log), `recodata_writer` wiring (coverage
-map at init, per-frame `fit_circle` re-run + fills, `eff(R)` division
+map at init, per-frame ring fit + fills, `eff(R)` division
 at finalize) all in place.  Output ROOT file gains a `Rings/`
-subfolder with the 10 hists listed under "V1 scope" below.  Code
-paths gated on the frame carrying `_TRIGGER_HOUGH_RING_FOUND_` — no
-overhead on background frames.  Beam-test live ready.
+subfolder with the 10 hists listed under "V1 scope" below.
+
+**Ring reconstruction is no longer Hough-gated.**  The streaming/Hough
+self-trigger is disabled in QA mode, so the frame never carries
+`_TRIGGER_HOUGH_RING_FOUND_` and there are no Hough-tagged hits to refit.
+Instead, recodata reconstructs the ring from every **non-afterpulse
+Cherenkov hit within an asymmetric ±Δt window around the *hardware*
+trigger's reference time** — see `compute_ring_fit_timewindow` (in
+`writers/recodata/ring_compute.{h,cxx}`), driven by the
+`hardware_ring_dt_min_ns` / `hardware_ring_dt_max_ns` knobs in
+`conf/working/recodata.toml`.  The reference time is the first genuine
+hardware trigger in the frame (synthetic + derived ring markers skipped;
+see `frame_pipeline.cxx`).  The histogram fill gate is
+`res.first.fit_ok || res.second.fit_ok` (fill only on a successful fit).
+With no Hough there is no first/second ring separation, so the
+time-window fit is the single reconstructed ring (second stays empty).
+The old Hough-mask helpers `compute_ring_fit` + `refit_and_fill_ring`
+have been removed; only `compute_ring_fit_timewindow` + `fill_ring_hists`
+remain in `ring_compute.{h,cxx}`.  The historical Hough-tagged-hits fit
+(`fit_circle` + `is_ring_tagged`) was retired with the QA-mode time-window
+reconstruction and is no longer kept as a standalone macro.
 
 Deferred items remain in the "post-V1" list at the bottom of this
 section.  This section is the recovery-handoff document for those —
@@ -769,7 +895,7 @@ be able to continue.
 **What it is.**  Per-event photon-counting and radial-distribution QA
 that runs inline in `recodata_writer` instead of as a separate offline
 macro pass.  Goal: live-visible Cherenkov physics observables for
-beam-test operators (the macro `macros/examples/photon_number_new.cpp`
+beam-test operators (the macro `photon_number_new.cpp`
 becomes a thin plotter, or goes away).
 
 **Why recodata, not lightdata.**  Architectural split:
@@ -788,11 +914,15 @@ into recodata is a more direct fit than into lightdata.
 attractive-looking option of extending the Hough trigger payload to
 carry `(cx, cy, R, peak_votes)` per ring would have touched every
 trigger consumer in the codebase and bumped the ROOT TBranch schema
-on `lightdata`.  Avoided.  Instead: lightdata already mask-tags hits
-with `HitmaskHoughRingTagFirst / Second`; recodata re-runs `fit_circle`
-per ring at consumption time to recover the per-event `(cx, cy, R)`.
-Cost: ~50 µs per ring × ~2 rings × ~21 k events = **< 1 s wall-clock
-per run** — well below the budget.
+on `lightdata`.  Avoided.  (Historically, lightdata mask-tagged hits
+with `HitmaskHoughRingTagFirst / Second` and recodata re-ran `fit_circle`
+per Hough-tagged ring at consumption time.  With the Hough self-trigger
+disabled in QA mode that path is dormant — recodata now fits the ring
+from non-afterpulse Cherenkov hits in a ±Δt window around the hardware
+trigger instead; see the status block above.)  Either way the per-event
+`(cx, cy, R)` is recovered at consumption time, so no schema bump.
+Cost: ~50 µs per ring × ~21 k events = **< 1 s wall-clock per run** —
+well below the budget.
 
 **Centre conventions** (`config_reader.h`'s `RecodataConfigStruct`):
 
@@ -848,7 +978,7 @@ streaming triggers rejected at edge/duplicate), the writer falls
 back to the geometric-upper-bound build and logs a warning — same
 observable as the V1-pre-spill-weighting behaviour.
 
-**Helper module: `util/radiator_efficiency`.**  Pure-geometry helpers,
+**Helper module: `utility/radiator_efficiency`.**  Pure-geometry helpers,
 no dependency on the recodata API:
 
 | Function | Returns | Purpose |
@@ -864,7 +994,8 @@ gap-correction factor only needed when the radial hist excludes
 **V1 scope (live-ready set — 18 hists total in `Rings/`):**
 
 *Engineering / sanity (geometry-only, static):*
-- ✅ Coverage map `h_coverage_map_rphi` (1 TH2F)
+- ✅ Coverage map `h_coverage_map_rphi` (1 TH2F) + cartesian sibling
+  `h_coverage_map_xy` (the operator-facing view + detector-readiness banner)
 - ✅ `eff(R)` `h_eff_R` (1 TH1F)
 
 *Per-ring physics observables (the headline numbers operators read):*
@@ -910,7 +1041,7 @@ gap-correction factor only needed when the radial hist excludes
 
 - ✅ Crystal-Ball + pol3 fit on the eff-corrected radial
   distribution (`h_radial_first/_second/_first_dual/_first_solo`),
-  ported from `macros/examples/photon_number_new.cpp`'s
+  ported from `photon_number_new.cpp`'s
   `fit_radial_distribution` lambda.  Two-stage procedure:
   1. **Sideband prefit**: clone the hist, mask signal region
      (peak ± few σ), fit pol3 background on the remaining bins.
@@ -919,15 +1050,15 @@ gap-correction factor only needed when the radial hist excludes
      iteration (lets CB find the peak), released for second.
 
   Outputs per radial hist (4 total: full + second + dual + solo):
-  - `<name>_cb_fit`            — TF1, full CB+pol3 form
+  - `<name>_ring_fit`          — TF1, full Gaussian+pol3 form
   - `<name>_bg_only`           — TF1, pol3 background only (for overlay)
   - `<name>_N_gamma_per_ring`  — TNamed, photons per Cherenkov ring
   - `<name>_N_gamma_total`     — TNamed, total photons "X.X (over N rings)"
   - `<name>_peak_mu_mm`        — TNamed, peak position ± error
-  - `<name>_peak_sigma_mm`     — TNamed, Crystal-Ball σ ± error
+  - `<name>_peak_sigma_mm`     — TNamed, peak (Gaussian) σ ± error
 
   N_γ extraction:
-    `N_gamma_total = (∫ cb_fit − ∫ bg_only) over [fit_lo, fit_hi]`
+    `N_gamma_total = (∫ ring_fit − ∫ bg_only) over [fit_lo, fit_hi]`
                        `÷ bin_width_of_hist`
     `N_gamma_per_ring = N_gamma_total / N_rings`
   where `N_rings = entries of the matching h_R_* hist` (one entry
@@ -974,11 +1105,12 @@ parsing).
 
 *Trigger gate and edge rejection (recodata_writer):*
 
-- V1 fills are gated on `accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_)`
-  per frame — the lightdata-side Hough trigger.  Switching to a
-  beam-trigger coincidence (e.g. `luca_and_finger × HOUGH`) is a
-  one-line change but yields ~half the stats; deferred until V1
-  shows what the noise-included sample looks like.
+- Ring fills are gated on `res.first.fit_ok || res.second.fit_ok` — a
+  successful ring fit, not a trigger count.  (The original V1 design
+  gated on `accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_)`, but the
+  Hough self-trigger is disabled in QA mode; the ring is now fit from
+  non-afterpulse Cherenkov hits in a ±Δt window around the hardware
+  trigger reference time — see § 2.6.)
 - Edge rejection in recodata_writer was previously a hidden units
   mismatch: `current_trigger.fine_time` (ns) compared against
   `edge_rejection_cc` (clock cycles, ~4 cc) and
@@ -1128,14 +1260,11 @@ needs:
 Tracked separately from this design; revisit once the Hough stage lands
 (Phases 2-4) and the Cherenkov pipeline is stable.
 
----
-
-*Document version: 2026-05-26.*
 
 *Implemented*: § 1 score stage (D-12, v1 landed); § 2.1–§ 2.4 Hough
 stage extraction (Phases 1–4); § 2.3.1 sub-cell aggregation + SAT
 peak finder + tight LUT padding (MIST patches shipped); § 2.6 V1
-live-QA pipeline — `util/radiator_efficiency` helper, `[recodata]`
+live-QA pipeline — `utility/radiator_efficiency` helper, `[recodata]`
 config block, `recodata_writer` wiring (coverage map / N_photons /
 `eff(R)` / radial fills), output ROOT `Rings/` subfolder.
 

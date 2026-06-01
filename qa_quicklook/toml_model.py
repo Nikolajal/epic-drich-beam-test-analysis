@@ -26,6 +26,7 @@ Leaf kinds
   ``"int_array"``       homogeneous list of int
   ``"float_array"``     homogeneous list of float
   ``"str_array"``       homogeneous list of str
+  ``"table_array"``     list of inline tables (array of dicts)
   ``"complex"``         everything else — dict-shaped tables, lists of
                         tables, mixed arrays, etc.  These are reported
                         as leaves (so the UI can show them) but

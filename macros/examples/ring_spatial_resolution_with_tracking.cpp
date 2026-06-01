@@ -1,15 +1,17 @@
 #include "../lib_loader.h"
 #include "utility/root_io.h"
 #include "utility/root_hist.h"
+#include "analysis_results.h"
+#include <mist/logger/logger.h>
 
 /**
- * @file ring_spatial_resolution.cpp
+ * @file ring_spatial_resolution_with_tracking.cpp
  * @brief Calculate the spatial resolution of the ring.
  *
  * This exercise estimates the center and radius of a ring of hits and then
  * computes the spatial resolution using multiple methods.
  *
- * Additonally, this version of the macro exploits the tracking capabilities of the recotrackdata, to check the correlation between tracking angle and ring reconstruction quality.
+ * Additionally, this version of the macro exploits the tracking capabilities of the recotrackdata, to check the correlation between tracking angle and ring reconstruction quality.
  *
  * @details
  * **Workflow:**
@@ -44,13 +46,19 @@
  */
 
 //  --- --- --- !!!
-//  This excercise is still a work in progress, stay tuned for updates!
+//  This exercise is still a work in progress, stay tuned for updates!
 //  --- --- --- !!!
 
 std::array<float, 2> time_cut_boundaries = {-45., 20.};
 
 void ring_spatial_resolution_with_tracking(std::string data_repository, std::string run_name, int max_frames = 100000)
 {
+    //  This analysis aggregates every cherenkov hit into a single ring fit; it
+    //  does not split the resolution by SiPM model, so the persisted result is
+    //  tagged with the "all" sensor scope.  No hardcoded channel range is used:
+    //  if a per-sensor split is ever introduced, resolve the model from the hit
+    //  device via the readout config (`cherenkov->sensor_for(recotrackdata->get_device(hit))`),
+    //  mirroring dark_count_rate.cpp — never a baked-in channel assumption.
     //  Input files
     std::string input_filename_recotrackdata = data_repository + "/" + run_name + "/recotrackdata.root";
 
@@ -147,10 +155,12 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
                 //  Check the Hit has been labeled as ring-belonging
                 //  This is done through a simple DBSCAN implementation
                 //  Density-Based Spatial Clustering of Applications with Noise > https://it.wikipedia.org/wiki/DBSCAN
-                //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
+                //  Clustering is done in R and t, \phi is ignored (radial symmetry of circle)
                 //  Clustering is done in AlcorRecotrackdata::find_rings(...)
-                //  TODO: add a flag for sensor type
-                if (recotrackdata->is_ring_tagged(current_hit))
+                //  Per-sensor split is intentionally not applied here (single
+                //  aggregate ring fit, "all" scope — see the note at the top of
+                //  the macro for the config-driven pattern if it is ever added).
+                if (!recotrackdata->is_ring_tagged(current_hit))
                     continue;
 
                 //  Store selected points
@@ -273,6 +283,27 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     f_resolution->SetParName(0, "SPSR");
     f_resolution->SetParName(1, "constant");
     g_resolution->Fit(f_resolution);
+
+    // ── Persist to AnalysisResults ────────────────────────────────────────────
+    //  Key physics result of this macro: the single-photon spatial resolution
+    //  (SPSR, par 0 of f_resolution) and the constant term (par 1), extracted
+    //  WITH external ALTAI tracking.  Keys carry the `.tracked` suffix to keep
+    //  them distinct from the non-tracking sibling (ring_spatial_resolution.cpp).
+    //  Scope is "all" — see the sensor-split note at the top of the macro.
+    {
+        AnalysisResults ar(data_repository + "/standard_results.toml");
+        ar.update({
+            {{run_name, "all", "ring.spatial_resolution.tracked"},
+             {f_resolution->GetParameter(0), f_resolution->GetParError(0)}},
+            {{run_name, "all", "ring.spatial_resolution_const.tracked"},
+             {f_resolution->GetParameter(1), f_resolution->GetParError(1)}},
+            {{run_name, "all", "ring.radius_mm.tracked"},
+             {(double)found_ring_radius, (double)found_ring_radius_stddev}},
+        }, "recotrack");
+
+        mist::logger::info("[ring_spatial_resolution_with_tracking] resolution fit "
+                           "written to standard_results.toml for run " + run_name);
+    }
 
     //  Show fit result on Canvas
     gStyle->SetOptFit(111111);

@@ -148,6 +148,49 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                     readout_config_utility[cfg_name].sensor_type = *s;
             }
 
+            //  Timing-trigger coincidence params (only the "timing" role sets
+            //  them; harmless no-ops on other roles).  alive_channels is a
+            //  [chip0, chip1] array; the deltas are floats in ns.
+            if (auto *ac_node = entry_tbl->get("alive_channels"))
+                if (auto *ac_arr = ac_node->as_array())
+                {
+                    int idx = 0;
+                    for (auto &el : *ac_arr)
+                    {
+                        if (auto v = el.value<int64_t>())
+                        {
+                            if (idx == 0)
+                                readout_config_utility[cfg_name].timing_chip0_alive_channels = static_cast<int>(*v);
+                            else if (idx == 1)
+                                readout_config_utility[cfg_name].timing_chip1_alive_channels = static_cast<int>(*v);
+                        }
+                        ++idx;
+                    }
+                    //  The same-channel-offset calibration divides by
+                    //  (alive_channels - 1), so a count < 2 divides by zero and
+                    //  poisons that channel's fine-time phase with NaN.  Clamp
+                    //  to 2 and warn rather than letting a misconfig through.
+                    auto &rc = readout_config_utility[cfg_name];
+                    for (int *p : {&rc.timing_chip0_alive_channels, &rc.timing_chip1_alive_channels})
+                        if (*p < 2)
+                        {
+                            mist::logger::warning(TString::Format(
+                                "(readout_config_reader) [readout.%s] alive_channels entry %d < 2 "
+                                "would divide by zero in the same-channel calibration; clamping to 2.",
+                                cfg_name.c_str(), *p).Data());
+                            *p = 2;
+                        }
+                }
+            if (auto v = entry_tbl->get("delta_center_ns"))
+                if (auto d = v->value<double>())
+                    readout_config_utility[cfg_name].timing_delta_center_ns = static_cast<float>(*d);
+            if (auto v = entry_tbl->get("delta_window_ns"))
+                if (auto d = v->value<double>())
+                    readout_config_utility[cfg_name].timing_delta_window_ns = static_cast<float>(*d);
+            if (auto v = entry_tbl->get("delta_n_sigma"))
+                if (auto d = v->value<double>())
+                    readout_config_utility[cfg_name].timing_delta_n_sigma = static_cast<float>(*d);
+
             auto *devices_node = entry_tbl->get("devices");
             if (!devices_node)
             {
@@ -169,6 +212,14 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                     continue;
                 uint16_t device = static_cast<uint16_t>(id_node->value_or(0));
 
+                //  Optional per-device sensor tag — lets one role span
+                //  two SiPM models (e.g. 1350 on rdo 192-195, 1375 on
+                //  196-199) without an array-of-tables.  Falls back to
+                //  the role-level sensor_type when absent.
+                if (auto *sensor_node = dev_tbl->get("sensor"))
+                    if (auto sv = sensor_node->value<std::string>())
+                        readout_config_utility[cfg_name].device_sensor[device] = *sv;
+
                 //  Expand chips: "*" wildcard or explicit integer array
                 std::vector<uint16_t> requested_chips;
                 auto *chips_node = dev_tbl->get("chips");
@@ -181,9 +232,37 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                         for (uint16_t c = 0; c < 8; ++c)
                             requested_chips.push_back(c);
                     else
-                        mist::logger::warning(TString::Format("(readout_config_reader) Unknown chips token '%s' for device %d",
-                                                              chips_str->c_str(), device)
-                                                  .Data());
+                    {
+                        //  Accept a comma-separated list given as a string
+                        //  (e.g. chips = "2,4") in addition to the canonical
+                        //  TOML array form ([2, 4]) — both mean "these chips".
+                        //  Only "*" is the wildcard.  Guards against the
+                        //  silent chip-drop when a list is mistakenly quoted.
+                        const std::string &s = *chips_str;
+                        bool any = false;
+                        for (size_t i = 0; i < s.size();)
+                        {
+                            while (i < s.size() &&
+                                   (s[i] == ',' || s[i] == ' ' || s[i] == '\t'))
+                                ++i;
+                            size_t j = i;
+                            while (j < s.size() && s[j] >= '0' && s[j] <= '9')
+                                ++j;
+                            if (j > i)
+                            {
+                                requested_chips.push_back(static_cast<uint16_t>(
+                                    std::stoi(s.substr(i, j - i))));
+                                any = true;
+                                i = j;
+                            }
+                            else
+                                break;  // non-numeric, non-separator → stop
+                        }
+                        if (!any)
+                            mist::logger::warning(TString::Format(
+                                "(readout_config_reader) Unknown chips token '%s' for device %d",
+                                s.c_str(), device).Data());
+                    }
                 }
                 else if (auto *chips_array = chips_node->as_array())
                 {
@@ -313,6 +392,10 @@ QaConfigStruct qa_conf_reader(std::string config_file)
             cfg.ct_elec_signal_lo = static_cast<int>(*v);
         if (auto v = (*qa_table)["ct_elec_signal_hi"].value<int64_t>())
             cfg.ct_elec_signal_hi = static_cast<int>(*v);
+        if (auto v = (*qa_table)["ct_phys_radius_mm"].value<double>())
+            cfg.ct_phys_radius_mm = static_cast<float>(*v);
+        if (auto v = (*qa_table)["ct_sideband_offset"].value<int64_t>())
+            cfg.ct_sideband_offset = static_cast<int>(*v);
 
         // QA-mode behavior toggles.
         if (auto v = (*qa_table)["per_spill_calibration_update"].value<bool>())
@@ -751,6 +834,13 @@ streaming_trigger_conf_reader(std::string config_file)
         //  C7.6 — multiplicity upper-bound cut.  0 = disabled.
         if (auto v = (*st_table)["max_hits_per_window"].value<int64_t>())
             cfg.max_hits_per_window = static_cast<int>(*v);
+        //  In-beam-background QA sample knobs.
+        if (auto v = (*st_table)["inbeam_pretrigger_offset_ns"].value<double>())
+            cfg.inbeam_pretrigger_offset_ns = static_cast<float>(*v);
+        if (auto v = (*st_table)["inbeam_sample_width_ns"].value<double>())
+            cfg.inbeam_sample_width_ns = static_cast<float>(*v);
+        if (auto v = (*st_table)["default_trigger_window_ns"].value<double>())
+            cfg.default_trigger_window_ns = static_cast<float>(*v);
 
         if (cfg.time_window_ns <= 0.f)
             mist::logger::warning("(streaming_trigger_conf_reader) time_window_ns must be > 0 — "
@@ -948,31 +1038,84 @@ streaming_hough_conf_reader(std::string config_file)
 
 // --- recodata_conf_reader -----------------------------------------------
 //
-// Parses the [recodata] table.  All fields are optional; missing keys
-// keep the defaults from RecodataConfigStruct (which match the offline
-// macro's conventions for direct comparison).  Same parse-error pattern
-// as streaming_hough_conf_reader — TOML parse failure is non-fatal
-// (a missing file just means default config), but bad parses are
-// logged.
+// Populates RecodataConfigStruct from TWO files (the former standalone
+// recodata.toml was dismembered):
+//   * `[streaming_hough]` in `streaming_file`  → the 5 ring-reco knobs,
+//     so they sit next to the Hough geometry they must agree with.
+//   * `[coverage]`        in `mapping_file`    → the 8 coverage-map
+//     geometry keys, same domain as the rest of mapping_conf.toml.
+// All fields are optional; missing keys (or a missing table) keep the
+// defaults from RecodataConfigStruct.  Each file is parsed in its own
+// try/catch so a parse failure in one doesn't lose the other's values —
+// same non-fatal pattern as streaming_hough_conf_reader.
 
 RecodataConfigStruct
-recodata_conf_reader(std::string config_file)
+recodata_conf_reader(std::string streaming_file, std::string mapping_file)
 {
     RecodataConfigStruct cfg;
 
+    //  (a) Ring-reconstruction knobs from streaming.toml's
+    //      `[streaming_hough]` table.
     try
     {
         //  C2.3: route through ``toml_parse_with_cutoff`` so a ``##``
         //  sentinel below the live config is honoured (matches every
         //  other reader — see ``streaming_hough_conf_reader`` and
         //  ``Mapping::load_calib``).
-        toml::table tbl = toml_parse_with_cutoff(config_file);
+        toml::table tbl = toml_parse_with_cutoff(streaming_file);
         mist::logger::info(TString::Format(
-                               "(recodata_conf_reader) Reading recodata config: %s",
-                               config_file.c_str())
+                               "(recodata_conf_reader) Reading ring-reco knobs from "
+                               "[streaming_hough] in: %s",
+                               streaming_file.c_str())
                                .Data());
 
-        if (auto *r_table = tbl["recodata"].as_table())
+        if (auto *h_table = tbl["streaming_hough"].as_table())
+        {
+            if (auto v = (*h_table)["delta_r_for_coverage_mm"].value<double>())
+                cfg.delta_r_for_coverage_mm = static_cast<float>(*v);
+            if (auto v = (*h_table)["min_hits_per_ring"].value<int64_t>())
+                cfg.min_hits_per_ring = static_cast<int>(*v);
+            if (auto v = (*h_table)["hardware_ring_dt_min_ns"].value<double>())
+                cfg.hardware_ring_dt_min_ns = static_cast<float>(*v);
+            if (auto v = (*h_table)["hardware_ring_dt_max_ns"].value<double>())
+                cfg.hardware_ring_dt_max_ns = static_cast<float>(*v);
+            if (auto v = (*h_table)["skip_loo_residuals"].value<bool>())
+                cfg.skip_loo_residuals = *v;
+        }
+        else
+        {
+            mist::logger::warning(
+                "(recodata_conf_reader) No `[streaming_hough]` table found — "
+                "using ring-reco defaults.");
+        }
+    }
+    catch (const toml::parse_error &err)
+    {
+        mist::logger::warning(TString::Format(
+                                  "(recodata_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                  streaming_file.c_str(), std::string(err.description()).c_str())
+                                  .Data());
+    }
+    catch (const std::exception &err)
+    {
+        mist::logger::warning(TString::Format(
+                                  "(recodata_conf_reader) Error reading '%s': %s — using defaults.",
+                                  streaming_file.c_str(), err.what())
+                                  .Data());
+    }
+
+    //  (b) Coverage-map geometry from mapping_conf.toml's `[coverage]`
+    //      table.
+    try
+    {
+        toml::table tbl = toml_parse_with_cutoff(mapping_file);
+        mist::logger::info(TString::Format(
+                               "(recodata_conf_reader) Reading coverage geometry from "
+                               "[coverage] in: %s",
+                               mapping_file.c_str())
+                               .Data());
+
+        if (auto *r_table = tbl["coverage"].as_table())
         {
             if (auto v = (*r_table)["n_phi_bins_coverage"].value<int64_t>())
                 cfg.n_phi_bins_coverage = static_cast<int>(*v);
@@ -988,19 +1131,14 @@ recodata_conf_reader(std::string config_file)
                 cfg.nominal_centre_x_mm = static_cast<float>(*v);
             if (auto v = (*r_table)["nominal_centre_y_mm"].value<double>())
                 cfg.nominal_centre_y_mm = static_cast<float>(*v);
-            if (auto v = (*r_table)["delta_r_for_coverage_mm"].value<double>())
-                cfg.delta_r_for_coverage_mm = static_cast<float>(*v);
-            if (auto v = (*r_table)["min_hits_per_ring"].value<int64_t>())
-                cfg.min_hits_per_ring = static_cast<int>(*v);
             if (auto v = (*r_table)["min_channel_r_for_coverage_mm"].value<double>())
                 cfg.min_channel_r_for_coverage_mm = static_cast<float>(*v);
-            if (auto v = (*r_table)["skip_loo_residuals"].value<bool>())
-                cfg.skip_loo_residuals = *v;
         }
         else
         {
             mist::logger::warning(
-                "(recodata_conf_reader) No `[recodata]` table found — using defaults.");
+                "(recodata_conf_reader) No `[coverage]` table found — "
+                "using coverage-geometry defaults.");
         }
 
         // Sanity warnings — same style as streaming_hough_conf_reader.
@@ -1047,14 +1185,14 @@ recodata_conf_reader(std::string config_file)
     {
         mist::logger::warning(TString::Format(
                                   "(recodata_conf_reader) TOML parse error in '%s': %s — using defaults.",
-                                  config_file.c_str(), std::string(err.description()).c_str())
+                                  mapping_file.c_str(), std::string(err.description()).c_str())
                                   .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format(
                                   "(recodata_conf_reader) Error reading '%s': %s — using defaults.",
-                                  config_file.c_str(), err.what())
+                                  mapping_file.c_str(), err.what())
                                   .Data());
     }
     return cfg;

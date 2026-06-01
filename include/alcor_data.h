@@ -179,7 +179,7 @@ public:
     ///@{
     int get_chip() const { return data.fifo / 4; }                                              ///< Chip number on the device (FIFO / 4)
     int get_eo_channel() const { return data.pixel + 4 * data.column + 32 * (get_chip() % 2); } ///< Even/odd channel index within the chip
-    /// @deprecated 2026-05-28 — collides across devices (no @c device
+    /// @deprecated collides across devices (no @c device
     /// field).  Use @ref get_global_index as the calibration key.
     [[deprecated("Use AlcorData::get_global_index() — get_calib_index() collides across devices.")]]
     int get_calib_index() const

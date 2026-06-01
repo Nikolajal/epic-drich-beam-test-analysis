@@ -1,5 +1,7 @@
 # Audit log for 2025.database.toml
-# Appended by scripts/backfill_audit_legacy.py for entries that pre-date task #156.
+# Appended by the dashboard (qa_quicklook/rundb.py) on every database edit.
+# Entries tagged source = "legacy" were one-shot migrated for runs that
+# pre-dated the audit log.
 
 [[entry]]
 at        = "2026-05-28T21:07:48"

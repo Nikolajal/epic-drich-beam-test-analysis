@@ -9,10 +9,23 @@ show_advanced_qa = false      # Show the "Advanced QA" tab (plots and values pul
 theme            = "dark"     # Visual theme: "system" follows the OS, "light" or "dark" force a mode.
 plots_theme      = "follow"   # QA matplotlib plot theme: "follow" tracks the UI theme, "light"/"dark" pin it (useful when projector/printer/contrast preferences differ from the UI).
 
+# Acquisition source.  The [source].address scheme picks the transfer
+# backend automatically:
+#   user@host:/path   → rsync over ssh (the DAQ dock; e.g. eic@eic701)
+#   /abs/path or file://… → local copy (a mounted sandbox)
+#   https://…         → online store via curl/wget (STUB — not wired yet)
+# Prefer [source].address.  The [rsync] block below is the legacy form,
+# still honoured: when [source].address is empty it is synthesised as
+# "<remote_host>:<remote_data_dir>".
+[source]
+address        = ""           # e.g. "eic@eic701:/data/2026-testbeam/runs" — empty → fall back to [rsync] below.
+# local_data_dir / extra_args may also be set here; they fall back to [rsync].
+
 [rsync]
-# Where the writers' raw data lives on the DAQ machine.  The (future)
-# Download button shells out to ``rsync -av <source>:<remote_data_dir>/<run_id>
-# <local_data_dir>/`` so only the selected run id moves over the wire.
+# Legacy ssh/rsync endpoint (superseded by [source].address, kept for
+# back-compat).  The Download button shells out to
+# ``rsync -av <remote_host>:<remote_data_dir>/<run_id> <local_data_dir>/``
+# so only the selected run id moves over the wire.
 remote_host      = "eic@eicserv01"         # SSH host (e.g. "drich-daq.local") — empty disables the Download button.
 remote_data_dir  = "/data/2026-testbeam/preparation/testpulse/"         # Absolute path on the DAQ host where run directories live.
 local_data_dir   = "Data"     # Project-relative path where downloaded runs land.
@@ -71,7 +84,7 @@ vbias_check.bands = [
 full_keep_n           = 5      # Most-recent runs that keep everything.  Increase if you re-analyse heavily.
 qa_keep_n             = 50     # Total runs kept on disk.  Older than this → run dir removed entirely.
 keep_recotrackdata    = true   # In the QA-only tier, also keep recotrackdata.root alongside recodata.root + PDFs.
-sweep_on_startup      = true   # Run the cleanup sweep once when the dashboard launches.  Off → sweep only fires immediately before a new download.
+sweep_on_startup      = false  # Run the cleanup sweep once when the dashboard launches.  Off → sweep only fires immediately before a new download.  TEMPORARILY OFF (2026-05-30) while iterating on QA plots so a dashboard launch can't auto-prune an old benchmark run's raw data; re-enable for normal disk hygiene once benchmark runs are reliably pinned `.qa_persistent`.
 
 [qa_general]
 # Cross-run trend tiles on the QA → General sub-tab.  Source is

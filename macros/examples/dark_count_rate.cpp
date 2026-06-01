@@ -1,12 +1,26 @@
 #include "../lib_loader.h"
 #include "utility/root_io.h"
 #include "utility/root_hist.h"
+#include "utility/config_reader.h"
 #include <mist/logger/logger.h>
 
-void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC/test-beam-rec/Data/",
-                     std::string run_name = "20251111-164951",
-                     int max_frames = 10000000)
+void dark_count_rate(std::string data_repository,
+                     std::string run_name,
+                     int max_frames = 10000000,
+                     std::string readout_config_file = "conf/readout_config.toml")
 {
+    //  Sensor split (SiPM model, e.g. "1350" / "1375") is read from the
+    //  readout config — the single source of truth — NOT hardcoded by channel
+    //  range.  Each channel resolves to its ALCOR device, and the cherenkov
+    //  role's `sensor_for(device)` returns the model tag (per-device override,
+    //  else role-level).  This is the exemplary pattern: nothing about the
+    //  detector layout is baked into the macro.
+    ReadoutConfigList readout_config(readout_config_reader(readout_config_file));
+    const ReadoutConfigStruct *cherenkov = readout_config.find_by_name("cherenkov");
+    if (!cherenkov)
+        mist::logger::warning("[dark_count_rate] no 'cherenkov' role in " + readout_config_file +
+                              " — per-sensor DCR split disabled");
+    std::map<int, std::string> ordinal_to_sensor; // channel ordinal → SiPM model
     //  Input files
     std::string input_filename_recodata = data_repository + "/" + run_name + "/recodata.root";
 
@@ -64,8 +78,8 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
         {
             active_sensors.clear();
             active_sensors_count.clear();
-            for (auto Hit = 0; Hit < (int)recodata->get_recodata().size(); Hit++)
-                active_sensors.insert(recodata->get_global_channel_index(Hit));
+            for (auto current_hit = 0; current_hit < (int)recodata->get_recodata().size(); current_hit++)
+                active_sensors.insert(recodata->get_global_channel_index(current_hit));
             continue;
         }
 
@@ -74,8 +88,15 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
             used_frames++;
             for (const auto &global_channel_index : active_sensors)
                 active_sensors_count[global_channel_index] = 0;
-            for (auto Hit = 0; Hit < (int)recodata->get_recodata().size(); Hit++)
-                active_sensors_count[recodata->get_global_channel_index(Hit)]++;
+            for (auto current_hit = 0; current_hit < (int)recodata->get_recodata().size(); current_hit++)
+            {
+                const int ordinal = recodata->get_global_channel_index(current_hit);
+                active_sensors_count[ordinal]++;
+                //  Resolve this channel's SiPM model once, from its device via
+                //  the readout config (single source of truth).
+                if (cherenkov && !ordinal_to_sensor.count(ordinal))
+                    ordinal_to_sensor[ordinal] = cherenkov->sensor_for(recodata->get_device(current_hit));
+            }
             for (auto &[global_channel_index, count] : active_sensors_count)
                 h_dcr_per_channel->Fill(global_channel_index, count);
 
@@ -89,24 +110,29 @@ void dark_count_rate(std::string data_repository = "/Users/nrubini/Analysis/ePIC
 
     // ── Fill log-binned distributions from per-channel profile ───────────────
     // Threshold at 100 kHz matches lightdata_writer convention (extract_DCR).
-    // Channels <= 1024 are SiPM 1350; channels > 1024 are SiPM 1375.
+    // The SiPM model per channel is the config-resolved tag (`ordinal_to_sensor`,
+    // built above from the cherenkov role's `sensor_for(device)`) — no hardcoded
+    // channel-range split.
     const double dcr_threshold = 100.0; // kHz
     for (int x_bin = 1; x_bin <= h_dcr_per_channel->GetNbinsX(); ++x_bin)
     {
         double dcr = h_dcr_per_channel->GetBinContent(x_bin);
-        int GlobalIndex = (int)h_dcr_per_channel->GetBinCenter(x_bin);
+        int global_index = (int)h_dcr_per_channel->GetBinCenter(x_bin);
         if (dcr < 0.001 || dcr <= dcr_threshold)
             continue;
-        if (GlobalIndex <= 1024)
+        auto it_sensor = ordinal_to_sensor.find(global_index);
+        const std::string sensor = (it_sensor != ordinal_to_sensor.end()) ? it_sensor->second : "";
+        if (sensor == "1350")
         {
             h_average_dcr->Fill(dcr);
             h_dcr_log_1350->Fill(dcr);
         }
-        else
+        else if (sensor == "1375")
         {
             h_average_dcr_2->Fill(dcr);
             h_dcr_log_1375->Fill(dcr);
         }
+        // Unknown / unmapped channel: skip rather than misattribute it.
     }
 
     // ── Gaussian fits on log-binned distributions ─────────────────────────────

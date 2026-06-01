@@ -9,6 +9,7 @@
  */
 
 #include "writers/recodata/sigma_vs_n_fit.h"
+#include "utility/qa_publish.h"  // util::qa::pdf_path — land PDFs under qa/recodata/
 
 #include <cmath>     // std::abs, std::isfinite
 #include <algorithm> // std::max
@@ -225,9 +226,13 @@ void fit_sigma_vs_n(TH2F *h2,
         pave.Draw();
 
         c.Update();
-        const std::string pdf_path = data_repository + "/" + run_name +
-                                     "/" + h2->GetName() + "_sigma_vs_n.pdf";
-        c.SaveAs(pdf_path.c_str());
+        //  Land under qa/recodata/ so the dashboard discovers it (was
+        //  dumping into the run root).
+        const auto pdf = util::qa::pdf_path(
+            data_repository + "/" + run_name, "recodata", 21,
+            std::string(h2->GetName()) + "_sigma_vs_n");
+        c.SaveAs(pdf.string().c_str());
+        util::qa::crop_pdf_inplace(pdf);
     }
 
     //  ── Extract σ_photon as a labeled scalar ──────────────────

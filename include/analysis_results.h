@@ -4,8 +4,8 @@
  *
  * Provides a three-axis key schema (run, sensor, quantity) backed by a
  * hand-readable TOML file, with upsert semantics and helpers for building
- * TGraphErrors for plotting.  Migrated from a ROOT TTree backend on
- * 2026-05-29 (see top-level DISCUSSION.md "AnalysisResults: TTree → TOML").
+ * TGraphErrors for plotting.  Migrated from a ROOT TTree backend
+ * (see top-level DISCUSSION.md "AnalysisResults: TTree → TOML").
  *
  * ### File layout
  * A single TOML file (e.g. `<data_repository>/standard_results.toml`)

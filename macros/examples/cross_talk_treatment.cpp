@@ -1,6 +1,8 @@
 #include "../lib_loader.h"
 #include "utility/root_io.h"
 #include "utility/root_hist.h"
+#include "utility/config_reader.h"
+#include <mist/logger/logger.h>
 
 /**
  * @file cross_talk_treatment.cpp
@@ -25,28 +27,43 @@
  *   - Physical CT: distance ≤ 3.2 mm (nearest-pixel optical/charge coupling)
  *   - Electrical CT: same device AND same FIFO (shared readout chain)
  *
+ * These are physical/topological neighbour definitions (spatial distance,
+ * shared readout chain), NOT a SiPM-model split — so the result is posted
+ * detector-wide under the "all" sensor tag.  No config-driven sensor lookup
+ * is needed here (cf. dark_count_rate.cpp, which DOES split by model).
+ *
  * @author Nicola Rubini
  */
 
-void cross_talk_treatment(std::string data_repository, std::string run_name, int max_frames = 10000000)
+void cross_talk_treatment(std::string data_repository, std::string run_name,
+                          int max_frames = 10000000,
+                          std::string framer_config_file = "conf/framer_conf.toml")
 {
-    //  ── Constants ────────────────────────────────────────────────────────────
-    //  Physical CT signal window: [0, 10] cc (causal, optical/charge coupling).
-    //  Electrical CT signal window: [-2, 10] cc — small negative Δt allowed for
-    //  readout-timing jitter along the shared electrical chain.
-    const float kPhysCtLoNs = 0.f;
-    const float kPhysCtHiNs = 10 * BTANA_ALCOR_CC_TO_NS; //  31.25 ns
-    const float kElecCtLoNs = -2 * BTANA_ALCOR_CC_TO_NS; //  -6.25 ns
-    const float kElecCtHiNs = kPhysCtHiNs;
-    const float kPhysCtWinNs = kPhysCtHiNs - kPhysCtLoNs;
-    const float kElecCtWinNs = kElecCtHiNs - kElecCtLoNs;
-    const float kPhysRadiusMm = 3.2f;
+    //  CT window edges (cc) are owned by framer_conf.toml [qa] — the same keys
+    //  the production framer reads (see dcr_afterpulse_ct_qa.cxx) — so the macro
+    //  and the writer can never drift.
+    const QaConfigStruct qa_cfg = qa_conf_reader(framer_config_file);
 
-    //  Sideband: same width as the respective signal window, well beyond any CT timescale.
-    //  At 512 cc (= 1600 ns) we are deep in the flat DCR plateau.
-    const float kSidebandLoNs = 512 * BTANA_ALCOR_CC_TO_NS; // 1600 ns
-    const float kPhysSidebandHiNs = kSidebandLoNs + kPhysCtWinNs;
-    const float kElecSidebandHiNs = kSidebandLoNs + kElecCtWinNs;
+    //  ── Constants ────────────────────────────────────────────────────────────
+    //  Physical CT signal window (causal, optical/charge coupling); electrical CT
+    //  signal window allows a small negative Δt for readout-timing jitter along
+    //  the shared electrical chain.  Edges read from [qa]; cc → ns here.
+    const float phys_ct_lo_ns = qa_cfg.ct_phys_signal_lo * BTANA_ALCOR_CC_TO_NS;
+    const float phys_ct_hi_ns = qa_cfg.ct_phys_signal_hi * BTANA_ALCOR_CC_TO_NS;
+    const float elec_ct_lo_ns = qa_cfg.ct_elec_signal_lo * BTANA_ALCOR_CC_TO_NS;
+    const float elec_ct_hi_ns = qa_cfg.ct_elec_signal_hi * BTANA_ALCOR_CC_TO_NS;
+    const float phys_ct_win_ns = phys_ct_hi_ns - phys_ct_lo_ns;
+    const float elec_ct_win_ns = elec_ct_hi_ns - elec_ct_lo_ns;
+    //  Physical-neighbour radius [mm] from [qa] — the same key the production
+    //  writer (dcr_afterpulse_ct_qa.cxx) reads, so the two never drift.
+    const float phys_radius_mm = qa_cfg.ct_phys_radius_mm;
+
+    //  Sideband: same width as the respective signal window, well beyond any CT
+    //  timescale.  Offset read from [qa] (cc); at the default 512 cc (= 1600 ns)
+    //  we are deep in the flat DCR plateau.
+    const float sideband_lo_ns = qa_cfg.ct_sideband_offset * BTANA_ALCOR_CC_TO_NS;
+    const float phys_sideband_hi_ns = sideband_lo_ns + phys_ct_win_ns;
+    const float elec_sideband_hi_ns = sideband_lo_ns + elec_ct_win_ns;
 
     //  ── Input ────────────────────────────────────────────────────────────────
     std::string input_filename = data_repository + "/" + run_name + "/recodata.root";
@@ -65,16 +82,16 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
 
     //  ── Histograms ───────────────────────────────────────────────────────────
     //  Δt distributions — one bin per cc (3.125 ns), covering a full frame
-    const int kDtBins = 1024;
-    const float kDtMax = kDtBins * BTANA_ALCOR_CC_TO_NS; //  3200 ns
-    const float kElecDtLo = -5 * BTANA_ALCOR_CC_TO_NS;   // -15.625 ns (headroom around -2 cc)
+    const int dt_bins = 1024;
+    const float dt_max = dt_bins * BTANA_ALCOR_CC_TO_NS; //  3200 ns
+    const float elec_dt_lo = -5 * BTANA_ALCOR_CC_TO_NS;  // -15.625 ns (headroom around -2 cc)
 
     RootHist<TH1F> h_phys_dt("h_phys_dt",
                              ";#Delta_{t} = t_{j} - t_{i} (ns);physical neighbour pairs / primary Hit",
-                             kDtBins, 0, kDtMax);
+                             dt_bins, 0, dt_max);
     RootHist<TH1F> h_elec_dt("h_elec_dt",
                              ";#Delta_{t} = t_{j} - t_{i} (ns);electrical neighbour pairs / primary Hit",
-                             kDtBins + 5, kElecDtLo, kDtMax);
+                             dt_bins + 5, elec_dt_lo, dt_max);
     //  Smeared spatial hitmaps for CT-tagged hits (100 fills per Hit, ±1.5 mm uniform smear).
     RootHist<TH2F> h_phys_ct_hitmap("h_phys_ct_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_elec_ct_hitmap("h_elec_ct_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
@@ -134,7 +151,7 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
                     continue;
 
                 const float dt = recodata->get_hit_t(j) - ti;
-                if (dt < kElecDtLo || dt >= kDtMax)
+                if (dt < elec_dt_lo || dt >= dt_max)
                     continue;
 
                 const float xj = recodata->get_hit_x(j);
@@ -143,7 +160,7 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
                 //  Physical CT: causal only (dt >= 0)
                 const bool is_phys = dt >= 0.f &&
                                      xi > -990.f && xj > -990.f &&
-                                     std::hypot(xj - xi, yj - yi) <= kPhysRadiusMm;
+                                     std::hypot(xj - xi, yj - yi) <= phys_radius_mm;
                 const bool is_elec = recodata->get_device(j) == dev_i &&
                                      recodata->get_fifo(j) == fifo_i;
 
@@ -156,16 +173,16 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
                 h_dchannel_dt->Fill(dchan, dt / BTANA_ALCOR_CC_TO_NS);
 
                 //  Accumulate per-Hit signal and sideband counts
-                if (dt >= kPhysCtLoNs && dt < kPhysCtHiNs)
+                if (dt >= phys_ct_lo_ns && dt < phys_ct_hi_ns)
                     if (is_phys)
                         ++n_phys_near;
-                if (dt >= kElecCtLoNs && dt < kElecCtHiNs)
+                if (dt >= elec_ct_lo_ns && dt < elec_ct_hi_ns)
                     if (is_elec)
                         ++n_elec_near;
-                if (dt >= kSidebandLoNs && dt < kPhysSidebandHiNs)
+                if (dt >= sideband_lo_ns && dt < phys_sideband_hi_ns)
                     if (is_phys)
                         ++n_phys_far;
-                if (dt >= kSidebandLoNs && dt < kElecSidebandHiNs)
+                if (dt >= sideband_lo_ns && dt < elec_sideband_hi_ns)
                     if (is_elec)
                         ++n_elec_far;
             }
@@ -198,29 +215,59 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
         return h->Integral(h->GetXaxis()->FindBin(lo), h->GetXaxis()->FindBin(hi) - 1);
     };
 
-    const double phys_n_sig = integral_ns(h_phys_dt, kPhysCtLoNs, kPhysCtHiNs);
-    const double phys_n_sb = integral_ns(h_phys_dt, kSidebandLoNs, kPhysSidebandHiNs);
-    const double elec_n_sig = integral_ns(h_elec_dt, kElecCtLoNs, kElecCtHiNs);
-    const double elec_n_sb = integral_ns(h_elec_dt, kSidebandLoNs, kElecSidebandHiNs);
+    const double phys_n_sig = integral_ns(h_phys_dt, phys_ct_lo_ns, phys_ct_hi_ns);
+    const double phys_n_sb = integral_ns(h_phys_dt, sideband_lo_ns, phys_sideband_hi_ns);
+    const double elec_n_sig = integral_ns(h_elec_dt, elec_ct_lo_ns, elec_ct_hi_ns);
+    const double elec_n_sb = integral_ns(h_elec_dt, sideband_lo_ns, elec_sideband_hi_ns);
 
     //  Windows have equal width per type → scale factor = 1
     const double phys_ct_raw = (n_primary > 0) ? phys_n_sig / n_primary : 0.;
-    const double phys_ct_corr = (n_primary > 0) ? (phys_n_sig - phys_n_sb) / n_primary : 0.;
+    const double phys_ct_corr_val = (n_primary > 0) ? (phys_n_sig - phys_n_sb) / n_primary : 0.;
     const double elec_ct_raw = (n_primary > 0) ? elec_n_sig / n_primary : 0.;
-    const double elec_ct_corr = (n_primary > 0) ? (elec_n_sig - elec_n_sb) / n_primary : 0.;
+    const double elec_ct_corr_val = (n_primary > 0) ? (elec_n_sig - elec_n_sb) / n_primary : 0.;
     const double phys_dcr_acc = (n_primary > 0) ? phys_n_sb / n_primary : 0.;
     const double elec_dcr_acc = (n_primary > 0) ? elec_n_sb / n_primary : 0.;
 
+    //  Poisson uncertainty on the sideband-subtracted probability:
+    //  N_sig and N_sb are independent Poisson counts, so
+    //  σ(N_sig − N_sb) = √(N_sig + N_sb); divide by the (exact) primary count.
+    const double phys_ct_corr_err = (n_primary > 0) ? std::sqrt(phys_n_sig + phys_n_sb) / n_primary : 0.;
+    const double elec_ct_corr_err = (n_primary > 0) ? std::sqrt(elec_n_sig + elec_n_sb) / n_primary : 0.;
+    const double phys_ct_raw_err = (n_primary > 0) ? std::sqrt(phys_n_sig) / n_primary : 0.;
+    const double elec_ct_raw_err = (n_primary > 0) ? std::sqrt(elec_n_sig) / n_primary : 0.;
+
     printf("\n=== Cross-talk summary ===\n");
     printf("  Physical CT  signal  [%.0f, %.0f] ns,  sideband [%.0f, %.0f] ns\n",
-           kPhysCtLoNs, kPhysCtHiNs, kSidebandLoNs, kPhysSidebandHiNs);
+           phys_ct_lo_ns, phys_ct_hi_ns, sideband_lo_ns, phys_sideband_hi_ns);
     printf("  Electrical CT signal [%.1f, %.0f] ns,  sideband [%.0f, %.0f] ns\n",
-           kElecCtLoNs, kElecCtHiNs, kSidebandLoNs, kElecSidebandHiNs);
+           elec_ct_lo_ns, elec_ct_hi_ns, sideband_lo_ns, elec_sideband_hi_ns);
     printf("  Primary hits analysed : %lld\n", n_primary);
     printf("  Physical CT  — raw: %.3f%%  DCR acc: %.3f%%  corrected: %.3f%%\n",
-           phys_ct_raw * 100., phys_dcr_acc * 100., phys_ct_corr * 100.);
+           phys_ct_raw * 100., phys_dcr_acc * 100., phys_ct_corr_val * 100.);
     printf("  Electrical CT — raw: %.3f%%  DCR acc: %.3f%%  corrected: %.3f%%\n\n",
-           elec_ct_raw * 100., elec_dcr_acc * 100., elec_ct_corr * 100.);
+           elec_ct_raw * 100., elec_dcr_acc * 100., elec_ct_corr_val * 100.);
+
+    //  ── Persist to AnalysisResults ────────────────────────────────────────────
+    //  Cross-talk is a detector-wide topological measurement (no SiPM-model
+    //  split), so everything is posted under the "all" sensor tag.  Fractions
+    //  are stored dimensionless (0–1), not percent, to match the convention of
+    //  other dimensionless quantities in standard_results.toml.
+    {
+        AnalysisResults ar(data_repository + "/standard_results.toml");
+        ar.update({
+            //  Physical (optical/charge-coupling) cross-talk
+            {{run_name, "all", "cross_talk.phys.fraction"}, {phys_ct_corr_val, phys_ct_corr_err}},
+            {{run_name, "all", "cross_talk.phys.fraction_raw"}, {phys_ct_raw, phys_ct_raw_err}},
+            {{run_name, "all", "cross_talk.phys.dcr_accidental"}, {phys_dcr_acc, 0.}},
+
+            //  Electrical (shared readout-chain) cross-talk
+            {{run_name, "all", "cross_talk.elec.fraction"}, {elec_ct_corr_val, elec_ct_corr_err}},
+            {{run_name, "all", "cross_talk.elec.fraction_raw"}, {elec_ct_raw, elec_ct_raw_err}},
+            {{run_name, "all", "cross_talk.elec.dcr_accidental"}, {elec_dcr_acc, 0.}},
+        });
+
+        mist::logger::info("[cross_talk_treatment] CT results written to standard_results.toml for run " + run_name);
+    }
 
     //  Normalise Δt distributions to pairs per primary Hit
     if (n_primary > 0)
@@ -254,16 +301,16 @@ void cross_talk_treatment(std::string data_repository, std::string run_name, int
     h_phys_dt->SetLineColor(kBlue + 1);
     h_phys_dt->SetLineWidth(2);
     h_phys_dt->Draw("HIST");
-    draw_window(kPhysCtLoNs, kPhysCtHiNs, kRed, "signal");
-    draw_window(kSidebandLoNs, kPhysSidebandHiNs, kGreen + 2, "sideband");
+    draw_window(phys_ct_lo_ns, phys_ct_hi_ns, kRed, "signal");
+    draw_window(sideband_lo_ns, phys_sideband_hi_ns, kGreen + 2, "sideband");
 
     c->cd(2);
     gPad->SetLogy();
     h_elec_dt->SetLineColor(kOrange + 7);
     h_elec_dt->SetLineWidth(2);
     h_elec_dt->Draw("HIST");
-    draw_window(kElecCtLoNs, kElecCtHiNs, kRed, "signal");
-    draw_window(kSidebandLoNs, kElecSidebandHiNs, kGreen + 2, "sideband");
+    draw_window(elec_ct_lo_ns, elec_ct_hi_ns, kRed, "signal");
+    draw_window(sideband_lo_ns, elec_sideband_hi_ns, kGreen + 2, "sideband");
 
     c->cd(3);
     h_dchannel_dt->SetStats(0);

@@ -47,6 +47,11 @@
 time_window_ns      =   20.0
 n_sigma_threshold   =   1.0e9   # disabled in QA mode — score hists still fill
 min_noise_hits      =   10.0
+# In-beam-background QA sample (the violet 05_streaming_score curve): band ends
+# `inbeam_pretrigger_offset_ns` before each hardware trigger, `inbeam_sample_width_ns` wide.
+inbeam_pretrigger_offset_ns = 40.0
+inbeam_sample_width_ns      = 600.0
+default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a non-Hough hardware trigger
 
 [streaming_hough]
 
@@ -110,3 +115,17 @@ centre_xy_half_range_mm  =   25.0
 aggregation_window_cells =   1
 # fit_circle_init_{x,y,r} removed 2026-05-30 (C3.5) — recodata seeds the
 # refit from the Hough peak.  Tolerated for one release with a warning.
+
+# ────────────────────────────────────────────────────────────────
+# Recodata ring-reconstruction knobs (formerly conf/QA/recodata.toml).
+# The only QA-specific override here is skip_loo_residuals — everything
+# else (hardware_ring_dt_*, min_hits_per_ring, delta_r_for_coverage_mm)
+# QA-matched production, so it inherits the defaults from
+# conf/defaults/streaming.toml's [streaming_hough] table.
+#
+# When true, the per-hit leave-one-out residual loop in
+# compute_ring_fit_pure is skipped — the biggest single speedup lever
+# for --QA mode.  Cost: σ_photon is NOT measurable from this run's
+# output (h_residual_vs_n_* stay empty, no _sigma_photon_mm scalars).
+# ────────────────────────────────────────────────────────────────
+skip_loo_residuals       =  true

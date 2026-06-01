@@ -142,10 +142,16 @@ inline bool crop_pdf_inplace(const std::filesystem::path &pdf_path,
     //  pdfcrop has no --quiet flag (verified on MacTeX 2024 / pdfcrop
     //  1.40); it's already non-verbose by default.  Redirect stdout +
     //  stderr to /dev/null instead.
+    //  ``--hires`` uses Ghostscript's high-resolution %%HiResBoundingBox
+    //  rather than the coarse integer bbox.  The integer box can round
+    //  INWARD and shave a row/column off the plot frame or an edge label
+    //  (the "the plot itself got cropped" failure); the hi-res box hugs
+    //  the true content, and the uniform ``--margins`` ring then leaves a
+    //  few points of clearance on every side so nothing is clipped.
     std::ostringstream cmd;
     cmd << "PATH=\"/Library/TeX/texbin:/usr/local/texlive/2024/bin/universal-darwin:"
         << "/usr/local/bin:/opt/homebrew/bin:${PATH:-}\" "
-        << "pdfcrop --margins " << margin_pt << ' '
+        << "pdfcrop --hires --margins " << margin_pt << ' '
         << "'" << pdf_path.string() << "' "
         << "'" << pdf_path.string() << "' "
         << "> /dev/null 2>&1";

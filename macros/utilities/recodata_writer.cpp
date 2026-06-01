@@ -5,9 +5,16 @@
 #include "utility.h"
 #include <stdio.h>
 #include <CLI/CLI.hpp>
+#include <TROOT.h>
 
 int main(int argc, char **argv)
 {
+    //  Force ROOT batch mode before any TCanvas is created: the writer
+    //  renders QA PDFs via off-screen canvases.  Without this, ROOT opens a
+    //  blank Cocoa/X window per canvas at finalize, which steals OS focus
+    //  when the run finishes.
+    gROOT->SetBatch(kTRUE);
+
     CLI::App app{"Recodata writer"};
 
     std::string data_repository;
@@ -20,7 +27,6 @@ int main(int argc, char **argv)
     std::string mapping_conf = "conf/mapping_conf.toml";
     std::string trigger_config_file;
     std::string framer_config_file;
-    std::string recodata_config_file;
     std::string streaming_config_file;
     std::string RunList;
 
@@ -28,7 +34,7 @@ int main(int argc, char **argv)
     bool force_rebuild = false;
     bool force_upstream = false;
     bool qa_mode = false;
-    //  Sweep audit (2026-05-30): accept --threads as a no-op so the
+    //  Sweep audit: accept --threads as a no-op so the
     //  uniform qa_pipeline.py invocation
     //  (`writer ... --threads N`) doesn't reject this stage.  Recodata
     //  doesn't yet plumb thread parallelism through, but the CLI
@@ -46,7 +52,6 @@ int main(int argc, char **argv)
     app.add_option("--Mapping-conf", mapping_conf);
     auto *p_trigger = app.add_option("--trigger-conf", trigger_config_file);
     auto *p_framer = app.add_option("--framer-conf", framer_config_file);
-    auto *p_recodata = app.add_option("--recodata-conf", recodata_config_file);
     //  Recodata never reads this file directly, but it's forwarded into
     //  the lightdata cascade when --force-upstream is set so that --QA
     //  Hough thresholds propagate through the pipeline in one command.
@@ -75,16 +80,14 @@ int main(int argc, char **argv)
             trigger_config_file = util::conf_path("trigger_conf.toml", mode);
         if (p_framer->count() == 0)
             framer_config_file = util::conf_path("framer_conf.toml", mode);
-        if (p_recodata->count() == 0)
-            recodata_config_file = util::conf_path("recodata.toml", mode);
         if (p_streaming->count() == 0)
             streaming_config_file = util::conf_path("streaming.toml", mode);
         if (qa_mode)
             mist::logger::info(TString::Format(
                                    "(recodata_writer) --QA mode: trigger-conf=%s  framer-conf=%s  "
-                                   "recodata-conf=%s  streaming-conf=%s",
+                                   "streaming-conf=%s",
                                    trigger_config_file.c_str(), framer_config_file.c_str(),
-                                   recodata_config_file.c_str(), streaming_config_file.c_str())
+                                   streaming_config_file.c_str())
                                    .Data());
 
         bool is_runlist = false;
@@ -113,7 +116,7 @@ int main(int argc, char **argv)
             {
                 auto start = std::chrono::high_resolution_clock::now();
                 mist::logger::info(TString::Format("(recodata_writer) Starting writing recodata for run '%s'", current_run_name.c_str()).Data());
-                recodata_writer(data_repository, current_run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, recodata_config_file, streaming_config_file);
+                recodata_writer(data_repository, current_run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, streaming_config_file);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
                 mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", elapsed.count()).Data());
@@ -125,7 +128,7 @@ int main(int argc, char **argv)
         else
         {
             auto start = std::chrono::high_resolution_clock::now();
-            recodata_writer(data_repository, run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, recodata_config_file, streaming_config_file);
+            recodata_writer(data_repository, run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, streaming_config_file);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
             mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", elapsed.count()).Data());

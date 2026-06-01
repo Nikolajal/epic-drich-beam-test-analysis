@@ -224,9 +224,10 @@ void recotrackdata_writer(
     //  directly (it inherits everything via recodata).
     {
         //  Cross-run aggregate sits next to the run directories
-        //  (``<repo>/standard_results.toml``) — same convention as
-        //  recodata + lightdata + calibration writers.  The earlier
-        //  ``extData/`` literal was a stale hard-code.
+        //  (``<data_repository>/standard_results.toml`` = ``Data/``, NOT
+        //  the git repo root) — same convention as recodata + lightdata
+        //  + calibration writers.  The earlier ``extData/`` literal was
+        //  a stale hard-code.
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
             {{run_name, "all", "recotrack.n_matched_tracks"},

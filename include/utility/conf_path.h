@@ -64,7 +64,7 @@ inline std::string conf_path(const std::string &basename, const std::string &sub
 /**
  * @brief Legacy bool overload — `qa_mode==true` ↔ `subdir=="QA"`.
  *
- * Marked `[[deprecated]]` 2026-05-28: new code should use the subdir
+ * Marked `[[deprecated]]`: new code should use the subdir
  * form with an explicit mode string (`"QA"`, `"calib"`, …) so the
  * call site documents which mode it routes to.  This overload is kept
  * only to avoid churning third-party callers that still pass a bool.

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <limits>
 #include <tuple>
 #include <vector>
 
@@ -529,4 +530,69 @@ bool run_streaming_trigger_weighted(
                                      std::get<2>(entry));
 
     return has_fired;
+}
+
+void fill_window_score_samples(
+    AlcorSpilldata &current_spill,
+    int frame_id,
+    const StreamingTriggerWeights &weights,
+    float t_lo_ns,
+    float t_hi_ns,
+    float time_window_ns,
+    TH1F *hist)
+{
+    if (hist == nullptr || weights.sigma_score_per_window <= 0.f)
+        return;
+
+    auto &cherenkov_hits = current_spill.get_frame_cherenkov_hits(frame_id);
+    //  cherenkov_hits comes GlobalIndex-sorted (by channel) from the framer's
+    //  post-merge step — NOT time-sorted.  The trailing-window scorer below
+    //  needs monotonically increasing time (it `break`s past t_hi and evicts
+    //  the window front), so materialise a time-sorted (time, channel) list
+    //  first, mirroring the explicit sort in run_streaming_trigger_weighted.
+    //  No index-permutation tracking is needed here: this routine only fills
+    //  a QA histogram and never writes hit masks back.
+    std::vector<std::pair<float, int>> sorted_hits;  // (time_ns, channel_ord)
+    sorted_hits.reserve(cherenkov_hits.size());
+    for (auto &hit_struct : cherenkov_hits)
+    {
+        AlcorFinedata hit(hit_struct);
+        if (hit.is_afterpulse())
+            continue;
+        sorted_hits.emplace_back(
+            hit.get_time_ns(),
+            ::GlobalIndex(hit.get_global_index()).channel_ordinal());
+    }
+    std::sort(sorted_hits.begin(), sorted_hits.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+
+    //  Sliding window mirroring run_streaming_trigger_weighted: maintain
+    //  a running score over the trailing time_window_ns and fill once per
+    //  modelled hit.  Fills only for hits in [t_lo, t_hi]; the window
+    //  still accumulates hits before t_lo so the running score is correct
+    //  at the region's left edge.  Hits are now time-ordered, so we can stop
+    //  once past t_hi.
+    std::deque<std::pair<float, float>> window;  // (time, weight)
+    float running_score = 0.f;
+    for (const auto &[t, channel_ord] : sorted_hits)
+    {
+        if (t > t_hi_ns)
+            break;  // time-ordered → nothing more in range
+
+        //  Evict front-of-window hits outside the trailing window.
+        while (!window.empty() && (t - window.front().first) > time_window_ns)
+        {
+            running_score -= window.front().second;
+            window.pop_front();
+        }
+        //  Same weight-resolution rule as the sliding scorer: an
+        //  uncalibrated channel contributes nothing.
+        const auto wit = weights.weight_by_channel.find(channel_ord);
+        if (wit == weights.weight_by_channel.end())
+            continue;
+        window.emplace_back(t, wit->second);
+        running_score += wit->second;
+        if (t >= t_lo_ns)
+            hist->Fill(weights.n_sigma_of(running_score));
+    }
 }

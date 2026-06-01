@@ -175,7 +175,7 @@ inline void log(const std::string &audit_path,
        << "error    = " << error << "\n\n";
     const std::string payload = os.str();
 
-    //  Sweep audit (2026-05-30): enforce the sub-PIPE_BUF invariant
+    //  Sweep audit: enforce the sub-PIPE_BUF invariant
     //  documented above.  POSIX guarantees atomic O_APPEND writes only
     //  for payloads < PIPE_BUF (4096 on macOS/Linux).  A typical entry
     //  is ~180 B; under pathological per-field input + TOML escape
@@ -214,7 +214,7 @@ inline void log(const std::string &audit_path,
 
     const ssize_t want = static_cast<ssize_t>(payload.size());
     const ssize_t got  = ::write(fd, payload.data(), payload.size());
-    //  Sweep audit (2026-05-30): guard the close.  close(-1) is a no-op
+    //  Sweep audit: guard the close.  close(-1) is a no-op
     //  on macOS/Linux but clobbers errno on some BSDs; the open-failure
     //  branch already returns above so fd >= 0 here, but keep the
     //  guard for future-refactor safety.

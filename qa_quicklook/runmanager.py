@@ -163,20 +163,18 @@ def _elapsed_since(iso_ts: str) -> str:
 
 
 def _list_runs(data_dir: Path) -> list[str]:
-    """All sub-directories under ``Data/`` — each is a run id.
+    """Real local runs under ``Data/``, most-recent first.
 
-    Returned **most-recent first**.  Run ids are timestamps
-    (``YYYYMMDD-HHMMSS``) so ``reverse=True`` on the lexical sort is
-    reverse-chronological for free.  Operators almost always want the
-    freshest run on top of the picker — that's the one they just
-    downloaded / acquired and are about to launch a writer on.
+    Delegates to ``rundb.list_populated_runs`` so the picker shows only
+    directories that (a) match the ``YYYYMMDD-HHMMSS`` run-id convention
+    and (b) actually hold run content.  Phantom directories — empty
+    folders left behind by a prune, or marker-only / ``.DS_Store``-only
+    stubs — are filtered out so they can't fool the dashboard into
+    listing a run that isn't really there.  Run ids are timestamps, so
+    the reverse lexical sort is reverse-chronological (freshest on top,
+    the run the operator just acquired).
     """
-    if not data_dir.is_dir():
-        return []
-    return sorted(
-        (p.name for p in data_dir.iterdir() if p.is_dir()),
-        reverse=True,
-    )
+    return rundb.list_populated_runs(data_dir)
 
 
 def _show_cascade_dialog(
@@ -488,6 +486,12 @@ class _WriterCard(QtWidgets.QFrame):
 class RunManagerView(QtWidgets.QWidget):
     """Run Manager tab — see module docstring."""
 
+    #  Emitted when the operator picks a different run, so the app can
+    #  keep the QA tab's picker in sync (and vice versa).  Only fires on
+    #  genuine selection changes, never on a programmatic ``set_selected
+    #  _run`` from the sync itself (guarded by ``_syncing_run``).
+    run_selected = QtCore.Signal(str)
+
     def __init__(
         self,
         repo_root: Path,
@@ -500,7 +504,11 @@ class RunManagerView(QtWidgets.QWidget):
         super().__init__(parent)
         self._repo_root = repo_root.resolve()
         self._data_dir = data_dir.resolve()
-        self._database_path = database_path or (repo_root / "run-lists" / "2025.database.toml")
+        #  Guards programmatic combo changes (from cross-tab sync) so
+        #  they don't re-broadcast and bounce the selection back.
+        self._syncing_run = False
+        self._database_path = database_path or rundb.newest_campaign_file(
+            repo_root / "run-lists", "database")
         # Shared FIFO worker for rundb writes — avoids GUI freeze on
         # the tomlkit dumps that take ~1.7 s on production-sized DBs.
         # Falls back to a local worker if the parent didn't share one
@@ -529,6 +537,8 @@ class RunManagerView(QtWidgets.QWidget):
         # be "idle" for run B.
         self._run_combo.currentTextChanged.connect(lambda _t: self._refresh_status_dots())
         self._run_combo.currentTextChanged.connect(lambda _t: self._refresh_preview())
+        #  Broadcast genuine selection changes for cross-tab sync.
+        self._run_combo.currentTextChanged.connect(self._on_run_selected_by_user)
         self._run_combo.currentTextChanged.connect(lambda _t: self._refresh_run_info())
         #  Refresh button — was icon-only ``⟳`` at default tool-button
         #  size and operators couldn't see it.  Spell out the word
@@ -684,10 +694,32 @@ class RunManagerView(QtWidgets.QWidget):
         self._status_timer.setInterval(2000)
         self._status_timer.timeout.connect(self._refresh_status_dots)
         self._status_timer.timeout.connect(self._refresh_active)
+        # Self-heal the run-picker enabled state against reality.  The
+        # running-flag used to be latched: _set_running(True) on launch,
+        # cleared only by the runner's `finished` signal.  If a writer
+        # died WITHOUT a clean finished (killed externally, an attached
+        # survivor that exited, a missed signal), the picker stayed
+        # greyed-out forever.  Reconciling against `_runner.is_running()`
+        # every tick re-enables it within 2 s once nothing is actually
+        # running — and disables it if an external run appears.
+        self._status_timer.timeout.connect(self._poll_running_state)
         # Cheap: re-read [rsync] so a Settings-side edit shows up in
         # the Download button's tooltip without waiting for a click.
         self._status_timer.timeout.connect(self._update_download_button_tip)
         self._status_timer.start()
+
+        # Periodic re-map of the locally-held runs so the picker stays
+        # in sync with what's actually on disk — a run that finished
+        # downloading, or one whose folder was pruned away, shows up /
+        # disappears within one tick without the operator hitting ⟳.
+        # Slower cadence than the liveness poll (30 s) because the
+        # on-disk run SET changes rarely, and the re-scan touches every
+        # run dir; ``_refresh_runs`` is a no-op-safe rebuild that
+        # preserves the current selection when it's still present.
+        self._runs_remap_timer = QtCore.QTimer(self)
+        self._runs_remap_timer.setInterval(30_000)
+        self._runs_remap_timer.timeout.connect(self._remap_runs_if_changed)
+        self._runs_remap_timer.start()
 
         self._refresh_runs()
         self._refresh_status_dots()
@@ -722,6 +754,22 @@ class RunManagerView(QtWidgets.QWidget):
         if not runs:
             self._log.appendPlainText(f"[note] no runs found under {self._data_dir}")
         self._refresh_status_dots()
+
+    def _remap_runs_if_changed(self) -> None:
+        """Periodic re-map (30 s timer): rebuild the picker ONLY when the
+        set of real local runs actually changed.
+
+        Rebuilding the combo every tick would fight the operator (drop
+        an open dropdown, reset edit focus), so we diff the on-disk run
+        set against what the combo currently holds and rebuild only on a
+        real delta — a finished download appearing, or a pruned folder
+        disappearing.  Cheap: ``_list_runs`` is a shallow scan.
+        """
+        on_disk = _list_runs(self._data_dir)
+        in_combo = [self._run_combo.itemText(i)
+                    for i in range(self._run_combo.count())]
+        if on_disk != in_combo:
+            self._refresh_runs()
 
     def _refresh_preview(self) -> None:
         run_id = self._run_combo.currentText().strip()
@@ -873,6 +921,55 @@ class RunManagerView(QtWidgets.QWidget):
 
     def _refresh_active(self) -> None:
         self._active.refresh()
+
+    def _on_run_selected_by_user(self, run_id: str) -> None:
+        """Re-broadcast a genuine run-picker change for cross-tab sync.
+
+        Suppressed while ``_syncing_run`` is set (i.e. the change came
+        FROM the sync), so the two tabs can't ping-pong the selection.
+        """
+        if not self._syncing_run and run_id:
+            self.run_selected.emit(run_id)
+
+    def set_selected_run(self, run_id: str) -> None:
+        """Programmatically select ``run_id`` without re-broadcasting.
+
+        No-op when the run isn't in the picker (e.g. a QA-only run not
+        present in the Run Manager's filesystem list) or already
+        selected.  The combo's own refresh signals still fire so the
+        status dots / preview follow, but ``run_selected`` does not —
+        ``_syncing_run`` gates it.
+        """
+        if not run_id or run_id == self._run_combo.currentText():
+            return
+        idx = self._run_combo.findText(run_id)
+        if idx < 0:
+            return
+        self._syncing_run = True
+        try:
+            self._run_combo.setCurrentIndex(idx)
+        finally:
+            self._syncing_run = False
+
+    def _poll_running_state(self) -> None:
+        """Reconcile the run-picker enabled state with reality.
+
+        ``_set_running`` is the only thing that disables the run combo,
+        and it used to be cleared solely by the runner's ``finished``
+        signal — so a writer that died without firing it left the
+        picker greyed-out indefinitely.  Here we re-derive the running
+        flag from ``_runner.is_running()`` (which polls the live popen /
+        attached external pid) and only touch the UI when it has drifted
+        from the picker's current state, so a stuck disabled picker
+        re-enables within one 2 s tick.
+        """
+        actually_running = (
+            self._runner is not None and self._runner.is_running()
+        )
+        #  Picker enabled iff NOT running.  Reconcile only on drift so we
+        #  don't thrash the cards' enabled state every tick.
+        if self._run_combo.isEnabled() == actually_running:
+            self._set_running(actually_running)
 
     def _refresh_status_dots(self) -> None:
         """Update each writer card's dot from the on-disk lock files.
@@ -1227,11 +1324,11 @@ class RunManagerView(QtWidgets.QWidget):
         #  Sweep audit (2026-05-30) — three-state retention model.
         #  Drop the `.qa_managed` marker into the run directory before
         #  rsync starts populating it.  Two reasons:
-        #    1. The retention sweep (when enforce_qa_managed=True) uses
-        #       the marker to distinguish auto-downloaded runs from
-        #       user-managed ones.  Without the marker, the sweep
-        #       would treat this run as user-managed and never prune
-        #       it once it ages out.
+        #    1. The retention sweep uses the marker to distinguish
+        #       auto-downloaded runs from user-managed ones.  This is
+        #       the ONLY thing that makes a run eligible for the sweep —
+        #       without the marker, the sweep treats the run as
+        #       user-managed and never touches it (by design).
         #    2. Partial/failed downloads should be eligible for
         #       cleanup; dropping the marker at launch time (not at
         #       successful completion) lets the next sweep clean them.

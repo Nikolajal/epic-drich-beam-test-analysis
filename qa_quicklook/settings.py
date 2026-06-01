@@ -35,12 +35,11 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import tomlkit
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
-from . import conf_layout, readout_validate, theme
+from . import readout_validate, theme
 from .conf_layout import MasterKind, active_set_name, list_sets, promote_to_working, scan, switch_set
 from .toml_form import TableLayout, TomlForm
 from .toml_model import apply_double_hash_cutoff, roundtrip_safe, set_leaf, split_at_double_hash
@@ -68,7 +67,6 @@ class _FilePresentation:
 
 FILE_PRESENTATION: tuple[_FilePresentation, ...] = (
     _FilePresentation("streaming.toml",        "Streaming Trigger & Hough"),
-    _FilePresentation("recodata.toml",         "Reconstruction"),
     _FilePresentation("framer_conf.toml",      "Streaming Framer"),
     _FilePresentation("readout_config.toml",   "Readout"),
     _FilePresentation("trigger_conf.toml",     "Triggers"),
@@ -128,8 +126,8 @@ SECTION_TITLES: dict[str, dict[tuple, str]] = {
         ("streaming_trigger",): "Streaming Trigger",
         ("streaming_hough",):   "Streaming Hough",
     },
-    "recodata.toml": {
-        ("recodata",): "Recodata",
+    "mapping_conf.toml": {
+        ("coverage",): "Coverage Map",
     },
     "qa_quicklook.toml": {
         ("retention",): "Disk retention",
@@ -143,17 +141,15 @@ SECTION_TITLES: dict[str, dict[tuple, str]] = {
 # When no entry is present and no inline comment exists, the cell
 # simply has no description.
 PARAM_DESCRIPTIONS: dict[str, dict[tuple, str]] = {
-    "recodata.toml": {
-        ("recodata", "n_phi_bins_coverage"):         "Number of azimuthal slices of the coverage map (1° per bin at 360).",
-        ("recodata", "n_r_bins_coverage"):           "Number of radial bins in the coverage map.",
-        ("recodata", "r_min_coverage_mm"):           "Lower radius of the coverage map.",
-        ("recodata", "r_max_coverage_mm"):           "Upper radius of the coverage map.",
-        ("recodata", "channel_half_width_mm"):       "Pixel half-side (SiPM pitch / 2). Drives coverage rasterisation.",
-        ("recodata", "nominal_centre_x_mm"):         "Nominal beam-axis projection on the detector plane (X).",
-        ("recodata", "nominal_centre_y_mm"):         "Nominal beam-axis projection on the detector plane (Y).",
-        ("recodata", "delta_r_for_coverage_mm"):     "Ring bandwidth — a channel counts as on-ring when |r_ch − R| < this.",
-        ("recodata", "min_hits_per_ring"):           "Minimum hits required for a ring to enter per-ring statistics.",
-        ("recodata", "min_channel_r_for_coverage_mm"): "Channels closer to the centre than this are excluded from the coverage map.",
+    "mapping_conf.toml": {
+        ("coverage", "n_phi_bins_coverage"):         "Number of azimuthal slices of the coverage map (1° per bin at 360).",
+        ("coverage", "n_r_bins_coverage"):           "Number of radial bins in the coverage map.",
+        ("coverage", "r_min_coverage_mm"):           "Lower radius of the coverage map.",
+        ("coverage", "r_max_coverage_mm"):           "Upper radius of the coverage map.",
+        ("coverage", "channel_half_width_mm"):       "Pixel half-side (SiPM pitch / 2). Drives coverage rasterisation.",
+        ("coverage", "nominal_centre_x_mm"):         "Nominal beam-axis projection on the detector plane (X).",
+        ("coverage", "nominal_centre_y_mm"):         "Nominal beam-axis projection on the detector plane (Y).",
+        ("coverage", "min_channel_r_for_coverage_mm"): "Channels closer to the centre than this are excluded from the coverage map.",
     },
     "framer_conf.toml": {
         ("framer", "frame_size"):                    "Clock cycles per frame (320 MHz clock → 3.125 ns/cc).",
@@ -201,6 +197,12 @@ PARAM_DESCRIPTIONS: dict[str, dict[tuple, str]] = {
         ("streaming_hough", "collection_radius"):    "Ring band width for hit assignment.",
         ("streaming_hough", "centre_xy_half_range_mm"): "Half-range of the centre search box.",
         ("streaming_hough", "aggregation_window_cells"): "Sub-cell aggregation window (1 = single-cell, 2 = aggregated).",
+        #  Recodata ring-reconstruction knobs (formerly conf/recodata.toml).
+        ("streaming_hough", "hardware_ring_dt_min_ns"): "Lower edge of the hardware-trigger coincidence window for ring-hit selection.",
+        ("streaming_hough", "hardware_ring_dt_max_ns"): "Upper edge of the hardware-trigger coincidence window for ring-hit selection.",
+        ("streaming_hough", "min_hits_per_ring"):    "Minimum hits required for a ring to enter per-ring statistics.",
+        ("streaming_hough", "delta_r_for_coverage_mm"): "Ring bandwidth — a channel counts as on-ring when |r_ch − R| < this.",
+        ("streaming_hough", "skip_loo_residuals"):   "QA fast path: skip the per-hit leave-one-out residual loop (no σ_photon).",
         #  fit_circle_init_{x,y,r} keys removed 2026-05-30 (CLEAN_OFF C3.5).
         #  No C++ reader consumes them anymore; the recodata refit seeds
         #  from the Hough peak directly.  Configs that still carry the
@@ -248,12 +250,22 @@ PARAM_UNITS: dict[str, dict[tuple, str]] = {
         ("streaming_hough", "hough_threshold_fraction"): "",
         ("streaming_hough", "min_hits_slack"):       "hits",
         ("streaming_hough", "aggregation_window_cells"): "cells",
+        #  Recodata ring-reconstruction knobs (formerly conf/recodata.toml).
+        ("streaming_hough", "min_hits_per_ring"):    "hits",
+        ("streaming_hough", "hardware_ring_dt_min_ns"): "ns",
+        ("streaming_hough", "hardware_ring_dt_max_ns"): "ns",
+        ("streaming_hough", "delta_r_for_coverage_mm"): "mm",
         #  fit_circle_init_{x,y,r} removed 2026-05-30 (CLEAN_OFF C3.5).
     },
-    "recodata.toml": {
-        ("recodata", "n_phi_bins_coverage"):         "bins",
-        ("recodata", "n_r_bins_coverage"):           "bins",
-        ("recodata", "min_hits_per_ring"):           "hits",
+    "mapping_conf.toml": {
+        ("coverage", "n_phi_bins_coverage"):         "bins",
+        ("coverage", "n_r_bins_coverage"):           "bins",
+        ("coverage", "r_min_coverage_mm"):           "mm",
+        ("coverage", "r_max_coverage_mm"):           "mm",
+        ("coverage", "channel_half_width_mm"):       "mm",
+        ("coverage", "nominal_centre_x_mm"):         "mm",
+        ("coverage", "nominal_centre_y_mm"):         "mm",
+        ("coverage", "min_channel_r_for_coverage_mm"): "mm",
     },
 }
 
@@ -515,7 +527,6 @@ class SettingsView(QtWidgets.QWidget):
             if p.is_file():
                 catalog[p.name] = p
 
-        index = _presentation_index()
         ordered: list[tuple[Path, str]] = []
         app_settings: list[tuple[Path, str]] = []
         seen: set[str] = set()

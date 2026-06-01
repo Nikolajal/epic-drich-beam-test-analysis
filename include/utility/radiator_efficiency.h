@@ -29,7 +29,7 @@
  *     use the **per-event ring centre** (fit-refined Hough centre, or
  *     the Hough peak when no fit was run).
  *
- * Ported from the offline `macros/examples/photon_number_new.cpp` —
+ * Ported from the offline `photon_number_new.cpp` —
  * specifically the `radial_efficiency` function and the start-of-spill
  * coverage-map fill loop.  No φ-gap masking (kPhiGapRanges in the macro)
  * — that's deferred to a finer-analysis follow-up.
@@ -140,6 +140,31 @@ TH1F *radial_efficiency(
     const TAxis *radial_reference_axis);
 
 /**
+ * @brief Cartesian (x, y) sibling of @ref build_coverage_map.
+ *
+ * Rasterises the same per-channel pixel footprints (square of
+ * `±channel_half_width_mm` around each channel's `(x, y)`), weighted by
+ * the same optional per-channel `channel_weights` (spill-activity
+ * fraction ∈ [0, 1]; unmapped/dead channels skipped) onto a cartesian
+ * `(c_x, c_y)` grid instead of the polar `(φ, R)` one.  No Jacobian, so
+ * the footprint test is a plain bounding-box containment.  Bin value =
+ * Σ weight of channels covering that bin — a per-bin coverage/readiness
+ * fraction (≈ activity fraction when one channel maps to a bin).  Title
+ * axes: `";c_{x} (mm);c_{y} (mm)"`.  Caller owns the returned `TH2F`.
+ */
+TH2F *build_coverage_map_xy(
+    const std::map<int, std::array<float, 2>> &channel_xy,
+    int n_x_bins,
+    float x_min_mm,
+    float x_max_mm,
+    int n_y_bins,
+    float y_min_mm,
+    float y_max_mm,
+    float channel_half_width_mm = 1.5f,
+    const std::map<int, float> *channel_weights = nullptr);
+
+
+/**
      * @brief Per-ring azimuthal coverage fraction `f ∈ [0, 1]`.
      *
      * For a ring of radius `R` centred at `(cx, cy)`, returns the
@@ -163,6 +188,10 @@ TH1F *radial_efficiency(
      * @param delta_r_mm  Channel-on-arc bandwidth [mm].  Typically
      *                    matches `collection_radius` from the upstream
      *                    Hough config.
+     * @param channel_half_width_mm  Pixel half-width [mm] used to convert a
+     *                    channel into an angular φ-span at its radius.  Pass
+     *                    `RecodataConfigStruct::channel_half_width_mm` so
+     *                    f_coverage and `build_coverage_map` share one value.
      * @return Coverage fraction in `[0, 1]`.  Returns 0 if `R <= 0`,
      *         `delta_r_mm <= 0`, or no channel intersects the arc.
      */
@@ -171,6 +200,7 @@ float azimuthal_coverage_fraction(
     float cx,
     float cy,
     float R,
-    float delta_r_mm);
+    float delta_r_mm,
+    float channel_half_width_mm = 1.5f);
 
 } // namespace util::radiator_efficiency

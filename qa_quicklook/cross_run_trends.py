@@ -1,6 +1,7 @@
 """Cross-run trend extraction for the QA General tab.
 
-Source: ``<repo>/standard_results.toml`` — the dashboard-side mirror of
+Source: ``<data_repository>/standard_results.toml`` (i.e.
+``Data/standard_results.toml``, NOT the git repo root) — the mirror of
 the C++ ``AnalysisResults`` store (see ``include/analysis_results.h``).
 The TOML schema is::
 
@@ -26,12 +27,10 @@ returned :class:`TrendSeries` lists into matplotlib tiles.  Tests in
 ``tests/test_cross_run_trends.py`` exercise this module against a
 synthetic TOML without touching Qt or the real data dir.
 
-The default metric list (:data:`DEFAULT_METRICS`) reflects the four
-observables we cleared with the operators on 2026-05-30: photon
-yield (``full.n_gamma``), photon-yield width (``full.sigma``), DCR
-rate per event (derived from ``lightdata.n_dcr_hits / n_events``),
-and streaming-trigger fires (``streaming.n_fires`` — written by the
-streaming/Hough stage; absent runs gracefully render as empty).
+The default metric list (:data:`DEFAULT_METRICS`) reflects the three
+observables we cleared with the operators: photon yield
+(``full.n_gamma``), photon-yield width (``full.sigma``), and DCR rate
+per event (derived from ``lightdata.n_dcr_hits / n_events``).
 """
 
 from __future__ import annotations
@@ -180,13 +179,6 @@ DEFAULT_METRICS: tuple[MetricSpec, ...] = (
         label="DCR rate / event",
         derive=_derive_dcr_rate_per_event,
         unit="hits / event",
-        y_floor_zero=True,
-    ),
-    MetricSpec(
-        key="n_streaming_fires",
-        label="Streaming fires",
-        quantity="streaming.n_fires",
-        unit="fires / run",
         y_floor_zero=True,
     ),
 )

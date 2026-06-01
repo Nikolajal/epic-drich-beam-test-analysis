@@ -96,3 +96,52 @@
 "199_7" = [8, 4]
 "200_0" = [99, 1]   # device 200 = timing reference ALCOR — not a Cherenkov PDU
 "200_2" = [99, 1]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recodata coverage-map geometry (formerly conf/recodata.toml).
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# These live here, alongside the detector geometry, because they ARE
+# detector geometry — the coverage map is a pure function of the
+# channel-to-position map that Mapping builds from the tables above.
+# Read by `recodata_conf_reader` (which pulls the ring-reconstruction
+# knobs from streaming.toml's [streaming_hough] table) and consumed by
+# recodata_writer.  All keys optional; missing keys take the defaults in
+# RecodataConfigStruct.
+#
+# There is NO conf/QA/mapping_conf.toml — both production and --QA runs
+# pass conf/mapping_conf.toml (a symlink to this file), so QA inherits
+# this table verbatim.
+[coverage]
+
+# The coverage map is a 2D TH2F(phi, R) computed once at writer init
+# from the same `index_to_hit_xy` both writers build via Mapping.  Each
+# (phi, R) bin holds the number of channels whose pixel footprint
+# overlaps it — a pure geometric quantity.  `radial_efficiency` collapses
+# it to a 1D eff(R) by averaging over phi to correct the radial(R) hist.
+n_phi_bins_coverage =   360    # azimuthal bins over [-pi, pi]  (1 deg/bin)
+n_r_bins_coverage   =    80    # radial bins
+r_min_coverage_mm   =   25.0   # mm
+r_max_coverage_mm   =  125.0   # mm
+
+# Channel pixel half-side [mm].  3 mm pitch → 1.5.  Used by both the
+# coverage map rasterisation and `azimuthal_coverage_fraction`'s
+# per-channel angular span — keep consistent or eff(R) and f_coverage
+# describe different geometries.
+channel_half_width_mm =  1.5
+
+# Nominal ring centre [mm] — the beam-axis projection on the detector
+# plane.  Only used for the COVERAGE map and the eff(R) curve; per-event
+# (R, phi) and per-ring f_coverage use the per-event Hough centre re-fit
+# by recodata.  Kept at (0, 0); the <1% eff(R) discrepancy from per-event
+# centre wander is justified in
+# include/triggers/streaming/DISCUSSION.md § 2.6.
+nominal_centre_x_mm =    0.0
+nominal_centre_y_mm =    0.0
+
+# Skip channels with r_channel < this when building the coverage map.
+# Default 0 = no extra filter (only the loose |x|<5 && |y|<5 filter from
+# index_to_hit_xy construction).  Bump above a spurious "low-R bump" to
+# crop bogus positions from uncalibrated channel slots; recodata_writer
+# logs the 10 smallest-r channels at startup to help identify them.
+min_channel_r_for_coverage_mm = 0.0

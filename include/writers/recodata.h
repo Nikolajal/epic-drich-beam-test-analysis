@@ -34,14 +34,11 @@
  *                               file first (`lightdata_writer` is invoked
  *                               with `force_rebuild = true`).
  * @param mapping_conf           Path to the Mapping TOML calibration file.
+ *                               Also carries the `[coverage]` table with
+ *                               the coverage-map geometry (formerly in
+ *                               `recodata.toml`).
  * @param trigger_conf           Path to the trigger TOML configuration file.
  * @param framer_conf            Path to the framer TOML configuration file.
- * @param recodata_conf          Path to the recodata-side TOML
- *                               configuration (coverage map, per-ring
- *                               photon counting).  Defaults to
- *                               `"conf/recodata.toml"`; `--QA` mode in
- *                               the CLI resolves this to
- *                               `"conf/QA/recodata.toml"` when present.
  */
 void recodata_writer(
     std::string data_repository,
@@ -52,13 +49,14 @@ void recodata_writer(
     std::string mapping_conf = "conf/mapping_conf.toml",
     std::string trigger_conf = "conf/trigger_conf.toml",
     std::string framer_conf = "conf/framer_conf.toml",
-    std::string recodata_conf = "conf/recodata.toml",
     /**
-     * Streaming-pipeline conf for the cascade.  Recodata itself does NOT
-     * read this file (the streaming Hough trigger runs upstream in
-     * `lightdata_writer`); it's accepted here purely so it can be
-     * forwarded into the `force_upstream` cascade.  This is what makes
-     * `recodata_writer --force-upstream --QA` propagate the QA Hough
-     * thresholds through to the lightdata stage.
+     * Streaming-pipeline conf.  The `[streaming_hough]` table now also
+     * carries the recodata ring-reconstruction knobs (hardware ring
+     * time window, min_hits_per_ring, delta_r, skip_loo_residuals),
+     * which `recodata_writer` reads directly via `recodata_conf_reader`.
+     * The streaming *trigger* + Hough stages themselves run upstream in
+     * `lightdata_writer`; this file is also forwarded into the
+     * `force_upstream` cascade so `recodata_writer --force-upstream --QA`
+     * propagates the QA Hough thresholds through to the lightdata stage.
      */
     std::string streaming_conf = "conf/streaming.toml");

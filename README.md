@@ -45,8 +45,8 @@ This repository aims to:
 ```
 .
 ├── include/                    # Public header files for all classes and utilities
-│   ├── utility.h               # Umbrella header — re-exports everything in util/
-│   ├── util/                   # Small header-only helpers (GlobalIndex, RootHist, …)
+│   ├── utility.h               # Umbrella header — re-exports everything in utility/
+│   ├── utility/                # Small header-only helpers (GlobalIndex, RootHist, …)
 │   ├── triggers.h              # Umbrella header — re-exports events / config / registry
 │   ├── triggers/               # Trigger subsystem
 │   │   ├── events.h            #   - runtime types: TriggerNumber, TriggerEvent
@@ -84,7 +84,7 @@ Three coexisting organisational patterns, each fitting its role:
 
 | Pattern | Example | When to use |
 |---|---|---|
-| **Umbrella + helpers** | [`utility.h`](include/utility.h) ↔ [`util/`](include/util) | Subsystem of small, low-coupling, header-only helpers.  The umbrella is a pure re-exporter; consumers `#include "utility.h"` to get everything or cherry-pick from `util/`. |
+| **Umbrella + helpers** | [`utility.h`](include/utility.h) ↔ [`utility/`](include/utility) | Subsystem of small, low-coupling, header-only helpers.  The umbrella is a pure re-exporter; consumers `#include "utility.h"` to get everything or cherry-pick from `utility/`. |
 | **Subsystem types + algorithms** | [`triggers.h`](include/triggers.h) ↔ [`triggers/`](include/triggers) | Subsystem with cross-cutting types **and** algorithms.  Types/config/registry live in sub-headers re-exported by the umbrella; algorithm headers (e.g. [`triggers/streaming/score.h`](include/triggers/streaming/score.h), [`triggers/streaming/hough.h`](include/triggers/streaming/hough.h)) are **not** re-exported — include them deliberately. |
 | **Category grouping** | [`writers/`](include/writers) | Folder of independent entry points that share no types or interface.  No umbrella; adding one would re-export nothing.  Stays flat on purpose. |
 
@@ -233,7 +233,7 @@ Event-level, analysis-ready data structures. Photon rings are reconstructed usin
 
 Every hit carries a packed 32-bit address identifying its origin TDC channel:
 `(device, FIFO, chip, channel, TDC)`.  The address is wrapped in a value type
-[`GlobalIndex`](include/GlobalIndex.h) with built-in validation, a validity
+[`GlobalIndex`](include/utility/global_index.h) with built-in validation, a validity
 sentinel bit, and explicit accessors for both the **TDC-level** view (full
 address, used by per-TDC calibration tables) and the **global-channel-level**
 view (TDC bits zeroed, used as a key for per-channel Mapping):
@@ -256,7 +256,7 @@ auto gc_from_file = GlobalIndex::from_legacy_channel(channel_raw);    // AlcorDa
 
 The layout is final-detector native (64-ch chips, up to 2048 devices); the
 current 32-ch split-in-two detector is handled by an adapter at the framer's
-input boundary.  See [`include/GlobalIndex.h`](include/GlobalIndex.h) for
+input boundary.  See [`include/utility/global_index.h`](include/utility/global_index.h) for
 the full bit layout and the `gidx::kUsesSplitInTwo` compile-time flag.
 
 ---
@@ -269,12 +269,11 @@ Runtime configuration is handled through TOML files in `conf/`:
 | -------------------------- | -------------------------------------------------------- |
 | `readout_config.toml`      | Maps (device, chip) pairs to hit categories              |
 | `framer_conf.toml`         | Streaming-framer + QA-window parameters (frame size, afterpulse / cross-talk sidebands) |
-| `mapping_conf.<year>.toml` | Pixel-to-physical-position Mapping for the SiPM plane    |
-| `trigger_conf.<year>.toml` | Trigger logic and channel assignment                     |
-| `streaming.toml`           | Software-trigger pipeline: `[streaming_trigger]` (stage 1 score), `[streaming_hough]` (stage 2 ring finder) |
-| `recodata.toml`            | Recodata live-QA pipeline: coverage-map geometry, per-ring photon counting |
+| `mapping_conf.toml`        | Pixel-to-physical-position Mapping for the SiPM plane, plus the `[coverage]` table (recodata coverage-map geometry) (symlink; year variants under `conf/sets/<year>/`) |
+| `trigger_conf.toml`        | Trigger logic and channel assignment (symlink; year variants under `conf/sets/<year>/`) |
+| `streaming.toml`           | Software-trigger pipeline: `[streaming_trigger]` (stage 1 score), `[streaming_hough]` (stage 2 ring finder + recodata ring-reconstruction knobs) |
 
-All config files honour the `##` cutoff sentinel (see [include/toml_utils.h](include/toml_utils.h))
+All config files honour the `##` cutoff sentinel (see [include/utility/toml_utils.h](include/utility/toml_utils.h))
 so you can append `## --- disabled ---` and keep scratch entries below without them being parsed.
 
 > **Symlinks require `core.symlinks=true`** (git's default on macOS and
@@ -292,7 +291,7 @@ so you can append `## --- disabled ---` and keep scratch entries below without t
 > ```
 >
 > A startup sanity check that detects a collapsed-to-text conf file and
-> errors clearly is tracked in the config-reader cluster (CLEAN_OFF C2).
+> errors clearly is tracked in the config-reader cluster.
 
 Run lists and a run metadata database for 2025 are available in `run-lists/` in TOML format, loadable via `RunInfo::read_database()` and `RunInfo::read_runslists()`.
 
@@ -417,18 +416,23 @@ cleans up ACLiC intermediates on exit so the source tree stays tidy.
 ## Operator dashboard
 
 A PySide6 dashboard for shift-time operations lives under
-[`qa_quicklook/`](qa_quicklook).  Single-window app with four tabs —
-**Run Manager** (launch the writer chain, follow it live, status
-lock files survive a dashboard restart, `🔍 Inspect` button pops up
-TBrowser), **QA** (General overview with four thematic rows —
+[`qa_quicklook/`](qa_quicklook).  Single-window app with three top-level
+tabs — **Run Info** (nesting three live panels: **Run Manager**, which
+launches the writer chain and follows it live, with status lock files
+that survive a dashboard restart and a `🔍 Inspect` button that pops up
+TBrowser; **Database**, which browses / edits
+`run-lists/<year>.database.toml` with forward-inheritance; and
+**Runlists**, which edits named run groupings in
+`<year>.runlists.toml`), **QA** (General overview with four thematic rows —
 Data-taking health / Sensor health / Cherenkov physics /
 Timing-calibration — plus per-step topic tabs, the interactive
-streaming n_σ picker, and cross-run trend plots), **Runlist**
-(browse / edit `run-lists/2025.database.toml` with forward-inheritance), and
+streaming n_σ picker, and cross-run trend plots), and
 **Settings** (edit every `conf/*.toml` two-way, with comment-
 preserving write-back, a setting-set system on top of
 `conf/defaults/` + `conf/sets/<year>/` + `conf/working/`, and the
-dashboard's own theme + behaviour knobs).
+dashboard's own theme + behaviour knobs).  An optional **Advanced QA**
+tab (hidden by default; enable via `[ui] show_advanced_qa = true`)
+surfaces bespoke ROOT-macro plots.
 
 Launch:
 

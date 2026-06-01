@@ -30,7 +30,7 @@ The trigger subsystem has two largely-orthogonal concerns:
 
 ## 1.  Two kinds of trigger configuration
 
-Every entry in `conf/trigger_conf.<year>.toml` is exactly one of two shapes —
+Every entry in `conf/trigger_conf.toml` (a symlink; year variants live under `conf/sets/<year>/`) is exactly one of two shapes —
 nothing in between.  The two-mode model replaces a previous "scoring + wildcard"
 scheme that allowed ambiguous configurations and silent failures.
 
@@ -181,8 +181,5 @@ the call site: a future tuner who edits the score's
 `time_window_ns` silently changes the Hough's behaviour.  Worth a
 single in-code comment at the score-stage knob site (TODO).
 
----
-
-*Document version: 2026-05-27.*
 *Implements: D-05 (landed) — two-mode config schema.  Streaming pipeline
 design moved to [`streaming/DISCUSSION.md`](streaming/DISCUSSION.md).*

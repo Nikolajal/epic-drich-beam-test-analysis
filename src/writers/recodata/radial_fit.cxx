@@ -13,6 +13,7 @@
  */
 
 #include "writers/recodata/radial_fit.h"
+#include "utility/qa_publish.h"  // util::qa::pdf_path — land PDFs under qa/recodata/
 
 #include <algorithm> // std::clamp
 #include <memory>    // std::unique_ptr
@@ -50,11 +51,11 @@ void fit_radial_distribution(TH1F *h,
     //  After scaling:
     //    • bin i = (photons per ring) in radial bin i
     //    • Σ(signal bins) × bin_width = N_γ per ring
-    //    • CB amplitude param [0] = peak photon density (per
+    //    • peak amplitude param [0] = peak photon density (per
     //      ring per mm) at μ
     //  N_rings = entries of the passed-in h_R_count hist (one
     //  entry per successful ring fit, populated in
-    //  refit_and_fill_ring).  If null/empty we skip the scale
+    //  fill_ring_hists).  If null/empty we skip the scale
     //  and the headline number degrades to "total photons
     //  across all rings" — graceful fallback for hists we
     //  forgot to wire a count hist to.
@@ -148,7 +149,7 @@ void fit_radial_distribution(TH1F *h,
         sideband->Fit(&bg_prefit, "RQ0");
     }
 
-    //  Combined Crystal-Ball + pol3 as a TFormula STRING (not
+    //  Combined Gaussian + pol3 as a TFormula STRING (not
     //  a C++ lambda) — so the resulting TF1 is fully
     //  serializable: writes cleanly to the ROOT file and
     //  reads back with the function still callable.  A
@@ -156,7 +157,7 @@ void fit_radial_distribution(TH1F *h,
     //  callable function pointer, which makes the saved TF1
     //  (and any canvas drawing it) segfault on TBrowser open.
     //
-    //  Switched 2026-05-27 from Crystal-Ball + pol3 to simple
+    //  Switched from Crystal-Ball + pol3 to simple
     //  Gaussian + pol3.  The CB tail parameters (α, n) were rail-
     //  locking on the low-statistics / broad samples (especially the
     //  second ring), making the fit unstable across runs.  A simple
@@ -176,18 +177,18 @@ void fit_radial_distribution(TH1F *h,
     static const char *kGaussPol3Formula =
         "[0]*exp(-0.5*((x-[1])/[2])*((x-[1])/[2]))"
         " + [3] + [4]*x + [5]*x*x + [6]*x*x*x";
-    TF1 cb_fit((tag + "_cb_fit").c_str(),
-               kGaussPol3Formula, fit_lo, fit_hi);
+    TF1 ring_fit((tag + "_ring_fit").c_str(),
+                 kGaussPol3Formula, fit_lo, fit_hi);
     const char *parnames[7] = {
         "peak_amp", "peak_mu", "peak_sigma",
         "bg_c0", "bg_c1", "bg_c2", "bg_c3"};
     for (int i = 0; i < 7; ++i)
-        cb_fit.SetParName(i, parnames[i]);
-    cb_fit.SetParameters(amp_seed, peak_seed, sigma_seed,
+        ring_fit.SetParName(i, parnames[i]);
+    ring_fit.SetParameters(amp_seed, peak_seed, sigma_seed,
                          bg_prefit.GetParameter(0), bg_prefit.GetParameter(1),
                          bg_prefit.GetParameter(2), bg_prefit.GetParameter(3));
-    cb_fit.SetParLimits(0, 0., 1e9);
-    cb_fit.SetParLimits(2, 1.5, 5.0); // peak σ physically bounded
+    ring_fit.SetParLimits(0, 0., 1e9);
+    ring_fit.SetParLimits(2, 1.5, 5.0); // peak σ physically bounded
 
     //  Two-stage strategy (no IMPROVE) — same as before.
     //  Stage 1: freeze background to prefit → minimiser finds the
@@ -196,14 +197,14 @@ void fit_radial_distribution(TH1F *h,
     //           stage-1 starting point.  "S" saves the covariance.
     //  bg params now live at indices 3..6 instead of 5..8.
     for (int i = 3; i < 7; ++i)
-        cb_fit.FixParameter(i, bg_prefit.GetParameter(i - 3));
-    h->Fit(&cb_fit, "RQ");
+        ring_fit.FixParameter(i, bg_prefit.GetParameter(i - 3));
+    h->Fit(&ring_fit, "RQ");
     for (int i = 3; i < 7; ++i)
-        cb_fit.ReleaseParameter(i);
-    h->Fit(&cb_fit, "RQS");
-    //  cb_fit gets auto-attached to h's function list by Fit()
+        ring_fit.ReleaseParameter(i);
+    h->Fit(&ring_fit, "RQS");
+    //  ring_fit gets auto-attached to h's function list by Fit()
     //  and ships with the hist on h->Write — no separate
-    //  cb_fit.Write() needed (and a separate write would leak
+    //  ring_fit.Write() needed (and a separate write would leak
     //  a TF1 with no canvas owner, which TBrowser handles
     //  poorly).
 
@@ -213,7 +214,7 @@ void fit_radial_distribution(TH1F *h,
     //  pol3 params live at indices 3..6 now (Gauss+pol3).
     TF1 bg_only((tag + "_bg_only").c_str(), "pol3", fit_lo, fit_hi);
     for (int i = 0; i < 4; ++i)
-        bg_only.SetParameter(i, cb_fit.GetParameter(3 + i));
+        bg_only.SetParameter(i, ring_fit.GetParameter(3 + i));
 
     //  N_γ per ring = signal-only integral.  Since the hist
     //  was scaled by 1/N_rings up top, this integral is now
@@ -222,7 +223,7 @@ void fit_radial_distribution(TH1F *h,
     //  dividing by the HIST'S OWN bin width to convert from
     //  TF1::Integral's "amplitude × mm" to "amplitude × bins"
     //  = Σ bin contents = photons per ring.
-    const double total_int = cb_fit.Integral(fit_lo, fit_hi);
+    const double total_int = ring_fit.Integral(fit_lo, fit_hi);
     const double bg_int = bg_only.Integral(fit_lo, fit_hi);
     const double bin_width = h->GetXaxis()->GetBinWidth(1);
     const double n_gamma = (total_int - bg_int) / bin_width;
@@ -233,8 +234,32 @@ void fit_radial_distribution(TH1F *h,
                                      ? n_gamma * static_cast<double>(n_rings)
                                      : n_gamma;
 
+    //  Data-driven cross-check of N_γ: sideband subtraction on the HIST
+    //  itself (fit-independent).  Peak window = μ ± 3σ; the two flanking
+    //  μ±3σ → μ±6σ bands (same total width as the peak window) estimate
+    //  the background under the peak, so
+    //      N_γ = (peak counts − sideband counts) / N_rings.
+    double n_gamma_sb = 0.0;
+    {
+        const double mu = ring_fit.GetParameter(1);
+        const double sig = std::fabs(ring_fit.GetParameter(2));
+        if (sig > 0.0)
+        {
+            auto *ax = h->GetXaxis();
+            const double peak_counts = h->Integral(
+                ax->FindBin(mu - 3.0 * sig), ax->FindBin(mu + 3.0 * sig));
+            const double outer_counts = h->Integral(
+                ax->FindBin(mu - 6.0 * sig), ax->FindBin(mu + 6.0 * sig));
+            const double sideband_counts = outer_counts - peak_counts; // the wings
+            const double signal = peak_counts - sideband_counts;
+            n_gamma_sb = (n_rings > 0)
+                             ? signal / static_cast<double>(n_rings)
+                             : signal;
+        }
+    }
+
     //  ── Canvas with hist + fit + values, written as TWO PDFs ──
-    //  Same pattern as `macros/examples/photon_number_new.cpp`:
+    //  Same pattern as `photon_number_new.cpp`:
     //  in-memory canvas, Draw + DrawCopy, SaveAs PDF.  No
     //  ROOT-file write (TF1 + TCanvas serialization is fragile).
     //
@@ -255,8 +280,8 @@ void fit_radial_distribution(TH1F *h,
         //  Fit-parameter table on the canvas.  Top group: headline
         //  physics (N_γ, χ²/ndf).  Middle: 3-param Gaussian (amp,
         //  μ, σ).  Bottom: 4-param pol3 background (c0..c3).
-        const double chi2 = cb_fit.GetChisquare();
-        const int ndf = cb_fit.GetNDF();
+        const double chi2 = ring_fit.GetChisquare();
+        const int ndf = ring_fit.GetNDF();
         const double chi2_per_ndf = (ndf > 0) ? chi2 / ndf : 0.0;
 
         //  NDC corners: upper-right corner (x: 0.65–0.9, y: 0.5–0.9).
@@ -266,6 +291,7 @@ void fit_radial_distribution(TH1F *h,
         pave.SetTextAlign(12);
         pave.SetTextSize(0.028);
         pave.AddText(TString::Format("N_{#gamma} / ring = %.2f", n_gamma).Data());
+        pave.AddText(TString::Format("N_{#gamma} (sideband) = %.2f", n_gamma_sb).Data());
         pave.AddText(TString::Format("over %ld rings", n_rings).Data());
         pave.AddText(TString::Format("#chi^{2}/ndf = %.2f / %d = %.2f",
                                      chi2, ndf, chi2_per_ndf)
@@ -273,62 +299,78 @@ void fit_radial_distribution(TH1F *h,
         pave.AddText(" ");
         pave.AddText("Gaussian peak:");
         pave.AddText(TString::Format("  amp = %.3g #pm %.2g",
-                                     cb_fit.GetParameter(0), cb_fit.GetParError(0))
+                                     ring_fit.GetParameter(0), ring_fit.GetParError(0))
                          .Data());
         pave.AddText(TString::Format("  #mu = %.3f #pm %.3f mm",
-                                     cb_fit.GetParameter(1), cb_fit.GetParError(1))
+                                     ring_fit.GetParameter(1), ring_fit.GetParError(1))
                          .Data());
         pave.AddText(TString::Format("  #sigma = %.3f #pm %.3f mm",
-                                     cb_fit.GetParameter(2), cb_fit.GetParError(2))
+                                     ring_fit.GetParameter(2), ring_fit.GetParError(2))
                          .Data());
         pave.AddText(" ");
         pave.AddText("pol3 background:");
-        pave.AddText(TString::Format("  c_{0} = %.3g", cb_fit.GetParameter(3)).Data());
-        pave.AddText(TString::Format("  c_{1} = %.3g", cb_fit.GetParameter(4)).Data());
-        pave.AddText(TString::Format("  c_{2} = %.3g", cb_fit.GetParameter(5)).Data());
-        pave.AddText(TString::Format("  c_{3} = %.3g", cb_fit.GetParameter(6)).Data());
+        pave.AddText(TString::Format("  c_{0} = %.3g", ring_fit.GetParameter(3)).Data());
+        pave.AddText(TString::Format("  c_{1} = %.3g", ring_fit.GetParameter(4)).Data());
+        pave.AddText(TString::Format("  c_{2} = %.3g", ring_fit.GetParameter(5)).Data());
+        pave.AddText(TString::Format("  c_{3} = %.3g", ring_fit.GetParameter(6)).Data());
         pave.Draw();
 
-        //  Linear Y.
+        //  Friendly PDF basename for the dashboard: "h_radial_first" →
+        //  "radial_fit_ring1", "h_radial_second" → "radial_fit_ring2";
+        //  the _dual / _solo / _smeared suffixes carry through.  The
+        //  histogram TNamed + published radial_results keys keep the
+        //  original `tag` (this only renames the QA PDF).
+        std::string pdf_name = tag;
+        if (auto p = pdf_name.find("h_radial_first"); p != std::string::npos)
+            pdf_name.replace(p, std::string("h_radial_first").size(),
+                             "radial_fit_ring1");
+        else if (auto q = pdf_name.find("h_radial_second"); q != std::string::npos)
+            pdf_name.replace(q, std::string("h_radial_second").size(),
+                             "radial_fit_ring2");
+
+        //  Linear Y.  Land under qa/recodata/ so the dashboard stage
+        //  scanner discovers it (was dumping into the run root).
         c.SetLogy(0);
         c.Update();
-        const std::string pdf_lin = data_repository + "/" + run_name +
-                                    "/" + tag + ".pdf";
-        c.SaveAs(pdf_lin.c_str());
+        const auto pdf_lin = util::qa::pdf_path(
+            data_repository + "/" + run_name, "recodata", 20, pdf_name);
+        c.SaveAs(pdf_lin.string().c_str());
+        util::qa::crop_pdf_inplace(pdf_lin);
 
         //  Log Y — same canvas, just flip the Y scale.
         c.SetLogy(1);
         c.Update();
-        const std::string pdf_log = data_repository + "/" + run_name +
-                                    "/" + tag + "_logy.pdf";
-        c.SaveAs(pdf_log.c_str());
+        const auto pdf_log = util::qa::pdf_path(
+            data_repository + "/" + run_name, "recodata", 20, pdf_name + "_logy");
+        c.SaveAs(pdf_log.string().c_str());
+        util::qa::crop_pdf_inplace(pdf_log);
     }
 
     mist::logger::info(TString::Format(
                            "(recodata_writer) %s: N_gamma/ring=%.2f  (total=%.0f over %ld rings)  "
                            "chi2/ndf=%.2f/%d",
                            tag.c_str(), n_gamma, n_gamma_total, n_rings,
-                           cb_fit.GetChisquare(), cb_fit.GetNDF())
+                           ring_fit.GetChisquare(), ring_fit.GetNDF())
                            .Data());
     mist::logger::info(TString::Format(
                            "(recodata_writer) %s   Gauss: amp=%.3g+/-%.2g  mu=%.3f+/-%.3f mm  "
                            "sigma=%.3f+/-%.3f mm",
                            tag.c_str(),
-                           cb_fit.GetParameter(0), cb_fit.GetParError(0),
-                           cb_fit.GetParameter(1), cb_fit.GetParError(1),
-                           cb_fit.GetParameter(2), cb_fit.GetParError(2))
+                           ring_fit.GetParameter(0), ring_fit.GetParError(0),
+                           ring_fit.GetParameter(1), ring_fit.GetParError(1),
+                           ring_fit.GetParameter(2), ring_fit.GetParError(2))
                            .Data());
     mist::logger::info(TString::Format(
                            "(recodata_writer) %s   pol3 bg: c0=%.3g  c1=%.3g  c2=%.3g  c3=%.3g",
                            tag.c_str(),
-                           cb_fit.GetParameter(3), cb_fit.GetParameter(4),
-                           cb_fit.GetParameter(5), cb_fit.GetParameter(6))
+                           ring_fit.GetParameter(3), ring_fit.GetParameter(4),
+                           ring_fit.GetParameter(5), ring_fit.GetParameter(6))
                            .Data());
 
     //  Push into the summary collector.
     results.push_back({tag, n_gamma,
-                       cb_fit.GetParameter(1), cb_fit.GetParError(1),
-                       cb_fit.GetParameter(2), cb_fit.GetParError(2)});
+                       ring_fit.GetParameter(1), ring_fit.GetParError(1),
+                       ring_fit.GetParameter(2), ring_fit.GetParError(2)});
 }
 
 } // namespace btana::recodata

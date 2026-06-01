@@ -49,9 +49,21 @@ std::optional<std::array<float, 2>> Mapping::get_position_from_pdu_column_row(in
     if (it == pdu_xy_position.end())
         return std::nullopt;
 
-    //  Intra-PDU coordinate: 3.2 mm pitch, guard-ring offsets, 0.3 mm inter-half gap
-    float x = 0.05f + 0.1f + 0.2f + 1.5f + 3.2f * column + (column > 7 ? 0.3f : 0.f);
-    float y = 0.05f + 0.1f + 0.2f + 1.5f + 3.2f * row + (row > 7 ? 0.3f : 0.f);
+    //  Intra-PDU coordinate geometry [mm].  The first-pixel-centre origin
+    //  offset is the guard-ring + edge stack (0.05 + 0.1 + 0.2) plus the
+    //  pixel half-width; pixels then step by the SiPM pitch, with an extra
+    //  inter-half gap once past the PDU half boundary.  (1.5 mm half-width
+    //  duplicates RecodataConfigStruct::channel_half_width_mm by design —
+    //  same physical pixel, different consumer.)
+    constexpr float kGuardRingOffsetMm = 0.05f + 0.1f + 0.2f;
+    constexpr float kPixelHalfWidthMm  = 1.5f;
+    constexpr float kPduPitchMm        = 3.2f;
+    constexpr float kInterHalfGapMm    = 0.3f;
+    constexpr int   kPduHalfBoundary   = 7; // last column/row before the half gap
+    float x = kGuardRingOffsetMm + kPixelHalfWidthMm + kPduPitchMm * column +
+              (column > kPduHalfBoundary ? kInterHalfGapMm : 0.f);
+    float y = kGuardRingOffsetMm + kPixelHalfWidthMm + kPduPitchMm * row +
+              (row > kPduHalfBoundary ? kInterHalfGapMm : 0.f);
 
     //  Add PDU origin (guaranteed found by the early return above).
     x += it->second[0];
@@ -287,12 +299,10 @@ void Mapping::build_index_to_position_cache(float origin_cut)
     // get_position_from_global_index.  The cache key is
     // `4 * channel_ordinal` — a small dense int that doubles as the
     // MIST HoughTransform `lut_key` plumbed through `index_to_hit_xy`.
-    constexpr int kDeviceLo = 192;
-    constexpr int kDeviceHi = 224; // generous upper bound; Mapping filters unmapped
     const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
     constexpr int kChannelHi = 64;
 
-    for (int device = kDeviceLo; device < kDeviceHi; ++device)
+    for (int device = ::gidx::kFirstDevice; device < ::gidx::kDeviceUpperBound; ++device)
         for (int chip = 0; chip < max_chip; ++chip)
             for (int channel = 0; channel < kChannelHi; ++channel)
             {
@@ -380,7 +390,7 @@ const std::map<int, std::vector<int>> Mapping::matrix_to_do_channel = {
 // =============================================================================
 //
 // `get_position_from_global_index(::GlobalIndex)` and its int-overload
-// were inline in `include/mapping.h` until the 2026-05-27 IWYU sweep.
+// were inline in `include/mapping.h` until the IWYU sweep.
 // They were moved out under a misdiagnosis — the autoparse failures
 // were a LinkDef problem, not a header-self-sufficiency problem.  The
 // canonical home for these short forwarders is the header.

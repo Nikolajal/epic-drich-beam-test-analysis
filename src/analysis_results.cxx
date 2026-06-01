@@ -11,7 +11,7 @@
  * Same load → patch → rewrite cycle as the previous ROOT-backed
  * implementation; toml++ handles the serialisation both ways.
  *
- * The TTree backend was retired on 2026-05-29 (see DISCUSSION.md
+ * The TTree backend was retired (see DISCUSSION.md
  * "AnalysisResults: TTree → TOML").  Any leftover .root files from
  * the dual-backend phase can be ignored — they're stale on first
  * writer invocation against the new path convention.
@@ -112,7 +112,7 @@ ResultMap AnalysisResults::load() const
  * copy), so the file is git-friendly: writing the same data twice yields
  * byte-identical output.
  *
- * Sweep audit (2026-05-30): write() accepts the target path explicitly
+ * Sweep audit: write() accepts the target path explicitly
  * so that update() can stage the write at a per-process tmp path and
  * atomically rename it over @ref fPath.  Direct callers that don't need
  * atomicity can pass @ref fPath.  The C2.1 atomicity concept that was
@@ -201,7 +201,7 @@ void AnalysisResults::write(const ResultMap &data,
  *     written TOML.
  *  6. Release the flock.
  *
- * Sweep audit (2026-05-30): re-applies the CLEAN_OFF C2.1 concept on
+ * Sweep audit: re-applies the CLEAN_OFF C2.1 concept on
  * the post-migration TOML backend.  The race window is identical to
  * the previous ROOT-backed implementation; only the file format
  * changed.
