@@ -1,0 +1,189 @@
+# conf/calib/calibration_conf.toml — pulser fine-time calibration knobs.
+#
+# Loaded by `pulser_calib_writer` when invoked.  The `--calib` flag on
+# `lightdata_writer` doesn't itself read this file — it just routes
+# OTHER config paths through `conf/calib/` (currently a no-op since no
+# overrides live there).  The two paired writers reach this file only
+# through `pulser_calib_writer`'s explicit lookup via util::conf_path.
+#
+# Pipeline:
+#   1. `lightdata_writer --calib <repo> <run>`
+#      Produces <repo>/<run>/lightdata.root with anchor flowing as a
+#      normal Cherenkov hit (192/0/0 is NOT in conf/trigger_conf.toml's
+#      [[trigger]] list, so the framer doesn't strip its fine value).
+#
+#   2. `pulser_calib_writer <repo> <run>`
+#      Reads this file, identifies the anchor, runs the per-TDC
+#      linear regression, writes <repo>/<run>/fine_calib.toml + the
+#      pulser_calib_qa.root diagnostic.  (The legacy fine_calib.txt
+#      format was retired in task #172 — TOML v3 only.)
+#
+# Switching anchor (e.g. 192 hardware fails): edit anchor_device /
+# anchor_chip / anchor_eo_channel below.  No rebuild needed.
+
+[calibration]
+
+# ── Anchor channel ──────────────────────────────────────────────────
+# The channel pulsed by the external pulser; serves as the per-pulse
+# coincidence reference.  Convention: dRICH 2026 test-beam uses 192/0/0.
+anchor_device     = 200
+anchor_chip       = 0
+anchor_eo_channel = 0
+
+# ── Fit thresholds ──────────────────────────────────────────────────
+# Cumulative hit floor for publishing a per-GlobalIndex calibration.
+# Below this, the GlobalIndex is omitted from fine_calib.toml (downstream
+# consumers fall back to the AlcorFinedata built-in default) and listed
+# in pulser_calib_qa.root's `skipped_global_indices` TNamed.
+min_hits_per_tdc = 250
+
+# ── Valid fine-bin band ─────────────────────────────────────────────
+# ALCOR's fine bins typically populate ~[30, 130]; values well
+# outside that range are pathological readout artefacts (early
+# pickup, end-of-cycle wrap, noise spikes).  Hits with
+#   fine < fine_min_valid   or   fine > fine_max_valid
+# are discarded at FIFO ingest in pulser_calib_writer and never
+# enter the per-channel bucket, the fit, or the slip-correction
+# pass.  The discarded count is published in
+# RunSummary/hits_rejected_fine_out_of_band.
+#
+# Design note: ideally the fit itself would identify such hits as
+# outliers without an explicit filter.  See
+# include/writers/DISCUSSION.md.
+fine_min_valid = 20
+fine_max_valid = 160
+
+# Per-spill hit floor: a spill contributes to a TDC's aggregate fit
+# only if the spill alone has at least this many hits on that TDC.
+# 4 = minimum for a 2-param linear fit with any leftover DoF for a
+# residual-sigma estimate.  Pulser runs typically deliver only ~5
+# hits/TDC/spill (each pulse round-robins among the 4 TDCs of one
+# channel, and spills are short); raising this floor silently drops
+# most spills from the cross-spill aggregate.
+min_hits_per_tdc_per_spill = 4
+
+# ── Slope-fit guard ─────────────────────────────────────────────────
+# Pulser hits land in a tight cluster of fine bins per TDC per spill
+# (typically 3-4 bins).  With less than `slope_fit_min_fine_span`
+# distinct bins, the 2-param linear regression has no x-axis lever
+# arm and returns numerical noise (often unphysical negative slopes).
+# When this guard fires, the writer fixes slope = default_slope_cc_per_bin
+# and fits only the intercept.  Default 5 — leaves enough variation
+# for a meaningful slope estimate when fine bins do walk.
+slope_fit_min_fine_span = 5
+
+# Fallback slope used when the guard fires.  Roughly 3.125/256 cc/bin
+# (uniform fine-distribution assumption ~ 0.0122) nudged toward 0.015
+# by typical ALCOR characterisation runs.  Override if you have a
+# better per-detector measurement.
+default_slope_cc_per_bin = 0.015
+
+# Physical-plausibility band for the per-TDC slope.  ALCOR slopes sit
+# in [0.01, 0.02] cc/bin centred at the default — anything outside is
+# the fit picking up noise from marginal fine-bin coverage even
+# though the fit guard passed.  Fitted slopes outside [slope_min,
+# slope_max] are replaced with default_slope_cc_per_bin at publish
+# time.  Set wider bounds only after a per-detector characterisation
+# confirms a real distribution outside this range.
+slope_min = 0.01
+slope_max = 0.02
+
+# Physical-plausibility band for the per-TDC intercept b (cc).  After
+# Stage 2 cross-channel alignment + Stage 3 mean-subtraction
+# centring, the published b is the per-channel arrival delay relative
+# to the detector mean — bounded by cable/routing physics to ≲ 20 cc
+# (~60 ns).  Anything outside is the integer-T residue from
+# independent inter-chip clock starts (NOT a real channel delay) and
+# gets clamped at write time to the nearest edge.
+b_min = -20.0
+b_max = +20.0
+
+# ── Pulser period (optional override) ────────────────────────────────
+# The pulser produces ONE signal observed by every TDC of every
+# channel of every device — period is a global property, not a
+# per-channel one.  When this knob is > 0, the writer SKIPS the
+# per-channel period fit and uses this value directly across the
+# whole detector.  Fixing the period from external knowledge (the
+# generator setting) often improves per-TDC offset fits because the
+# fit's intercept no longer has to fight the slope-vs-period
+# correlation.
+#
+# Example: 1 kHz pulser, 320 MHz clock ⇒ 320000 cc.
+# Set to 0 to fit per channel instead of fixing.
+pulser_period_cc = 320000.0   # 1 kHz @ 320 MHz
+
+# ── Pair safety filter ──────────────────────────────────────────────
+# A consecutive-hit pair on one channel only contributes to the
+# closed-form least-squares system if
+#   |c_h − c_p − pulser_period_cc| < consecutive_pair_tolerance_cc.
+# Rationale: rejects pairs straddling a missed pulse (≥2T jump),
+# spill-boundary leaks, DAQ glitches.  Tight value (±10 cc ≈ ±31 ps)
+# keeps only genuine pulse-to-next-pulse pairs — pulser jitter +
+# ALCOR fine resolution sits well inside this window for a healthy
+# 1 kHz pulser run.  Widen this knob if a campaign has unusually
+# noisy pulse arrival times.  The diagnostic histogram
+# `Diagnostics/h_pair_coarse_diff` shows the actual `c_h − c_p`
+# distribution and is the right knob to consult before changing this.
+consecutive_pair_tolerance_cc = 10.0
+
+# ── Slip correction (intermittent ±N·T_clock hits) ────────────────
+# Known ALCOR quirk: some hits arrive with their coarse counter
+# shifted by an integer number of clock cycles (sign unknown).
+# After the first closed-form fit converges, each hit's within-pulse
+# phase is compared to the per-(spill, TDC) median, and integer-cc
+# deviations are snapped back to the majority branch before the
+# second-pass solve.  Two knobs control this:
+#
+#   slip_confidence_cc      — only snap a hit when its deviation from
+#                             the per-(spill, TDC) median is within
+#                             this many cc of an integer cc offset.
+#                             Tight (0.1) rejects per-hit noise and
+#                             keeps only resolved integer slips.
+#                             Loose (≥0.3) gets fooled by the natural
+#                             sub-cc scatter of the fit and over-snaps.
+#
+#   slip_max_snap_fraction  — safety cap: if more than this fraction
+#                             of hits in one (spill, TDC) would snap,
+#                             leave the (spill, TDC) alone (the
+#                             distribution is too wide to trust).
+#
+# Set slip_max_snap_fraction = 0 to disable slip correction entirely.
+# The QA file's `RunSummary/slip_*` parameters and the per-channel
+# `h_slipped_hits_per_channel` histogram report what was snapped.
+slip_confidence_cc        = 0.1
+slip_max_snap_fraction    = 0.30
+
+# Note: a regime-1 (permanent whole-TDC slip) pass used to live here.
+# It was removed 2026-05-27 because it produced silently-wrong
+# calibrations.  Permanent per-TDC slip is naturally absorbed by the
+# fit's per-TDC intercept b — the QA hist for h_fit_intercept_b
+# shows satellites at the slip lattice points (integer cc for full
+# coarse-counter slips, half-integer cc for ALCOR-domain 640 MHz
+# slips); those satellites are correct and reflect what's in the
+# calibration file.  Old `regime1_*` keys in TOML are silently
+# ignored for backward compatibility.
+
+# ── Calibration-file resolution (3-tier policy) ─────────────────────
+# Used by BOTH the producer (pulser_calib_writer) and the downstream
+# consumers (recodata_writer, …) so there's one source of truth for
+# "which fine_calib does this run use?".
+#
+# Resolution order:
+#   1. `override_path`     — explicit path; used if set and exists.
+#                            For analysts curating a calibration
+#                            outside the run dir.  Default empty.
+#   2. `default_path`      — file in <data_repository>/<run_name>/.
+#                            Where pulser_calib_writer writes; where
+#                            consumers read by default.  COMPULSORY.
+#   3. (missing → rebuild) — producer: runs the pipeline.
+#                            consumers: error out pointing at
+#                            pulser_calib_writer.
+#
+# `force_rebuild` short-circuits all the above for the producer
+# (always recomputes, overwrites default_path).  No effect on
+# consumers.  The pulser_calib_writer CLI `--force-rebuild` flag
+# overrides this to true for one invocation.
+
+override_path = ""                # optional; leave empty to skip
+default_path  = "fine_calib.toml"  # compulsory, relative to run dir
+force_rebuild = false             # producer-only knob

@@ -1,0 +1,1947 @@
+# 2023 full database of runs info
+# The first run defines the standard configuration,
+# all subsequent runs only specify fields that changed w.r.t the previous run.
+#
+# Source: imported from Run Book [2023][dRICH][testbeam] Run Book.xlsx
+# Fields: mirror_mm, beam_status, particle, polarity, beam_energy,
+#         rdo_firmware, timing_firmware, temperature, v_bias,
+#         calibration, dcr_scan, n_spills, quality, notes
+
+[runs."20231010-082118"]
+radiator_desc = "aerogel 1.02"
+mirror_mm = 75
+beam_status = "on"
+polarity = "negative"
+collimators = 4
+beam_energy = 10.0
+trigger = "in0 --> Luca-and"
+rdo_firmware = "dual-ext-std-dev"
+timing_firmware = "single-ext-std-dev"
+temperature = -20.0
+v_bias = 53.0
+notes = "many FIFOs in overflow in 195 because readout config was wrong because DCR was killed"
+n_spills = 25
+quality = "bad"
+
+[runs."20231010-084623"]
+quality = "good"
+
+[runs."20231010-090008"]
+
+[runs."20231010-091256"]
+notes = "many FIFOs in overflow due to root macro for data analysis running in parallel on the same machine"
+n_spills = 22
+quality = "warning"
+
+[runs."20231010-092527"]
+n_spills = 50
+quality = "good"
+
+[runs."20231010-100105"]
+rdo_firmware = "dual-ext-adv-dev"
+notes = "with this new Firmware only 3 out of 7 KC705 are taking data"
+n_spills = 25
+quality = "warning"
+
+[runs."20231010-102157"]
+notes = "with this new Firmware only 3 out of 7 KC705 are taking data. We tried to reload again the KC705 whithout data, but nothing changed"
+
+[runs."20231010-104509"]
+rdo_firmware = "dual-ext-std-dev"
+notes = "mirror scan"
+quality = "good"
+
+[runs."20231010-105842"]
+mirror_mm = 50
+
+[runs."20231010-111532"]
+mirror_mm = 25
+
+[runs."20231010-113029"]
+mirror_mm = 0
+quality = "warning"
+
+[runs."20231010-114819"]
+mirror_mm = 100
+notes = "manually disabled fifo 5 and 17 in kc 193, fifo 5 in kc 195, fifo 17 in kc 197"
+quality = "good"
+
+[runs."20231010-120419"]
+mirror_mm = 125
+notes = "manuallly disabled fifo 1, 12, 13 and 14 in kc 196"
+
+[runs."20231010-122441"]
+mirror_mm = 75
+
+[runs."20231010-130339"]
+rdo_firmware = "dual-ext-adv-dev"
+quality = "bad"
+
+[runs."20231010-131723"]
+
+[runs."20231010-132846"]
+n_spills = 2
+quality = "good"
+
+[runs."20231010-133214"]
+n_spills = 25
+quality = "bad"
+
+[runs."20231010-135828"]
+rdo_firmware = "dual-ext-std-dev"
+notes = "by mistake started only on 192"
+n_spills = 50
+
+[runs."20231010-141234"]
+quality = "good"
+
+[runs."20231010-144804"]
+
+[runs."20231010-152047"]
+v_bias = 54.0
+notes = "increased bias voltage to 54 V"
+
+[runs."20231010-154910"]
+v_bias = 55.0
+notes = "increased bias voltage to 55 V"
+
+[runs."20231010-163636"]
+mirror_mm = 5
+v_bias = 52.0
+notes = "start of mirror scan V bias = 52V"
+
+[runs."20231010-171133"]
+mirror_mm = 15
+
+[runs."20231010-173650"]
+mirror_mm = 25
+
+[runs."20231010-180450"]
+mirror_mm = 35
+notes = "kc705-196 fifo 15 overflow at 2nd spill"
+n_spills = 2
+quality = "bad"
+
+[runs."20231010-181846"]
+n_spills = 50
+quality = "good"
+
+[runs."20231010-190826"]
+mirror_mm = 45
+
+[runs."20231010-193642"]
+mirror_mm = 55
+
+[runs."20231010-195618"]
+mirror_mm = 65
+notes = "kc705-195 fifo 20 overflow at 2nd spill"
+n_spills = 3
+quality = "bad"
+
+[runs."20231010-195910"]
+n_spills = 50
+quality = "good"
+
+[runs."20231010-201928"]
+mirror_mm = 75
+
+[runs."20231010-203952"]
+mirror_mm = 85
+notes = "kc705-196 fifo 15 overflow at 2nd spill"
+n_spills = 3
+quality = "bad"
+
+[runs."20231010-204331"]
+
+[runs."20231010-204934"]
+n_spills = 50
+quality = "good"
+
+[runs."20231010-211228"]
+mirror_mm = 95
+
+[runs."20231010-213426"]
+mirror_mm = 105
+
+[runs."20231010-215752"]
+mirror_mm = 115
+notes = "kc705-195 fifo 17 overflow"
+n_spills = 37
+quality = "bad"
+
+[runs."20231010-221114"]
+n_spills = 50
+quality = "good"
+
+[runs."20231010-223412"]
+mirror_mm = 125
+
+[runs."20231010-225620"]
+mirror_mm = 135
+
+[runs."20231010-231817"]
+
+[runs."20231010-234404"]
+mirror_mm = 125
+notes = "kc705-196 fifo 9 overflow at 42 spill"
+n_spills = 42
+quality = "bad"
+
+[runs."20231010-235919"]
+n_spills = 50
+quality = "good"
+
+[runs."20231011-002330"]
+mirror_mm = 115
+notes = "kc705-195 fifo 17 overflow at 38 spill"
+n_spills = 38
+quality = "bad"
+
+[runs."20231011-004019"]
+notes = "problems with QA script. Solved in next test run"
+n_spills = 50
+quality = "need QA"
+
+[runs."20231011-011418"]
+notes = "test run for scripts. Ok"
+n_spills = 5
+quality = "bad"
+
+[runs."20231011-012136"]
+notes = "kc705-196 fifo 17 overflow at 42 spill"
+n_spills = 42
+
+[runs."20231011-013615"]
+notes = "a lot of kc705  overflow"
+n_spills = 2
+
+[runs."20231011-013939"]
+notes = "kc705-198 all fifo overflow at 49 spill"
+n_spills = 49
+
+[runs."20231011-015609"]
+notes = "kc705-196 fifo 17 overflow at 49 spill, was warning --> changed to good by RP"
+n_spills = 50
+quality = "good"
+
+[runs."20231011-021453"]
+mirror_mm = 105
+
+[runs."20231011-023208"]
+mirror_mm = 95
+notes = "kc705-198 fifo 5 overflow at 1 spill"
+n_spills = 1
+quality = "bad"
+
+[runs."20231011-023619"]
+notes = "this was flagged as 85 mm, but likely 95 --> modified by RP"
+n_spills = 50
+quality = "good"
+
+[runs."20231011-030302"]
+mirror_mm = 85
+notes = "kc705-196 fifo 17 overflow at 11 spill"
+n_spills = 11
+quality = "bad"
+
+[runs."20231011-030939"]
+notes = "run not start properly; no stable beam ; spill about every 20 sec"
+
+[runs."20231011-031333"]
+notes = "run not start properly"
+quality = "warning"
+
+[runs."20231011-031910"]
+
+[runs."20231011-032443"]
+notes = "kc705-198 fifo 5 overflow at 2 spill"
+n_spills = 2
+quality = "bad"
+
+[runs."20231011-032851"]
+notes = "problem with start/stop run"
+
+[runs."20231011-033625"]
+
+[runs."20231011-035243"]
+
+[runs."20231011-040145"]
+notes = "ktc705-196 fif 17 full (again). Stopping the run does not stop the \"running status\" (only after many spills)"
+n_spills = 30
+
+[runs."20231011-041853"]
+notes = "-> to be checked: fifo full FIFO13 of 195 on last spill preventing stop of runs, was warning --> converted to good by RP, is this at 85 mm ?"
+n_spills = 50
+quality = "good"
+
+[runs."20231011-043844"]
+mirror_mm = 75
+notes = "196 fifo 17 full...."
+n_spills = 3
+quality = "bad"
+
+[runs."20231011-044520"]
+n_spills = 50
+quality = "good"
+
+[runs."20231011-050241"]
+mirror_mm = 65
+notes = "192 fifo 14 full"
+n_spills = 7
+quality = "bad"
+
+[runs."20231011-050841"]
+notes = "196 fifo 10 full"
+n_spills = 5
+
+[runs."20231011-051622"]
+notes = "196 fifo 17 full on last spill, was warning --> changed to good by RP"
+n_spills = 44
+quality = "good"
+
+[runs."20231011-053156"]
+mirror_mm = 55
+n_spills = 50
+
+[runs."20231011-054904"]
+mirror_mm = 45
+notes = "192 fifo 14 full on last spill"
+n_spills = 7
+quality = "bad"
+
+[runs."20231011-055656"]
+n_spills = 50
+quality = "good"
+
+[runs."20231011-061339"]
+mirror_mm = 35
+
+[runs."20231011-063055"]
+mirror_mm = 25
+notes = "193 fifo 9 and 198 fifo 5 full."
+n_spills = 15
+quality = "bad"
+
+[runs."20231011-063927"]
+notes = "196 fifo 10 and 17 full"
+n_spills = 10
+
+[runs."20231011-064602"]
+n_spills = 50
+quality = "good"
+
+[runs."20231011-070309"]
+mirror_mm = 15
+n_spills = 57
+
+[runs."20231011-071607"]
+mirror_mm = 5
+notes = "mirror scan program completed"
+n_spills = 50
+
+[runs."20231011-153827"]
+mirror_mm = 135
+rdo_firmware = "dual-ext-std-dev2 (soft-10)"
+timing_firmware = "single-ext-std-dev2 (soft-10)"
+notes = "test with new FW with SOFT reset at 10 CLK"
+n_spills = 1
+quality = "bad"
+
+[runs."20231011-154958"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+timing_firmware = "single-ext-std-dev2 (soft-8)"
+notes = "test with new FW with SOFT reset at 8 CLK"
+
+[runs."20231011-155220"]
+rdo_firmware = "dual-ext-std-dev2 (soft-6)"
+timing_firmware = "single-ext-std-dev2 (soft-6)"
+notes = "test with new FW with SOFT reset at 6 CLK"
+
+[runs."20231011-155518"]
+rdo_firmware = "dual-ext-std-dev2 (soft-4)"
+timing_firmware = "single-ext-std-dev2 (soft-4)"
+notes = "test with new FW with SOFT reset at 4 CLK"
+
+[runs."20231011-160034"]
+notes = "After FPGA power cycle: test with new FW with SOFT reset at 4 CLK"
+
+[runs."20231011-160412"]
+notes = "Alcor-init ok, repeating the previous run"
+
+[runs."20231011-160751"]
+notes = "Last attempt, repeating the previous run"
+
+[runs."20231011-161008"]
+rdo_firmware = "dual-ext-std-dev2 (soft-6)"
+timing_firmware = "single-ext-std-dev2 (soft-6)"
+notes = "test with new FW with SOFT reset at 6 CLK"
+
+[runs."20231011-161259"]
+notes = "longer run with new FW with SOFT reset at 6 CLK"
+n_spills = 50
+quality = "good"
+
+[runs."20231011-163139"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+timing_firmware = "single-ext-std-dev2 (soft-8)"
+notes = "longer run with new FW with SOFT reset at 8 CLK"
+
+[runs."20231011-164920"]
+rdo_firmware = "dual-ext-std-dev2 (soft-10)"
+timing_firmware = "single-ext-std-dev2 (soft-10)"
+notes = "longer run with new FW with SOFT reset at 10 CLK"
+
+[runs."20231011-171847"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+timing_firmware = "single-ext-std-dev2 (soft-8)"
+notes = "start Vbias scan, SOFT RESET at 8 CLK, turning on TOT mode, T = -20 C (but PDU 6, 8 at -18 C), TOT mode did not work --- investigating"
+n_spills = 10
+quality = "bad"
+
+[runs."20231011-173208"]
+notes = "Normal mode, no ToT"
+quality = "good"
+
+[runs."20231011-173758"]
+notes = "fixed the ToT mode configuration, let's go"
+
+[runs."20231011-174928"]
+v_bias = 49.0
+notes = "start of bias voltage scan with ToT = ON, No signal, as expected, we are under Vbr"
+n_spills = 50
+
+[runs."20231011-181206"]
+v_bias = 50.0
+
+[runs."20231011-182852"]
+v_bias = 51.0
+
+[runs."20231011-184656"]
+
+[runs."20231011-190039"]
+
+[runs."20231011-191435"]
+v_bias = 52.0
+
+[runs."20231011-195125"]
+beam_status = "off"
+v_bias = 49.5
+notes = "Floating Vbias value setting fixed, no beam"
+quality = "bad"
+
+[runs."20231011-211008"]
+beam_status = "on"
+v_bias = 53.0
+n_spills = 1
+
+[runs."20231011-212149"]
+notes = "all FIFOs always full, let's try lover Vbias"
+n_spills = 28
+
+[runs."20231011-214110"]
+v_bias = 49.5
+n_spills = 50
+quality = "good"
+
+[runs."20231011-221500"]
+v_bias = 51.5
+notes = "switched off manually FIFOs: 193-5, 193-17, 195-5, 196-12, 196-13, 196-14, 197-17"
+
+[runs."20231011-223457"]
+v_bias = 50.5
+
+[runs."20231011-225350"]
+v_bias = 52.5
+notes = "many FIFO overflows"
+
+[runs."20231011-231256"]
+rdo_firmware = "dual-ext-adv-dev"
+timing_firmware = "single-ext-std-dev"
+v_bias = 51.5
+notes = "moving to ADV firmware, kc 195 dead after 6 spills"
+n_spills = 20
+quality = "bad"
+
+[runs."20231011-232004"]
+
+[runs."20231011-232752"]
+notes = "kc 195 and 196 dead after 9 spills"
+
+[runs."20231011-233405"]
+notes = "Resetting lanes after each EOS --> Data taking does not stop, but QC is not able to process data (possibly a series of F0000000"
+
+[runs."20231011-234358"]
+notes = "Resetting lanes after each EOS --> Data taking does not stop, but QC is not able to process data (possibly a series of F0000000 --> removing reset and reducing to 10 spills"
+
+[runs."20231012-000013"]
+notes = "Run stopped due to no beam."
+n_spills = 10
+
+[runs."20231012-020322"]
+quality = "good"
+
+[runs."20231012-020844"]
+notes = "kc705-195 stuck"
+quality = "bad"
+
+[runs."20231012-021239"]
+quality = "good"
+
+[runs."20231012-021855"]
+notes = "QA stuck"
+quality = "bad"
+
+[runs."20231012-022359"]
+notes = "QC empty, but no links were stuck during acquisition"
+
+[runs."20231012-022937"]
+notes = "QA stuck"
+
+[runs."20231012-023518"]
+n_spills = 20
+quality = "good"
+
+[runs."20231012-024729"]
+notes = "KC-195 stuck after 5 spills"
+quality = "bad"
+
+[runs."20231012-025014"]
+notes = "KC-197 stuck after 5 spills"
+
+[runs."20231012-025336"]
+notes = "QA empty, but no links were stuck during acquisition"
+
+[runs."20231012-025933"]
+notes = "QA empty, but no links were stuck during acquisition, reprocessed offline"
+
+[runs."20231012-030516"]
+notes = "QA stuck, but no links got stuck during acquisition"
+
+[runs."20231012-034116"]
+notes = "QA stuck, but no links got stuck during acquisition --> Beams issues most likely since 20231012-024729 (multiple entried in the PS operations logbook)"
+n_spills = 10
+
+[runs."20231012-041035"]
+notes = "QA stuck, also with offline reprocessing"
+
+[runs."20231012-042300"]
+notes = "QA stuck"
+
+[runs."20231012-043553"]
+
+[runs."20231012-045009"]
+notes = "Test run only on KC705-192"
+
+[runs."20231012-050003"]
+notes = "KC-192 stuck after 2 spills"
+
+[runs."20231012-050332"]
+notes = "KC-192 stuck after 5 spills"
+
+[runs."20231012-051316"]
+
+[runs."20231012-052340"]
+quality = "good"
+
+[runs."20231012-053400"]
+notes = "KC-195, 196 and 198 stuck after 9 spills"
+quality = "bad"
+
+[runs."20231012-054320"]
+quality = "good"
+
+[runs."20231012-055251"]
+
+[runs."20231012-060203"]
+v_bias = 52.0
+notes = "KC-195 stuck after 5 spills"
+quality = "bad"
+
+[runs."20231012-061015"]
+notes = "KC-192 and 193  stuck after 5 spills"
+
+[runs."20231012-062132"]
+notes = "all kc stuck"
+
+[runs."20231012-063328"]
+notes = "Loaded new firmware with protection from FFFFFFFF, version 20231012"
+
+[runs."20231012-064429"]
+notes = "Back to firmware version 20231009. KC192 stuck after two spills"
+
+[runs."20231012-064956"]
+notes = "KC192 stuck after two spills"
+
+[runs."20231012-071533"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+timing_firmware = "single-ext-std-dev2 (soft-8)"
+notes = "back to STD FW, kc 192 stuck... to be investigated"
+n_spills = 8
+
+[runs."20231012-073128"]
+notes = "recovered kc 192, problem was in chip 0, solved by power cycle. improving DAQ OS"
+n_spills = 50
+quality = "good"
+
+[runs."20231012-075334"]
+
+[runs."20231012-081303"]
+v_bias = 52.5
+notes = "no beam after ~ 35 spills"
+n_spills = 38
+
+[runs."20231012-084157"]
+beam_status = "off"
+notes = "running with SPILL LOOP to test"
+n_spills = 50
+
+[runs."20231012-085350"]
+rdo_firmware = "dual-ext-adv-dev"
+timing_firmware = "single-ext-std-dev"
+notes = "testing new ADV FW version without beam"
+quality = "bad"
+
+[runs."20231012-090322"]
+
+[runs."20231012-090801"]
+n_spills = 10
+
+[runs."20231012-091630"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+timing_firmware = "single-ext-std-dev2 (soft-8)"
+v_bias = 52.0
+notes = "back to STD FW"
+n_spills = 50
+quality = "good"
+
+[runs."20231012-094335"]
+notes = "TEST THRESHOLD SCAN w/o beam, Delta=5 OpMode=4"
+quality = "bad"
+
+[runs."20231012-094745"]
+notes = "Delta=10 OpMode=4"
+
+[runs."20231012-095208"]
+notes = "BEAM BACK, back to PS SPILL, Delta=15 OpMode=4"
+n_spills = 10
+quality = "good"
+
+[runs."20231012-095753"]
+notes = "Delta=10 OpMode=4 Buffers full in 40% of cases"
+quality = "bad"
+
+[runs."20231012-100327"]
+notes = "Delta=10 OpMode=1, DAQ never saturates 300 Mbit/s"
+quality = "good"
+
+[runs."20231012-100916"]
+
+[runs."20231012-101641"]
+v_bias = 53.0
+notes = "V=53 V --> throughput 377 Mbit/s"
+
+[runs."20231012-102901"]
+notes = "changed SPILL: 1.2 s delay, 250 ms length"
+
+[runs."20231012-103733"]
+notes = "turn on ToT: Delta=10 OpMode=4 throughput doubled but FIFO are saturated"
+quality = "bad"
+
+[runs."20231012-105515"]
+notes = "UPDATE interpolation factor to 1: ECCR from 0xb01b --> 0xb03f"
+
+[runs."20231012-110735"]
+v_bias = 55.0
+notes = "BACK interpolation factor to 0: ECCR = 0xb01b, ToT OFF, Delta=15 OpMode=1"
+
+[runs."20231012-195331"]
+beam_status = "on"
+temperature = -25.0
+v_bias = 52.0
+notes = "maybe ready to resume after long time, T = -25 C on all PDUs but 6 and 8 at -18 C"
+quality = "warning"
+calibration = "20231012-143823"
+
+[runs."20231012-200431"]
+notes = "Delta=5, Opmode=1"
+quality = "good"
+
+[runs."20231012-201040"]
+notes = "Delta=10, Opmode=1"
+
+[runs."20231012-201748"]
+notes = "Delta=7, Opmode=1"
+
+[runs."20231012-202534"]
+v_bias = 55.0
+notes = "Delta=10, Opmode=1"
+
+[runs."20231012-203147"]
+notes = "Delta=15, Opmode=1"
+n_spills = 9
+
+[runs."20231012-205302"]
+beam_status = "off"
+notes = "Delta=25, Opmode=1, SPILL LOOP"
+n_spills = 50
+quality = "warning"
+
+[runs."20231012-205846"]
+notes = "Delta=55, Opmode=1, SPILL LOOP"
+
+[runs."20231012-211153"]
+notes = "after ALCOR power cycle and re[program KC, Delta=55, Opmode=1, SPILL LOOP"
+
+[runs."20231012-211712"]
+beam_status = "on"
+notes = "PS SPILL, Delta=55 OpMode=1"
+n_spills = 10
+quality = "good"
+
+[runs."20231012-212258"]
+notes = "start of Vbias-threshold scan, Delta=10, Opmode=1"
+n_spills = 50
+
+[runs."20231012-214713"]
+notes = "Delta=10, Opmode=1"
+
+[runs."20231012-220530"]
+notes = "Delta=15, Opmode=1"
+
+[runs."20231012-222416"]
+
+[runs."20231012-224314"]
+notes = "Delta=20, Opmode=1"
+
+[runs."20231012-230202"]
+
+[runs."20231012-232137"]
+v_bias = 54.0
+notes = "Delta=10, Opmode=1"
+quality = "bad"
+
+[runs."20231012-233053"]
+notes = "Spill not stable, test run"
+n_spills = 10
+quality = "warning"
+
+[runs."20231012-234223"]
+v_bias = 55.0
+notes = "Delta=20, Opmode=1"
+n_spills = 50
+quality = "good"
+
+[runs."20231013-000115"]
+v_bias = 54.0
+notes = "Delta=10, Opmode=1"
+
+[runs."20231013-002036"]
+
+[runs."20231013-005342"]
+notes = "Delta=15, Opmode=1"
+
+[runs."20231013-012533"]
+
+[runs."20231013-015747"]
+notes = "Delta=20, Opmode=1"
+
+[runs."20231013-022135"]
+
+[runs."20231013-024313"]
+v_bias = 53.0
+notes = "Delta=10, Opmode=1"
+
+[runs."20231013-030121"]
+
+[runs."20231013-031910"]
+notes = "Delta=15, Opmode=1"
+
+[runs."20231013-033702"]
+
+[runs."20231013-035515"]
+notes = "Delta=20, Opmode=1"
+
+[runs."20231013-041313"]
+
+[runs."20231013-043129"]
+v_bias = 52.0
+notes = "Delta=10, Opmode=1"
+
+[runs."20231013-044920"]
+
+[runs."20231013-050739"]
+notes = "Delta=15, Opmode=1"
+
+[runs."20231013-052522"]
+
+[runs."20231013-054300"]
+notes = "Delta=20, Opmode=1"
+
+[runs."20231013-061218"]
+
+[runs."20231013-065322"]
+v_bias = 51.0
+notes = "Delta=10, Opmode=1"
+
+[runs."20231013-072422"]
+
+[runs."20231013-075530"]
+notes = "Delta=15, Opmode=1"
+
+[runs."20231013-081346"]
+
+[runs."20231013-083220"]
+notes = "Delta=20, Opmode=1"
+
+[runs."20231013-085022"]
+
+[runs."20231013-090925"]
+notes = "Delta=10, Opmode=4"
+
+[runs."20231013-092716"]
+
+[runs."20231013-094400"]
+notes = "Delta=15, Opmode=4"
+
+[runs."20231013-100520"]
+notes = "Delta=15, Opmode=4, ETH fw expired after 45 spills"
+n_spills = 45
+
+[runs."20231013-104150"]
+notes = "Delta=20, Opmode=4"
+n_spills = 50
+
+[runs."20231013-105951"]
+
+[runs."20231013-111840"]
+v_bias = 52.0
+notes = "Delta=10, Opmode=4, rate is about 430Mib/s, a few times almost all lanes have fifo full"
+
+[runs."20231013-113750"]
+notes = "Delta=10, Opmode=4"
+
+[runs."20231013-115549"]
+notes = "Delta=15, Opmode=4"
+
+[runs."20231013-121520"]
+notes = "Delta=15, Opmode=4,"
+
+[runs."20231013-123325"]
+notes = "Delta=20, Opmode=4"
+
+[runs."20231013-130117"]
+
+[runs."20231013-132349"]
+v_bias = 53.0
+notes = "Delta=10, Opmode=4, rate is about 528Mib/s, a few times almost all lanes have fifo full STOP at 48"
+
+[runs."20231013-211201"]
+v_bias = 52.0
+notes = "Delta=10, Opmode=4, stopped"
+n_spills = 10
+quality = "bad"
+calibration = "20231013-181801"
+dcr_scan = "20231013-202707"
+
+[runs."20231013-212545"]
+notes = "Delta=10, Opmode=4,"
+
+[runs."20231013-215308"]
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF"
+quality = "good"
+calibration = "20231012-143823"
+
+[runs."20231013-220337"]
+v_bias = 53.0
+
+[runs."20231013-221227"]
+n_spills = 50
+
+[runs."20231013-223143"]
+
+[runs."20231013-225339"]
+notes = "Delta=15, Opmode=4, PDU1 = Vbias OFF"
+
+[runs."20231013-231223"]
+
+[runs."20231013-233151"]
+notes = "Delta=20, Opmode=4, PDU1 = Vbias OFF, beam probably went down sometime during this run"
+quality = "warning"
+
+[runs."20231013-235043"]
+notes = "Delta=20, Opmode=4, PDU1 = Vbias OFF, BEAM WAS DOWN"
+quality = "bad"
+
+[runs."20231014-001131"]
+notes = "tried to start long runs, but beam down"
+n_spills = 100
+
+[runs."20231014-034657"]
+notes = "Delta=20, Opmode=4, PDU1 = Vbias OFF"
+n_spills = 50
+quality = "good"
+
+[runs."20231014-040822"]
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF. Starting long runs once again"
+n_spills = 100
+
+[runs."20231014-044332"]
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF. Plots not looking great"
+quality = "need QA"
+
+[runs."20231014-051900"]
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF"
+quality = "good"
+
+[runs."20231014-055359"]
+
+[runs."20231014-063207"]
+mirror_mm = 75
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF, mirror = 75mm"
+
+[runs."20231014-070723"]
+
+[runs."20231014-074230"]
+
+[runs."20231014-081835"]
+
+[runs."20231014-085345"]
+
+[runs."20231014-093038"]
+v_bias = 532.0
+notes = "Delta=10, Opmode=4, mirror = 75mm, PDU2 only"
+n_spills = 10
+
+[runs."20231014-094815"]
+v_bias = 533.0
+notes = "Delta=10, Opmode=4, mirror = 75mm, PDU3 only"
+
+[runs."20231014-095512"]
+v_bias = 534.0
+notes = "Delta=10, Opmode=4, mirror = 75mm, PDU4 only"
+quality = "bad"
+
+[runs."20231014-100325"]
+quality = "good"
+
+[runs."20231014-101208"]
+mirror_mm = 5
+v_bias = 53.0
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF, mirror = 5mm"
+n_spills = 100
+
+[runs."20231014-105735"]
+
+[runs."20231014-113056"]
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF, mirror = 5mm, QC stuck"
+quality = "need QA"
+
+[runs."20231014-120505"]
+notes = "Delta=10, Opmode=4, PDU1 = Vbias OFF, mirror = 5mm, run stopped preparing for energy change, QC stuck"
+n_spills = 30
+
+[runs."20231014-121847"]
+notes = "Delta=10, Opmode=1, mirror = 5mm"
+n_spills = 31
+quality = "good"
+
+[runs."20231014-123758"]
+beam_energy = 1.5
+notes = "Delta=10, Opmode=1, mirror = 5mm, test run, energy changed. Beam momentum set at -1.5 GeV"
+n_spills = 10
+quality = "bad"
+
+[runs."20231014-125415"]
+notes = "Delta=10, Opmode=1, mirror = 5mm, test run, energy changed. Beam more centered. Stop at 30 spills for access"
+n_spills = 30
+quality = "good"
+
+[runs."20231014-130640"]
+notes = "Delta=10, Opmode=1, mirror = 5mm"
+n_spills = 50
+
+[runs."20231014-132453"]
+n_spills = 100
+
+[runs."20231014-140132"]
+mirror_mm = 135
+notes = "Delta=10, Opmode=1, mirror = 135mm"
+
+[runs."20231014-143552"]
+mirror_mm = 75
+notes = "Delta=10, Opmode=1, mirror = 75mm"
+
+[runs."20231014-152305"]
+mirror_mm = 5
+notes = "Delta=10, Opmode=1, mirror = 5mm"
+
+[runs."20231014-161624"]
+notes = "Delta=10, Opmode=1, mirror = 5mm, after Cherenkov tune, increased pressure up to 0.9 bar (beam should be broader)"
+
+[runs."20231014-170432"]
+trigger = "e- trigger on input #2 (?)"
+notes = "Delta=10, Opmode=1, mirror = 5mm, after Cherenkov tune, increased pressure up to 0.9 bar (beam should be broader) just a test"
+n_spills = 10
+quality = "warning"
+
+[runs."20231014-204855"]
+v_bias = 52.0
+notes = "Delta=10, Opmode=1, mirror = 5mm NO RING maybe trigger issues"
+n_spills = 50
+quality = "bad"
+calibration = "20231014-183213"
+dcr_scan = "20231014-181900"
+
+[runs."20231014-215937"]
+notes = "Delta=10, Opmode=1, mirror = 5mm"
+quality = "good"
+dcr_scan = "20231014-215501"
+
+[runs."20231015-100011"]
+v_bias = 53.0
+notes = "back to Physics mode with BCR=standard, baseline=20231015-045856, Delta=10, OpMode=1, Vbias=53"
+n_spills = 100
+calibration = "20231015-045856"
+dcr_scan = "20231015-091318"
+
+[runs."20231015-104102"]
+n_spills = 6
+
+[runs."20231015-121717"]
+n_spills = 100
+
+[runs."20231015-125344"]
+notes = "BCR=standard, baseline=20231015-045856, Delta=10, OpMode=1, Vbias=53"
+
+[runs."20231015-133850"]
+
+[runs."20231015-141253"]
+
+[runs."20231015-144424"]
+notes = "BCR=standard, baseline=20231015-045856, Delta=10, OpMode=1, Vbias=53, stopping at 30 for change of beams energy"
+n_spills = 30
+
+[runs."20231015-150049"]
+polarity = "positive"
+beam_energy = 10.0
+notes = "Test of run with high luminosity (7000 trigger per spill)"
+n_spills = 10
+
+[runs."20231015-150605"]
+notes = "Test with decreased luminosity"
+
+[runs."20231015-151107"]
+notes = "BCR=standard, baseline=20231015-045856, Delta=10, OpMode=1, Vbias=53, Cherenkov pion tagger is filling up"
+n_spills = 50
+
+[runs."20231015-153020"]
+trigger = "trigger #2 is pion"
+notes = "start of mirror scan 5 mm"
+
+[runs."20231015-155045"]
+mirror_mm = 15
+notes = "15 mm"
+
+[runs."20231015-160753"]
+mirror_mm = 25
+notes = "25 mm"
+
+[runs."20231015-162500"]
+mirror_mm = 35
+notes = "35 mm"
+
+[runs."20231015-164216"]
+mirror_mm = 45
+notes = "45 mm"
+
+[runs."20231015-170005"]
+mirror_mm = 55
+notes = "55 mm"
+
+[runs."20231015-171810"]
+mirror_mm = 65
+notes = "65 mm"
+
+[runs."20231015-173603"]
+mirror_mm = 75
+notes = "75 mm small Cherenkov trigger pressure increased, this trigger should be a little more efficient"
+
+[runs."20231015-175339"]
+mirror_mm = 85
+notes = "85 mm"
+
+[runs."20231015-181207"]
+mirror_mm = 95
+notes = "95 mm"
+
+[runs."20231015-183437"]
+mirror_mm = 105
+notes = "105 mm big Cherenkov trigger pressure increased, this trigger should be more efficient"
+
+[runs."20231015-185136"]
+mirror_mm = 115
+notes = "115 mm"
+
+[runs."20231015-192740"]
+mirror_mm = 5
+beam_energy = 8.0
+notes = "Beam energy 8 GeV, beginning new mirror scan starting at 5mm"
+
+[runs."20231015-194634"]
+mirror_mm = 15
+notes = "15 mm"
+
+[runs."20231015-200455"]
+mirror_mm = 25
+notes = "25 mm"
+
+[runs."20231015-202316"]
+notes = "config.331.31.31"
+quality = "bad"
+calibration = "20231015-024850"
+dcr_scan = "20231016-165052"
+
+[runs."20231015-204142"]
+mirror_mm = 45
+notes = "45 mm"
+quality = "good"
+calibration = "20231015-045856"
+dcr_scan = "20231015-091318"
+
+[runs."20231015-210024"]
+mirror_mm = 55
+notes = "55 mm"
+
+[runs."20231015-211837"]
+mirror_mm = 65
+notes = "65 mm"
+
+[runs."20231015-213747"]
+mirror_mm = 75
+notes = "75 mm"
+
+[runs."20231015-215618"]
+mirror_mm = 85
+notes = "85 mm"
+
+[runs."20231015-221457"]
+mirror_mm = 95
+notes = "95 mm"
+
+[runs."20231015-223644"]
+mirror_mm = 105
+notes = "forgot to re-program kc705 and died mid-run"
+quality = "bad"
+
+[runs."20231015-225200"]
+notes = "105 mm"
+quality = "good"
+
+[runs."20231015-234118"]
+mirror_mm = 115
+notes = "115mm"
+
+[runs."20231016-003230"]
+mirror_mm = 125
+notes = "125 mm"
+
+[runs."20231016-005051"]
+mirror_mm = 135
+notes = "135 mm"
+
+[runs."20231016-010859"]
+
+[runs."20231016-012726"]
+mirror_mm = 125
+notes = "125 mm"
+
+[runs."20231016-014605"]
+mirror_mm = 115
+notes = "115 mm"
+
+[runs."20231016-020441"]
+mirror_mm = 105
+notes = "105 mm"
+
+[runs."20231016-022330"]
+mirror_mm = 95
+notes = "95 mm"
+
+[runs."20231016-024242"]
+mirror_mm = 85
+notes = "85 mm"
+
+[runs."20231016-030147"]
+mirror_mm = 75
+notes = "75 mm"
+
+[runs."20231016-032038"]
+mirror_mm = 65
+notes = "65 mm"
+
+[runs."20231016-033848"]
+mirror_mm = 55
+notes = "55 mm"
+
+[runs."20231016-035702"]
+mirror_mm = 45
+notes = "45 mm"
+
+[runs."20231016-041548"]
+mirror_mm = 35
+notes = "35 mm"
+
+[runs."20231016-043423"]
+mirror_mm = 25
+notes = "25 mm"
+
+[runs."20231016-045341"]
+mirror_mm = 15
+notes = "15 mm"
+
+[runs."20231016-051215"]
+mirror_mm = 5
+notes = "5 mm"
+
+[runs."20231016-053705"]
+notes = "Delta=10, OpMode=4, Vbias=53, PDU1 = Vbias = OFF, mirror = 5 mm"
+
+[runs."20231016-055755"]
+mirror_mm = 75
+notes = "Delta=10, OpMode=4, Vbias=53, PDU1 = Vbias = OFF, mirror = 75 mm (missing QA plots WARNING, did no manage to run analysis... infinite spill loop? )"
+quality = "need QA"
+
+[runs."20231016-061846"]
+mirror_mm = 135
+notes = "Delta=10, OpMode=4, Vbias=53, PDU1 = Vbias = OFF, mirror = 135 mm"
+quality = "good"
+
+[runs."20231016-064350"]
+mirror_mm = 75
+notes = "Delta=10, OpMode=4, Vbias=53, PDU1 = Vbias = OFF, mirror = 75 mm"
+
+[runs."20231016-071933"]
+v_bias = 52.0
+notes = "Delta=10, OpMode=4, VBias=52, mirror = 75 mm"
+n_spills = 100
+
+[runs."20231016-081108"]
+beam_status = "off"
+notes = "Manual threshold scan. DeltaThr = 1, OpMode=1, SPILL LOOP"
+n_spills = 4
+
+[runs."20231016-081331"]
+notes = "Manual threshold scan. DeltaThr = 2"
+
+[runs."20231016-081532"]
+notes = "Manual threshold scan. DeltaThr = 3"
+
+[runs."20231016-081816"]
+notes = "Manual threshold scan. DeltaThr = 4"
+
+[runs."20231016-082014"]
+notes = "Manual threshold scan. DeltaThr = 5"
+
+[runs."20231016-082208"]
+notes = "Manual threshold scan. DeltaThr = 6"
+
+[runs."20231016-082804"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-192"
+
+[runs."20231016-083112"]
+notes = "Manual threshold scan. DeltaThr = 2, only KC705-192"
+
+[runs."20231016-083350"]
+notes = "Manual threshold scan. DeltaThr = 3, only KC705-192"
+
+[runs."20231016-083512"]
+notes = "Manual threshold scan. DeltaThr = 4, only KC705-192"
+
+[runs."20231016-083616"]
+notes = "Manual threshold scan. DeltaThr = 5, only KC705-192"
+
+[runs."20231016-083702"]
+notes = "Manual threshold scan. DeltaThr = 6, only KC705-192"
+
+[runs."20231016-083748"]
+notes = "Manual threshold scan. DeltaThr = 7, only KC705-192"
+
+[runs."20231016-083832"]
+notes = "Manual threshold scan. DeltaThr = 8, only KC705-192"
+
+[runs."20231016-083916"]
+notes = "Manual threshold scan. DeltaThr = 9, only KC705-192"
+
+[runs."20231016-084001"]
+notes = "Manual threshold scan. DeltaThr = 10, only KC705-192"
+
+[runs."20231016-084144"]
+notes = "Manual threshold scan. DeltaThr = 11, only KC705-192"
+
+[runs."20231016-084225"]
+notes = "Manual threshold scan. DeltaThr = 12, only KC705-192"
+
+[runs."20231016-084308"]
+notes = "Manual threshold scan. DeltaThr = 13, only KC705-192"
+
+[runs."20231016-084352"]
+notes = "Manual threshold scan. DeltaThr = 14, only KC705-192"
+
+[runs."20231016-084435"]
+notes = "Manual threshold scan. DeltaThr = 15, only KC705-192"
+
+[runs."20231016-084526"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-193"
+
+[runs."20231016-084642"]
+notes = "Manual threshold scan. DeltaThr = 2, only KC705-193"
+
+[runs."20231016-084725"]
+notes = "Manual threshold scan. DeltaThr = 3, only KC705-193"
+
+[runs."20231016-084811"]
+notes = "Manual threshold scan. DeltaThr = 4, only KC705-193"
+
+[runs."20231016-084855"]
+notes = "Manual threshold scan. DeltaThr = 5, only KC705-193"
+
+[runs."20231016-084935"]
+notes = "Manual threshold scan. DeltaThr = 6, only KC705-193"
+
+[runs."20231016-085021"]
+notes = "Manual threshold scan. DeltaThr = 7, only KC705-193"
+
+[runs."20231016-085104"]
+notes = "Manual threshold scan. DeltaThr = 8, only KC705-193"
+
+[runs."20231016-085209"]
+notes = "Manual threshold scan. DeltaThr = 9, only KC705-193"
+
+[runs."20231016-085252"]
+notes = "Manual threshold scan. DeltaThr = 10, only KC705-193"
+
+[runs."20231016-085332"]
+notes = "Manual threshold scan. DeltaThr = 11, only KC705-193"
+
+[runs."20231016-085414"]
+notes = "Manual threshold scan. DeltaThr = 12, only KC705-193"
+
+[runs."20231016-085454"]
+notes = "Manual threshold scan. DeltaThr = 13, only KC705-193"
+
+[runs."20231016-085538"]
+notes = "Manual threshold scan. DeltaThr = 14, only KC705-193"
+
+[runs."20231016-085621"]
+notes = "Manual threshold scan. DeltaThr = 15, only KC705-193"
+
+[runs."20231016-085813"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-194"
+
+[runs."20231016-085859"]
+notes = "Manual threshold scan. DeltaThr = 2, only KC705-194"
+
+[runs."20231016-085947"]
+notes = "Manual threshold scan. DeltaThr = 3, only KC705-194"
+
+[runs."20231016-090040"]
+notes = "Manual threshold scan. DeltaThr = 4, only KC705-194"
+
+[runs."20231016-090133"]
+notes = "Manual threshold scan. DeltaThr = 5, only KC705-194"
+
+[runs."20231016-090219"]
+notes = "Manual threshold scan. DeltaThr = 6, only KC705-194"
+
+[runs."20231016-090313"]
+notes = "Manual threshold scan. DeltaThr = 7, only KC705-194"
+
+[runs."20231016-090411"]
+notes = "Manual threshold scan. DeltaThr = 8, only KC705-194"
+
+[runs."20231016-090500"]
+notes = "Manual threshold scan. DeltaThr = 9, only KC705-194"
+
+[runs."20231016-090541"]
+notes = "Manual threshold scan. DeltaThr = 10, only KC705-194"
+
+[runs."20231016-090619"]
+notes = "Manual threshold scan. DeltaThr = 11, only KC705-194"
+
+[runs."20231016-090652"]
+notes = "Manual threshold scan. DeltaThr = 12, only KC705-194"
+
+[runs."20231016-090731"]
+notes = "Manual threshold scan. DeltaThr = 13, only KC705-194"
+
+[runs."20231016-090802"]
+notes = "Manual threshold scan. DeltaThr = 14, only KC705-194"
+
+[runs."20231016-090846"]
+notes = "Manual threshold scan. DeltaThr = 15, only KC705-194"
+
+[runs."20231016-090956"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-195"
+
+[runs."20231016-091108"]
+notes = "Manual threshold scan. DeltaThr = 2, only KC705-195"
+
+[runs."20231016-091151"]
+notes = "Manual threshold scan. DeltaThr = 3, only KC705-195"
+
+[runs."20231016-091226"]
+notes = "Manual threshold scan. DeltaThr = 4, only KC705-195"
+
+[runs."20231016-091305"]
+notes = "Manual threshold scan. DeltaThr = 5, only KC705-195"
+
+[runs."20231016-091341"]
+notes = "Manual threshold scan. DeltaThr = 6, only KC705-195"
+
+[runs."20231016-091418"]
+notes = "Manual threshold scan. DeltaThr = 7, only KC705-195"
+
+[runs."20231016-091451"]
+notes = "Manual threshold scan. DeltaThr = 8, only KC705-195"
+
+[runs."20231016-091524"]
+notes = "Manual threshold scan. DeltaThr = 9, only KC705-195"
+
+[runs."20231016-091554"]
+notes = "Manual threshold scan. DeltaThr = 10, only KC705-195"
+
+[runs."20231016-091626"]
+notes = "Manual threshold scan. DeltaThr = 11, only KC705-195"
+
+[runs."20231016-091659"]
+notes = "Manual threshold scan. DeltaThr = 12, only KC705-195"
+
+[runs."20231016-091733"]
+notes = "Manual threshold scan. DeltaThr = 13, only KC705-195"
+
+[runs."20231016-091809"]
+notes = "Manual threshold scan. DeltaThr = 14, only KC705-195"
+
+[runs."20231016-091840"]
+notes = "Manual threshold scan. DeltaThr = 15, only KC705-195"
+
+[runs."20231016-092642"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-196"
+n_spills = "20231016-145041"
+
+[runs."20231016-092750"]
+notes = "Manual threshold scan. DeltaThr = 2, only KC705-196"
+n_spills = 4
+
+[runs."20231016-092848"]
+notes = "Manual threshold scan. DeltaThr = 3, only KC705-196"
+
+[runs."20231016-092945"]
+notes = "Manual threshold scan. DeltaThr = 4, only KC705-196"
+
+[runs."20231016-093034"]
+notes = "Manual threshold scan. DeltaThr = 5, only KC705-196"
+
+[runs."20231016-093139"]
+notes = "Manual threshold scan. DeltaThr = 6, only KC705-196"
+
+[runs."20231016-093235"]
+notes = "Manual threshold scan. DeltaThr = 7, only KC705-196"
+
+[runs."20231016-093333"]
+notes = "Manual threshold scan. DeltaThr = 8, only KC705-196"
+
+[runs."20231016-093438"]
+notes = "Manual threshold scan. DeltaThr = 9, only KC705-196"
+
+[runs."20231016-093537"]
+notes = "Manual threshold scan. DeltaThr = 10, only KC705-196"
+
+[runs."20231016-093623"]
+notes = "Manual threshold scan. DeltaThr = 11, only KC705-196"
+
+[runs."20231016-093719"]
+notes = "Manual threshold scan. DeltaThr = 12, only KC705-196"
+
+[runs."20231016-093806"]
+notes = "Manual threshold scan. DeltaThr = 13, only KC705-196"
+
+[runs."20231016-093854"]
+notes = "Manual threshold scan. DeltaThr = 14, only KC705-196"
+
+[runs."20231016-093954"]
+notes = "Manual threshold scan. DeltaThr = 15, only KC705-196"
+
+[runs."20231016-094133"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-197"
+
+[runs."20231016-094227"]
+notes = "Manual threshold scan. DeltaThr = 2, only KC705-197"
+
+[runs."20231016-094333"]
+notes = "Manual threshold scan. DeltaThr = 3, only KC705-197"
+
+[runs."20231016-094449"]
+notes = "Manual threshold scan. DeltaThr = 4, only KC705-197"
+
+[runs."20231016-094545"]
+notes = "Manual threshold scan. DeltaThr = 5, only KC705-197"
+
+[runs."20231016-094644"]
+notes = "Manual threshold scan. DeltaThr = 6, only KC705-197"
+
+[runs."20231016-094739"]
+notes = "Manual threshold scan. DeltaThr = 7, only KC705-197"
+
+[runs."20231016-094824"]
+notes = "Manual threshold scan. DeltaThr = 8, only KC705-197"
+
+[runs."20231016-094917"]
+notes = "Manual threshold scan. DeltaThr = 9, only KC705-197"
+
+[runs."20231016-095024"]
+notes = "Manual threshold scan. DeltaThr = 10, only KC705-197"
+
+[runs."20231016-095115"]
+notes = "Manual threshold scan. DeltaThr = 11, only KC705-197"
+
+[runs."20231016-095201"]
+notes = "Manual threshold scan. DeltaThr = 12, only KC705-197"
+
+[runs."20231016-095306"]
+notes = "Manual threshold scan. DeltaThr = 13, only KC705-197"
+
+[runs."20231016-095417"]
+notes = "Manual threshold scan. DeltaThr = 14, only KC705-197"
+
+[runs."20231016-095522"]
+notes = "Manual threshold scan. DeltaThr = 15, only KC705-197"
+
+[runs."20231016-095625"]
+notes = "Manual threshold scan. DeltaThr = 1, only KC705-198"
+
+[runs."20231016-095723"]
+notes = "Manual threshold scan. DeltaThr = 2 only KC705-198"
+
+[runs."20231016-095815"]
+notes = "Manual threshold scan. DeltaThr = 3 only KC705-198"
+
+[runs."20231016-095927"]
+notes = "Manual threshold scan. DeltaThr = 4 only KC705-198"
+
+[runs."20231016-100006"]
+notes = "Manual threshold scan. DeltaThr = 5 only KC705-198"
+
+[runs."20231016-100048"]
+notes = "Manual threshold scan. DeltaThr = 6 only KC705-198"
+
+[runs."20231016-100128"]
+notes = "Manual threshold scan. DeltaThr = 7 only KC705-198"
+
+[runs."20231016-100213"]
+notes = "Manual threshold scan. DeltaThr = 8 only KC705-198"
+
+[runs."20231016-100302"]
+notes = "Manual threshold scan. DeltaThr = 9 only KC705-198"
+
+[runs."20231016-100352"]
+notes = "Manual threshold scan. DeltaThr = 10 only KC705-198"
+
+[runs."20231016-100459"]
+notes = "Manual threshold scan. DeltaThr = 11 only KC705-198"
+
+[runs."20231016-100544"]
+notes = "Manual threshold scan. DeltaThr = 12 only KC705-198"
+
+[runs."20231016-100625"]
+notes = "Manual threshold scan. DeltaThr = 13 only KC705-198"
+
+[runs."20231016-100706"]
+notes = "Manual threshold scan. DeltaThr = 14 only KC705-198"
+
+[runs."20231016-100745"]
+notes = "Manual threshold scan. DeltaThr = 15 only KC705-198"
+
+[runs."20231016-100900"]
+notes = "Manual threshold scan. DeltaThr = 16, all boards"
+
+[runs."20231016-101055"]
+notes = "Manual threshold scan. DeltaThr = 17, all boards"
+
+[runs."20231016-101246"]
+notes = "Manual threshold scan. DeltaThr = 18, all boards"
+
+[runs."20231016-101441"]
+notes = "Manual threshold scan. DeltaThr = 19, all boards"
+
+[runs."20231016-101635"]
+notes = "Manual threshold scan. DeltaThr = 20, all boards"
+
+[runs."20231016-101829"]
+notes = "Manual threshold scan. DeltaThr = 21, all boards"
+
+[runs."20231016-102025"]
+notes = "Manual threshold scan. DeltaThr = 22, all boards"
+
+[runs."20231016-102219"]
+notes = "Manual threshold scan. DeltaThr = 23, all boards"
+
+[runs."20231016-102436"]
+notes = "Manual threshold scan. DeltaThr = 24, all boards"
+
+[runs."20231016-102954"]
+notes = "Manual threshold scan. DeltaThr = 25, all boards"
+
+[runs."20231016-103340"]
+notes = "Manual threshold scan. DeltaThr = 26, all boards"
+
+[runs."20231016-103538"]
+notes = "Manual threshold scan. DeltaThr = 27, all boards"
+
+[runs."20231016-103744"]
+notes = "Manual threshold scan. DeltaThr = 28, all boards"
+
+[runs."20231016-103938"]
+notes = "Manual threshold scan. DeltaThr = 29, all boards"
+
+[runs."20231016-104132"]
+notes = "Manual threshold scan. DeltaThr = 30, all boards"
+
+[runs."20231016-104326"]
+notes = "Manual threshold scan. DeltaThr = 31, all boards"
+
+[runs."20231016-104533"]
+notes = "Manual threshold scan. DeltaThr = 32, all boards"
+
+[runs."20231016-104726"]
+notes = "Manual threshold scan. DeltaThr = 33, all boards"
+
+[runs."20231016-104945"]
+notes = "Manual threshold scan. DeltaThr = 34, all boards"
+
+[runs."20231016-105142"]
+notes = "Manual threshold scan. DeltaThr = 35, all boards"
+
+[runs."20231016-105344"]
+notes = "Manual threshold scan. DeltaThr = 36, all boards"
+
+[runs."20231016-105609"]
+notes = "Manual threshold scan. DeltaThr = 37, all boards"
+
+[runs."20231016-105817"]
+notes = "Manual threshold scan. DeltaThr = 38, all boards"
+
+[runs."20231016-110015"]
+notes = "Manual threshold scan. DeltaThr = 39, all boards"
+
+[runs."20231016-110204"]
+notes = "Manual threshold scan. DeltaThr = 40, all boards"
+
+[runs."20231016-110401"]
+notes = "Manual threshold scan. DeltaThr = 41, all boards"
+
+[runs."20231016-110549"]
+notes = "Manual threshold scan. DeltaThr = 42, all boards"
+
+[runs."20231016-110749"]
+notes = "Manual threshold scan. DeltaThr = 43, all boards"
+
+[runs."20231016-110941"]
+notes = "Manual threshold scan. DeltaThr = 44, all boards"
+
+[runs."20231016-111129"]
+notes = "Manual threshold scan. DeltaThr = 45, all boards"
+
+[runs."20231016-111400"]
+notes = "Manual threshold scan. DeltaThr = 46, all boards"
+
+[runs."20231016-111559"]
+notes = "Manual threshold scan. DeltaThr = 47, all boards"
+
+[runs."20231016-111748"]
+notes = "Manual threshold scan. DeltaThr = 48, all boards"
+
+[runs."20231016-111939"]
+notes = "Manual threshold scan. DeltaThr = 49, all boards"
+
+[runs."20231016-112155"]
+notes = "Manual threshold scan. DeltaThr = 50, all boards"
+
+[runs."20231016-112408"]
+notes = "Manual threshold scan. DeltaThr = 51, all boards"
+
+[runs."20231016-112656"]
+notes = "Manual threshold scan. DeltaThr = 52, all boards"
+
+[runs."20231016-112901"]
+notes = "Manual threshold scan. DeltaThr = 53, all boards"
+
+[runs."20231016-113051"]
+notes = "Manual threshold scan. DeltaThr = 54, all boards"
+
+[runs."20231016-113252"]
+notes = "Manual threshold scan. DeltaThr = 55, all boards"
+
+[runs."20231016-113501"]
+notes = "Manual threshold scan. DeltaThr = 56, all boards"
+
+[runs."20231016-113704"]
+notes = "Manual threshold scan. DeltaThr = 57, all boards"
+
+[runs."20231016-113854"]
+notes = "Manual threshold scan. DeltaThr = 58, all boards"
+
+[runs."20231016-114056"]
+notes = "Manual threshold scan. DeltaThr = 59, all boards"
+
+[runs."20231016-114307"]
+notes = "Manual threshold scan. DeltaThr = 60, all boards"
+
+[runs."20231016-120208"]
+beam_status = "on"
+notes = "Just a test to check everything is still working (changed from fake spills to real spills), DeltaThr=10"
+n_spills = 10
+dcr_scan = "20231016-115515"
+
+[runs."20231016-121210"]
+notes = "52 V, ToT ON, DeltaThr=10, baseline calibration 31,31 (FIFOs often full)"
+n_spills = 100
+quality = "warning"
+calibration = "20231015-024850"
+
+[runs."20231016-175650"]
+temperature = 0.0
+notes = "52 V, T=0°C, standard settings"
+n_spills = 10
+quality = "bad"
+calibration = "20231016-145041"
+dcr_scan = "20231016-165052"
+
+[runs."20231016-184344"]
+notes = "52 V, T from -20° C to -22° C"
+
+[runs."20231016-203431"]
+temperature = -25.0
+v_bias = 53.0
+notes = "53 V, T=-25°C, standard settings, DeltaThr=10,"
+n_spills = 50
+quality = "good"
+calibration = "20231015-045856"
+
+[runs."20231016-212253"]
+notes = "bias voltage OFF on PDU #3 matrix 1 and 3, PDU #1 matrix 3 and 4, PDU #4 matrix 2 and 4"
+n_spills = 10
+
+[runs."20231016-213255"]
+notes = "bias voltage OFF also on PDU #2 matrix 1 and 2"
+
+[runs."20231016-215405"]
+notes = "All on mapping test"
+
+[runs."20231016-220158"]
+mirror_mm = 25
+notes = "mirror at 25 mm"
+
+[runs."20231016-220808"]
+mirror_mm = 5
+notes = "mirror at 5 mm"
+
+[runs."20231016-222632"]
+mirror_mm = 25
+notes = "PDU1 all OFF, PDU2 3&4 OFF, PDU3 1&3 OFF, PDU4 2&4 OFF, spill loop"
+quality = "bad"
+
+[runs."20231016-223132"]
+n_spills = 11
+
+[runs."20231016-223439"]
+n_spills = 50
+quality = "good"
+
+[runs."20231016-230522"]
+polarity = "negative"
+beam_energy = 10.0
+notes = "config.331.31.31"
+n_spills = 10
+quality = "bad"
+calibration = "20231015-024850"
+
+[runs."20231016-231159"]
+notes = "deltaThr = 15"
+
+[runs."20231016-231859"]
+notes = "deltaThr = 10 Standard config"
+calibration = "20231015-045856"
+
+[runs."20231016-233030"]
+notes = "PDU off are also excluded from the readout"
+
+[runs."20231016-233703"]
+
+[runs."20231016-234302"]
+notes = "deltaThr=15"
+quality = "good"
+calibration = "20231015-024850"
+
+[runs."20231016-235446"]
+notes = "Start of timing runs: config.331.31.31, deltaThr=15, VBias=53V, PDU1 all OFF, PDU2 3&4 OFF, PDU3 1&3 OFF, PDU4 2&4 OFF"
+n_spills = 100
+
+[runs."20231017-002910"]
+notes = "config.000.0.0, deltaThr=10, VBias=53V 160Mbit/s"
+calibration = "20231014-183213"
+
+[runs."20231017-010338"]
+notes = "config.301.15.15, deltaThr=10, VBias=53V 190Mbit/s"
+calibration = "20231014-224148"
+
+[runs."20231017-013835"]
+notes = "config.301.15.29, deltaThr=10, VBias=53V 330Mbit/s"
+calibration = "20231015-004803"
+
+[runs."20231017-021349"]
+notes = "standard, deltaThr=10, VBias=53V 325Mbit/s"
+calibration = "20231015-045856"
+
+[runs."20231017-035303"]
+v_bias = 55.0
+notes = "Another timing run now with higher VBias: standard, deltaThr=10, VBias=55V 475 Mbit/s"
+
+[runs."20231017-044617"]
+notes = "config.000.0.0, deltaThr=10, VBias=55V 236 Mbit/s"
+calibration = "20231014-183213"
+
+[runs."20231017-052021"]
+notes = "config.301.15.15, deltaThr=10, VBias=55V  264 Mbit/s"
+calibration = "20231014-224148"
+
+[runs."20231017-055418"]
+notes = "config.301.15.29, deltaThr=10, VBias=55V  232 Mbit/s"
+calibration = "20231015-004803"
+
+[runs."20231017-064936"]
+notes = "stopped after 13 spills to reprogram kc705.   config.331.31.31, op mode=1 deltaThr=15, VBias=55V 216 Mbit/s"
+n_spills = 13
+quality = "warning"
+calibration = "20231015-024850"
+
+[runs."20231017-071158"]
+notes = "config.331.31.31, op mode=1 deltaThr=15, VBias=55V 216 Mbit/s"
+n_spills = 100
+quality = "good"
+
+[runs."20231017-081700"]
+v_bias = 56.0
+notes = "NO BEAM, BCR=standard, baseline=20231015-045856, Delta=10, OPMode=4, Vbias=56 -- PDU1 all OFF, PDU2 3&4 OFF, PDU3 1&3 OFF, PDU4 2&4 OFF"
+n_spills = 0
+quality = "bad"
+calibration = "20231015-045856"
+
+[runs."20231017-133727"]
+mirror_mm = 250
+v_bias = 53.0
+notes = "BCR=standard, baseline=20231015-045856, Delta=10, Opmode=1, ALL PDUs ON at T = -24, but PDU 6,8 at T = -20 C (not super stable temperatures)"
+n_spills = 10
+quality = "good"
+
+[runs."20231017-134425"]
+n_spills = 50
+
+[runs."20231017-140515"]
+notes = "BAD PDU 7,8 (likely)"
+
+[runs."20231017-151610"]
+rdo_firmware = "dual-ext-adv-dev3 (soft-10)"
+notes = "Loca moved the gas mirror a bit to try centering the gas ring better, TESTING ADV FW WITH SPILL LOOP"
+n_spills = 10
+quality = "bad"
+
+[runs."20231017-151823"]
+
+[runs."20231017-152633"]
+rdo_firmware = "dual-ext-std-dev3 (soft-8)"
+
+[runs."20231017-153749"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+
+[runs."20231017-154658"]
+notes = "Delta=30 because we likely have baselines off"
+
+[runs."20231017-155125"]
+
+[runs."20231017-155803"]
+notes = "Delta=10 WE NEED A BASELINE SCAN"
+
+[runs."20231017-183414"]
+polarity = "positive"
+beam_energy = 8.0
+notes = "Delta=5"
+calibration = "20231017-183414"
+
+[runs."20231017-184332"]
+rdo_firmware = "dual-ext-std-dev3 (soft-8)"
+
+[runs."20231017-185204"]
+rdo_firmware = "dual-ext-std-dev2 (soft-8)"
+notes = "Delta=10"
+quality = "good"
+
+[runs."20231017-185633"]
+notes = "Delta=15"
+quality = "bad"
+
+[runs."20231017-190138"]
+quality = "good"
+
+[runs."20231017-190808"]
+n_spills = 50
+
+[runs."20231017-192705"]
+v_bias = 54.0
+notes = "WARNING LAST SPILLS beam momentum changed to -10"
+n_spills = 57
+quality = "need QA"
+
+[runs."20231017-194703"]
+polarity = "negative"
+beam_energy = 10.0
+n_spills = 100
+quality = "good"
+
+[runs."20231017-202425"]
+v_bias = 53.0
+notes = "TESTING VIRTUAL SHIFTER"
+n_spills = 10
+
+[runs."20231017-203112"]
+v_bias = 54.0
+
+[runs."20231017-203802"]
+v_bias = 55.0
+
+[runs."20231017-204452"]
+
+[runs."20231017-220152"]
+notes = "DOWN to -36 with all PDUs but 6 and 8 at -23.5 , Delta=10 ?"
+quality = "bad"
+
+[runs."20231018-064933"]
+mirror_mm = 2585
+v_bias = 53.0
+notes = "POSSIBLY FIRST RUN WITH BEAM IS 20231018-064933 at 53 V"
+n_spills = 50
+quality = "good"
+
+[runs."20231018-070121"]
+n_spills = 100
+
+[runs."20231018-072922"]
+v_bias = 54.0
+
+[runs."20231018-075251"]
+v_bias = 55.0
+notes = "NO BEAM FROM BOOSTER, END"
+n_spills = 25
+
+[schema]
+extra_fields = ["altai"]

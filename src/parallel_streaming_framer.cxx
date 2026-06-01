@@ -1,7 +1,10 @@
 #include "parallel_streaming_framer.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <tuple>
 #include <vector>
 #include <string>
 #include <thread>
@@ -12,21 +15,22 @@ using namespace std;
 
 //  Constructor (frame_size overload — delegates to the FramerConfigStruct overload)
 ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filenames,
-                                                     std::string trigger_config_file,
-                                                     std::string readout_config_file,
-                                                     uint16_t frame_size)
+                                                 std::string trigger_config_file,
+                                                 std::string readout_config_file,
+                                                 uint16_t frame_size)
     : ParallelStreamingFramer(filenames, trigger_config_file, readout_config_file,
-                                FramerConfigStruct{frame_size,
-                                                     BTANA_FIRST_FRAMES_TRIGGER,
-                                                     BTANA_AFTERPULSE_DEADTIME,
-                                                     BTANA_TRIGGER_SECONDARY_WINDOW})
-{}
+                              FramerConfigStruct{frame_size,
+                                                 BTANA_FIRST_FRAMES_TRIGGER,
+                                                 BTANA_AFTERPULSE_DEADTIME,
+                                                 BTANA_TRIGGER_SECONDARY_WINDOW})
+{
+}
 
 //  Constructor (FramerConfigStruct overload — canonical implementation)
 ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filenames,
-                                                     std::string trigger_config_file,
-                                                     std::string readout_config_file,
-                                                     FramerConfigStruct framer_cfg)
+                                                 std::string trigger_config_file,
+                                                 std::string readout_config_file,
+                                                 FramerConfigStruct framer_cfg)
     : _frame_size(framer_cfg.frame_size),
       _first_frames_trigger(framer_cfg.first_frames_trigger),
       _afterpulse_deadtime(framer_cfg.afterpulse_deadtime),
@@ -35,7 +39,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
 {
     // Create streams.  Invalid streamers are dropped HERE (in the ctor) so
     // the data_streams indices stay stable for the lifetime of the framer.
-    // The previous per-spill erase in next_spill() (CODE_REVIEW §1.3) would
+    // The previous per-spill erase in next_spill() would
     // have re-indexed streams between spills, which is incompatible with
     // rollover_correction_per_stream_and_spill — that table is built once
     // by resolve_rollover_offsets() against the ORIGINAL ordering.
@@ -54,47 +58,32 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
         if (!data_streams.back().is_valid())
         {
             mist::logger::warning("Failed to open streamer: " + current_filename);
-            data_streams.pop_back();   // drop invalid streamers up front
+            data_streams.pop_back(); // drop invalid streamers up front
         }
     }
 
-    // Load trigger configurations (read-only during processing; looked up via find_best_trigger).
-    triggers = trigger_conf_reader(trigger_config_file);
+    // Load trigger configurations (read-only during processing; O(1) lookup via
+    // trigger_config.by_device and trigger_config.by_channel — see ).
+    trigger_config = trigger_conf_reader(trigger_config_file);
 
     // Readout configuration
     readout_config = ReadoutConfigList(readout_config_reader(readout_config_file));
 
-    // Warn for every use_hit trigger whose source channel is absent from the readout config.
-    // Without a readout entry the Hit path produces no output (current_readout_tag_list is empty).
-    for (const auto &trig : triggers)
+    // Channel-mode triggers must also be registered in the readout config — the
+    // per-chip readout filter further down breaks out of the stream loop before
+    // the channel-mode lookup is even reached if the source chip isn't enrolled.
+    // Warn at startup so silently-disabled triggers don't surprise the user.
+    for (const auto &[key, ct] : trigger_config.by_channel)
     {
-        if (!trig.use_hit)
-            continue;
-
-        bool registered = false;
-        if (trig.fifo >= 0)
-        {
-            // Exact lane known — check the specific chip.
-            registered = !readout_config.find_by_device_and_chip(trig.device, trig.fifo / 4).empty();
-        }
-        else if (trig.chip >= 0)
-        {
-            // Chip-level filter — check that chip.
-            registered = !readout_config.find_by_device_and_chip(trig.device, trig.chip).empty();
-        }
-        else
-        {
-            // Device-only trigger — any chip on the device would do.
-            registered = (readout_config.find_by_device(trig.device) != nullptr);
-        }
-
+        const bool registered =
+            !readout_config.find_by_device_and_chip(ct.device, ct.fifo / 4).empty();
         if (!registered)
             mist::logger::warning(
-                "(ParallelStreamingFramer) Trigger \"" + trig.name +
-                "\" has use_hit=true but device=" + std::to_string(trig.device) +
-                (trig.fifo >= 0 ? " fifo=" + std::to_string(trig.fifo) : "") +
-                (trig.chip >= 0 ? " chip=" + std::to_string(trig.chip) : "") +
-                " is not registered in the readout config — hits will be silently discarded.");
+                "(ParallelStreamingFramer) Channel-mode trigger \"" + ct.name +
+                "\" targets device=" + std::to_string(ct.device) +
+                " fifo=" + std::to_string(ct.fifo) +
+                " (chip=" + std::to_string(ct.fifo / 4) + ")"
+                                                          " which is not registered in the readout config — trigger will never fire.");
     }
 
     // Initialize spill counter
@@ -111,7 +100,7 @@ ParallelStreamingFramer::ParallelStreamingFramer(std::vector<std::string> filena
     // first Hit).  Range chosen to span ~100 µs (32768 cc) so DCR-driven
     // long-Δt entries land in the in-range part of the histogram rather than
     // overflowing the previous narrow [0, 1024] axis (post-migration audit
-    // §10).  Bin width = 32 cc ≈ 100 ns — coarse enough for the long tail,
+    // Bin width = 32 cc ≈ 100 ns — coarse enough for the long tail,
     // fine enough to resolve the QA near (1–64 cc) and far (256–319 cc)
     // windows.
     h_afterpulse_dt = RootHist<TH1F>("h_afterpulse_dt",
@@ -234,14 +223,15 @@ void ParallelStreamingFramer::resolve_rollover_offsets()
             if (rollover_offset > 1.)
             {
                 mist::logger::warning(TString::Format(
-                    "(ParallelStreamingFramer::resolve_rollover_offsets) "
-                    "Stream %s spill %zu: rollover offset %.0f exceeds 1 tick "
-                    "(stream = %.0f, reference = %.0f) — skipping correction",
-                    current_stream.get_filename().c_str(),
-                    i_spill,
-                    rollover_offset,
-                    rollover_vector[i_spill],
-                    reference_rollover_per_spill[i_spill]).Data());
+                                          "(ParallelStreamingFramer::resolve_rollover_offsets) "
+                                          "Stream %s spill %zu: rollover offset %.0f exceeds 1 tick "
+                                          "(stream = %.0f, reference = %.0f) — skipping correction",
+                                          current_stream.get_filename().c_str(),
+                                          i_spill,
+                                          rollover_offset,
+                                          rollover_vector[i_spill],
+                                          reference_rollover_per_spill[i_spill])
+                                          .Data());
                 continue;
             }
 
@@ -252,13 +242,14 @@ void ParallelStreamingFramer::resolve_rollover_offsets()
             ++n_corrections_applied;
 
             mist::logger::warning(TString::Format(
-                "(ParallelStreamingFramer::resolve_rollover_offsets) "
-                "Stream %s spill %zu: rollover = %.0f, reference = %.0f, correction = +%.0f ticks",
-                current_stream.get_filename().c_str(),
-                i_spill,
-                rollover_vector[i_spill],
-                reference_rollover_per_spill[i_spill],
-                rollover_offset).Data());
+                                      "(ParallelStreamingFramer::resolve_rollover_offsets) "
+                                      "Stream %s spill %zu: rollover = %.0f, reference = %.0f, correction = +%.0f ticks",
+                                      current_stream.get_filename().c_str(),
+                                      i_spill,
+                                      rollover_vector[i_spill],
+                                      reference_rollover_per_spill[i_spill],
+                                      rollover_offset)
+                                      .Data());
         }
     }
 
@@ -282,7 +273,13 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
     {
         const auto &stream_corrections =
             rollover_correction_per_stream_and_spill[stream_index];
-        if (static_cast<size_t>(_current_spill) < stream_corrections.size())
+        //  _current_spill is initialised to -1 and only becomes a valid
+        //  index after the first start_spill — guard explicitly to
+        //  avoid the implicit `static_cast<size_t>(-1) == SIZE_MAX`
+        //  trap that would silently pass any signed/unsigned compare
+        //  against a smaller vector.
+        if (_current_spill >= 0 &&
+            static_cast<size_t>(_current_spill) < stream_corrections.size())
             rollover_correction_cc = stream_corrections[_current_spill];
     }
 
@@ -302,11 +299,10 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
 
     // Precompute the QA far-window bounds from _qa_cfg.
     // Far window mirrors the near window's width and starts at the sideband offset.
-    const int64_t qa_near_lo      = _qa_cfg.afterpulse_near_lo;
-    const int64_t qa_near_hi      = _qa_cfg.afterpulse_near_hi;
-    const int64_t qa_far_lo       = _qa_cfg.afterpulse_sideband_offset;
-    const int64_t qa_far_hi       = _qa_cfg.afterpulse_sideband_offset
-                                  + (_qa_cfg.afterpulse_near_hi - _qa_cfg.afterpulse_near_lo);
+    const int64_t qa_near_lo = _qa_cfg.afterpulse_near_lo;
+    const int64_t qa_near_hi = _qa_cfg.afterpulse_near_hi;
+    const int64_t qa_far_lo = _qa_cfg.afterpulse_sideband_offset;
+    const int64_t qa_far_hi = _qa_cfg.afterpulse_sideband_offset + (_qa_cfg.afterpulse_near_hi - _qa_cfg.afterpulse_near_lo);
 
     // Start loop on streamer data
     while (current_stream.read_next())
@@ -334,6 +330,42 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         //  ----    ----    ----    ALCOR Hit  ----    ----    ----
         if (current_data.is_alcor_hit())
         {
+            // Channel-mode trigger: a data-tagged word on a configured channel
+            // is forced into the trigger path (see DISCUSSION.md → ).
+            // Check this FIRST so the channel never touches the data-hit path
+            // (no afterpulse bookkeeping, no readout-tag categorisation).
+            {
+                const uint64_t ch_key = pack_channel_key(
+                    static_cast<uint16_t>(current_device),
+                    static_cast<uint16_t>(current_data.get_fifo()),
+                    static_cast<uint8_t>(current_data.get_column()),
+                    static_cast<uint8_t>(current_data.get_pixel()));
+                if (auto it = trigger_config.by_channel.find(ch_key);
+                    it != trigger_config.by_channel.end())
+                {
+                    const auto &ct = it->second;
+                    bool sec = false;
+                    if (auto sm = trigger_secondary_map.find(ct.index); sm != trigger_secondary_map.end())
+                        sec = hit_frame_coarse_global < sm->second;
+                    trigger_secondary_map[ct.index] = hit_frame_coarse_global + _trigger_secondary_window;
+
+                    const uint32_t new_frame_index =
+                        (hit_frame_coarse_global - ct.delay) / (_frame_size * 1.);
+                    const uint64_t new_frame_coarse =
+                        (hit_frame_coarse_global - ct.delay) % static_cast<uint64_t>(_frame_size);
+
+                    std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
+                    if (use_shared_frame_map)
+                        map_lock.lock();
+                    auto &ev = frame_map[new_frame_index].trigger_hits.emplace_back(
+                        ct.index,
+                        static_cast<uint16_t>(new_frame_coarse),
+                        static_cast<float>(BTANA_ALCOR_CC_TO_NS * new_frame_coarse));
+                    ev.is_secondary = sec;
+                    continue;
+                }
+            }
+
             // Same-channel Δt analysis: drives both the framer's afterpulse
             // mask (Δt < deadtime, gates downstream CT/recodata logic) AND
             // the QA near/far bits used for sideband-subtracted afterpulse
@@ -369,7 +401,8 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             // shared mutex so existing single-threaded callers keep working.
             {
                 std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                if (use_shared_frame_map) map_lock.lock();
+                if (use_shared_frame_map)
+                    map_lock.lock();
                 auto &current_lightdata = frame_map[hit_frame_index];
                 for (auto &tag : current_readout_tag_list)
                 {
@@ -399,109 +432,43 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         //  ----    ----    ----    Trigger Hit  ----    ----    ----
         if (current_data.is_trigger_tag())
         {
-            auto current_fifo   = current_data.get_fifo();
-            auto current_column = current_data.get_column();
-            auto current_pixel  = current_data.get_pixel();
-
-            // Find best-matching config (most specific selector wins).
-            // triggers is read-only after construction — no mutex needed for the scan.
-            const TriggerConfig *best = find_best_trigger(
-                triggers, current_device, current_fifo, current_column, current_pixel);
-
-            // Log unrecognised triggers once per (device, fifo, column, pixel) tuple.
-            // Set membership is the only thing that needs the mutex — the
-            // std::to_string chain + mist::logger::warning() are released
-            // outside it so anyone else queuing on triggers_map_mutex isn't
-            // held up by string formatting (CODE_REVIEW §1.6).
-            if (!best)
-            {
-                uint64_t key = trigger_map_key(current_device, current_fifo, current_column, current_pixel);
-                bool first_time = false;
-                {
-                    std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
-                    first_time = unknown_triggers_seen.insert(key).second;
-                }
-                if (first_time)
-                    mist::logger::warning("(ParallelStreamingFramer) Unknown trigger:"
-                                          " device=" + std::to_string(current_device) +
-                                          " fifo="   + std::to_string(current_fifo) +
-                                          " column=" + std::to_string(current_column) +
-                                          " pixel="  + std::to_string(current_pixel));
-            }
-
-            const bool trigger_known = best != nullptr;
-            const TriggerConfig current_setting = best ? *best : TriggerConfig{};
-
-            // use_hit bypass: treat the trigger-tagged word as a standard ALCOR Hit.
-            // The trigger_tag struct carries the same channel and timing fields as a
-            // normal alcor_hit, so the Hit path processes it identically.
-            // Requires the channel to be registered in the readout config so that
-            // current_readout_tag_list is non-empty and the Hit is categorised correctly.
-            if (current_setting.use_hit)
-            {
-                // Same-channel Δt analysis (mirrors the ALCOR-Hit path above);
-                // same_channel_dt is forwarded into the locked block below for
-                // the h_afterpulse_dt diagnostic fill.
-                current_data.set_mask(0);
-                auto current_channel = current_data.get_global_index();
-                int64_t same_channel_dt = -1;
-                if (auto search = prev_hit_time_map.find(current_channel); search != prev_hit_time_map.end())
-                {
-                    same_channel_dt =
-                        static_cast<int64_t>(hit_frame_coarse_global) - static_cast<int64_t>(search->second);
-                    if (same_channel_dt < static_cast<int64_t>(_afterpulse_deadtime))
-                        current_data.add_mask_bit(HitmaskAfterpulse);
-                    if (same_channel_dt >= qa_near_lo && same_channel_dt <= qa_near_hi)
-                        current_data.add_mask_bit(HitmaskAfterpulseNear);
-                    if (same_channel_dt >= qa_far_lo && same_channel_dt <= qa_far_hi)
-                        current_data.add_mask_bit(HitmaskAfterpulseFar);
-                }
-                prev_hit_time_map[current_channel] = hit_frame_coarse_global;
-                current_data.set_rollover(0);
-                current_data.set_coarse(hit_frame_coarse);
-                {
-                    // Per-worker frame_map → no lock; fallback test path
-                    // (qa==nullptr) still serialises via the shared mutex.
-                    std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                    if (use_shared_frame_map) map_lock.lock();
-                    auto &current_lightdata = frame_map[hit_frame_index];
-                    for (auto &tag : current_readout_tag_list)
-                    {
-                        if (tag == "timing")
-                            current_lightdata.timing_hits.emplace_back(current_data.get_data());
-                        else if (tag == "tracking")
-                            current_lightdata.tracking_hits.emplace_back(current_data.get_data());
-                        else if (tag == "cherenkov")
-                            current_lightdata.cherenkov_hits.emplace_back(current_data.get_data());
-                    }
-                }
-                if (qa)
-                {
-                    // h2_fine_tune_distribution is sized [0, 10000] on the X axis
-                // — the legacy compact "global tdc index" range.  Under Phase-5
-                // storage, get_global_tdc_index() returns the packed 32-bit raw
-                // value (millions), which would overflow the axis on every fill.
-                // Use the dense ordinal helper to recover the legacy bin index.
-                qa->h2_fine_tune->Fill(::GlobalIndex(current_data.get_global_tdc_index()).tdc_ordinal(),
-                                       current_data.get_fine());
-                    if (same_channel_dt >= 0)
-                        qa->h_afterpulse->Fill(static_cast<double>(same_channel_dt));
-                }
-                continue;
-            }
+            // Device-mode lookup: the hardware tag is the discriminator —
+            // the device alone identifies which configured trigger fired
+            // (see DISCUSSION.md → ).  O(1) hash lookup, no scoring.
+            auto it = trigger_config.by_device.find(static_cast<uint16_t>(current_device));
+            const bool trigger_known = (it != trigger_config.by_device.end());
 
             if (!trigger_known)
             {
-                // Unknown trigger — write to original frame
+                // Log unrecognised tagged-trigger devices once. Set membership
+                // is the only thing under the mutex — string formatting and
+                // mist::logger::warning() are released to keep other workers
+                // off this lock
+                bool first_time = false;
+                {
+                    std::lock_guard<std::mutex> trig_lock(triggers_map_mutex);
+                    first_time = unknown_trigger_devices_seen.insert(
+                                                                 static_cast<uint16_t>(current_device))
+                                     .second;
+                }
+                if (first_time)
+                    mist::logger::warning(
+                        "(ParallelStreamingFramer) Tagged trigger from "
+                        "unconfigured device=" +
+                        std::to_string(current_device) +
+                        " — emitting as _TRIGGER_UNKNOWN_.");
+
+                // Unknown trigger — write to original frame at the original timing.
                 const uint8_t unknown_idx = static_cast<uint8_t>(_TRIGGER_UNKNOWN_);
                 bool sec = false;
-                if (auto it = trigger_secondary_map.find(unknown_idx); it != trigger_secondary_map.end())
-                    sec = hit_frame_coarse_global < it->second;
+                if (auto sm = trigger_secondary_map.find(unknown_idx); sm != trigger_secondary_map.end())
+                    sec = hit_frame_coarse_global < sm->second;
                 trigger_secondary_map[unknown_idx] = hit_frame_coarse_global + _trigger_secondary_window;
                 {
                     // Per-worker frame_map → no lock; fallback test path locks.
                     std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                    if (use_shared_frame_map) map_lock.lock();
+                    if (use_shared_frame_map)
+                        map_lock.lock();
                     auto &ev = frame_map[hit_frame_index].trigger_hits.emplace_back(
                         unknown_idx,
                         static_cast<uint16_t>(current_device),
@@ -511,20 +478,25 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 continue;
             }
 
-            // Known trigger — check for secondary firing, then recalculate frame and write there
-            {
-                bool sec = false;
-                if (auto it = trigger_secondary_map.find(current_setting.index); it != trigger_secondary_map.end())
-                    sec = hit_frame_coarse_global < it->second;
-                trigger_secondary_map[current_setting.index] = hit_frame_coarse_global + _trigger_secondary_window;
+            // Known trigger — apply delay correction and write to the corrected frame.
+            const auto &cfg = it->second;
+            bool sec = false;
+            if (auto sm = trigger_secondary_map.find(cfg.index); sm != trigger_secondary_map.end())
+                sec = hit_frame_coarse_global < sm->second;
+            trigger_secondary_map[cfg.index] = hit_frame_coarse_global + _trigger_secondary_window;
 
-                uint32_t new_frame_index = (hit_frame_coarse_global - current_setting.delay) / (_frame_size * 1.);
-                uint64_t new_frame_coarse = (hit_frame_coarse_global - current_setting.delay) % static_cast<uint64_t>(_frame_size);
+            const uint32_t new_frame_index =
+                (hit_frame_coarse_global - cfg.delay) / (_frame_size * 1.);
+            const uint64_t new_frame_coarse =
+                (hit_frame_coarse_global - cfg.delay) % static_cast<uint64_t>(_frame_size);
+
+            {
                 // Per-worker frame_map → no lock; fallback test path locks.
                 std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
-                if (use_shared_frame_map) map_lock.lock();
+                if (use_shared_frame_map)
+                    map_lock.lock();
                 auto &ev = frame_map[new_frame_index].trigger_hits.emplace_back(
-                    static_cast<uint8_t>(current_setting.index),
+                    cfg.index,
                     static_cast<uint16_t>(new_frame_coarse),
                     static_cast<float>(BTANA_ALCOR_CC_TO_NS * new_frame_coarse));
                 ev.is_secondary = sec;
@@ -568,27 +540,23 @@ bool ParallelStreamingFramer::next_spill()
 
     // --- First frames trigger
     //
-    // Keys are inserted in strictly ascending order (0 .. _first_frames_trigger),
-    // so frame_list.end() is always the correct insertion hint → each
-    // try_emplace is O(1) amortized instead of operator[]'s O(log N)
-    // lookup-or-insert.  Saves ~1-2 ms per spill at the default
-    // first_frames_trigger=5000 (CODE_REVIEW §1.7).
-    auto hint = frame_list.end();
+    // frame_list is an unordered_map (hashed buckets, O(1) average insert),
+    // so the previous ascending-order insertion-hint trick is unnecessary.
+    // Reserve once up front so the run of 5000 inserts doesn't trigger any
+    // rehash + bucket reshuffle mid-loop.
+    frame_list.reserve(frame_list.size() + static_cast<size_t>(_first_frames_trigger));
     for (auto i_frame = 0; i_frame < _first_frames_trigger; ++i_frame)
     {
-        hint = frame_list.try_emplace(hint, i_frame);
-        hint->second.trigger_hits.push_back({
-            TriggerFirstFrames,
-            static_cast<uint16_t>(_frame_size / 2.),
-            static_cast<float>(BTANA_ALCOR_CC_TO_NS * _frame_size / 2.)});
-        ++hint; // advance past the just-inserted element so the next hint
-                // = end(), keeping the amortized-O(1) insert invariant.
+        auto [it, _] = frame_list.try_emplace(i_frame);
+        it->second.trigger_hits.push_back({TriggerFirstFrames,
+                                           static_cast<uint16_t>(_frame_size / 2.),
+                                           static_cast<float>(BTANA_ALCOR_CC_TO_NS * _frame_size / 2.)});
     }
 
     // Invalid streams were already dropped in the constructor, so
     // data_streams here is guaranteed to contain only valid streamers and
     // its indexing is stable across spills (matches the rollover_correction
-    // table; CODE_REVIEW §1.3).
+    // table;).
 
     // Determine worker thread count.  Clamped by three independent factors:
     //
@@ -608,19 +576,19 @@ bool ParallelStreamingFramer::next_spill()
     //    for no gain.  At 192 streams this rarely bites, but at small DCR
     //    configs (4–8 streams) the saving is real.
     //
-    // CODE_REVIEW §D-09 fix: the previous formula `8 * std::min(n_usable, 2u)`
+    // fix: the previous formula `8 * std::min(n_usable, 2u)`
     // is algebraically equivalent to a hard ceiling of 16 on every machine
     // with ≥ 4 cores, regardless of n_usable.  64-core nodes performed
     // identically to 4-core laptops.  Replaced with an explicit
     // `min(n_usable, kMaxWorkers)` so the cap is greppable and the intermediate
     // value scales with hardware up to the cap.
     constexpr unsigned int kMaxWorkers = 16;
-    const unsigned int n_hw      = std::thread::hardware_concurrency();
-    const unsigned int n_usable  = (n_hw > 2) ? (n_hw - 2) : 0;
+    const unsigned int n_hw = std::thread::hardware_concurrency();
+    const unsigned int n_usable = (n_hw > 2) ? (n_hw - 2) : 0;
     const unsigned int n_streams = static_cast<unsigned int>(data_streams.size());
     const unsigned int n_threads = (n_threads_requested > 0)
-        ? std::min({static_cast<unsigned int>(n_threads_requested), kMaxWorkers, n_streams})
-        : std::min({std::max(1u, n_usable),                          kMaxWorkers, n_streams});
+                                       ? std::min({static_cast<unsigned int>(n_threads_requested), kMaxWorkers, n_streams})
+                                       : std::min({std::max(1u, n_usable), kMaxWorkers, n_streams});
 
     std::atomic<size_t> next_streamer_atomic(0);
     std::atomic<size_t> completed(0);
@@ -640,19 +608,21 @@ bool ParallelStreamingFramer::next_spill()
         worker_qas[i].h2_fine_tune = static_cast<TH2F *>(
             h2_fine_tune_distribution->Clone(
                 TString::Format("h2_fine_tune_distribution_worker_%zu_spill_%d",
-                     i, static_cast<int>(_current_spill)).Data()));
+                                i, static_cast<int>(_current_spill))
+                    .Data()));
         worker_qas[i].h2_fine_tune->SetDirectory(nullptr);
         worker_qas[i].h2_fine_tune->Reset();
         worker_qas[i].h_afterpulse = static_cast<TH1F *>(
             h_afterpulse_dt->Clone(
                 TString::Format("h_afterpulse_dt_worker_%zu_spill_%d",
-                     i, static_cast<int>(_current_spill)).Data()));
+                                i, static_cast<int>(_current_spill))
+                    .Data()));
         worker_qas[i].h_afterpulse->SetDirectory(nullptr);
         worker_qas[i].h_afterpulse->Reset();
     }
 
     // Per-spill std::async spawn cost was measured at < 0.01% of per-spill
-    // work on a realistic load (CODE_REVIEW §D-09 — resolved); no worker
+    // work on a realistic load; no worker
     // pool needed.  Instrumentation removed.
     std::vector<std::future<void>> thread_pool;
     thread_pool.reserve(n_threads);
@@ -702,6 +672,45 @@ bool ParallelStreamingFramer::next_spill()
                 merge_lightdata(it->second, std::move(lightdata));
         }
         qa.frame_map.clear();
+    }
+
+    //  Post-merge canonicalisation pass — guarantees bit-identical
+    //  output across runs regardless of how the work-stealing atomic
+    //  counter (line 622) distributed streams across worker threads.
+    //
+    //  Why this is needed: each worker accumulates hits into its
+    //  per-thread frame_map in source-stream-traversal order; at merge
+    //  time the per-worker frames are concatenated onto the master
+    //  frame's hit vectors via merge_lightdata.  Which streams a given
+    //  worker processed depends on OS scheduling, so the per-worker
+    //  block contents of each frame's final hit vector shuffle from
+    //  run to run.  Downstream consumers that iterate the vector in
+    //  order (notably MIST's `collect_ring_hits`, which assigns
+    //  border-line hits to whichever ring is found first) then produce
+    //  slightly different output.  Sorting the vectors by a stable
+    //  hardware-derived key fixes the order in a way the schedule
+    //  cannot perturb.
+    //
+    //  Cost: O(N log N) per frame on N ≤ ~50 hits / frame — negligible
+    //  vs the per-stream decoding work above.  std::sort is stable
+    //  enough here because the key is strict (no duplicate (device,
+    //  fifo, column, pixel, tdc, rollover, coarse, fine) tuples in a
+    //  spill by construction).
+    auto cmp_finedata = [](const AlcorFinedataStruct &a,
+                           const AlcorFinedataStruct &b)
+    {
+        return std::tie(a.GlobalIndex, a.rollover, a.coarse, a.fine) < std::tie(b.GlobalIndex, b.rollover, b.coarse, b.fine);
+    };
+    auto cmp_trigger = [](const TriggerEvent &a, const TriggerEvent &b)
+    {
+        return std::tie(a.index, a.coarse, a.fine_time) < std::tie(b.index, b.coarse, b.fine_time);
+    };
+    for (auto &[frame_index, ld] : master_frame_map)
+    {
+        std::sort(ld.cherenkov_hits.begin(), ld.cherenkov_hits.end(), cmp_finedata);
+        std::sort(ld.timing_hits.begin(), ld.timing_hits.end(), cmp_finedata);
+        std::sort(ld.tracking_hits.begin(), ld.tracking_hits.end(), cmp_finedata);
+        std::sort(ld.trigger_hits.begin(), ld.trigger_hits.end(), cmp_trigger);
     }
 
     // Merge the per-worker QA clones into the master histograms, then free.

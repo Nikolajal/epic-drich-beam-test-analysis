@@ -65,7 +65,10 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    GIT_TAG        dev
+    # Pinned to an immutable SHA for a reproducible v2.0.0 build — this is the
+    # commit the release was built and tested against.  Bump deliberately when
+    # adopting newer MIST; do not float back to a branch name for releases.
+    GIT_TAG        96c6f5a779ca9456abadf754b0be9b31ed312f71
 )
 FetchContent_MakeAvailable(mist)
 
@@ -78,8 +81,8 @@ find_package(ROOT REQUIRED COMPONENTS RIO Tree Hist Graf Gui)
 # Dictionary Headers
 # --------------------------------------------------
 set(DICT_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/util/global_index.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/util/config_reader.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/utility/global_index.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/utility/config_reader.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/triggers.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_data.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/alcor_finedata.h
@@ -129,11 +132,23 @@ set(SRC_FILES
     src/tracking_altai.cxx
     src/alcor_data_streamer.cxx
     src/parallel_streaming_framer.cxx
-    src/triggers.cxx
+    src/triggers/config.cxx
+    src/triggers/streaming/score.cxx
+    src/triggers/streaming/hough.cxx
     src/lightdata_writer.cxx
+    src/writers/lightdata/dcr_afterpulse_ct_qa.cxx
+    src/writers/lightdata/finalize_streaming_qa.cxx
     src/recodata_writer.cxx
+    src/writers/recodata/radial_fit.cxx
+    src/writers/recodata/sigma_vs_n_fit.cxx
+    src/writers/recodata/ring_compute.cxx
+    src/writers/recodata/frame_pipeline.cxx
     src/recotrackdata_writer.cxx
     src/analysis_results.cxx
+    src/radiator_efficiency.cxx
+    src/utilities/btana_dump.cxx
+    src/writers/pulser_calib_writer.cxx
+    src/writers/anchor_dt_canvas.cxx
 )
 
 # --------------------------------------------------
@@ -144,6 +159,40 @@ add_library(beam_test_analysis SHARED
     G__beam_test_analysis_dict.cxx
 )
 
+#  Dev-mode lib_loader: source-tree headers + build-tree library.
+#  Used by macros run directly from the project source dir (before any
+#  `cmake --install`).  Lands at `macros/lib_loader.h` so the macros'
+#  `#include "../lib_loader.h"` resolves to this dev flavour.
+#
+#  Why dev-mode points at the source tree:  `ROOT_GENERATE_DICTIONARY`
+#  embeds absolute paths to the source-tree headers in the dict
+#  payload.  If the macro's `#include` search uses any OTHER include
+#  path that also contains those headers (e.g. a stale install at
+#  `~/.local/include`), ROOT parses the same logical header from two
+#  physical paths and triggers a redefinition cascade for every type
+#  the dict autoloads.  Pinning the dev loader to the source tree
+#  guarantees the macro and the dict resolve to identical file paths.
+if(APPLE)
+    set(DYNLIB_EXT ".dylib")
+elseif(WIN32)
+    set(DYNLIB_EXT ".dll")
+else()
+    set(DYNLIB_EXT ".so")
+endif()
+set(BEAM_LOADER_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(BEAM_LOADER_LIB     "${CMAKE_CURRENT_BINARY_DIR}/libbeam_test_analysis${DYNLIB_EXT}")
+#  Dev-mode also needs the FetchContent'd dependency includes (mist,
+#  toml++) — they live under `build/_deps/*/include` and aren't
+#  reachable through the source-tree include path.
+set(BEAM_LOADER_DEP_INCLUDES
+"R__ADD_INCLUDE_PATH(${mist_SOURCE_DIR}/include)
+R__ADD_INCLUDE_PATH(${tomlplusplus_SOURCE_DIR}/include)")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/macros/lib_loader.h"
+    @ONLY
+)
+#  Keep an in-build-tree copy too — some tooling expects `build/lib_loader.h`.
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/lib_loader.h"
@@ -171,11 +220,13 @@ target_link_libraries(beam_test_analysis
         mist::mist
 )
 
-if(APPLE)
-    set_target_properties(beam_test_analysis PROPERTIES
-        INSTALL_RPATH "@loader_path"
-    )
-endif()
+#  Install RPATH for the shared library — resolve its own siblings
+#  (libmist.so etc.) from the same lib/ dir after install.  Ship BOTH
+#  the macOS (@loader_path) and Linux ($ORIGIN) idioms in one list; the
+#  loader on each platform ignores the token it doesn't understand.
+set_target_properties(beam_test_analysis PROPERTIES
+    INSTALL_RPATH "@loader_path;$ORIGIN"
+)
 
 # --------------------------------------------------
 # Executables
@@ -183,10 +234,47 @@ endif()
 add_executable(lightdata_writer      macros/utilities/lightdata_writer.cpp)
 add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
+add_executable(pulser_calib_writer   macros/utilities/pulser_calib_writer.cpp)
+add_executable(btana-dump            macros/utilities/btana_dump.cpp)
+# Stand-alone TBrowser launcher used by the QA dashboard's Inspect
+# button.  See macros/utilities/qa_tbrowser.cpp for the rationale.
+add_executable(qa_tbrowser           macros/utilities/qa_tbrowser.cpp)
+# Sibling — pops a single histogram on a TCanvas (Open-in-ROOT path).
+# See macros/utilities/qa_tcanvas.cpp.
+add_executable(qa_tcanvas            macros/utilities/qa_tcanvas.cpp)
 
 target_link_libraries(lightdata_writer      PRIVATE beam_test_analysis)
 target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
+target_link_libraries(pulser_calib_writer   PRIVATE beam_test_analysis)
+target_link_libraries(btana-dump            PRIVATE beam_test_analysis)
+# qa_tbrowser + qa_tcanvas only need ROOT (no project lib) since
+# they're pure TApplication glue.  Link against the umbrella ROOT
+# library target FindROOT already exports for the writers.
+target_include_directories(qa_tbrowser     PRIVATE ${ROOT_INCLUDE_DIRS})
+target_link_libraries(qa_tbrowser           PRIVATE ${ROOT_LIBRARIES})
+target_include_directories(qa_tcanvas      PRIVATE ${ROOT_INCLUDE_DIRS})
+target_link_libraries(qa_tcanvas            PRIVATE ${ROOT_LIBRARIES})
+
+#  Install RPATH for the writer executables.  They install to bin/ and
+#  link libbeam_test_analysis (+ transitively libmist) which install to
+#  lib/, so the runtime search path must point one level up into lib/.
+#  Without this a fresh `cmake --install` on Linux produced binaries
+#  that failed at first run with "libmist.so: cannot open shared object
+#  file" unless the operator set LD_LIBRARY_PATH by hand — exactly the
+#  "README says it works, it doesn't" failure mode for a new shifter.
+#  Both idioms shipped (see the library block above for why).  qa_tbrowser
+#  / qa_tcanvas link only ROOT (found via its own RPATH) so they don't
+#  need the project lib path, but including them is harmless and uniform.
+set_target_properties(
+    lightdata_writer
+    recodata_writer
+    recotrackdata_writer
+    pulser_calib_writer
+    btana-dump
+    PROPERTIES
+        INSTALL_RPATH "@loader_path/../lib;$ORIGIN/../lib"
+)
 
 # --------------------------------------------------
 # Install Rules
@@ -196,6 +284,10 @@ install(TARGETS
     lightdata_writer
     recodata_writer
     recotrackdata_writer
+    pulser_calib_writer
+    btana-dump
+    qa_tbrowser
+    qa_tcanvas
     EXPORT  beam_test_analysisTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
@@ -211,29 +303,32 @@ install(FILES
     OPTIONAL
 )
 
-# Determine dynamic library extension
-if(APPLE)
-    set(DYNLIB_EXT ".dylib")
-elseif(WIN32)
-    set(DYNLIB_EXT ".dll")
-else()
-    set(DYNLIB_EXT ".so")
-endif()
+#  DYNLIB_EXT is already defined above (dev-mode lib_loader block).
 
-# Paths
-set(BEAM_DICT_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis_dict${DYNLIB_EXT}")
-set(BEAM_MAIN_LIB "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
-
-# Configure the header
+#  Install-mode lib_loader: install-prefix headers + install-prefix
+#  library.  Used by downstream consumers that find the framework via
+#  `find_package` or include against the installed tree.  Generated
+#  with DIFFERENT path substitutions than the dev-mode loader above
+#  (which lives in `macros/lib_loader.h`).
+set(BEAM_LOADER_INCLUDE "${CMAKE_INSTALL_PREFIX}/include")
+set(BEAM_LOADER_LIB     "${CMAKE_INSTALL_PREFIX}/lib/libbeam_test_analysis${DYNLIB_EXT}")
+#  Install-mode: deps already live under the install prefix (mist is
+#  installed there alongside this project; toml++ is header-only and
+#  bundled).  Empty string → template substitutes nothing.
+set(BEAM_LOADER_DEP_INCLUDES "")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
     @ONLY
 )
 
-# Install so macros can include it
+#  Install the install-mode loader into the project's include prefix.
+#  Previous design copied this into `macros/` of the SOURCE tree at
+#  install time — that's what caused the dev-mode macros to silently
+#  pick up the install-prefix paths and clash with the source-tree
+#  dict payload.  Headers now stay in their own tree.
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/lib_loader.h"
-        DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/macros/")
+        DESTINATION include)
 
 # --------------------------------------------------
 # Tests (off by default so downstream consumers skip them)

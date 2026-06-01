@@ -28,15 +28,15 @@
 struct AlcorRecotrackdataStruct
 {
     // Default-initialised to NaN so a silent `resize(idx+1)` in
-    // AlcorRecotrackdata::recotrackdata_at (CODE_REVIEW §2.7) cannot produce
+    // AlcorRecotrackdata::recotrackdata_at cannot produce
     // indeterminate float reads.  Callers that need a real value overwrite
     // these explicitly; downstream consumers can test `std::isnan(...)` to
     // detect uninitialised entries.
-    float det_plane_x     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated X coordinate at the detector plane [mm].
-    float det_plane_y     = std::numeric_limits<float>::quiet_NaN(); ///< Extrapolated Y coordinate at the detector plane [mm].
+    float det_plane_x = std::numeric_limits<float>::quiet_NaN();     ///< Extrapolated X coordinate at the detector plane [mm].
+    float det_plane_y = std::numeric_limits<float>::quiet_NaN();     ///< Extrapolated Y coordinate at the detector plane [mm].
     float traj_angcoeff_x = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along X (dx/dz).
     float traj_angcoeff_y = std::numeric_limits<float>::quiet_NaN(); ///< Track angular coefficient along Y (dy/dz).
-    float chi2ndof        = std::numeric_limits<float>::quiet_NaN(); ///< Fit quality: χ²/NDF.
+    float chi2ndof = std::numeric_limits<float>::quiet_NaN();        ///< Fit quality: χ²/NDF.
 
     AlcorRecotrackdataStruct() = default;
 
@@ -58,7 +58,7 @@ struct AlcorRecotrackdataStruct
  * adds a per-event vector of @ref AlcorRecotrackdataStruct entries, one
  * per telescope track reconstructed by ALTAI.
  *
- * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * ### Non-copyable, non-movable
  * Inherits the non-copyable / non-movable contract from @ref AlcorRecodata,
  * declared explicitly below for clarity.  ROOT branch addresses bound here
  * (recotrackdata_ptr) and inherited (recodata_ptr, triggers_ptr) are stable

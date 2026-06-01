@@ -36,7 +36,7 @@
 #include <filesystem>
 #include "alcor_spilldata.h"
 #include "alcor_data_streamer.h"
-#include "util/config_reader.h"
+#include "utility/config_reader.h"
 #include <mist/logger/progress_bar.h>
 #include <mist/logger/multi_progress_bar.h>
 
@@ -46,8 +46,13 @@
 /** @brief Number of clock cycles per frame */
 #define BTANA_FRAME_SIZE 1024
 
-/** @brief Frame duration in nanoseconds (3.125ns per clock cycle at 320MHz) */
-#define BTANA_FRAME_LENGTH_NS (BTANA_FRAME_SIZE * 3.125)
+/** @brief Frame duration in nanoseconds.
+ *
+ * Derived from @ref BTANA_FRAME_SIZE × @ref BTANA_ALCOR_CC_TO_NS so the
+ * single source of truth for the 3.125 ns/cc conversion lives in
+ * `alcor_data.h`.  A bench change of the ALCOR clock frequency (or a
+ * future rescaling of frame size) updates here automatically. */
+#define BTANA_FRAME_LENGTH_NS (BTANA_FRAME_SIZE * BTANA_ALCOR_CC_TO_NS)
 
 /** @brief Number of initial frames reserved for trigger synchronization */
 #define BTANA_FIRST_FRAMES_TRIGGER 5000
@@ -139,7 +144,7 @@ public:
      * @brief Returns a reference to the current spill data.
      *
      * The previous by-value `get_spilldata()` overload was removed when
-     * @ref AlcorSpilldata became non-copyable (CODE_REVIEW §D-08).  All
+     * @ref AlcorSpilldata became non-copyable  All
      * callers should hold a reference / `unique_ptr` to the owning wrapper.
      *
      * @return Reference to the internal @ref AlcorSpilldata object.
@@ -148,10 +153,13 @@ public:
 
     /**
      * @brief Returns the number of triggers registered from the configuration file.
-     * @return Number of triggers registered from the configuration file.
-     * @todo Trigger number should be assigned by program, and checked to avoid using reserved numbers > should be [0-100[
+     *        Counts both device-mode and channel-mode entries.
+     * @return Total registered triggers.
      */
-    int get_registered_triggers() { return triggers.size(); }
+    int get_registered_triggers() { return static_cast<int>(trigger_config.size()); }
+
+    /// @return Const reference to the parsed trigger configuration (both maps + ordered list).
+    const TriggerConfigSet &get_trigger_config() const { return trigger_config; }
 
     /**
      * @brief Returns the fine tune distribution per tdc index.
@@ -163,10 +171,12 @@ public:
      * @brief Returns the same-channel Δt distribution used to validate the
      *        afterpulse QA windows.
      *
-     * One entry per Hit (after the channel's first Hit), Δt = current global
-     * cc − previous-same-channel global cc.  Range 0..1024 cc — covers both
-     * the near window (default 1–64 cc) and the far sideband (default
-     * 256–319 cc) with comfortable headroom.
+     * One entry per Hit (after the channel's first Hit), Δt = current
+     * global cc − previous-same-channel global cc.  Range 0..32768 cc
+     * (one full rollover period), 1024 bins → 32 cc/bin — covers both
+     * the near afterpulse window (default 1–64 cc) and the far
+     * sideband (default 256–319 cc) plus the entire DCR plateau out
+     * to one rollover.
      */
     TH1F *get_afterpulse_dt_distribution() { return h_afterpulse_dt.get(); }
 
@@ -182,7 +192,7 @@ public:
      *
      * Use to query which device/chip pairs are assigned to each sub-detector
      * role (timing / tracking / cherenkov) without re-parsing the TOML.
-     * Added for CODE_REVIEW §D-07 (timing chip IDs are no longer hardcoded
+     * Added for (timing chip IDs are no longer hardcoded
      * in @c lightdata_writer.cxx).
      */
     const ReadoutConfigList &get_readout_config() const { return readout_config; }
@@ -197,9 +207,9 @@ public:
     // Setters
     // -------------------------------------------------------------------------
 
-    // set_spilldata*() removed: AlcorSpilldata is non-copyable and non-movable
-    // (CODE_REVIEW §D-08); replace any future "replace the spill" use case
-    // with `framer.get_spilldata_link().clear()` + repopulate-in-place.
+    // set_spilldata*() removed: AlcorSpilldata is non-copyable and non-movable;
+    // replace any future "replace the spill" use case with
+    // `framer.get_spilldata_link().clear()` + repopulate-in-place.
 
     /**
      * @brief Sets the number of parallel processing threads.
@@ -297,13 +307,16 @@ public:
      * dominant per-Hit contention points are addressed by isolating them per
      * worker:
      *
-     *  1. **`frame_map`** — a private `std::map<uint32_t, AlcorLightdataStruct>`
-     *     that the worker writes to without acquiring @c frame_mutexes_access.
-     *     The shared `frame_mutexes_access` lock used to serialise every Hit's
-     *     `frame_and_lightdata[]` insertion across all 16 worker threads; that
-     *     was the dominant bottleneck even after the QA-fill move.  At spill
-     *     end @ref next_spill merges every worker's `frame_map` into the master
-     *     `spilldata.frame_and_lightdata` via @ref merge_lightdata.
+     *  1. **`frame_map`** — a private `std::unordered_map<uint32_t,
+     *     AlcorLightdataStruct>` that the worker writes to without acquiring
+     *     @c frame_mutexes_access.  The shared `frame_mutexes_access` lock
+     *     used to serialise every Hit's `frame_and_lightdata[]` insertion
+     *     across all 16 worker threads; that was the dominant bottleneck even
+     *     after the QA-fill move.  At spill end @ref next_spill merges every
+     *     worker's `frame_map` into the master `spilldata.frame_and_lightdata`
+     *     via @ref merge_lightdata.  Iteration order is unspecified — the
+     *     merge step doesn't care, and the master-map post-merge
+     *     canonicalisation pass already sorts hit vectors deterministically.
      *  2. **`h2_fine_tune` / `h_afterpulse`** — clones of the master QA
      *     histograms, also filled lock-free by the worker and merged into the
      *     master via `TH1::Add` at spill end (then freed).
@@ -311,10 +324,11 @@ public:
      * `spilldata_masks_mutex` is still used for `is_start_spill()` paths
      * (rare; once per stream per spill).
      */
-    struct WorkerQA {
-        TH2F *h2_fine_tune = nullptr; ///< Per-thread clone of @ref h2_fine_tune_distribution.
-        TH1F *h_afterpulse = nullptr; ///< Per-thread clone of @ref h_afterpulse_dt.
-        std::map<uint32_t, AlcorLightdataStruct> frame_map; ///< Per-worker frame buffer; merged into master at spill end.
+    struct WorkerQA
+    {
+        TH2F *h2_fine_tune = nullptr;                                 ///< Per-thread clone of @ref h2_fine_tune_distribution.
+        TH1F *h_afterpulse = nullptr;                                 ///< Per-thread clone of @ref h_afterpulse_dt.
+        std::unordered_map<uint32_t, AlcorLightdataStruct> frame_map; ///< Per-worker frame buffer; merged into master at spill end.
     };
 
     /**
@@ -335,7 +349,7 @@ public:
      *
      * Frame size is read directly from the @c _frame_size member; the
      * previous `int _frame_size` parameter was an unused override (it
-     * just shadowed the member) — dropped per CODE_REVIEW §1.4.
+     * just shadowed the member) — dropped.
      */
     void process(size_t stream_index, WorkerQA *qa = nullptr);
 
@@ -354,7 +368,7 @@ private:
      * `<mist/logger>` are internally mutex-guarded (verified against MIST
      * `dev`: each bar owns a `std::mutex` taken on every state-mutating
      * method).  Concurrent calls from worker threads are safe.
-     * Closes CODE_REVIEW §1.10.
+     *
      */
     void _update_bar(int64_t current, int64_t total);
 
@@ -384,7 +398,7 @@ private:
      *         @c frame_mutexes.  Acquired before the frame mutex itself. */
     std::mutex frame_mutexes_access;
 
-    /** @brief Protects writes to @ref unknown_triggers_seen. */
+    /** @brief Protects writes to @ref unknown_trigger_devices_seen. */
     std::mutex triggers_map_mutex;
 
     /** @brief Protects creation of new spill participants and dead-channel masks. */
@@ -447,11 +461,11 @@ private:
     /// @name Configuration
     /// @{
 
-    /** @brief Ordered list of trigger configurations loaded from file. */
-    std::vector<TriggerConfig> triggers;
+    /** @brief Parsed trigger configuration — device-mode map, channel-mode map, ordered list. */
+    TriggerConfigSet trigger_config;
 
-    /** @brief Tracks (device, fifo, column, pixel) tuples already logged as unknown triggers (deduplication). */
-    std::unordered_set<uint64_t> unknown_triggers_seen;
+    /** @brief Tracks device IDs already logged as "tagged trigger from unknown device" (deduplication). */
+    std::unordered_set<uint16_t> unknown_trigger_devices_seen;
 
     /** @brief Readout configuration (channel masking, thresholds, etc.). */
     ReadoutConfigList readout_config;

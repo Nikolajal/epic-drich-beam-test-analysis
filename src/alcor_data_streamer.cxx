@@ -25,8 +25,14 @@ AlcorDataStreamer::AlcorDataStreamer(const std::string &fname)
     auto rdo_pos = filename.find("rdo-");
     if (rdo_pos != std::string::npos)
     {
-        try { device_id = std::stoi(filename.substr(rdo_pos + 4)); }
-        catch (...) { device_id = -1; }
+        try
+        {
+            device_id = std::stoi(filename.substr(rdo_pos + 4));
+        }
+        catch (...)
+        {
+            device_id = -1;
+        }
     }
     //  Recover the FIFO id from the filename (e.g. ".../alcdaq.fifo_07.root").
     //  Each input file contains data from a single FIFO, so we override the fifo
@@ -35,20 +41,28 @@ AlcorDataStreamer::AlcorDataStreamer(const std::string &fname)
     auto fifo_pos = filename.find("fifo_");
     if (fifo_pos != std::string::npos)
     {
-        try { fifo_id = std::stoi(filename.substr(fifo_pos + 5)); }
-        catch (...) { fifo_id = -1; }
+        try
+        {
+            fifo_id = std::stoi(filename.substr(fifo_pos + 5));
+        }
+        catch (...)
+        {
+            fifo_id = -1;
+        }
     }
     if (n_entries > 0)
     {
         tree->GetEntry(0);
         if (device_id > 0 && data.get_data().device <= 0)
             mist::logger::warning(TString::Format(
-                "(AlcorDataStreamer) Overriding bogus device branch with %d (parsed from %s)",
-                device_id, filename.c_str()).Data());
+                                      "(AlcorDataStreamer) Overriding bogus device branch with %d (parsed from %s)",
+                                      device_id, filename.c_str())
+                                      .Data());
         if (fifo_id >= 0 && data.get_data().fifo != fifo_id)
             mist::logger::warning(TString::Format(
-                "(AlcorDataStreamer) Overriding bogus fifo branch with %d (parsed from %s)",
-                fifo_id, filename.c_str()).Data());
+                                      "(AlcorDataStreamer) Overriding bogus fifo branch with %d (parsed from %s)",
+                                      fifo_id, filename.c_str())
+                                      .Data());
     }
     //  Read gRollover — one point per spill, y = rollover count during that spill.
     if (auto *rollover_graph = dynamic_cast<TGraph *>(file->Get("gRollover")))
@@ -73,7 +87,7 @@ AlcorDataStreamer &AlcorDataStreamer::operator=(AlcorDataStreamer &&other) noexc
         tree->ResetBranchAddresses();
 
     filename = std::move(other.filename);
-    file = std::move(other.file);   // closes old file, takes ownership of other's
+    file = std::move(other.file); // closes old file, takes ownership of other's
     tree = other.tree;
     data = std::move(other.data);
     n_entries = other.n_entries;

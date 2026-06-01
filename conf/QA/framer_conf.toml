@@ -1,0 +1,79 @@
+# conf/QA/framer_conf.toml — fast-feedback QA override for the framer + QA windows.
+#
+# Loaded instead of `conf/framer_conf.toml` when a writer is invoked
+# with `--QA` (the entry-point macro routes `framer_conf.toml` through
+# `util::conf_path(..., qa_mode)` which redirects to this file when present).
+#
+# Mirrors production values for everything that affects framing geometry
+# or QA-window definitions; the only QA-specific knob is the
+# per-spill-calibration toggle at the bottom.  Following the same
+# convention as `conf/QA/streaming.toml`:
+# QA configs are self-contained mirrors of production, with deltas at
+# the end.
+
+[framer]
+frame_size               = 1024
+first_frames_trigger     = 5000
+afterpulse_deadtime      = 64
+trigger_secondary_window = 200
+
+[qa]
+# QA windows — mirror conf/framer_conf.toml exactly.
+afterpulse_near_lo            =   1
+afterpulse_near_hi            =  64
+afterpulse_sideband_offset    = 256
+
+ct_scan_dt_min                =  -5
+ct_scan_dt_max                = 200
+ct_phys_signal_lo             =   0
+ct_phys_signal_hi             =  10
+ct_elec_signal_lo             =  -2
+ct_elec_signal_hi             =  10
+ct_phys_radius_mm             = 3.2
+ct_sideband_offset            = 512
+
+# Calibration-update toggle — DROPPED from --QA bundle (2026-05-29 audit).
+#
+# Was historically `true` in this file because the original "QA mode"
+# was for online-only operation without an offline fine-calibration
+# TOML.  Profiling showed the calibration derivation involves ~500 TDCs
+# × up to 5 retries of a 4-parameter non-linear Minuit fit per spill —
+# ~12 500 fits on a 5-spill run, dragging --QA wall time from a
+# streaming-disabled ~55 s to ~17 minutes.  The streaming-threshold
+# tuning workflow (the actual purpose of --QA) doesn't depend on the
+# fine-time calibration at all (it operates in coarse-counter space),
+# so the calibration update was pure wasted work.
+#
+# If you need the "derive calibration online" use case, pass an
+# explicit `--framer-conf` pointing at a config with this set to true.
+# A dedicated `--online` flag may land here later — see
+# include/triggers/streaming/DISCUSSION.md § 1.5.1.
+per_spill_calibration_update = false
+
+# Low-stats channel-cache retry period (per BACKLOG row P 1.20).
+#
+# Tuning knob for the AlcorFinedata low-stats cache that the per-spill
+# `update_calibration` (above) consults.  Channels whose Y-projection
+# is below the >=250-entries gate are remembered, so subsequent spills
+# skip the 256-bin ProjectionY allocation for them — measured at
+# ~10–15 s/spill saved on a 5-spill --QA run (the ProjectionY had been
+# the dominant cost on the post-spill-0 cascade).
+#
+# Semantics:
+#   0       (default) — never invalidate; once a channel is cached as
+#                       low-stats it stays cached for the whole run.
+#                       Safe for QA workflows because the streaming-
+#                       threshold tuning operates in coarse-counter
+#                       space; the fine calibration doesn't move the
+#                       decision.
+#   N > 0             — drop the cache every N-th `update_calibration`
+#                       call so marginal channels (near the 250-entry
+#                       boundary) get re-examined.  Use this only if
+#                       you're verifying that previously-quiet channels
+#                       come back online mid-run.
+#
+# Ignored when `per_spill_calibration_update = false` (no per-spill
+# `update_calibration` happens), and irrelevant for the offline
+# recodata path which passes `overwrite=true` (cache cleared on every
+# call anyway).
+generate_calibration_low_stats_retry_period = 0

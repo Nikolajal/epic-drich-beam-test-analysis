@@ -2,20 +2,21 @@
  * @file analysis_results.h
  * @brief Persistent storage and query interface for dRICH beam-test analysis results.
  *
- * Provides a three-axis key schema (run, sensor, quantity) backed by a ROOT TTree,
- * with upsert semantics and helpers for building TGraphErrors for plotting.
+ * Provides a three-axis key schema (run, sensor, quantity) backed by a
+ * hand-readable TOML file, with upsert semantics and helpers for building
+ * TGraphErrors for plotting.  Migrated from a ROOT TTree backend
+ * (see top-level DISCUSSION.md "AnalysisResults: TTree → TOML").
  *
  * ### File layout
- * A single ROOT file (e.g. `extData/standard_results.root`) stores one TTree named
- * `"results"` with five branches:
+ * A single TOML file (e.g. `<data_repository>/standard_results.toml`)
+ * stores entries nested by (run, sensor, quantity):
  *
- * | Branch   | Type | Description                                      |
- * |----------|------|--------------------------------------------------|
- * | run      | C    | Run timestamp string, e.g. `"20251111-181940"`   |
- * | sensor   | C    | Sensor tag: `"all"`, `"1350"`, or `"1375"`       |
- * | quantity | C    | Dot-scoped quantity, e.g. `"ex_gap.n_gamma"`     |
- * | value    | D    | Central value                                    |
- * | error    | D    | Associated uncertainty (0 if not applicable)     |
+ *     [results."20251111-181940"."1350"]
+ *     "ex_gap.n_gamma" = { value = 47.3, error = 0.6 }
+ *     "ex_gap.sigma"   = { value = 1.42, error = 0.05 }
+ *
+ * `error` is omitted on disk for dimensionless diagnostics (e.g.
+ * `chi2_ndf`, `gs_frac`) where an uncertainty isn't meaningful.
  *
  * ### Quantity naming convention
  * Quantities follow the pattern `<scope>.<name>`, where scope encodes the
@@ -40,9 +41,7 @@
 #include <tuple>
 #include <vector>
 
-#include "TFile.h"
-#include "TGraphErrors.h"
-#include "TTree.h"
+#include "TGraphErrors.h" // for make_graph() return type
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ResultKey
@@ -110,23 +109,24 @@ using ResultMap = std::map<ResultKey, ResultEntry>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @brief Handle for a persistent ROOT-backed analysis result store.
+ * @brief Handle for a persistent TOML-backed analysis result store.
  *
- * Wraps a single ROOT file that contains one TTree (`"results"`) with a
- * five-branch schema (run / sensor / quantity / value / error).  The class
- * provides upsert semantics through a load → patch → rewrite cycle, which is
- * safe because ROOT TTrees do not support random-access row editing and the
- * total number of entries per campaign is small (~hundreds).
+ * Wraps a single hand-readable TOML file whose top-level table is
+ * `results."<run>"."<sensor>"."<quantity>" = { value, error }`.  The
+ * class provides upsert semantics through a load → patch → rewrite
+ * cycle — cheap at the expected campaign size (~hundreds of entries),
+ * keeps the file self-describing and git-mergeable, and matches the
+ * dashboard reader (`qa_quicklook.rundb.results_load`) byte for byte.
  *
  * ### Typical workflow
  * @code
  * // After photon_number() fills fit_results …
- * AnalysisResults ar("extData/standard_results.root");
+ * AnalysisResults ar(data_repository + "/standard_results.toml");
  * ar.update({
  *     {{"20251111-181940", "all",  "ex_gap.n_gamma"}, {N,   N_err }},
  *     {{"20251111-181940", "all",  "ex_gap.sigma"},   {sig, sig_err}},
  *     {{"20251111-181940", "1350", "ex_gap.n_gamma"}, {N_1350, ...}},
- * });
+ * }, "recodata");  // source tag → audit log
  *
  * // Later, in a plotting macro …
  * auto m  = ar.load();
@@ -144,8 +144,13 @@ public:
      * The file does not need to exist yet; it will be created on the first
      * call to update().
      *
-     * @param path  Filesystem path to the ROOT result file,
-     *              e.g. @c "extData/standard_results.root".
+     * @param path  Filesystem path to the TOML result file.  The
+     *              writers feed it as @c <data_repository>/standard_results.toml
+     *              (typically @c Data/standard_results.toml), so the
+     *              cross-run aggregate sits next to the per-run
+     *              directories it summarises.  An audit log
+     *              @c *.audit.toml is emitted alongside on every
+     *              @c update() that carries a non-empty @c source tag.
      */
     explicit AnalysisResults(const std::string &path) : fPath(path) {}
 
@@ -154,9 +159,10 @@ public:
     /**
      * @brief Load the full result database into memory.
      *
-     * Opens the ROOT file in read-only mode, reads all TTree rows into a
-     * ResultMap, then closes the file.  Returns an empty map if the file does
-     * not exist or contains no `"results"` tree.
+     * Parses the TOML file and walks the
+     * `results."<run>"."<sensor>"."<quantity>"` table tree into a
+     * ResultMap.  Returns an empty map if the file does not exist,
+     * fails to parse, or carries no top-level `[results]` table.
      *
      * @return  ResultMap containing every stored (key, entry) pair.
      */
@@ -170,8 +176,17 @@ public:
      * Entries not present in @p entries are preserved unchanged.
      *
      * @param entries  Map of keys and values to insert or update.
+     * @param source   Optional provenance tag.  When non-empty, one
+     *                 ``[[entry]]`` block per key in @p entries is appended
+     *                 to the sibling ``*.audit.toml`` file via
+     *                 ``util::audit::log`` (see ``utility/audit.h``).
+     *                 Pass the writer name — ``"lightdata"``,
+     *                 ``"recodata"``, ``"recotrack"``, ``"calibration"`` —
+     *                 or ``"dashboard"`` from Python edits.  Empty (the
+     *                 default) preserves the pre-audit behaviour: no log.
      */
-    void update(const ResultMap &entries) const;
+    void update(const ResultMap &entries,
+                const std::string &source = "") const;
 
     /**
      * @brief Upsert a single entry into the persistent store.
@@ -181,8 +196,13 @@ public:
      * @param key    Three-component key (run, sensor, quantity).
      * @param value  Central value to store.
      * @param error  Associated uncertainty (default 0).
+     * @param source Optional provenance tag (see batch overload).
      */
-    void update(const ResultKey &key, double value, double error = 0.) const { update(ResultMap{{key, {value, error}}}); }
+    void update(const ResultKey &key, double value, double error = 0.,
+                const std::string &source = "") const
+    {
+        update(ResultMap{{key, {value, error}}}, source);
+    }
 
     /**
      * @brief Return the filesystem path this handle points to.
@@ -191,18 +211,25 @@ public:
     const std::string &path() const { return fPath; }
 
 private:
-    std::string fPath; ///< Path to the backing ROOT file
+    std::string fPath; ///< Path to the backing TOML file
 
     /**
-     * @brief Overwrite the ROOT file with the contents of @p data.
+     * @brief Overwrite the TOML file at @p target_path with the contents
+     *        of @p data.
      *
-     * Creates (or truncates) the file at fPath, writes a fresh TTree with all
-     * entries from @p data, then closes the file.  Called internally by
-     * update() after patching the in-memory map.
+     * Truncates the file at @p target_path and writes a fresh `[results]`
+     * table tree containing every entry from @p data.  Called internally
+     * by update() after patching the in-memory map.
      *
-     * @param data  Complete result database to persist.
+     * For the atomic-update path (see @ref update), @p target_path is a
+     * per-process ``"<fPath>.tmp.<pid>"`` staging path which @ref update
+     * then renames over @ref fPath.  Direct callers that don't need
+     * atomicity can pass @ref fPath.
+     *
+     * @param data         Complete result database to persist.
+     * @param target_path  Destination file path (see above).
      */
-    void write(const ResultMap &data) const;
+    void write(const ResultMap &data, const std::string &target_path) const;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

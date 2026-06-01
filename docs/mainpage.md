@@ -44,11 +44,11 @@ Helper headers are grouped under two umbrella folders:
 
 | Folder              | Holds                                                                 |
 |---------------------|-----------------------------------------------------------------------|
-| `include/util/`     | Standalone utilities (bit ops, `GlobalIndex`, TOML loader, circle/ring fits, ROOT I/O) |
+| `include/utility/`  | Standalone utilities (bit ops, `GlobalIndex`, TOML loader, circle/ring fits, ROOT I/O) |
 | `include/writers/`  | Sink classes that consume reconstructed levels and emit ROOT trees     |
 
-The `include/utility.h` umbrella re-exports every `util/` subheader so legacy
-call sites keep compiling; new code should `#include "util/<topic>.h"` directly.
+The `include/utility.h` umbrella re-exports every `utility/` subheader so legacy
+call sites keep compiling; new code should `#include "utility/<topic>.h"` directly.
 
 **Inline vs. out-of-line rule** (heavy parsing lives in `.cxx`):
 TOML/config readers expose a one-line declaration in their header and put the
@@ -56,7 +56,7 @@ heavy parsing logic in the matching `src/*.cxx`.  This keeps `toml++` and
 `<mist/logger>` out of public headers — for example, @ref trigger_conf_reader
 is declared in `include/triggers.h` and implemented in `src/triggers.cxx`.
 The pattern is mirrored by @ref RunInfo / @ref ReadoutConfigList in
-`util/config_reader.h` + `src/config_reader.cxx`.
+`include/utility/config_reader.h` + `src/config_reader.cxx`.
 
 ## Repository
 

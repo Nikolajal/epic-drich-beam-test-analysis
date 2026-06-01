@@ -1,4 +1,6 @@
 #include "alcor_recodata.h"
+#include <mist/logger/logger.h>
+#include "alcor_data.h"
 
 // =============================================================================
 // Trigger search
@@ -7,7 +9,7 @@
 std::optional<TriggerEvent> AlcorRecodata::get_trigger_by_index(uint8_t index) const
 {
     // Use the const-ref accessor — get_triggers() returns by reference now
-    // (no per-call deep copy of the trigger vector, CODE_REVIEW §D-08).
+    // (no per-call deep copy of the trigger vector).
     const auto &current_trigger = get_triggers();
     auto it = std::find_if(current_trigger.begin(), current_trigger.end(),
                            [index](const TriggerEvent &t)
@@ -108,7 +110,7 @@ void AlcorRecodata::find_rings(float distance_length_cut, float distance_time_cu
 }
 
 void AlcorRecodata::build_hough_lut(const std::map<int, std::array<float, 2>> &index_to_hit_xy,
-                                     float r_min, float r_max, float r_step, float cell_size)
+                                    float r_min, float r_max, float r_step, float cell_size)
 {
     hough_cell_size = cell_size;
 
@@ -172,7 +174,8 @@ void AlcorRecodata::build_hough_lut(const std::map<int, std::array<float, 2>> &i
     }
     hough_accum.assign(hough_r_bins.size() * hough_nx * hough_ny, 0);
     mist::logger::info(TString::Format("Hough LUT built: %zu channels, %zu R bins, grid %dx%d",
-                            hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny).Data());
+                                       hough_lut.size(), hough_r_bins.size(), hough_nx, hough_ny)
+                           .Data());
 }
 
 void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)
@@ -290,4 +293,13 @@ void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)
         if (n_rings_found >= 2)
             break;
     }
+}
+//  CONVENTION-BREAK NOTICE — see same notice in src/alcor_finedata.cxx.
+//  `is_ring_tagged` was inline in the header until the IWYU
+//  sweep; that sweep was driven by a misdiagnosed autoload problem.
+//  Per project convention the body belongs in the header.  Not reverting
+//  blindly; do not generalise.
+bool AlcorRecodata::is_ring_tagged(int i)
+{
+    return check_hit_mask(i, encode_bits({HitmaskRingTagFirst, HitmaskRingTagSecond}));
 }

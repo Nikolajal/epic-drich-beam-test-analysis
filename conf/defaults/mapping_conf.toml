@@ -1,0 +1,147 @@
+# mapping_conf.2025.toml — detector geometry for the 2025 test-beam run
+# Encodes the physical layout of PDUs in the detector plane and the
+# correspondence between ALCOR device/chip addresses and PDU positions.
+
+# Physical XY centre of each PDU [mm], relative to the beam-axis reference point.
+# Key = PDU index (1-based, per assembly drawing); value = [x, y].
+[pdu_xy_position]
+1 = [-82.0,  30.0]
+2 = [-26.0,  35.0]
+3 = [ 30.0,  30.0]
+4 = [ 30.0, -26.0]
+5 = [ 30.0, -82.0]
+6 = [-26.0, -87.0]
+7 = [-82.0, -82.0]
+8 = [-82.0, -26.0]
+
+# true → PDU is mounted rotated 180° about its centre (reverses quadrant ordering).
+[pdu_rotation]
+1 = true
+2 = true
+3 = true
+4 = true
+5 = true
+6 = true
+7 = true
+8 = true
+
+# Maps "deviceID_chipIndex" → [pdu_index, quadrant] (quadrants 1–4, row-major).
+# Consecutive even/odd chip pairs share a quadrant (e.g. _0 and _1 cover the same
+# 2×2 pixel block on the SiPM tile, read by two independent ALCOR input channels).
+# PDU index 99 is a sentinel for non-Cherenkov (timing / ancillary) devices.
+[device_chip_to_pdu_matrix]
+"192_0" = [1, 1]
+"192_1" = [1, 1]
+"192_2" = [1, 2]
+"192_3" = [1, 2]
+"192_4" = [1, 3]
+"192_5" = [1, 3]
+"192_6" = [1, 4]
+"192_7" = [1, 4]
+"193_0" = [2, 1]
+"193_1" = [2, 1]
+"193_2" = [2, 2]
+"193_3" = [2, 2]
+"193_4" = [2, 3]
+"193_5" = [2, 3]
+"193_6" = [2, 4]
+"193_7" = [2, 4]
+"194_0" = [3, 1]
+"194_1" = [3, 1]
+"194_2" = [3, 2]
+"194_3" = [3, 2]
+"194_4" = [3, 3]
+"194_5" = [3, 3]
+"194_6" = [3, 4]
+"194_7" = [3, 4]
+"195_0" = [4, 1]
+"195_1" = [4, 1]
+"195_2" = [4, 2]
+"195_3" = [4, 2]
+"195_4" = [4, 3]
+"195_5" = [4, 3]
+"195_6" = [4, 4]
+"195_7" = [4, 4]
+"196_0" = [5, 1]
+"196_1" = [5, 1]
+"196_2" = [5, 2]
+"196_3" = [5, 2]
+"196_4" = [5, 3]
+"196_5" = [5, 3]
+"196_6" = [5, 4]
+"196_7" = [5, 4]
+"197_0" = [6, 1]
+"197_1" = [6, 1]
+"197_2" = [6, 2]
+"197_3" = [6, 2]
+"197_4" = [6, 3]
+"197_5" = [6, 3]
+"197_6" = [6, 4]
+"197_7" = [6, 4]
+"198_0" = [7, 1]
+"198_1" = [7, 1]
+"198_2" = [7, 2]
+"198_3" = [7, 2]
+"198_4" = [7, 3]
+"198_5" = [7, 3]
+"198_6" = [7, 4]
+"198_7" = [7, 4]
+"199_0" = [8, 1]
+"199_1" = [8, 1]
+"199_2" = [8, 2]
+"199_3" = [8, 2]
+"199_4" = [8, 3]
+"199_5" = [8, 3]
+"199_6" = [8, 4]
+"199_7" = [8, 4]
+"200_0" = [99, 1]   # device 200 = timing reference ALCOR — not a Cherenkov PDU
+"200_2" = [99, 1]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recodata coverage-map geometry (formerly conf/recodata.toml).
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# These live here, alongside the detector geometry, because they ARE
+# detector geometry — the coverage map is a pure function of the
+# channel-to-position map that Mapping builds from the tables above.
+# Read by `recodata_conf_reader` (which pulls the ring-reconstruction
+# knobs from streaming.toml's [streaming_hough] table) and consumed by
+# recodata_writer.  All keys optional; missing keys take the defaults in
+# RecodataConfigStruct.
+#
+# There is NO conf/QA/mapping_conf.toml — both production and --QA runs
+# pass conf/mapping_conf.toml (a symlink to this file), so QA inherits
+# this table verbatim.
+[coverage]
+
+# The coverage map is a 2D TH2F(phi, R) computed once at writer init
+# from the same `index_to_hit_xy` both writers build via Mapping.  Each
+# (phi, R) bin holds the number of channels whose pixel footprint
+# overlaps it — a pure geometric quantity.  `radial_efficiency` collapses
+# it to a 1D eff(R) by averaging over phi to correct the radial(R) hist.
+n_phi_bins_coverage =   360    # azimuthal bins over [-pi, pi]  (1 deg/bin)
+n_r_bins_coverage   =    80    # radial bins
+r_min_coverage_mm   =   25.0   # mm
+r_max_coverage_mm   =  125.0   # mm
+
+# Channel pixel half-side [mm].  3 mm pitch → 1.5.  Used by both the
+# coverage map rasterisation and `azimuthal_coverage_fraction`'s
+# per-channel angular span — keep consistent or eff(R) and f_coverage
+# describe different geometries.
+channel_half_width_mm =  1.5
+
+# Nominal ring centre [mm] — the beam-axis projection on the detector
+# plane.  Only used for the COVERAGE map and the eff(R) curve; per-event
+# (R, phi) and per-ring f_coverage use the per-event Hough centre re-fit
+# by recodata.  Kept at (0, 0); the <1% eff(R) discrepancy from per-event
+# centre wander is justified in
+# include/triggers/streaming/DISCUSSION.md § 2.6.
+nominal_centre_x_mm =    0.0
+nominal_centre_y_mm =    0.0
+
+# Skip channels with r_channel < this when building the coverage map.
+# Default 0 = no extra filter (only the loose |x|<5 && |y|<5 filter from
+# index_to_hit_xy construction).  Bump above a spurious "low-R bump" to
+# crop bogus positions from uncalibrated channel slots; recodata_writer
+# logs the 10 smallest-r channels at startup to help identify them.
+min_channel_r_for_coverage_mm = 0.0

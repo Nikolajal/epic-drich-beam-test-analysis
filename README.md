@@ -22,6 +22,7 @@ The framework provides core data structures, I/O utilities, ROOT dictionary supp
 - [Configuration](#configuration)
 - [Documentation](#documentation)
 - [Testing & CI](#testing--ci)
+- [Operator dashboard](#operator-dashboard)
 - [Open design questions](#open-design-questions)
 - [Contributing](#contributing)
 - [Authors](#authors)
@@ -44,18 +45,58 @@ This repository aims to:
 ```
 .
 ├── include/                    # Public header files for all classes and utilities
+│   ├── utility.h               # Umbrella header — re-exports everything in utility/
+│   ├── utility/                # Small header-only helpers (GlobalIndex, RootHist, …)
+│   ├── triggers.h              # Umbrella header — re-exports events / config / registry
+│   ├── triggers/               # Trigger subsystem
+│   │   ├── events.h            #   - runtime types: TriggerNumber, TriggerEvent
+│   │   ├── config.h            #   - schema + reader: DeviceTrigger, ChannelTrigger, TriggerConfigSet
+│   │   ├── registry.h          #   - bin-label lookup: TriggerRegistry
+│   │   ├── streaming/          #   - software trigger pipeline (split by stage):
+│   │   │   ├── score.h         #       stage 1: DCR-weighted score + time clustering
+│   │   │   └── hough.h         #       stage 2: Hough ring finder + fit_circle refinement
+│   │   └── DISCUSSION.md       #   - community-facing design notes
+│   └── writers/                # Independent pipeline-stage entry points (no umbrella by design — see DISCUSSION attention-point)
+│       ├── lightdata.h         #   - lightdata_writer entry point
+│       ├── recodata.h          #   - recodata_writer entry point
+│       ├── recotrackdata.h     #   - recotrackdata_writer entry point
+│       └── recodata/           #   - internal helpers (not in any public umbrella):
+│           ├── types.h         #       per-frame + per-ring result types + RingFillHists
+│           ├── radial_fit.h    #       CB+pol3 radial fit (finalize-QA)
+│           └── sigma_vs_n_fit.h#       one-param LOO σ(N) fit (finalize-QA)
 ├── src/                        # Implementation files (.cxx)
 ├── macros/                     # ROOT macros for analysis
 │   ├── examples/               # Ready-to-run example macros
 │   └── utilities/              # Pipeline entry-point macros (lightdata, recodata, …)
 ├── scripts/                    # Build and install scripts
-├── conf/                       # Readout, Mapping, and trigger configuration files
+├── conf/                       # Readout, Mapping, trigger, and streaming-trigger
+│                                #   configuration files
 ├── run-lists/                  # Run database and run list definitions (.toml)
 ├── dict/                       # ROOT dictionary linkdef header
 ├── docs/                       # Doxygen configuration and generated documentation
 ├── CMakeLists.txt              # CMake build configuration
 └── README.md
 ```
+
+### Repository conventions for `include/` subdirectories
+
+Three coexisting organisational patterns, each fitting its role:
+
+| Pattern | Example | When to use |
+|---|---|---|
+| **Umbrella + helpers** | [`utility.h`](include/utility.h) ↔ [`utility/`](include/utility) | Subsystem of small, low-coupling, header-only helpers.  The umbrella is a pure re-exporter; consumers `#include "utility.h"` to get everything or cherry-pick from `utility/`. |
+| **Subsystem types + algorithms** | [`triggers.h`](include/triggers.h) ↔ [`triggers/`](include/triggers) | Subsystem with cross-cutting types **and** algorithms.  Types/config/registry live in sub-headers re-exported by the umbrella; algorithm headers (e.g. [`triggers/streaming/score.h`](include/triggers/streaming/score.h), [`triggers/streaming/hough.h`](include/triggers/streaming/hough.h)) are **not** re-exported — include them deliberately. |
+| **Category grouping** | [`writers/`](include/writers) | Folder of independent entry points that share no types or interface.  No umbrella; adding one would re-export nothing.  Stays flat on purpose. |
+
+> **Trigger subsystem.**  The two-mode config schema (device / channel) is
+> documented in [`include/triggers/DISCUSSION.md`](include/triggers/DISCUSSION.md);
+> the two-stage software trigger pipeline (DCR-weighted score → Hough ring
+> finder, D-12) is in [`include/triggers/streaming/DISCUSSION.md`](include/triggers/streaming/DISCUSSION.md).
+> TOML knobs live in [`conf/streaming.toml`](conf/streaming.toml) under the
+> `[streaming_trigger]` (stage 1) and `[streaming_hough]` (stage 2) sections;
+> tune `n_sigma_threshold` from the QA score histograms
+> (`Streaming Trigger/h_streaming_score_{noise,data}` in the lightdata output)
+> after a first run.
 
 ---
 
@@ -144,6 +185,23 @@ recotrackdata.root   ← track-matched recodata with ALTAI telescope information
 
 Each step is invoked via the corresponding macro in `macros/utilities/` or the matching free function declared in `include/`.
 
+#### Inspecting on-disk files: `btana-dump`
+
+```bash
+btana-dump <file.root>                   # prints first 5 entries
+btana-dump <file.root> -n 20             # prints first 20 entries
+btana-dump <file.root> -n -1             # prints every entry
+```
+
+`btana-dump` auto-detects the format (`lightdata`, `recodata`, or
+`recotrackdata`) by the tree name and pretty-prints a per-entry summary
+to stdout — useful for quickly inspecting a freshly produced file or
+diff-checking the same file at two pipeline stages.  Lives at
+`bin/btana-dump` after `cmake --build`; the decoder functions
+(`btana::utilities::dump_{lightdata,recodata,recotrackdata,file}`) are
+also exposed via `include/utilities/btana_dump.h` for use inside
+macros.
+
 ### In development
 
 The `lightdata_writer` step implements a streaming Hough-transform ring finder
@@ -175,7 +233,7 @@ Event-level, analysis-ready data structures. Photon rings are reconstructed usin
 
 Every hit carries a packed 32-bit address identifying its origin TDC channel:
 `(device, FIFO, chip, channel, TDC)`.  The address is wrapped in a value type
-[`GlobalIndex`](include/GlobalIndex.h) with built-in validation, a validity
+[`GlobalIndex`](include/utility/global_index.h) with built-in validation, a validity
 sentinel bit, and explicit accessors for both the **TDC-level** view (full
 address, used by per-TDC calibration tables) and the **global-channel-level**
 view (TDC bits zeroed, used as a key for per-channel Mapping):
@@ -198,7 +256,7 @@ auto gc_from_file = GlobalIndex::from_legacy_channel(channel_raw);    // AlcorDa
 
 The layout is final-detector native (64-ch chips, up to 2048 devices); the
 current 32-ch split-in-two detector is handled by an adapter at the framer's
-input boundary.  See [`include/GlobalIndex.h`](include/GlobalIndex.h) for
+input boundary.  See [`include/utility/global_index.h`](include/utility/global_index.h) for
 the full bit layout and the `gidx::kUsesSplitInTwo` compile-time flag.
 
 ---
@@ -210,12 +268,30 @@ Runtime configuration is handled through TOML files in `conf/`:
 | File                       | Description                                              |
 | -------------------------- | -------------------------------------------------------- |
 | `readout_config.toml`      | Maps (device, chip) pairs to hit categories              |
-| `framer_conf.toml`         | Streaming-framer parameters (frame size, QA windows, …)  |
-| `mapping_conf.<year>.toml` | Pixel-to-physical-position Mapping for the SiPM plane    |
-| `trigger_conf.<year>.toml` | Trigger logic and channel assignment                     |
+| `framer_conf.toml`         | Streaming-framer + QA-window parameters (frame size, afterpulse / cross-talk sidebands) |
+| `mapping_conf.toml`        | Pixel-to-physical-position Mapping for the SiPM plane, plus the `[coverage]` table (recodata coverage-map geometry) (symlink; year variants under `conf/sets/<year>/`) |
+| `trigger_conf.toml`        | Trigger logic and channel assignment (symlink; year variants under `conf/sets/<year>/`) |
+| `streaming.toml`           | Software-trigger pipeline: `[streaming_trigger]` (stage 1 score), `[streaming_hough]` (stage 2 ring finder + recodata ring-reconstruction knobs) |
 
-All config files honour the `##` cutoff sentinel (see [include/toml_utils.h](include/toml_utils.h))
+All config files honour the `##` cutoff sentinel (see [include/utility/toml_utils.h](include/utility/toml_utils.h))
 so you can append `## --- disabled ---` and keep scratch entries below without them being parsed.
+
+> **Symlinks require `core.symlinks=true`** (git's default on macOS and
+> Linux — the only supported platforms; see `DISCUSSION.md` § D-11).
+> Each top-level `conf/*.toml` is a symlink into `conf/working/`
+> (live-edited) or `conf/defaults/` (pristine).  If you cloned with
+> `core.symlinks=false`, those entries materialise as one-line **text
+> files** whose content is the relative target path (e.g.
+> `working/streaming.toml`) instead of real symlinks, and the writers
+> load garbage.  Fix:
+>
+> ```sh
+> git config core.symlinks true
+> git checkout -- conf/        # re-materialise the symlinks
+> ```
+>
+> A startup sanity check that detects a collapsed-to-text conf file and
+> errors clearly is tracked in the config-reader cluster.
 
 Run lists and a run metadata database for 2025 are available in `run-lists/` in TOML format, loadable via `RunInfo::read_database()` and `RunInfo::read_runslists()`.
 
@@ -254,20 +330,15 @@ header docstring of each script for the full set of options.
 
 ## Testing & CI
 
-The repository runs build + test verification on every push and pull request
-via [`.github/workflows/build.yml`](.github/workflows/build.yml).
-The matrix exercises:
-
-|                | Release                | Debug                  |
-|----------------|------------------------|------------------------|
-| Linux (Ubuntu) | build + ctest, required| build + ctest, required|
-| macOS          | build + ctest, required| build + ctest, required|
-| Windows        | build + ctest, best-effort | —                  |
-
-The Windows leg uses ROOT from `conda-forge` and is currently marked
-`continue-on-error: true` while the configuration stabilises — failures there
-do not block PRs.  Promote it to a required check once it is consistently
-green (remove the `continue-on-error` line).
+The CI workflow [`.github/workflows/build.yml`](.github/workflows/build.yml)
+defines build + test verification across Linux / macOS / Windows, but
+**all three OS jobs are currently gated off** (`if: false`) — the per-platform
+ROOT provisioning has been fragile (Ubuntu noble dropped the apt
+`root-system` package, conda-forge has no Windows `root` recipe, Homebrew
+churns periodically).  The workflow file is kept intact as architectural
+reference; to re-enable a leg, find its job in `build.yml` and drop the
+`if: false` line.  See the header comment in the workflow file for the
+full re-enable checklist.
 
 ### Building & running tests locally
 
@@ -288,15 +359,88 @@ ring-finder regression) are on the roadmap.
 
 ### Formatting
 
-A second workflow ([`.github/workflows/clang-format.yml`](.github/workflows/clang-format.yml))
-runs `clang-format-22` over every `.h`/`.cxx`/`.cpp` under `include/`, `src/`, and `macros/` on each PR.
-It auto-commits any reformatting back to the PR branch and fails the check so the author
-knows to `git pull` before merging.  Format locally to skip the round-trip:
+[`.github/workflows/clang-format.yml`](.github/workflows/clang-format.yml) runs
+on every push to `main`/`dev` and every PR.  It checks that every `.h` / `.cxx`
+/ `.cpp` / `.hpp` under `include/`, `src/`, and `macros/` matches the project
+style defined in [`.clang-format`](.clang-format) (LLVM base, 4-space indent,
+Allman braces, no column limit).  Style rules that clang-format can't enforce
+(naming, file layout) live in [`docs/coding_conventions.md`](docs/coding_conventions.md).
+
+**The check fails the build if any file would be reformatted**, prints the
+exact diff in the job log, and lists the offending paths in the Actions-summary
+panel.  Fix locally before pushing:
 
 ```bash
-find include src macros -type f \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' \) \
-  | xargs clang-format -i --style=file
+find include src macros -type f \
+    \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
+    -not -path '*/build/*' -not -path '*/_deps/*' \
+    -print0 | xargs -0 clang-format -i --style=file
 ```
+
+The CI runner uses the apt `clang-format` shipped with Ubuntu noble (currently
+clang-format-18); the project-wide format pass on 2026-05-27 was applied with
+clang-format-22 (Homebrew).  The `.clang-format` config is conservative enough
+that both versions produce identical output on this codebase.  If a future
+clang-format version drifts, pin the CI to a specific version via the
+[LLVM apt repository](https://apt.llvm.org/) and re-run the project-wide
+format pass.
+
+### Macro compile-check
+
+[`scripts/check_macros.sh`](scripts/check_macros.sh) drives every macro under
+`macros/examples/` and `macros/utilities/` through ROOT's ACLiC
+(`.L <macro>+`).  Unlike interpreted `.x` mode, ACLiC shells out to the system
+compiler and links against `libbeam_test_analysis`, so missing `#include`s,
+broken API uses, and stale signatures surface as hard errors instead of being
+papered over by cling's lazy parsing and auto-loaded headers.
+
+```bash
+cmake --build build              # framework lib must exist
+scripts/check_macros.sh          # all macros
+scripts/check_macros.sh macros/examples/dark_count_rate.cpp   # one macro
+```
+
+Exit code is `0` only if every macro compiles + links + dlopens.  The script
+cleans up ACLiC intermediates on exit so the source tree stays tidy.
+
+> **Note:** the macros under `macros/examples/` currently rely on cling's
+> implicit pre-loaded ROOT headers and don't all compile under ACLiC yet.
+> The `macros/utilities/` pipeline entry-points (the ones invoked by the
+> framework binaries) do.  Bringing the example macros to ACLiC-clean state
+> is tracked separately; the CI hook for this script lights up once that
+> work lands (and once the OS build legs are re-enabled — see
+> [`DISCUSSION.md`](DISCUSSION.md) §ci-os-legs).
+
+---
+
+## Operator dashboard
+
+A PySide6 dashboard for shift-time operations lives under
+[`qa_quicklook/`](qa_quicklook).  Single-window app with three top-level
+tabs — **Run Info** (nesting three live panels: **Run Manager**, which
+launches the writer chain and follows it live, with status lock files
+that survive a dashboard restart and a `🔍 Inspect` button that pops up
+TBrowser; **Database**, which browses / edits
+`run-lists/<year>.database.toml` with forward-inheritance; and
+**Runlists**, which edits named run groupings in
+`<year>.runlists.toml`), **QA** (General overview with four thematic rows —
+Data-taking health / Sensor health / Cherenkov physics /
+Timing-calibration — plus per-step topic tabs, the interactive
+streaming n_σ picker, and cross-run trend plots), and
+**Settings** (edit every `conf/*.toml` two-way, with comment-
+preserving write-back, a setting-set system on top of
+`conf/defaults/` + `conf/sets/<year>/` + `conf/working/`, and the
+dashboard's own theme + behaviour knobs).  An optional **Advanced QA**
+tab (hidden by default; enable via `[ui] show_advanced_qa = true`)
+surfaces bespoke ROOT-macro plots.
+
+Launch:
+
+```bash
+./scripts/qa_quicklook              # bootstrap (.venv) + launch GUI
+```
+
+Full description in [`qa_quicklook/README.md`](qa_quicklook/README.md).
 
 ---
 

@@ -2,7 +2,7 @@
 
 #ifdef __ROOTCLING__
 
-#include "util/global_index.h"
+#include "utility/global_index.h"
 #pragma link C++ class GlobalIndex + ;
 #pragma link C++ class std::vector<GlobalIndex> + ;
 
@@ -40,7 +40,7 @@
 #pragma link C++ class std::unordered_map<uint8_t, uint32_t> + ;
 #pragma link C++ class std::unordered_map<uint32_t, AlcorLightdataStruct> + ;
 
-#include "util/config_reader.h"
+#include "utility/config_reader.h"
 #pragma link C++ class RunList + ;
 #pragma link C++ class RunInfo + ;
 

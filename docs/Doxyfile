@@ -1027,7 +1027,19 @@ WARN_LOGFILE           =
 # spaces. See also FILE_PATTERNS and EXTENSION_MAPPING
 # Note: If this tag is empty the current directory is searched.
 
-INPUT                  = ../include ../src ../macros mainpage.md
+#  ../README.md is NOT listed directly — it would be claimed by the
+#  repo-root dir under IMPLICIT_DIR_DOCS=YES and silently dropped (the
+#  repo root isn't a scanned dir).  `readme_page.dox` is the wrapper
+#  that pulls README content into a regular page (`@page top_readme`).
+#
+#  Sub-level READMEs (include/triggers/README.md, include/triggers/
+#  streaming/README.md) are picked up automatically via RECURSIVE=YES
+#  on ../include and serve as the description page for their containing
+#  directory under IMPLICIT_DIR_DOCS=YES — that's the right semantic
+#  for them (they describe a folder, not a topic).  All DISCUSSION.md
+#  files anywhere under ../include / ../src / ../macros are also
+#  picked up automatically and listed under "Related Pages".
+INPUT                  = ../include ../src ../macros mainpage.md readme_page.dox ../DISCUSSION.md coding_conventions.md
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses
@@ -1161,7 +1173,10 @@ EXCLUDE_SYMBOLS        =
 # that contain example code fragments that are included (see the \include
 # command).
 
-EXAMPLE_PATH           =
+#  `..` lets `readme_page.dox` resolve `\include ../README.md` from
+#  the project root.  Add more dirs here if other .dox wrappers grow
+#  the need.
+EXAMPLE_PATH           = ..
 
 # If the value of the EXAMPLE_PATH tag contains directories, you can use the
 # EXAMPLE_PATTERNS tag to specify one or more wildcard pattern (like *.cpp and

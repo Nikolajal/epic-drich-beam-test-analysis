@@ -20,7 +20,6 @@
  * holding the mutex — @c std::shared_mutex is not reentrant.
  */
 
-#include <mist/ring_finding/hough_transform.h>
 #include <mist/rnd.h>
 #include <sstream>
 #include <cmath>
@@ -29,20 +28,57 @@
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <array>
 #include "TH2F.h"
+
 #include "TF1.h"
 #include "TCanvas.h"
-#include "alcor_data.h"
+
+// ============================================================================
+//  CONVENTION-BREAK NOTICE — read before re-inlining these methods
+// ============================================================================
+//
+//  The forward decls below + the out-of-line method bodies in
+//  alcor_finedata.cxx (look for the matching "CONVENTION-BREAK" marker)
+//  exist because of an IWYU sweep that turned out to be
+//  driven by a misdiagnosis: the macro `.x` failures it was chasing
+//  were a LinkDef / autoload problem, NOT a "framework headers must be
+//  self-sufficient" problem.
+//
+//  The PROJECT CONVENTION is:
+//      macros do `#include "../lib_loader.h"` and rely on cling
+//      autoload (via the dict's rootmap, populated from
+//      `dict/alcor_linkdef.h`) to pull in framework classes on first
+//      reference.  Framework headers may transitively include each
+//      other freely; they are NOT expected to be parseable in
+//      isolation by ROOT's autoparse.
+//
+//  Per that convention, the right place to fix "autoparse can't see
+//  AlcorData / HitMask / ::GlobalIndex" is `dict/alcor_linkdef.h`
+//  (ensure every type a macro might touch is listed there with `+`).
+//  Moving inline methods to .cxx is a workaround for a problem that
+//  shouldn't have existed.
+//
+//  The edits are not actively harmful (smaller TUs, slightly faster
+//  rebuilds of dependents) so they aren't being reverted blindly —
+//  but DO NOT promote this pattern to "the way framework headers
+//  should be written".  If a macro fails to autoload one of these
+//  types again, fix the LinkDef, don't move more methods here.
+// ============================================================================
+struct AlcorDataStruct;      // defined in alcor_data.h
+enum HitMask : unsigned int; // defined in alcor_data.h
+class GlobalIndex;           // defined in utility/global_index.h
 
 /**
-     * @brief Raw decoded Hit data from an ALCOR TDC channel.
-     *
-     * Holds the timing components (rollover, coarse, fine) and the calibration
-     * index used to look up the corresponding fine-time calibration parameters.
-     *
-     * @todo Implement bit-wise manipulation for rollover, fine, and coarse encoding.
-     */
+ * @brief Raw decoded Hit data from an ALCOR TDC channel.
+ *
+ * Holds the timing components (rollover, coarse, fine) and the calibration
+ * index used to look up the corresponding fine-time calibration parameters.
+ *
+ * Timing components stay unpacked (one @c uint32_t each); identity packing
+ * lives in @ref GlobalIndex (@c utility/global_index.h), not here.
+ */
 struct AlcorFinedataStruct
 {
     /// @name Timing Components
@@ -83,12 +119,12 @@ struct AlcorFinedataStruct
      * @brief Constructor from individual values.
      */
     AlcorFinedataStruct(uint32_t rollover_,
-                          uint16_t coarse_,
-                          uint8_t fine_,
-                          float hit_x_,
-                          float hit_y_,
-                          uint32_t global_index_,
-                          uint32_t hit_mask_)
+                        uint16_t coarse_,
+                        uint8_t fine_,
+                        float hit_x_,
+                        float hit_y_,
+                        uint32_t global_index_,
+                        uint32_t hit_mask_)
         : rollover(rollover_),
           coarse(coarse_),
           fine(fine_),
@@ -115,7 +151,11 @@ struct AlcorFinedataStruct
  *
  * AlcorV2BaseCalib  — baseline linear interpolation between the two
  *                          sigmoid inflection points (parameters 0 and 1).
- * AlcorV2FitCalib   — reserved for a future fit-based correction.
+ * AlcorV2FitCalib   — fit-based phase correction (slope @c a + intercept
+ *                          @c -b + residual sigma @c sigma per channel).
+ *                          The production calibration method emitted by
+ *                          @c pulser_calib_writer and consumed by
+ *                          @c AlcorFinedata::get_phase.
  */
 enum class CalibrationMethod : uint8_t
 {
@@ -208,7 +248,7 @@ public:
     AlcorFinedataStruct get_data() const { return internal_data; }
 
     /** @brief Returns a reference of the underlying @ref AlcorFinedataStruct. */
-    AlcorFinedataStruct &get_data_link()  { return internal_data; }
+    AlcorFinedataStruct &get_data_link() { return internal_data; }
 
     /** @brief Returns the calibration index identifying the TDC channel. */
     uint32_t get_global_index() const { return internal_data.GlobalIndex; }
@@ -251,13 +291,14 @@ public:
      * Combines rollover, coarse, and the fine-time phase correction.
      * All unsigned fields are promoted to float before arithmetic to avoid
      * unsigned underflow when subtracting the (potentially non-zero) phase.
+     *
+     * Implementation lives in alcor_finedata.cxx because BTANA_ALCOR_*
+     * macros are defined in alcor_data.h.
      */
-    float get_time() const { return static_cast<float>(BTANA_ALCOR_ROLLOVER_TO_CC) * static_cast<float>(get_rollover()) + static_cast<float>(get_coarse()) - get_phase(); }
+    float get_time() const;
 
-    /**
-     * @brief Returns the calibrated Hit time in nanoseconds.
-     */
-    float get_time_ns() const { return BTANA_ALCOR_CC_TO_NS * get_time(); }
+    /// @brief Returns the calibrated Hit time in nanoseconds.
+    float get_time_ns() const;
 
     /// @}
 
@@ -268,47 +309,43 @@ public:
     /// @name Derived Address Getters
     /// @{
 
-    // Phase 5: every derived accessor delegates to the @ref GlobalIndex
-    // value type, decoding the stored new-layout raw via direct construction
-    // (no @c from_legacy — the storage is now the new layout natively).
+    //  Every derived accessor delegates to the ::GlobalIndex value type,
+    //  decoding the stored raw via direct construction.  Bodies live in
+    //  alcor_finedata.cxx so this header doesn't need GlobalIndex's full
+    //  definition (forward declaration above is sufficient for the
+    //  declaration-only signatures here).
 
-    /** @brief Returns the TDC index decoded from the stored global index. */
-    int get_tdc() const { return ::GlobalIndex(get_global_index()).tdc(); }
+    /// @brief Returns the TDC index decoded from the stored global index.
+    int get_tdc() const;
 
-    /** @brief Returns the readout device ID decoded from the stored global index. */
-    int get_device() const { return ::GlobalIndex(get_global_index()).device(); }
+    /// @brief Returns the readout device ID decoded from the stored global index.
+    int get_device() const;
 
-    /** @brief Returns the FIFO number decoded from the stored global index. */
-    int get_fifo() const { return ::GlobalIndex(get_global_index()).fifo(); }
+    /// @brief Returns the FIFO number decoded from the stored global index.
+    int get_fifo() const;
 
-    /** @brief Returns the lane number decoded from the stored global index. */
+    /// @brief Returns the lane number decoded from the stored global index.
     int get_lane() const { return get_fifo(); }
 
-    /** @brief Returns the **physical hardware** chip ID (0–7) decoded from the stored global index. */
-    int get_chip() const { return ::GlobalIndex(get_global_index()).real_chip(); }
+    /// @brief Returns the **physical hardware** chip ID (0–7) decoded from the stored global index.
+    int get_chip() const;
 
-    /** @brief Returns the even/odd channel index (0–63) decoded from the stored global index. */
-    int get_eo_channel() const { return ::GlobalIndex(get_global_index()).eo_channel(); }
+    /// @brief Returns the even/odd channel index (0–63) decoded from the stored global index.
+    int get_eo_channel() const;
 
-    /** @brief Returns the column address decoded from the stored global index. */
-    int get_column() const { return ::GlobalIndex(get_global_index()).column(); }
+    /// @brief Returns the column address decoded from the stored global index.
+    int get_column() const;
 
-    /** @brief Returns the pixel address decoded from the stored global index. */
-    int get_pixel() const { return ::GlobalIndex(get_global_index()).pixel(); }
+    /// @brief Returns the pixel address decoded from the stored global index.
+    int get_pixel() const;
 
-    /** @brief Returns the per-device flat index 0..255. */
-    int get_device_index() const { return ::GlobalIndex(get_global_index()).device_index(); }
+    /// @brief Returns the per-device flat index 0..255.
+    int get_device_index() const;
 
     /** @brief Returns the dense, counter-style channel ordinal — suitable for
      *         histogram axes that bin one channel per bin.  Matches the legacy
-     *         `tdc_raw / 4` value bit-exact for the current detector.
-     *
-     *  @note  This now returns @ref GlobalIndex::channel_ordinal rather than
-     *         the raw `stored / 4` value.  The semantic is identical (dense
-     *         per-channel counter); the integer value matches what the legacy
-     *         `tdc_raw / 4` pattern returned, so existing hitmap histograms
-     *         that bin on this axis carry over unchanged. */
-    int get_global_channel_index() const { return ::GlobalIndex(get_global_index()).channel_ordinal(); }
+     *         `tdc_raw / 4` value bit-exact for the current detector. */
+    int get_global_channel_index() const;
 
     /// @}
 
@@ -327,14 +364,16 @@ public:
      *  `std::uniform_real_distribution<float>` per call was measurable in framer-pipeline
      *  runtime.  Hoisting it removes that overhead while keeping the per-thread engine.
      */
-    float get_hit_x_rnd() const {
+    float get_hit_x_rnd() const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return internal_data.hit_x + pixel_jitter(rng.engine());
     }
 
     /** @brief Returns the pixel-randomised y-coordinate, uniform within ±1.5 mm of the Hit position. */
-    float get_hit_y_rnd() const {
+    float get_hit_y_rnd() const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return internal_data.hit_y + pixel_jitter(rng.engine());
@@ -358,6 +397,38 @@ public:
      */
     float get_hit_phi_rnd(std::array<float, 2> v) const;
 
+    /**
+     * @brief Returns the radial distance from a custom centre using the
+     *        bare (non-randomised) pixel-centre position.
+     *
+     * Companion to @ref get_hit_r_rnd that does not jitter inside the
+     * pixel — the discrete pixel-grid quantisation is preserved.  Useful
+     * for fits where the pixel-pitch quantisation needs to be tracked
+     * explicitly (e.g. consistency check against the smeared version of
+     * the same observable, with the variance subtraction
+     * `σ²_intrinsic = σ²_unsmeared − pitch²/12` separating the
+     * intrinsic spread from the pixel-pitch contribution).
+     * @param v Centre coordinates {x, y}.
+     */
+    float get_hit_r(std::array<float, 2> v) const
+    {
+        return std::hypot(internal_data.hit_x - v[0],
+                          internal_data.hit_y - v[1]);
+    }
+
+    /** @brief Returns the azimuthal angle from a custom centre using the bare pixel-centre position [rad]. */
+    float get_hit_phi(std::array<float, 2> v) const
+    {
+        return std::atan2(internal_data.hit_y - v[1],
+                          internal_data.hit_x - v[0]);
+    }
+
+    /** @brief Returns the radial distance from the origin using the bare pixel-centre position. */
+    float get_hit_r() const { return get_hit_r({0.f, 0.f}); }
+
+    /** @brief Returns the azimuthal angle from the origin using the bare pixel-centre position [rad]. */
+    float get_hit_phi() const { return get_hit_phi({0.f, 0.f}); }
+
     /// @}
 
     // -------------------------------------------------------------------------
@@ -371,32 +442,32 @@ public:
      * @brief Sets a single bit in the Hit mask.
      * @param bit Bit position to set (from @ref HitMask enum).
      */
-    void add_mask_bit(HitMask bit) { internal_data.HitMask |= (1u << bit); }
+    void add_mask_bit(HitMask bit);
 
     /**
      * @brief Clears a single bit in the Hit mask.
      * @param bit Bit position to clear (from @ref HitMask enum).
      */
-    void clear_mask_bit(HitMask bit) { internal_data.HitMask &= ~(1u << bit); }
+    void clear_mask_bit(HitMask bit);
 
     /**
      * @brief Checks whether a single bit is set in the Hit mask.
      * @param bit Bit position to check (from @ref HitMask enum).
      * @return true if the bit is set.
      */
-    bool has_mask_bit(HitMask bit) const { return (internal_data.HitMask >> bit) & 1u; }
+    bool has_mask_bit(HitMask bit) const;
 
-    /** @brief Checks whether the Hit is tagged as part of a ring (first pass). */
-    bool is_ring_tag_first() const { return has_mask_bit(HitmaskRingTagFirst); }
+    /// @brief Checks whether the Hit is tagged as part of a ring (first pass).
+    bool is_ring_tag_first() const;
 
-    /** @brief Checks whether the Hit is tagged as part of a ring (second pass). */
-    bool is_ring_tag_second() const { return has_mask_bit(HitmaskRingTagSecond); }
+    /// @brief Checks whether the Hit is tagged as part of a ring (second pass).
+    bool is_ring_tag_second() const;
 
-    /** @brief Checks whether the Hit is flagged as cross-talk. */
-    bool is_cross_talk() const { return has_mask_bit(HitmaskCrossTalk); }
+    /// @brief Checks whether the Hit is flagged as cross-talk.
+    bool is_cross_talk() const;
 
-    /** @brief Checks whether the Hit is flagged as an afterpulse (Δt < framer @c afterpulse_deadtime). */
-    bool is_afterpulse() const { return has_mask_bit(HitmaskAfterpulse); }
+    /// @brief Checks whether the Hit is flagged as an afterpulse (Δt < framer @c afterpulse_deadtime).
+    bool is_afterpulse() const;
 
     /**
      * @brief True if Δt to the previous same-channel Hit lies in the QA near window
@@ -407,7 +478,7 @@ public:
      * (@ref QaConfigStruct::afterpulse_near_lo / @c afterpulse_near_hi) and is meant
      * exclusively for the sideband-subtraction afterpulse probability QA.
      */
-    bool is_afterpulse_near() const { return has_mask_bit(HitmaskAfterpulseNear); }
+    bool is_afterpulse_near() const;
 
     /**
      * @brief True if Δt to the previous same-channel Hit lies in the QA far window
@@ -416,13 +487,13 @@ public:
      * Paired with @ref is_afterpulse_near to subtract the random same-channel
      * coincidence baseline from the apparent afterpulse rate.
      */
-    bool is_afterpulse_far() const { return has_mask_bit(HitmaskAfterpulseFar); }
+    bool is_afterpulse_far() const;
 
-    /** @brief Checks whether the Hit originates from a partially active lane. */
-    bool is_part_lane() const { return has_mask_bit(_HITMASK_part_lane); }
+    /// @brief Checks whether the Hit originates from a partially active lane.
+    bool is_part_lane() const;
 
-    /** @brief Checks whether the Hit originates from a dead lane. */
-    bool is_dead_lane() const { return has_mask_bit(HitmaskDeadLane); }
+    /// @brief Checks whether the Hit originates from a dead lane.
+    bool is_dead_lane() const;
 
     /// @}
 
@@ -469,8 +540,8 @@ public:
      */
     void set_mask(uint32_t mask) { internal_data.HitMask = mask; }
 
-    /** @brief Flags the Hit as a streaming ring trigger participant. */
-    void set_streaming_ring_trigger_mask() { add_mask_bit(HitmaskStreamingRingTrigger); }
+    /// @brief Flags the Hit as a streaming ring trigger participant.
+    void set_streaming_ring_trigger_mask();
 
     /// @}
 
@@ -485,7 +556,7 @@ public:
      * @brief Returns calibration parameter 0 for a given TDC channel.
      * @param GlobalIndex Global TDC index to query.
      */
-    static float get_param0(int GlobalIndex)
+    static float get_param0(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = calibration_parameters.find(GlobalIndex);
@@ -496,7 +567,7 @@ public:
      * @brief Returns calibration parameter 1 for a given TDC channel.
      * @param GlobalIndex Global TDC index to query.
      */
-    static float get_param1(int GlobalIndex)
+    static float get_param1(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = calibration_parameters.find(GlobalIndex);
@@ -507,7 +578,7 @@ public:
      * @brief Returns calibration parameter 2 for a given TDC channel.
      * @param GlobalIndex Global TDC index to query.
      */
-    static float get_param2(int GlobalIndex)
+    static float get_param2(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = calibration_parameters.find(GlobalIndex);
@@ -528,7 +599,7 @@ public:
      * @param GlobalIndex Global TDC index to update.
      * @param value            New value for parameter 0.
      */
-    static void set_param0(int GlobalIndex, float value)
+    static void set_param0(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         calibration_parameters[GlobalIndex][0] = value;
@@ -539,7 +610,7 @@ public:
      * @param GlobalIndex Global TDC index to update.
      * @param value            New value for parameter 1.
      */
-    static void set_param1(int GlobalIndex, float value)
+    static void set_param1(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         calibration_parameters[GlobalIndex][1] = value;
@@ -550,7 +621,7 @@ public:
      * @param GlobalIndex Global TDC index to update.
      * @param value            New value for parameter 2.
      */
-    static void set_param2(int GlobalIndex, float value)
+    static void set_param2(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         calibration_parameters[GlobalIndex][2] = value;
@@ -608,16 +679,32 @@ public:
     static void update_calibration(TH2F *h) { generate_calibration(h, false); }
 
     /**
-     * @brief Writes the current calibration parameters to a plain-text file.
-     * @param filename Path to the output calibration file.
+     * @brief Writes the current calibration parameters to disk.
+     *
+     * Output format is **always** TOML v3 (`[[entry]]` tables per
+     * GlobalIndex).  @p filename must end in @c .toml — the legacy
+     * whitespace-separated text format (``fine_calib.txt``, v2
+     * schema) is no longer supported and the call hard-fails with a
+     * @c std::runtime_error if the extension doesn't match.  Hard
+     * cut — see task #172.
+     *
+     * @param filename Path to the output calibration file.  Must end in @c .toml.
+     * @throws std::runtime_error if @p filename doesn't end in @c .toml or cannot be opened.
      */
     static void write_calib_to_file(const std::string &filename);
 
     /**
-     * @brief Loads calibration parameters from a plain-text file.
-     * @param filename     Path to the calibration file to read.
+     * @brief Loads calibration parameters from disk.
+     *
+     * Input format is **always** TOML v3 — same hard-cut as
+     * @ref write_calib_to_file.  Passing a non-`.toml` path raises
+     * @c std::runtime_error; operators with old ``fine_calib.txt``
+     * files must regenerate via @c pulser_calib_writer.
+     *
+     * @param filename     Path to the calibration file to read.  Must end in @c .toml.
      * @param clear_first  If @c true, clears existing parameters before loading (default: @c true).
      * @param overwrites   If @c true, existing entries are overwritten by file values (default: @c true).
+     * @throws std::runtime_error if @p filename doesn't end in @c .toml.
      */
     static void read_calib_from_file(const std::string &filename, bool clear_first = true, bool overwrites = true);
 
@@ -627,7 +714,7 @@ public:
      * @param GlobalIndex  Channel to configure.
      * @param method        One of the @ref CalibrationMethod enumerators.
      */
-    static void set_calibration_method(int GlobalIndex, CalibrationMethod method)
+    static void set_calibration_method(uint32_t GlobalIndex, CalibrationMethod method)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         channel_calibration_method[GlobalIndex] = method;
@@ -650,7 +737,7 @@ public:
      *        falling back to the global default if none is set.
      * @param GlobalIndex Channel to query.
      */
-    static CalibrationMethod get_calibration_method(int GlobalIndex)
+    static CalibrationMethod get_calibration_method(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
         auto it = channel_calibration_method.find(GlobalIndex);
@@ -666,6 +753,78 @@ public:
         return default_calibration_method;
     }
 
+    // -------------------------------------------------------------------------
+    //  Low-stats channel cache (per-spill calibration fast-path)
+    // -------------------------------------------------------------------------
+    //
+    //  Cache key = `GlobalIndex::raw()` of a channel whose Y-projection
+    //  came back below the >=250-entries gate inside the last (or an
+    //  earlier) `generate_calibration` invocation.  On subsequent calls
+    //  with `overwrite_calibration=false` we skip the channel BEFORE the
+    //  256-bin `TH2F::ProjectionY` allocation — that projection was the
+    //  hot spot on the --QA cascade (~10–15 s/spill of redundant work
+    //  after spill 0 on a 5-spill run; see BACKLOG row P 1.20).
+    //
+    //  Trade-off: a channel that was below threshold last spill stays
+    //  uncalibrated for the rest of the run by default.  Use
+    //  @ref set_low_stats_retry_period to retry every N
+    //  `generate_calibration` calls.  Per-spill QA workflows accept the
+    //  staleness because the streaming-threshold pass operates in
+    //  coarse-counter space (the fine calibration doesn't move the
+    //  decision).  Offline reconstruction calls `generate_calibration`
+    //  with `overwrite=true` exactly once at startup, which clears the
+    //  cache anyway, so this knob has no effect on production output.
+
+    /// @brief Number of `generate_calibration(.., overwrite=false)` invocations
+    ///        between low-stats cache invalidations.
+    ///
+    ///  `0` (the default) = never invalidate — once a channel is cached
+    ///  as low-stats it stays cached for the whole process.  `N > 0` =
+    ///  clear the cache every N-th call so channels that crossed the
+    ///  >=250 gate since their last skip get re-examined.
+    static void set_low_stats_retry_period(unsigned long period) noexcept
+    {
+        std::unique_lock<std::shared_mutex> lock(calibration_mutex);
+        low_stats_retry_period_ = period;
+    }
+
+    /// @brief Returns the current low-stats retry period.  See
+    ///        @ref set_low_stats_retry_period.
+    static unsigned long get_low_stats_retry_period() noexcept
+    {
+        std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+        return low_stats_retry_period_;
+    }
+
+    /// @brief Returns the number of channels currently marked as low-stats.
+    ///        Exposed for tests and QA-side instrumentation.
+    static std::size_t get_low_stats_cache_size() noexcept
+    {
+        std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+        return low_stats_keys_.size();
+    }
+
+    /// @brief Returns the cumulative count of cache-driven early-exits
+    ///        across all `generate_calibration` invocations.  Resets to
+    ///        zero when @ref clear_low_stats_cache is called or when a
+    ///        call passes `overwrite_calibration=true`.
+    static unsigned long get_low_stats_cached_skips() noexcept
+    {
+        std::shared_lock<std::shared_mutex> lock(calibration_mutex);
+        return low_stats_cached_skips_;
+    }
+
+    /// @brief Clear the low-stats cache and reset its instrumentation
+    ///        counters.  Called automatically on
+    ///        `generate_calibration(.., overwrite=true)`.
+    static void clear_low_stats_cache() noexcept
+    {
+        std::unique_lock<std::shared_mutex> lock(calibration_mutex);
+        low_stats_keys_.clear();
+        low_stats_call_count_ = 0;
+        low_stats_cached_skips_ = 0;
+    }
+
     /**
      * @brief Switch a channel to the linear fit calibration method (v2) and update its parameters.
      *
@@ -679,52 +838,24 @@ public:
      * @param offset            Intercept offset applied after the midpoint shift.
      * @param sigma             Width parameter stored as param2 (e.g. for resolution estimates).
      */
-    static void switch_to_fit_v2(int GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma);
+    static void switch_to_fit_v2(uint32_t GlobalIndex, CalibrationMethod calibration_type, float angular_coeff, float offset, float sigma);
 
     /// @}
 
     // -------------------------------------------------------------------------
-    // Finding rings algorithms
+    // Ring-finding algorithms — removed.
+    //
+    // The former static `alcor_find_rings_hough` adapter lived here as a thin
+    // wrapper around `mist::ring_finding::HoughTransform::find_rings` that
+    // converted ALCOR hits to generic hits and wrote ring-tag mask bits back.
+    // Its only consumer was the streaming-Hough trigger stage, so the logic
+    // now lives inline in `src/triggers/streaming/hough.cxx`.  AlcorFinedata
+    // is back to being a pure per-hit value type with no algorithm
+    // dependencies on MIST's ring-finding subsystem.
+    //
+    // See `include/triggers/streaming/DISCUSSION.md` § 2 for the Hough
+    // stage's current home and design.
     // -------------------------------------------------------------------------
-
-    /// @name Ring-finding algorithms
-    /// @{
-
-    /**
-     * @brief Convert a vector of @ref AlcorFinedata hits into @ref hough_hit,
-     *        run the Hough-transform ring finder, write mask bits back onto the
-     *        original hits, and return the ring results.
-     *
-     * All ALCOR-specific knowledge is concentrated here:
-     *  - Afterpulse filtering (`is_afterpulse()`).
-     *  - Device-index guard (device ≥ 200 excluded).
-     *  - LUT key derivation (`get_global_index() / 4`).
-     *  - Mask-bit assignment (`HitmaskHoughRingTagFirst/second`).
-     *
-     * @param ht                  Pre-built @ref HoughTransform instance.
-     *                            @ref HoughTransform::build_lut must have been
-     *                            called with geometry consistent with @p alcor_hits.
-     * @param alcor_hits          Calibrated ALCOR hits for the current event.
-     *                            Mask bits are written back in-place for tagged hits.
-     * @param threshold_fraction  Minimum fraction of active hits required in the
-     *                            peak accumulator cell (range 0–1).
-     * @param min_hits            Minimum absolute vote count for a ring to be accepted.
-     * @param max_rings           Maximum number of rings to extract (default 2).
-     * @param collection_radius   Distance from the ring arc within which a Hit is
-     *                            assigned to the ring [mm] (default 6).
-     * @return                    Vector of @ref hough_ring_result (indices refer to
-     *                            the @p alcor_hits vector), in descending peak-vote order.
-     */
-    static std::vector<mist::ring_finding::RingResult> alcor_find_rings_hough(
-        mist::ring_finding::HoughTransform &ht,
-        std::vector<AlcorFinedata> &alcor_hits,
-        float threshold_fraction,
-        int min_hits,
-        int min_active,
-        int max_rings = 2,
-        float collection_radius = 6.f);
-
-    /// @}
 
 private:
     // -------------------------------------------------------------------------
@@ -745,15 +876,47 @@ private:
      *       take a unique (write) lock.  Load calibration before spawning
      *       worker threads to avoid contention on the hot read path.
      */
-    inline static std::unordered_map<int, std::array<float, 3>> calibration_parameters = {};
+    //  Keyed by `GlobalIndex::raw()` (the full 32-bit packed identifier).
+    //  Was previously keyed by `AlcorData::get_calib_index()` which omitted
+    //  the device field — caused silent collisions between devices in
+    //  the legacy fine_calib.txt format with last-write-wins behaviour.
+    //  Now uses the raw GlobalIndex value, which encodes every component
+    //  (device, fifo, chip, channel, tdc) plus the validity bit.
+    inline static std::unordered_map<uint32_t, std::array<float, 3>> calibration_parameters = {};
 
     /** @brief Per-channel phase-correction method override.
      *  @note Protected by @c calibration_mutex. */
-    inline static std::unordered_map<int, CalibrationMethod> channel_calibration_method = {};
+    //  Keyed by `GlobalIndex::raw()`, parallel to @ref calibration_parameters above.
+    inline static std::unordered_map<uint32_t, CalibrationMethod> channel_calibration_method = {};
 
     /** @brief Fallback method for channels absent from channel_calibration_method.
      *  @note Protected by @c calibration_mutex. */
     inline static CalibrationMethod default_calibration_method = CalibrationMethod::AlcorV2BaseCalib;
+
+    /// @brief Per-channel low-stats skip cache for the per-spill
+    ///        @ref generate_calibration fast path.  See the
+    ///        public-side block above for semantics + trade-offs.
+    /// @note  Protected by @c calibration_mutex.
+    inline static std::unordered_set<uint32_t> low_stats_keys_ = {};
+
+    /// @brief Counter of `generate_calibration(.., overwrite=false)`
+    ///        invocations since the last cache reset, used to decide
+    ///        when the retry-every-N policy fires.
+    /// @note  Protected by @c calibration_mutex.
+    inline static unsigned long low_stats_call_count_ = 0;
+
+    /// @brief Cumulative count of cache-driven early-exits (channels
+    ///        skipped before the per-channel ProjectionY allocation).
+    ///        Exposed for tests and the `--QA` instrumentation log line.
+    /// @note  Protected by @c calibration_mutex.
+    inline static unsigned long low_stats_cached_skips_ = 0;
+
+    /// @brief Period (in `generate_calibration` calls) at which the
+    ///        low-stats cache is dropped to give marginal channels
+    ///        another chance.  `0` = never retry.  See
+    ///        @ref set_low_stats_retry_period.
+    /// @note  Protected by @c calibration_mutex.
+    inline static unsigned long low_stats_retry_period_ = 0;
 
     /**
      * @brief Reader-writer lock guarding all three static calibration members.
@@ -770,7 +933,7 @@ private:
     inline static std::shared_mutex calibration_mutex{};
 
     /**
-     * @brief Frozen-table fast-path flag (CODE_REVIEW §3.1).
+     * @brief Frozen-table fast-path flag
      *
      * Once calibration loading is complete the table is immutable for the rest
      * of the run.  Setting this flag lets per-Hit readers like @ref get_phase

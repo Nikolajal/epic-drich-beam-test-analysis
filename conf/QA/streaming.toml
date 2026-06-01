@@ -1,0 +1,131 @@
+# conf/QA/streaming.toml — fast-feedback QA override for the software trigger pipeline.
+#
+# Loaded instead of `conf/streaming.toml` when a writer is invoked with
+# `--QA`.  Tuning goal: trim rings with low hit multiplicity so that
+# operators get a quick rough-and-ready answer (Cherenkov is there / it
+# isn't), at the cost of a known upward bias on N_γ.
+#
+# Bias direction (read before quoting QA-mode numbers in a paper):
+#
+#   σ_photon  ~invariant   — the LOO σ(N) = σ_photon·√(N/(N-3)) model
+#                            estimates σ_photon per N-slice independently;
+#                            cutting low-N slices reduces stats but does
+#                            not bias the central value (the surviving
+#                            slices still measure σ_photon the same way).
+#                            Modulo a small selection effect if high-N
+#                            rings are a physically cleaner population
+#                            (typically pushes σ down, not up).
+#
+#   N_γ/ring  biased ↑     — the CB+pol3 integral divided by N_rings
+#                            both grows (accepted rings have more hits)
+#                            and shrinks-the-denominator (fewer rings
+#                            pass).  Direction unambiguous; magnitude
+#                            tunable via `hough_threshold_fraction` below.
+#                            DO NOT quote QA-mode N_γ values as the run's
+#                            physics result.
+#
+#   N_rings   ↓            — fewer events qualify, so per-run statistics
+#                            on every observable are lower.  Helpful if
+#                            you only want the top-quality rings.
+#
+# Stage 1 is left at production defaults — the QA bias comes from the
+# stage 2 (Hough) thresholds below.
+
+# QA-mode operating point (2026-05-29 audit): n_sigma_threshold raised
+# to a sentinel value (1e9) so the streaming trigger NEVER fires.  The
+# score histograms (h_streaming_score_noise red, h_streaming_score_data
+# blue) still accumulate inside run_streaming_trigger_weighted on every
+# scoring window — the threshold check only gates the *firing* path
+# downstream of the score.  Net effect: the QA writer is ~6× faster
+# (streaming/Hough cascade contributes ~0 s instead of ~290 s), AND the
+# analyser still gets the bkg-vs-sig score distribution on the QA
+# dashboard (emitted as ``qa/lightdata/05_streaming_score.pdf``).
+# Analyser workflow: inspect the score plot, decide a production
+# n_sigma_threshold from where the data tail crosses the noise tail,
+# then set it for the production run (without --QA).
+[streaming_trigger]
+time_window_ns      =   20.0
+n_sigma_threshold   =   1.0e9   # disabled in QA mode — score hists still fill
+min_noise_hits      =   10.0
+# In-beam-background QA sample (the violet 05_streaming_score curve): band ends
+# `inbeam_pretrigger_offset_ns` before each hardware trigger, `inbeam_sample_width_ns` wide.
+inbeam_pretrigger_offset_ns = 40.0
+inbeam_sample_width_ns      = 600.0
+default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a non-Hough hardware trigger
+
+[streaming_hough]
+
+# ────────────────────────────────────────────────────────────────
+# Coarser Hough accumulator — QA speedup lever.
+#
+# Production (conf/streaming.toml) uses r_step = cell_size = 1.5 mm
+# with aggregation_window_cells = 2 → 8-cell sliding-window peak
+# finder over a 3×3×3 mm³ volume.  Cost: voting and peak-finding
+# scale with n_cells = nx·ny·n_R, which goes as 1/cell_size³.
+#
+# QA reverts to the legacy coarser grid: r_step = cell_size = 3.0 mm
+# (half the production resolution per axis → ~8× fewer accumulator
+# cells, ~8× faster vote pass + peak finder) and turns aggregation
+# off (single-cell peak), since the cells are already at the
+# legacy-equivalent volume.
+#
+# Trade-off: ~22% loss in peak_votes recovery vs the aggregation
+# recipe (rings near cell boundaries can fragment); centres are
+# located to one 3-mm cell instead of one 1.5-mm cell.  The
+# subsequent fit_circle re-fit in recodata refines the centre to
+# sub-mm precision either way, so the resolution loss is on the
+# Hough seed, not on the final ring measurement.  Fine for QA.
+# ────────────────────────────────────────────────────────────────
+r_min               =   35.0
+r_max               =  105.0
+r_step              =    3.0    # QA: legacy coarser radius granularity
+cell_size           =    3.0    # QA: legacy coarser XY cell — ~8× speedup
+centre_padding_mm   =   10.0
+
+# ────────────────────────────────────────────────────────────────
+# QA-tuned ring acceptance — the only knobs that differ from
+# production.  All three move in the same direction (tighter →
+# only high-N rings pass).
+# ────────────────────────────────────────────────────────────────
+
+# Production: 0.33 — accept a peak cell when its votes are ≥ 33% of
+# the currently-active hit count.  QA: 0.50 — require half the active
+# hits to concentrate in the peak cell.  Cuts rings whose hits are
+# more diffuse around the (real or fake) centre.
+threshold_fraction       =   0.50
+
+# Production: 0.50 — the absolute floor min_hits = floor(min_active ×
+# slack) lets a ring with min_active/2 votes still fire.  QA: 0.75 —
+# tighter, but still leaves headroom for statistical fluctuation.
+min_hits_slack           =   0.75
+
+# Production: 0.0035 — at 1648 active channels this floors min_active
+# at ceil(5.8) = 6 hits.  QA: 0.008 — floors at ceil(13.2) = 14 hits.
+# Doubles the entry gate; preserves statistics on the bright-ring
+# population while cutting the long-tail fake rings.
+hough_threshold_fraction =   0.008
+
+# Production defaults for everything else — these are not QA levers.
+collection_radius        =   2
+centre_xy_half_range_mm  =   25.0
+#  Aggregation off in QA: the cell_size is already at the legacy
+#  3 mm, so an 8-cell window would scan a 6³ mm³ volume — too coarse
+#  for two-ring separation.  Single-cell peak at 3 mm matches the
+#  pre-Q2-2026 production behaviour.
+aggregation_window_cells =   1
+# fit_circle_init_{x,y,r} removed 2026-05-30 (C3.5) — recodata seeds the
+# refit from the Hough peak.  Tolerated for one release with a warning.
+
+# ────────────────────────────────────────────────────────────────
+# Recodata ring-reconstruction knobs (formerly conf/QA/recodata.toml).
+# The only QA-specific override here is skip_loo_residuals — everything
+# else (hardware_ring_dt_*, min_hits_per_ring, delta_r_for_coverage_mm)
+# QA-matched production, so it inherits the defaults from
+# conf/defaults/streaming.toml's [streaming_hough] table.
+#
+# When true, the per-hit leave-one-out residual loop in
+# compute_ring_fit_pure is skipped — the biggest single speedup lever
+# for --QA mode.  Cost: σ_photon is NOT measurable from this run's
+# output (h_residual_vs_n_* stay empty, no _sigma_photon_mm scalars).
+# ────────────────────────────────────────────────────────────────
+skip_loo_residuals       =  true

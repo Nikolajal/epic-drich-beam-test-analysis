@@ -45,7 +45,7 @@
  * address of those owned vectors; ROOT's `TTree::SetBranchAddress` is bound
  * to the address of the *_ptr slot (`&recodata_ptr`).
  *
- * ### Non-copyable, non-movable (CODE_REVIEW §D-08)
+ * ### Non-copyable, non-movable
  * ROOT branches bind to the address of the wrapper's @c _ptr slots.  Any
  * copy or move of @c AlcorRecodata would either duplicate the slot value
  * (pointing into the source's freed memory after destruction) or relocate
@@ -183,14 +183,16 @@ public:
     /// Distribution is cached `static thread_local` to avoid per-call construction —
     /// this getter sits in hot lightdata_writer loops; see the matching note on
     /// `AlcorFinedata::get_hit_x_rnd`.
-    inline float get_hit_x_rnd(int i) const {
+    inline float get_hit_x_rnd(int i) const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return recodata[i].hit_x + pixel_jitter(rng.engine());
     }
 
     /// @brief Pixel-randomised y-coordinate (uniform ±1.5 mm jitter within the pixel cell).
-    inline float get_hit_y_rnd(int i) const {
+    inline float get_hit_y_rnd(int i) const
+    {
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return recodata[i].hit_y + pixel_jitter(rng.engine());
@@ -270,7 +272,7 @@ public:
      *
      * The previous by-value `set_recodata(...)`, `set_triggers(...)`,
      * `set_recodata_link(...)`, `set_triggers_link(...)` methods are
-     * removed (CODE_REVIEW §D-08) — no callers, and they either copy
+     * removed — no callers, and they either copy
      * multi-MB containers per call or invite the F1/F2/F3 branch-address
      * traps now blocked by the non-copyable contract.
      *
@@ -385,7 +387,8 @@ public:
     inline bool is_cross_talk(int i) { return get_finedata(i).is_cross_talk(); }
 
     /// @brief True if Hit @p i has been associated with a reconstructed ring.
-    inline bool is_ring_tagged(int i) { return check_hit_mask(i, encode_bits({HitmaskRingTagFirst, HitmaskRingTagSecond})); }
+    /// Body in alcor_recodata.cxx — uses HitMask enum constants from alcor_data.h.
+    bool is_ring_tagged(int i);
 
     ///@}
 

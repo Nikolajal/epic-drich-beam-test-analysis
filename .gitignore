@@ -1,7 +1,6 @@
 *~
 extData
 Data
-extData
 .DS_Store
 */.DS_Store
 */*.d
@@ -10,7 +9,31 @@ extData
 build/
 macros/*.h
 .claude
+*.pyc
 
-# Local design-discussion scratchpad — kept out of git so open questions
-# move to GitHub Issues once they're worth collaborating on.
-DISCUSSION.md
+# qa_quicklook setting-set "working overlay" — per-operator scratch
+# space.  Master files at conf/<name>.toml symlink into here while
+# the dashboard has unsaved local edits; the directory itself stays
+# untracked so a dirty working tree doesn't follow operators around.
+conf/working/
+
+# Personal / scratch / experimental ROOT macros — NOT shipped.  Drop any
+# throwaway or in-development macro under macros/working/ and it stays out
+# of the tree (mirrors conf/working/).  Shipped reference macros live in
+# macros/examples/, shipped build targets in macros/utilities/.  Only the
+# explanatory README is tracked.
+macros/working/*
+!macros/working/README.md
+
+# Cross-shifter sync — Google service-account JSON keys.  The default
+# storage path is ~/.config/qa_quicklook/sheets-sa.json (outside the
+# worktree); these patterns are belt-and-braces against the day someone
+# accidentally drops a key under the repo root.
+*sa.json
+*service-account*.json
+*-sheets-*.json
+# Reverse-merge snapshot baseline — operator-local state that should
+# never be committed.  Lives under ~/.cache/qa_quicklook/ in the real
+# install; the pattern catches strays from running the CLI inside the
+# repo with --snapshot-path overrides.
+sheets_last_pushed.json

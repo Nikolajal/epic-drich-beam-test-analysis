@@ -5,7 +5,7 @@
  * @brief Per-spill metadata: dead-channel masks, active-participant masks,
  *        and the @ref AlcorLightdataStruct payload for the spill.
  *
- * **Two-layer design (CODE_REVIEW §D-08).**  This header exposes two related
+ * **Two-layer design**  This header exposes two related
  * types with split responsibilities:
  *
  * - @ref AlcorSpilldataStruct — the **POD data side**.  Owns the vectors and
@@ -85,15 +85,20 @@ struct DataMaskStruct
 struct AlcorSpilldataStruct
 {
     // --- Working maps (random-access processing) ------------------------
-    std::map<uint8_t, uint32_t> dead_mask;                          ///< device → dead-channel bitmask.
-    std::map<uint8_t, uint32_t> participants_mask;                  ///< device → participating-channel bitmask.
-    std::map<uint32_t, AlcorLightdataStruct> frame_and_lightdata;   ///< frame_id → light-data payload.
+    std::map<uint8_t, uint32_t> dead_mask;                                  ///< device → dead-channel bitmask.
+    std::map<uint8_t, uint32_t> participants_mask;                          ///< device → participating-channel bitmask.
+    std::unordered_map<uint32_t, AlcorLightdataStruct> frame_and_lightdata; ///< frame_id → light-data payload.
+                                                                            ///< Hashed for O(1) insert/lookup and ~25%-cheaper destroy than the
+                                                                            ///< previous std::map.  Iteration order is NOT key-sorted; call
+                                                                            ///< @ref sorted_frame_ids (free function below) at the few sites that
+                                                                            ///< rely on ascending frame_id order (lightdata_writer main loop,
+                                                                            ///< AlcorSpilldata::prepare_tree_fill, first-spill timing calibration).
 
     // --- Flat vectors (ROOT TTree serialisation) -------------------------
-    std::vector<DataMaskStruct> dead_mask_list;                     ///< Flat copy of @c dead_mask for TTree output.
-    std::vector<DataMaskStruct> participants_mask_list;             ///< Flat copy of @c participants_mask for TTree output.
-    std::vector<uint32_t> frame_reference;                          ///< Ordered list of frame IDs written to the TTree.
-    std::vector<AlcorLightdataStruct> lightdata_list_in_frame;      ///< Light-data entries parallel to @c frame_reference.
+    std::vector<DataMaskStruct> dead_mask_list;                ///< Flat copy of @c dead_mask for TTree output.
+    std::vector<DataMaskStruct> participants_mask_list;        ///< Flat copy of @c participants_mask for TTree output.
+    std::vector<uint32_t> frame_reference;                     ///< Ordered list of frame IDs written to the TTree.
+    std::vector<AlcorLightdataStruct> lightdata_list_in_frame; ///< Light-data entries parallel to @c frame_reference.
 
     // --- Special members: move-only --------------------------------------
     AlcorSpilldataStruct() noexcept = default;
@@ -167,7 +172,7 @@ public:
     AlcorSpilldataStruct &get_spilldata_link() noexcept { return spilldata; }
 
     /// @brief Mutable reference to the frame → light-data map.
-    std::map<uint32_t, AlcorLightdataStruct> &get_frame_link() noexcept { return spilldata.frame_and_lightdata; }
+    std::unordered_map<uint32_t, AlcorLightdataStruct> &get_frame_link() noexcept { return spilldata.frame_and_lightdata; }
 
     /// @brief Mutable reference to the participants-mask map.
     std::map<uint8_t, uint32_t> &get_participants_mask_link() noexcept { return spilldata.participants_mask; }
@@ -256,10 +261,10 @@ private:
     /// non-movable, so the addresses are stable for its lifetime.
     void sync_ptrs_() noexcept
     {
-        dead_mask_list_ptr_         = &spilldata.dead_mask_list;
+        dead_mask_list_ptr_ = &spilldata.dead_mask_list;
         participants_mask_list_ptr_ = &spilldata.participants_mask_list;
-        frame_reference_ptr_        = &spilldata.frame_reference;
-        lightdata_list_in_frame_ptr_= &spilldata.lightdata_list_in_frame;
+        frame_reference_ptr_ = &spilldata.frame_reference;
+        lightdata_list_in_frame_ptr_ = &spilldata.lightdata_list_in_frame;
     }
 
     AlcorSpilldataStruct spilldata;                                  ///< Owned spill-data payload.
@@ -267,9 +272,9 @@ private:
 
     // Branch-address pointer slots — live HERE (not in the POD struct).
     // Stable for the wrapper's lifetime since the class is non-movable.
-    std::vector<DataMaskStruct> *dead_mask_list_ptr_         = nullptr;
+    std::vector<DataMaskStruct> *dead_mask_list_ptr_ = nullptr;
     std::vector<DataMaskStruct> *participants_mask_list_ptr_ = nullptr;
-    std::vector<uint32_t>       *frame_reference_ptr_        = nullptr;
+    std::vector<uint32_t> *frame_reference_ptr_ = nullptr;
     std::vector<AlcorLightdataStruct> *lightdata_list_in_frame_ptr_ = nullptr;
 };
 
@@ -291,3 +296,20 @@ void merge_lightdata(AlcorLightdataStruct &lhs, AlcorLightdataStruct &&rhs);
  *   if the key already exists.
  */
 void merge(AlcorSpilldataStruct &lhs, AlcorSpilldataStruct &&rhs);
+
+/**
+ * @brief Returns the keys of @p frame_link sorted in ascending order.
+ *
+ * The frame_id → light-data container is a `std::unordered_map` so that
+ * insertion / lookup / destroy are all O(1).  A small number of call sites
+ * (lightdata_writer's main per-frame loop, AlcorSpilldata::prepare_tree_fill,
+ * the first-spill timing-calibration loop) rely on ascending frame_id
+ * iteration order to remain behaviourally identical to the previous
+ * `std::map`.  Those sites build a sorted-keys vector once per spill via
+ * this helper and iterate it directly; the rest of the codebase keeps the
+ * hash-map's native unordered iteration.
+ *
+ * Complexity: O(N) reserve + O(N log N) sort, where N = @p frame_link size.
+ */
+std::vector<uint32_t> sorted_frame_ids(
+    const std::unordered_map<uint32_t, AlcorLightdataStruct> &frame_link);
