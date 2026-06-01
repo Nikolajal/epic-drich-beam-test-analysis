@@ -191,10 +191,10 @@ TH2F *build_coverage_map_xy(
         {
             auto it_w = channel_weights->find(lut_key);
             if (it_w == channel_weights->end())
-                continue;  // unmapped → effectively masked
+                continue; // unmapped → effectively masked
             channel_weight = it_w->second;
             if (channel_weight <= 0.f)
-                continue;  // dead channel
+                continue; // dead channel
         }
 
         const float cx = position[0];

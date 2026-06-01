@@ -34,7 +34,7 @@
 #include "utility/circle_fit.h"
 #include "utility/config_dump.h"
 #include "utility/config_reader.h"
-#include "utility/qa_publish.h"            // util::qa::pdf_path + crop_pdf_inplace
+#include "utility/qa_publish.h" // util::qa::pdf_path + crop_pdf_inplace
 #include <set>
 #include <filesystem>
 #include <memory>
@@ -157,7 +157,7 @@ void recodata_writer(
     //  0 per channel); the error itself is still surfaced loudly.
     {
         namespace fs = std::filesystem;
-        const fs::path run_dir   = fs::path(data_repository) / run_name;
+        const fs::path run_dir = fs::path(data_repository) / run_name;
         const fs::path toml_path = run_dir / "fine_calib.toml";
         try
         {
@@ -285,7 +285,7 @@ void recodata_writer(
 
     RootHist<TH2F> h_trigger_qa(
         "h_trigger_qa",
-        "Trigger selection QA;trigger;",  // no Y title — the bin labels (accepted / edge-rejected / duplicate-rejected) carry it
+        "Trigger selection QA;trigger;", // no Y title — the bin labels (accepted / edge-rejected / duplicate-rejected) carry it
         n_triggers, 0, n_triggers,
         3, 0, 3);
     for (int i = 0; i < n_triggers; ++i)
@@ -333,7 +333,7 @@ void recodata_writer(
     //  there propagates here automatically.
     constexpr double kTriggerDtHalfRangeNs =
         BTANA_ALCOR_ROLLOVER_TO_CC * BTANA_ALCOR_CC_TO_NS;
-    constexpr int    kTriggerDtBins      = 5000;
+    constexpr int kTriggerDtBins = 5000;
 
     // ─────────────────────────────────────────────────────────────────────
     //  Live-QA radiator pipeline
@@ -634,13 +634,13 @@ void recodata_writer(
     //  check guards the division below from a 0 denominator (all
     //  samples rejected as outliers) and a low-statistics tail.
     constexpr float kFineOffsetOutlierCutNs = 30.f;
-    constexpr int   kFineOffsetMinSamples   = 20;
+    constexpr int kFineOffsetMinSamples = 20;
     for (auto &[channel_index, values_list] : map_of_offsets)
     {
         if (static_cast<int>(values_list.size()) < kFineOffsetMinSamples)
             continue;
         float offset_sum = 0.f;
-        int   offset_participants = 0;
+        int offset_participants = 0;
         for (const auto &value : values_list)
         {
             if (std::fabs(value) > kFineOffsetOutlierCutNs)
@@ -1442,30 +1442,30 @@ void recodata_writer(
     {
         util::ConfigDump dump(output_file.get());
         //  Runtime CLI flags.
-        dump.add("max_spill",      max_spill)
-            .add("force_rebuild",  force_rebuild)
+        dump.add("max_spill", max_spill)
+            .add("force_rebuild", force_rebuild)
             .add("force_upstream", force_upstream);
         //  Operationally interesting resolved values — the verbatim
         //  TOML snapshots below carry the full story; these surface the
         //  knobs people actually scan for in the dashboard.
-        dump.add("frame_size",                framer_cfg.frame_size)
-            .add("frame_length_ns",           framer_cfg.frame_length_ns())
-            .add("n_phi_bins_coverage",       recodata_cfg.n_phi_bins_coverage)
-            .add("n_r_bins_coverage",         recodata_cfg.n_r_bins_coverage)
-            .add("r_min_coverage_mm",         recodata_cfg.r_min_coverage_mm)
-            .add("r_max_coverage_mm",         recodata_cfg.r_max_coverage_mm)
-            .add("channel_half_width_mm",     recodata_cfg.channel_half_width_mm)
-            .add("nominal_centre_x_mm",       recodata_cfg.nominal_centre_x_mm)
-            .add("nominal_centre_y_mm",       recodata_cfg.nominal_centre_y_mm);
+        dump.add("frame_size", framer_cfg.frame_size)
+            .add("frame_length_ns", framer_cfg.frame_length_ns())
+            .add("n_phi_bins_coverage", recodata_cfg.n_phi_bins_coverage)
+            .add("n_r_bins_coverage", recodata_cfg.n_r_bins_coverage)
+            .add("r_min_coverage_mm", recodata_cfg.r_min_coverage_mm)
+            .add("r_max_coverage_mm", recodata_cfg.r_max_coverage_mm)
+            .add("channel_half_width_mm", recodata_cfg.channel_half_width_mm)
+            .add("nominal_centre_x_mm", recodata_cfg.nominal_centre_x_mm)
+            .add("nominal_centre_y_mm", recodata_cfg.nominal_centre_y_mm);
         //  Conf-file paths + verbatim TOML bodies for every conf the
         //  writer reads (mapping — now also carries the [coverage]
         //  geometry, trigger, framer) plus the streaming conf (which
         //  carries the [streaming_hough] ring-reco knobs and is also
         //  forwarded to the lightdata cascade on --force-upstream so the
         //  cascade is reproducible from this file alone).
-        dump.add_conf_file("mapping_conf",   mapping_conf)
-            .add_conf_file("trigger_conf",   trigger_conf)
-            .add_conf_file("framer_conf",    framer_conf)
+        dump.add_conf_file("mapping_conf", mapping_conf)
+            .add_conf_file("trigger_conf", trigger_conf)
+            .add_conf_file("framer_conf", framer_conf)
             .add_conf_file("streaming_conf", streaming_conf);
     }
 
@@ -1495,7 +1495,8 @@ void recodata_writer(
         gStyle->SetPaintTextFormat(".0f");
 
         auto save_one = [&run_dir](int order, const std::string &name,
-                                   TH1 *h, const char *draw_opt) {
+                                   TH1 *h, const char *draw_opt)
+        {
             if (!h)
                 return;
             TCanvas c(TString::Format("c_qa_recodata_%02d_%s",
@@ -1577,11 +1578,11 @@ void recodata_writer(
             py->SetLineColor(kAzure + 2);
             //  Best centre = peak (mode) of each projection.
             const double best_x = px->GetEntries() > 0
-                ? px->GetXaxis()->GetBinCenter(px->GetMaximumBin())
-                : 0.0;
+                                      ? px->GetXaxis()->GetBinCenter(px->GetMaximumBin())
+                                      : 0.0;
             const double best_y = py->GetEntries() > 0
-                ? py->GetXaxis()->GetBinCenter(py->GetMaximumBin())
-                : 0.0;
+                                      ? py->GetXaxis()->GetBinCenter(py->GetMaximumBin())
+                                      : 0.0;
 
             TCanvas c("c_qa_recodata_04_ring_centre_xy", "", 1000, 1000);
             const double kYW = 0.18; // Y-projection strip width (right)
@@ -1596,14 +1597,14 @@ void recodata_writer(
             TPad pxp("pxproj_centre", "", 0.00, 1.00 - kXH, 1.00 - kYW, 1.00);
             TPad pyp("pyproj_centre", "", 1.00 - kYW, 0.00, 1.00, 1.00 - kXH);
             p2d.SetLeftMargin(kL);
-            p2d.SetRightMargin(0.0);  // butt against the Y-projection
+            p2d.SetRightMargin(0.0); // butt against the Y-projection
             p2d.SetBottomMargin(kB);
-            p2d.SetTopMargin(0.0);    // butt against the X-projection
+            p2d.SetTopMargin(0.0); // butt against the X-projection
             pxp.SetLeftMargin(kL);
             pxp.SetRightMargin(0.0);
             pxp.SetBottomMargin(0.0); // touch the map's top
             pxp.SetTopMargin(0.04);
-            pyp.SetLeftMargin(0.0);   // touch the map's right
+            pyp.SetLeftMargin(0.0); // touch the map's right
             pyp.SetRightMargin(0.04);
             pyp.SetBottomMargin(kB);
             pyp.SetTopMargin(0.0);
@@ -1706,7 +1707,7 @@ void recodata_writer(
         if (pub_have_ring)
         {
             rm[{run_name, "all", "full.n_gamma"}] = {pub_n_gamma, 0.0};
-            rm[{run_name, "all", "full.sigma"}]   = {pub_sigma, pub_sigma_err};
+            rm[{run_name, "all", "full.sigma"}] = {pub_sigma, pub_sigma_err};
         }
         ar.update(rm, /*source=*/"recodata");
     }

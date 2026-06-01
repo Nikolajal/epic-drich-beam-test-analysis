@@ -32,7 +32,7 @@
 #include <vector>
 
 #include "alcor_finedata.h"          // AlcorFinedataStruct
-#include "utility/config_reader.h"      // QaConfigStruct
+#include "utility/config_reader.h"   // QaConfigStruct
 #include "writers/lightdata/types.h" // CtHit
 
 class TH1F;

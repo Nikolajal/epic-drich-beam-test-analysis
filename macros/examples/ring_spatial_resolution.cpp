@@ -272,16 +272,17 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     {
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update({
-            //  SPSR resolution function: sigma_R(N) = sqrt(SPSR^2 / N + const^2)
-            {{run_name, "all", "ring.spatial_resolution"}, {f_resolution->GetParameter(0), f_resolution->GetParError(0)}},
-            {{run_name, "all", "ring.resolution_constant"}, {f_resolution->GetParameter(1), f_resolution->GetParError(1)}},
+                      //  SPSR resolution function: sigma_R(N) = sqrt(SPSR^2 / N + const^2)
+                      {{run_name, "all", "ring.spatial_resolution"}, {f_resolution->GetParameter(0), f_resolution->GetParError(0)}},
+                      {{run_name, "all", "ring.resolution_constant"}, {f_resolution->GetParameter(1), f_resolution->GetParError(1)}},
 
-            //  Direct single-photon resolution (leave-one-out residual width)
-            {{run_name, "all", "ring.spsr_sigma_mm"}, {spsr_direct_fit.GetParameter(2), spsr_direct_fit.GetParError(2)}},
+                      //  Direct single-photon resolution (leave-one-out residual width)
+                      {{run_name, "all", "ring.spsr_sigma_mm"}, {spsr_direct_fit.GetParameter(2), spsr_direct_fit.GetParError(2)}},
 
-            //  First-round mean ring radius (geometry reference)
-            {{run_name, "all", "ring.radius_mm"}, {found_ring_radius, found_ring_radius_stddev}},
-        }, "recodata");
+                      //  First-round mean ring radius (geometry reference)
+                      {{run_name, "all", "ring.radius_mm"}, {found_ring_radius, found_ring_radius_stddev}},
+                  },
+                  "recodata");
 
         mist::logger::info("[ring_spatial_resolution] resolution results written to standard_results.toml for run " + run_name);
     }
