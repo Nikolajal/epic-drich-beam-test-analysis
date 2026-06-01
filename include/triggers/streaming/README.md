@@ -1,4 +1,4 @@
-# `include/triggers/streaming/` — software trigger pipeline
+# include/triggers/streaming/ — software trigger pipeline
 
 This folder holds the two-stage software pre-filter that gates the
 lightdata writer's output.  Both stages live here so the pipeline is
