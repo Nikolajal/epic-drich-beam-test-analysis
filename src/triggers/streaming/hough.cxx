@@ -14,7 +14,7 @@
 
 #include "triggers/streaming/hough.h"
 
-#include <algorithm>   // std::max, std::sort, std::remove_if (C3.1 + C3.4)
+#include <algorithm> // std::max, std::sort, std::remove_if (C3.1 + C3.4)
 #include <array>
 #include <cmath>
 #include <vector>

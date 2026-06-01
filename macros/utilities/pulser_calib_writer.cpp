@@ -62,8 +62,8 @@ int main(int argc, char **argv)
     //  Sentinel -1 = "no CLI override"; ≥ 0 wins over calibration_conf.toml.
     //  CLI11 leaves these untouched when the user doesn't pass the flag,
     //  so the writer impl can do a single ``if (override >= 0)`` check.
-    int anchor_device_override     = -1;
-    int anchor_chip_override       = -1;
+    int anchor_device_override = -1;
+    int anchor_chip_override = -1;
     int anchor_eo_channel_override = -1;
     //  Pulser frequency override (Hz).  -1.0 = no override; positive
     //  values are converted to ``pulser_period_cc`` below using the

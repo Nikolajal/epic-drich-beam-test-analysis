@@ -821,7 +821,7 @@ public:
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
         low_stats_keys_.clear();
-        low_stats_call_count_   = 0;
+        low_stats_call_count_ = 0;
         low_stats_cached_skips_ = 0;
     }
 

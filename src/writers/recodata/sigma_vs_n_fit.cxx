@@ -9,7 +9,7 @@
  */
 
 #include "writers/recodata/sigma_vs_n_fit.h"
-#include "utility/qa_publish.h"  // util::qa::pdf_path — land PDFs under qa/recodata/
+#include "utility/qa_publish.h" // util::qa::pdf_path — land PDFs under qa/recodata/
 
 #include <cmath>     // std::abs, std::isfinite
 #include <algorithm> // std::max

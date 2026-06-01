@@ -67,7 +67,7 @@ namespace util::audit
 /// edits so a tail of the audit file reads like a unified history.
 inline std::string iso8601_now()
 {
-    const auto now   = std::chrono::system_clock::now();
+    const auto now = std::chrono::system_clock::now();
     const auto t_now = std::chrono::system_clock::to_time_t(now);
     std::tm local{};
 #if defined(_WIN32)
@@ -87,7 +87,7 @@ inline std::filesystem::path sibling_audit_path(const std::string &primary_path)
 {
     namespace fs = std::filesystem;
     fs::path p(primary_path);
-    p.replace_extension();              // drop ``.root`` / ``.toml``
+    p.replace_extension(); // drop ``.root`` / ``.toml``
     p += ".audit.toml";
     return p;
 }
@@ -107,14 +107,29 @@ inline std::string toml_basic_escape(std::string_view s)
     {
         switch (c)
         {
-            case '\\': out += "\\\\"; break;
-            case '"':  out += "\\\""; break;
-            case '\n': out += "\\n";  break;
-            case '\t': out += "\\t";  break;
-            case '\r': out += "\\r";  break;
-            case '\b': out += "\\b";  break;
-            case '\f': out += "\\f";  break;
-            default:   out += c;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        default:
+            out += c;
         }
     }
     return out;
@@ -148,8 +163,8 @@ inline void log(const std::string &audit_path,
                 const std::string &run,
                 const std::string &sensor,
                 const std::string &quantity,
-                double             value,
-                double             error = 0.0)
+                double value,
+                double error = 0.0)
 {
     //  In-process mutex — serialises threads of the same process so
     //  two threads don't both call ``::write`` simultaneously (which
@@ -166,11 +181,11 @@ inline void log(const std::string &audit_path,
     std::ostringstream os;
     os << std::setprecision(6);
     os << "[[entry]]\n"
-       << "at       = \"" << toml_basic_escape(iso8601_now())  << "\"\n"
-       << "source   = \"" << toml_basic_escape(source)         << "\"\n"
-       << "run      = \"" << toml_basic_escape(run)            << "\"\n"
-       << "sensor   = \"" << toml_basic_escape(sensor)         << "\"\n"
-       << "quantity = \"" << toml_basic_escape(quantity)       << "\"\n"
+       << "at       = \"" << toml_basic_escape(iso8601_now()) << "\"\n"
+       << "source   = \"" << toml_basic_escape(source) << "\"\n"
+       << "run      = \"" << toml_basic_escape(run) << "\"\n"
+       << "sensor   = \"" << toml_basic_escape(sensor) << "\"\n"
+       << "quantity = \"" << toml_basic_escape(quantity) << "\"\n"
        << "value    = " << value << "\n"
        << "error    = " << error << "\n\n";
     const std::string payload = os.str();
@@ -213,7 +228,7 @@ inline void log(const std::string &audit_path,
     }
 
     const ssize_t want = static_cast<ssize_t>(payload.size());
-    const ssize_t got  = ::write(fd, payload.data(), payload.size());
+    const ssize_t got = ::write(fd, payload.data(), payload.size());
     //  Sweep audit: guard the close.  close(-1) is a no-op
     //  on macOS/Linux but clobbers errno on some BSDs; the open-failure
     //  branch already returns above so fd >= 0 here, but keep the
@@ -226,7 +241,7 @@ inline void log(const std::string &audit_path,
         mist::logger::error("[util::audit] short write to " + audit_path +
                             " (" + std::to_string(got) + " / " +
                             std::to_string(want) + " bytes) — entry "
-                            "may be truncated");
+                                                   "may be truncated");
     }
 }
 

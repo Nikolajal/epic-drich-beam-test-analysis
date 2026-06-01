@@ -163,7 +163,6 @@ TH2F *build_coverage_map_xy(
     float channel_half_width_mm = 1.5f,
     const std::map<int, float> *channel_weights = nullptr);
 
-
 /**
      * @brief Per-ring azimuthal coverage fraction `f ∈ [0, 1]`.
      *

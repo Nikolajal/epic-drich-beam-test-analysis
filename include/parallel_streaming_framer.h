@@ -326,8 +326,8 @@ public:
      */
     struct WorkerQA
     {
-        TH2F *h2_fine_tune = nullptr;                       ///< Per-thread clone of @ref h2_fine_tune_distribution.
-        TH1F *h_afterpulse = nullptr;                       ///< Per-thread clone of @ref h_afterpulse_dt.
+        TH2F *h2_fine_tune = nullptr;                                 ///< Per-thread clone of @ref h2_fine_tune_distribution.
+        TH1F *h_afterpulse = nullptr;                                 ///< Per-thread clone of @ref h_afterpulse_dt.
         std::unordered_map<uint32_t, AlcorLightdataStruct> frame_map; ///< Per-worker frame buffer; merged into master at spill end.
     };
 

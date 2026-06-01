@@ -56,10 +56,10 @@ std::optional<std::array<float, 2>> Mapping::get_position_from_pdu_column_row(in
     //  duplicates RecodataConfigStruct::channel_half_width_mm by design —
     //  same physical pixel, different consumer.)
     constexpr float kGuardRingOffsetMm = 0.05f + 0.1f + 0.2f;
-    constexpr float kPixelHalfWidthMm  = 1.5f;
-    constexpr float kPduPitchMm        = 3.2f;
-    constexpr float kInterHalfGapMm    = 0.3f;
-    constexpr int   kPduHalfBoundary   = 7; // last column/row before the half gap
+    constexpr float kPixelHalfWidthMm = 1.5f;
+    constexpr float kPduPitchMm = 3.2f;
+    constexpr float kInterHalfGapMm = 0.3f;
+    constexpr int kPduHalfBoundary = 7; // last column/row before the half gap
     float x = kGuardRingOffsetMm + kPixelHalfWidthMm + kPduPitchMm * column +
               (column > kPduHalfBoundary ? kInterHalfGapMm : 0.f);
     float y = kGuardRingOffsetMm + kPixelHalfWidthMm + kPduPitchMm * row +
