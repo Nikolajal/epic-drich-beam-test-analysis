@@ -26,7 +26,7 @@
 #include <utility.h>
 #include <toml++/toml.h>
 #include "utility/toml_utils.h"
-#include "alcor_data.h"   // BTANA_ALCOR_CC_TO_NS — single source of truth for the 3.125 ns/cc conversion used by frame_length_ns()
+#include "alcor_data.h" // BTANA_ALCOR_CC_TO_NS — single source of truth for the 3.125 ns/cc conversion used by frame_length_ns()
 
 // =========================================================================
 //  Core tag set
@@ -65,7 +65,7 @@ struct ReadoutConfigStruct
     /// trigger: accepted when |Δt − center| < n_sigma · window [ns].
     float timing_delta_center_ns = -0.5f;
     float timing_delta_window_ns = 0.5f;
-    float timing_delta_n_sigma   = 3.0f;
+    float timing_delta_n_sigma = 3.0f;
 
     /// @brief Sensor tag for @p device: the per-device override if set,
     ///        else the role-level @ref sensor_type.
@@ -225,7 +225,9 @@ struct FramerConfigStruct
     /// @ref BTANA_ALCOR_CC_TO_NS (alcor_data.h) so the 3.125 ns/cc
     /// conversion has a single source of truth.
     float frame_length_ns() const
-    { return static_cast<float>(frame_size * BTANA_ALCOR_CC_TO_NS); }
+    {
+        return static_cast<float>(frame_size * BTANA_ALCOR_CC_TO_NS);
+    }
 };
 
 /**
@@ -872,7 +874,7 @@ struct RecodataConfigStruct
     /// Cherenkov light sits in a specific window after the trigger.  See
     /// `compute_ring_fit_timewindow`.  Defaults −30 … +30 ns.
     float hardware_ring_dt_min_ns = -30.f;
-    float hardware_ring_dt_max_ns =  30.f;
+    float hardware_ring_dt_max_ns = 30.f;
 
     /// @brief Skip channels with `r_channel < this` when building the
     /// coverage map.  Default 0 = no extra filter (the loose

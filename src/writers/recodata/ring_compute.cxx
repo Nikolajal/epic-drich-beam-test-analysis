@@ -19,8 +19,8 @@
 #include "TH1.h"
 #include "TH2.h"
 
-#include "alcor_finedata.h"  // AlcorFinedata
-#include "alcor_lightdata.h" // AlcorLightdata
+#include "alcor_finedata.h"     // AlcorFinedata
+#include "alcor_lightdata.h"    // AlcorLightdata
 #include "utility/circle_fit.h" // fit_circle
 #include "utility/radiator_efficiency.h"
 
