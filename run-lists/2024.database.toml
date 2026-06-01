@@ -1,0 +1,789 @@
+# 2024 full database of runs info
+# The first run defines the standard configuration,
+# all subsequent runs only specify fields that changed w.r.t the previous run.
+#
+# Source: imported from Run Book [2024][dRICH][testbeam] Run Book.xlsx
+# Fields: mirror_mm, beam_status, particle, polarity, beam_energy,
+#         rdo_firmware, timing_firmware, temperature, v_bias,
+#         calibration, dcr_scan, n_spills, quality, notes
+
+[runs."20240526-150232"]
+radiator_desc = "aerogel 1.02\n2x 2 cm tiles\nAG22-J001 (1.021)\nAG22-J003 (1.0207)\nside B"
+mirror_mm = 75
+beam_status = "on"
+polarity = "negative"
+beam_energy = 11.5
+trigger = "193: Luca-and-16x10\n194: Luca-GEM"
+rdo_firmware = "dual-ext-std-tb2024-base.02"
+timing_firmware = "single-ext-std-tb2024-base.02"
+temperature = -20.0
+calibration = "20240526-141034"
+notes = "pilot run, forgot to set thresholds"
+v_bias = 53.0
+dcr_scan = "20240526-143658"
+collimators = 12
+n_spills = 10
+quality = "bad"
+
+[runs."20240526-150909"]
+notes = "deltathr = 5"
+quality = "warning"
+
+[runs."20240526-153451"]
+notes = "collimators = 4 mm"
+collimators = 4
+
+[runs."20240526-154039"]
+notes = "deltathr = 8"
+
+[runs."20240526-160007"]
+notes = "deltathr = 10 | changed spill gate: 1.3 s delay, 300 ms width [nominal was 1.1 s delay, 600 ms width]"
+
+[runs."20240526-164435"]
+trigger = "193: Luca back"
+notes = "changed trigger in Luca rear | collimators = 12 mm"
+
+[runs."20240526-165134"]
+notes = "deltathr = 8"
+
+[runs."20240526-170105"]
+notes = "deltathr = 10"
+
+[runs."20240526-171211"]
+notes = "deltathr = 15 | Vbias = 54 & alcor init"
+v_bias = 54.0
+
+[runs."20240526-171823"]
+notes = "no alcor init, to check if kc705-199 fifo 11 is stuck"
+
+[runs."20240526-172525"]
+notes = "kc705-199 init, No change, maybe pixel stuck"
+
+[runs."20240526-173411"]
+trigger = "193: Luca AND"
+notes = "Changed trigger in Luca AND"
+
+[runs."20240526-202228"]
+notes = "done serious dRICH alignment, which was not"
+quality = "good"
+
+[runs."20240526-204847"]
+n_spills = 50
+
+[runs."20240526-212506"]
+notes = "spill gate back to originale 1.1 s delta, 500 ms width | START OF MIRROR SCAN"
+
+[runs."20240526-214648"]
+mirror_mm = 70
+
+[runs."20240526-220929"]
+mirror_mm = 65
+n_spills = 10
+
+[runs."20240526-221557"]
+mirror_mm = 60
+
+[runs."20240526-222205"]
+mirror_mm = 80
+
+[runs."20240526-222751"]
+mirror_mm = 85
+
+[runs."20240526-223322"]
+mirror_mm = 90
+
+[runs."20240526-223957"]
+mirror_mm = 95
+
+[runs."20240526-224653"]
+mirror_mm = 100
+
+[runs."20240526-225403"]
+mirror_mm = 55
+
+[runs."20240526-230701"]
+mirror_mm = 50
+
+[runs."20240526-231457"]
+mirror_mm = 40
+
+[runs."20240526-234138"]
+mirror_mm = 30
+
+[runs."20240526-235529"]
+mirror_mm = 75
+
+[runs."20240527-000410"]
+mirror_mm = 20
+
+[runs."20240527-001117"]
+mirror_mm = 45
+
+[runs."20240527-105518"]
+mirror_mm = 50
+notes = "mirror scan, again at 50 with -11.5 GeV/c"
+collimators = 12
+
+[runs."20240527-110422"]
+mirror_mm = 20
+
+[runs."20240527-111009"]
+mirror_mm = 10
+
+[runs."20240527-111636"]
+mirror_mm = 0
+
+[runs."20240527-112432"]
+mirror_mm = 120
+notes = "Power cut"
+quality = "bad"
+
+[runs."20240527-134015"]
+beam_status = "off"
+notes = "TEST run to restart"
+n_spills = 5
+
+[runs."20240527-134825"]
+notes = "TEST run to restart: waiting for temperature to stabilize"
+
+[runs."20240527-135253"]
+n_spills = 10
+
+[runs."20240527-140236"]
+beam_status = "on"
+notes = "TEST run to restart: checking the beam operations. Some blanks spots so ALCOR is reinitialized and few photons"
+n_spills = 5
+
+[runs."20240527-142146"]
+notes = "Now it's good"
+
+[runs."20240527-142623"]
+mirror_mm = 100
+notes = "Position of the mirror back to 100"
+n_spills = 10
+quality = "good"
+
+[runs."20240527-143549"]
+mirror_mm = 120
+notes = "back to the scan: 120"
+quality = "need QA"
+
+[runs."20240527-144641"]
+mirror_mm = 130
+notes = "few photons"
+quality = "warning"
+
+[runs."20240527-145357"]
+mirror_mm = 140
+quality = "need QA"
+
+[runs."20240527-150539"]
+notes = "tried to initialize ALCORs again"
+
+[runs."20240527-190539"]
+mirror_mm = 20
+calibration = "20240527-171034"
+notes = "TEST RUN"
+quality = "good"
+
+[runs."20240527-191549"]
+
+[runs."20240527-193830"]
+notes = "adjusted by hands threshold on kc705-199 chip-1 channel-30 and channel-35"
+
+[runs."20240527-194649"]
+n_spills = 50
+quality = "warning"
+
+[runs."20240527-201403"]
+mirror_mm = 75
+notes = "mirror at 75 mm"
+
+[runs."20240527-214643"]
+mirror_mm = 20
+polarity = "positive"
+beam_energy = 8.0
+trigger = "193: Luca-and-16x10\n194: Luca-GEM\n195: Cherenkov CET043\n196: Cherenkov CET040"
+notes = "TEST RUN WITH POSITIVE BEAM"
+n_spills = 5
+quality = "good"
+
+[runs."20240527-215804"]
+collimators = 6
+n_spills = 10
+
+[runs."20240527-221053"]
+beam_energy = 2.0
+n_spills = 50
+
+[runs."20240527-223705"]
+quality = "bad"
+
+[runs."20240527-223822"]
+
+[runs."20240527-224456"]
+
+[runs."20240527-224747"]
+
+[runs."20240527-225045"]
+
+[runs."20240527-230311"]
+n_spills = 5
+
+[runs."20240528-041607"]
+radiator_desc = "with FILTER 350"
+polarity = "negative"
+beam_energy = 11.5
+notes = "one lane of kc705-194 and of kc705-198 with fifo full"
+collimators = 12
+n_spills = 200
+quality = "good"
+
+[runs."20240528-133821"]
+radiator_desc = "with PASS 400-450"
+notes = "STARTING"
+n_spills = 10
+
+[runs."20240528-135112"]
+
+[runs."20240528-140354"]
+notes = "LONG RUNS with FILTER 400-450 --> stopped NO BEAM"
+n_spills = 100
+quality = "bad"
+
+[runs."20240528-143620"]
+notes = "problems with magnet"
+n_spills = 10
+
+[runs."20240528-144352"]
+notes = "still"
+
+[runs."20240528-150547"]
+notes = "magnet intervention needed"
+
+[runs."20240528-180358"]
+radiator_desc = "with FILTER 350"
+notes = "STARTING"
+quality = "good"
+
+[runs."20240528-181325"]
+
+[runs."20240528-181849"]
+n_spills = 100
+
+[runs."20240528-185003"]
+notes = "might need to be decoded again"
+quality = "warning"
+
+[runs."20240528-192022"]
+notes = "disk full"
+quality = "bad"
+
+[runs."20240528-192626"]
+
+[runs."20240528-194117"]
+notes = "magnet issue"
+
+[runs."20240528-201440"]
+
+[runs."20240528-203618"]
+n_spills = 10
+quality = "good"
+
+[runs."20240528-204147"]
+n_spills = 50
+
+[runs."20240528-210219"]
+
+[runs."20240528-214845"]
+n_spills = 25
+
+[runs."20240528-221301"]
+notes = "da vedere il grafico"
+
+[runs."20240528-222352"]
+notes = "magnete giu"
+n_spills = 50
+quality = "bad"
+
+[runs."20240528-223027"]
+n_spills = 25
+quality = "good"
+
+[runs."20240528-224021"]
+n_spills = 50
+quality = "bad"
+
+[runs."20240528-224425"]
+n_spills = 25
+quality = "good"
+
+[runs."20240528-225409"]
+quality = "bad"
+
+[runs."20240528-225902"]
+quality = "good"
+
+[runs."20240528-232244"]
+
+[runs."20240528-234802"]
+
+[runs."20240529-001739"]
+
+[runs."20240529-004311"]
+n_spills = 50
+
+[runs."20240529-012359"]
+notes = "one lane of kc705-194 with fifo full from about spill 50  (max fifo 8193)"
+n_spills = 100
+
+[runs."20240529-020609"]
+notes = "again the same lane as before with fifo full but from spill 94"
+
+[runs."20240529-024707"]
+n_spills = 50
+
+[runs."20240529-030822"]
+
+[runs."20240529-033436"]
+n_spills = 100
+
+[runs."20240529-054504"]
+notes = "one lane of kc705-193,kc705-194 and of kc705-198 with fifo full"
+quality = "need QA"
+
+[runs."20240529-063456"]
+notes = "short run started  just because previous run got stacked in running mode after last spill"
+n_spills = 5
+quality = "bad"
+
+[runs."20240529-064146"]
+notes = "one lane of kc705-193,kc705-194 and of kc705-198 with fifo full"
+n_spills = 100
+quality = "good"
+
+[runs."20240529-071142"]
+notes = "plots are empty"
+quality = "need QA"
+
+[runs."20240529-073443"]
+notes = "magnet off, no triggers"
+n_spills = 50
+quality = "bad"
+
+[runs."20240529-080038"]
+n_spills = 10
+quality = "good"
+
+[runs."20240529-094910"]
+radiator_desc = "with PASS 400-450"
+notes = "TEST RUN, looks good"
+
+[runs."20240529-095327"]
+notes = "beam lost after 30 spills"
+n_spills = 50
+quality = "warning"
+
+[runs."20240529-101753"]
+notes = "beam lost after 19 spills"
+
+[runs."20240529-110432"]
+notes = "beam back"
+n_spills = 10
+quality = "good"
+
+[runs."20240529-110807"]
+notes = "mnagnet troubles"
+n_spills = 50
+quality = "bad"
+
+[runs."20240529-111248"]
+n_spills = 10
+quality = "good"
+
+[runs."20240529-111607"]
+
+[runs."20240529-111933"]
+
+[runs."20240529-112329"]
+notes = "not best run, plenty of full FIFOs"
+n_spills = 50
+quality = "warning"
+
+[runs."20240529-113933"]
+notes = "beam lost after 30 spills, magnet trouble"
+
+[runs."20240529-121229"]
+n_spills = 10
+quality = "good"
+
+[runs."20240529-121737"]
+
+[runs."20240529-122216"]
+
+[runs."20240529-122709"]
+
+[runs."20240529-123118"]
+
+[runs."20240529-123537"]
+n_spills = 25
+
+[runs."20240529-124515"]
+
+[runs."20240529-125500"]
+
+[runs."20240529-143123"]
+radiator_desc = "with PASS 450-500"
+notes = "TESTING"
+n_spills = 10
+
+[runs."20240529-143844"]
+notes = "beam lost at last spill?"
+
+[runs."20240529-144747"]
+notes = "several FIFOs full"
+
+[runs."20240529-145727"]
+notes = "beam lost after 20 spill"
+n_spills = 25
+
+[runs."20240529-152459"]
+
+[runs."20240529-154459"]
+
+[runs."20240529-171339"]
+radiator_desc = "with PASS 500-550"
+notes = "testing"
+n_spills = 10
+
+[runs."20240529-172321"]
+
+[runs."20240529-173251"]
+n_spills = 25
+
+[runs."20240529-174909"]
+
+[runs."20240529-175828"]
+notes = "stopped at spill 12 for NO beam"
+quality = "bad"
+
+[runs."20240529-193154"]
+radiator_desc = "with pass 550-600"
+notes = "testing"
+n_spills = 10
+quality = "good"
+
+[runs."20240529-194329"]
+
+[runs."20240529-195439"]
+n_spills = 25
+
+[runs."20240529-201633"]
+
+[runs."20240529-202847"]
+n_spills = 50
+
+[runs."20240529-205645"]
+
+[runs."20240529-211829"]
+
+[runs."20240529-214021"]
+
+[runs."20240530-103255"]
+radiator_desc = "aerogel 1.02\n3x 2 cm tiles\nAG22-J001 (1.021)\nAG22-J003 (1.0207)\nTSA1-2b (1.0206)\nside B"
+notes = "TESTING, ok, but seems we get spurious triggers?"
+n_spills = 10
+
+[runs."20240530-103956"]
+
+[runs."20240530-104507"]
+
+[runs."20240530-104944"]
+
+[runs."20240530-105400"]
+n_spills = 50
+
+[runs."20240530-111452"]
+
+[runs."20240530-124341"]
+beam_status = "off"
+notes = "TESTING, no beam, background run"
+n_spills = 8
+
+[runs."20240530-124929"]
+beam_status = "on"
+notes = "TESTING, now beam is ok, and the noise on the upper part of the sensors is gone"
+n_spills = 10
+
+[runs."20240530-125446"]
+n_spills = 50
+
+[runs."20240530-131508"]
+
+[runs."20240530-133757"]
+
+[runs."20240530-165520"]
+radiator_desc = "aerogel 1.02\n1x 2 cm tiles\nAG22-J001 (1.021)\nside B"
+notes = "two runs started contiguously,this should be empty, it was running in parallel"
+n_spills = 10
+quality = "bad"
+
+[runs."20240530-165546"]
+notes = "empty run"
+
+[runs."20240530-170722"]
+n_spills = 5
+
+[runs."20240530-171711"]
+notes = "probably good"
+n_spills = 10
+
+[runs."20240530-172411"]
+notes = "stopped at 19 spills, probably good"
+n_spills = 50
+
+[runs."20240530-174706"]
+quality = "good"
+
+[runs."20240530-180746"]
+
+[runs."20240530-194756"]
+radiator_desc = "none"
+notes = "NO AEROGEL"
+n_spills = 10
+
+[runs."20240530-200252"]
+n_spills = 50
+
+[runs."20240530-202344"]
+
+[runs."20240530-204413"]
+
+[runs."20240530-210507"]
+
+[runs."20240530-212533"]
+
+[runs."20240530-230448"]
+radiator_desc = "with FILTER 300"
+notes = "AEROGEL 2 TILE 2+2 + filtro 280-320nm"
+n_spills = 10
+
+[runs."20240530-233229"]
+n_spills = 50
+
+[runs."20240531-000808"]
+
+[runs."20240531-002916"]
+
+[runs."20240531-004950"]
+
+[runs."20240531-011114"]
+
+[runs."20240531-013205"]
+
+[runs."20240531-015413"]
+
+[runs."20240531-021446"]
+n_spills = 100
+
+[runs."20240531-025403"]
+
+[runs."20240531-033330"]
+
+[runs."20240531-041304"]
+
+[runs."20240531-045232"]
+
+[runs."20240531-053138"]
+notes = "stopped at 92, FPGa program time ended"
+quality = "warning"
+
+[runs."20240531-093524"]
+radiator_desc = "with FILTER > 600"
+notes = "baselines not good"
+n_spills = 10
+quality = "bad"
+
+[runs."20240531-095343"]
+
+[runs."20240531-101024"]
+n_spills = 50
+
+[runs."20240531-103706"]
+
+[runs."20240531-110044"]
+n_spills = 5
+
+[runs."20240531-113612"]
+
+[runs."20240531-151359"]
+notes = "test post fix"
+quality = "good"
+
+[runs."20240531-152445"]
+n_spills = 50
+
+[runs."20240531-160041"]
+
+[runs."20240531-161807"]
+
+[runs."20240531-163657"]
+
+[runs."20240531-185438"]
+radiator_desc = "4x aerogel tiles:\n--Beam--\n-TSA1-3b (1.0199)\n-TSA1-2b (1.0206)\n-AG22J003 (1.0207)\n-AG22J001 (1.0210)\n--detector--"
+notes = "start test - not stable in T"
+n_spills = 5
+quality = "bad"
+
+[runs."20240531-190343"]
+notes = "not stable in T"
+n_spills = 50
+
+[runs."20240531-192327"]
+notes = "stop command sent due to no beam with 33 spills collected. It did not stop and the run started to increment spill number again once the beam was back, after about 5 minutes"
+quality = "warning"
+
+[runs."20240531-195813"]
+quality = "good"
+
+[runs."20240531-201710"]
+
+[runs."20240531-225443"]
+radiator_desc = "2x aerogel tiles: TSA1.024 AG22J009 (1.0260) AG22J010 (1.0261)"
+notes = "start test"
+n_spills = 5
+
+[runs."20240601-093806"]
+radiator_desc = "2x aerogel tiles:\n--Beam--\n-AG24H001(1.026)\n-AG24H006(1.026)\n--detector--"
+notes = "test, fail -> started in preparing and not running"
+n_spills = 6
+quality = "warning"
+gem = "1986"
+available_triggers = "1000"
+
+[runs."20240601-094500"]
+notes = "992 / 1000 TRG by GEM"
+quality = "good"
+gem = "1987"
+
+[runs."20240601-095157"]
+notes = "666 / 666 TRG by GEM"
+n_spills = 4
+gem = "1988"
+available_triggers = "666"
+
+[runs."20240601-113946"]
+notes = "Test with GEM"
+n_spills = 15
+gem = "1992"
+available_triggers = "3000"
+
+[runs."20240601-115754"]
+n_spills = 50
+gem = "1993"
+available_triggers = "10000"
+
+[runs."20240601-122225"]
+gem = "1994"
+
+[runs."20240601-123931"]
+radiator_desc = "No aerogel"
+gem = "1995"
+radiator_gas = "C2F6 (1.0008)"
+
+[runs."20240601-221239"]
+notes = "test after gas"
+n_spills = 5
+quality = "need QA"
+gem = "no"
+available_triggers = "no"
+
+[runs."20240602-000143"]
+mirror_mm = 2070
+notes = "NEG - 11.5 GeV - Coll. 12 - test for momentum scan with GEM (good data)"
+n_spills = 50
+quality = "good"
+gem = "yes"
+available_triggers = "10418"
+
+[runs."20240602-001745"]
+polarity = "positive"
+notes = "POS - 11.5 GeV - Coll. 6 - test for momentum scan with GEM (good data)"
+collimators = 6
+available_triggers = "13701"
+
+[runs."20240602-003635"]
+beam_energy = 5.0
+notes = "POS - 5 GeV - Coll. 6 - test for momentum scan with GEM (good data)"
+n_spills = 6
+available_triggers = "1000"
+
+[runs."20240602-004100"]
+polarity = "negative"
+beam_energy = 4.0
+notes = "NEG - 4 GeV - Coll. 12 - test for momentum scan with GEM (good data)"
+collimators = 12
+n_spills = 8
+
+[runs."20240602-004616"]
+beam_energy = 11.5
+notes = "NEG - 11.5 GeV - Coll. 12 - test for momentum scan with GEM (good data)"
+n_spills = 29
+available_triggers = "10000"
+
+[runs."20240602-091517"]
+radiator_desc = "2x aerogel tiles:\n--Beam--\n-AG24H001(1.026)\n-AG24H006(1.026)\n--detector--"
+notes = "no beam,empty"
+n_spills = 9
+quality = "bad"
+gem = "-"
+available_triggers = "-"
+
+[runs."20240603-055252"]
+radiator_desc = "2x aerogel tiles: AG22-J001 (1.021)\nAG22-J003 (1.0207)"
+notes = "--- FROM 05:50 --- PDU3 at -7C"
+
+[runs."20240603-132553"]
+temperature = "PDU1: -40\nPDU2: -39.5\nPDU3: -40\nPDU4: -40\nPDU5: -26\nPDU6: -38.5\nPDU7: -26\nPDU8: -40"
+notes = "LOW TEMP TEST"
+v_bias = "PDU1: 53\nPDU2: 53\nPDU3: 53\nPDU4: 53\nPDU5: 53.7\nPDU6: 53\nPDU7: 53.7\nPDU8: 53"
+n_spills = 2
+available_triggers = "1000"
+
+[runs."20240603-132949"]
+n_spills = 5
+
+[runs."20240603-133454"]
+n_spills = 10
+quality = "good"
+gem = "2110"
+available_triggers = "1553"
+
+[runs."20240603-135925"]
+gem = "2111"
+available_triggers = "10000"
+
+[runs."20240603-145031"]
+gem = "2112"
+
+[runs."20240604-201006"]
+notes = "First test after re-mounting -> GEM did not start properly: cards enabled 0"
+n_spills = 2
+quality = "warning"
+gem = "2114"
+available_triggers = "0"
+radiator_gas = "C4F10 (1.0014)"
+
+[runs."20240604-201239"]
+n_spills = 6
+quality = "good"
+gem = "2117"
+available_triggers = "1000"
+
+[runs."20240604-210538"]
+n_spills = 0
+gem = "0"
+available_triggers = "0"
+
+[schema]
+extra_fields = ["altai"]

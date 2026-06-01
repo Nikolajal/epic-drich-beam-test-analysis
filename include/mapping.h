@@ -3,7 +3,9 @@
 #include "utility.h"
 #include "alcor_finedata.h"
 #include <toml++/toml.h>
-#include "util/toml_utils.h"
+#include <unordered_map>
+#include <cassert>
+#include "utility/toml_utils.h"
 
 /**
  * @file Mapping.h
@@ -44,7 +46,11 @@
  * HORIZONTAL lines share the same y coordinate (constant row index).
  * Used both for geometry analysis and HV bias-line identification.
  */
-enum class line_orientation_type { Vertical, Horizontal };
+enum class line_orientation_type
+{
+    Vertical,
+    Horizontal
+};
 
 /**
  * @brief Fully-qualified identifier of the HV bias line powering one pixel.
@@ -54,9 +60,9 @@ enum class line_orientation_type { Vertical, Horizontal };
  */
 struct HvChannelAddress
 {
-    int pdu_index;               ///< PDU index [1–8].
-    int matrix_index;            ///< Matrix quadrant index [1–4].
-    int hv_line_index;           ///< HV line index within the matrix [0–7].
+    int pdu_index;                     ///< PDU index [1–8].
+    int matrix_index;                  ///< Matrix quadrant index [1–4].
+    int hv_line_index;                 ///< HV line index within the matrix [0–7].
     line_orientation_type orientation; ///< VERTICAL (column lines) or HORIZONTAL (row lines).
 };
 
@@ -170,7 +176,9 @@ public:
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
     std::optional<std::array<float, 2>> get_position_from_finedata(AlcorFinedata entry) const
-    { return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel()); }
+    {
+        return get_position_from_device_chip_eoch(entry.get_device(), entry.get_chip(), entry.get_eo_channel());
+    }
 
     /**
      * @brief Compute the physical position from a @ref GlobalIndex.
@@ -182,10 +190,9 @@ public:
      * @param gi Validated @ref GlobalIndex identifying the channel.
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
-    std::optional<std::array<float, 2>> get_position_from_global_index(::GlobalIndex gi) const
-    { return get_position_from_device_chip_eoch(gi.device(),
-                                                 gi.real_chip(),
-                                                 gi.eo_channel()); }
+    //  Bodies in mapping.cxx — these methods take/use ::GlobalIndex
+    //  whose full definition is heavier than we want in this header.
+    std::optional<std::array<float, 2>> get_position_from_global_index(::GlobalIndex gi) const;
 
     /**
      * @brief Convenience overload — compute the physical position from the
@@ -199,8 +206,7 @@ public:
      * @param stored_raw  Stored new-layout @ref GlobalIndex raw.
      * @return Physical position {x, y} in mm, or @c std::nullopt if unmapped.
      */
-    std::optional<std::array<float, 2>> get_position_from_global_index(int stored_raw) const
-    { return get_position_from_global_index(::GlobalIndex(static_cast<uint32_t>(stored_raw))); }
+    std::optional<std::array<float, 2>> get_position_from_global_index(int stored_raw) const;
 
     /**
      * @brief Fill the @c hit_x / @c hit_y fields of a fine-data struct in-place.
@@ -289,11 +295,28 @@ public:
 
     /**
      * @brief Query the index → position cache.
-     * @param GlobalIndex Global TDC channel index.
+     *
+     * The cache is keyed by ``4 * GlobalIndex::channel_ordinal()`` — see
+     * @ref build_index_to_position_cache.  That formula collapses the four
+     * tdc values of a given physical channel onto a single slot, so callers
+     * must pass a key with the bottom two bits zero (i.e. the tdc=0
+     * representative).  Passing a key with @c key % 4 != 0 would silently
+     * miss the cache and return @c std::nullopt; the assertion below makes
+     * that bug loud in debug builds (release: silent miss preserved).
+     *
+     * @param channel_ordinal_times_four  Cache key, equal to
+     *                                    @c 4 * GlobalIndex::channel_ordinal()
+     *                                    for the queried physical channel.
      * @return Cached {x, y} in mm, or @c std::nullopt if not in cache.
      */
-    std::optional<std::array<float, 2>> get_cached_position(int GlobalIndex) const
-    { auto it = index_to_hit_xy.find(GlobalIndex); return (it != index_to_hit_xy.end()) ? std::optional{it->second} : std::nullopt; }
+    std::optional<std::array<float, 2>> get_cached_position(int channel_ordinal_times_four) const
+    {
+        assert(channel_ordinal_times_four % 4 == 0 &&
+               "get_cached_position: key must be 4 * channel_ordinal "
+               "(the cache stores tdc=0 representatives only)");
+        auto it = index_to_hit_xy.find(channel_ordinal_times_four);
+        return (it != index_to_hit_xy.end()) ? std::optional{it->second} : std::nullopt;
+    }
 
     /**
      * @brief Query the position → index reverse cache.
@@ -302,7 +325,10 @@ public:
      * @return Cached global TDC index, or @c std::nullopt if not in cache.
      */
     std::optional<int> get_cached_index(float x, float y) const
-    { auto it = hit_xy_to_index.find({x, y}); return (it != hit_xy_to_index.end()) ? std::optional{it->second} : std::nullopt; }
+    {
+        auto it = hit_xy_to_index.find({x, y});
+        return (it != hit_xy_to_index.end()) ? std::optional{it->second} : std::nullopt;
+    }
 
     /**
      * @brief Read-only access to the full index → position cache.
@@ -310,7 +336,7 @@ public:
      * Useful for iterating over all active channels, e.g. when filling
      * occupancy histograms or building detector response matrices.
      */
-    const std::map<int, std::array<float, 2>> &get_index_to_position_map() const { return index_to_hit_xy; }
+    const std::unordered_map<int, std::array<float, 2>> &get_index_to_position_map() const { return index_to_hit_xy; }
 
     /**
      * @brief Read-only access to the full position → index reverse cache.
@@ -336,33 +362,45 @@ public:
 
 private:
     // -------------------------------------------------------------------------
-    /** @name Static channel-routing tables (compile-time constants) */
+    /** @name Channel-routing tables (compile-time constants) */
     /// @{
 
     /// EO→DO channel permutation for each of the four matrix quadrants.
-    /// Indexed by matrix [1–4]; inner vector has 64 entries (one per EO channel).
-    static std::map<int, std::vector<int>> matrix_to_do_channel;
+    /// Indexed by matrix [1–4]; inner vector has 64 entries (one per
+    /// EO channel).  Kept @c static because the EO→DO permutation is
+    /// a fixed ALCOR hardware property — not mutated by load_calib —
+    /// and sharing the table across instances has no concurrency
+    /// downside (read-only after initialisation).
+    static const std::map<int, std::vector<int>> matrix_to_do_channel;
 
     /// @}
 
     // -------------------------------------------------------------------------
-    /** @name Calibration data (loaded at runtime) */
+    /** @name Calibration data (loaded at runtime, per-instance) */
     /// @{
 
+    //  These four maps are populated by load_calib at construction
+    //  time from the mapping TOML.  They are PER-INSTANCE rather than
+    //  static because (a) closes D-10's "two Mapping instances
+    //  silently share state" trap and (b) supports any future
+    //  reload-mid-run feature without racing against framer workers.
+    //  No API change for callers — Mapping is already constructed
+    //  per-instance everywhere (`Mapping current_mapping(conf)`).
+
     /// Physical centre position {x, y} in mm for each PDU, keyed by PDU index.
-    static std::map<int, std::array<float, 2>> pdu_xy_position;
+    std::map<int, std::array<float, 2>> pdu_xy_position;
 
     /// 180° rotation flag per PDU. @c true means column/row are mirrored as
     /// (15 − col, 15 − row) before the position lookup.
-    static std::map<int, bool> pdu_rotation;
+    std::map<int, bool> pdu_rotation;
 
     /// Maps (device, chip) pairs to their (PDU, matrix) assignment.
-    static std::map<std::array<int, 2>, std::array<int, 2>> device_chip_to_pdu_matrix;
+    std::map<std::array<int, 2>, std::array<int, 2>> device_chip_to_pdu_matrix;
 
     /// HV bias line orientation per matrix quadrant [1–4].
     /// VERTICAL  → bias lines run along columns (do_channel / 8).
     /// HORIZONTAL → bias lines run along rows    (do_channel % 8).
-    static std::map<int, line_orientation_type> hv_line_orientation;
+    std::map<int, line_orientation_type> hv_line_orientation;
 
     /// @}
 
@@ -370,8 +408,15 @@ private:
     /** @name Position caches */
     /// @{
 
-    std::map<int, std::array<float, 2>> index_to_hit_xy;   ///< global index → {x, y} mm.
-    std::map<std::array<float, 2>, int> hit_xy_to_index;   ///< {x, y} mm → global index.
+    //  index_to_hit_xy is `std::unordered_map` for O(1) hot-path
+    //  lookups — the framer workers hit `get_position_from_*` on
+    //  every Hit, and the ~2k-entry table was log-N tree walks
+    //  under `std::map`.  The reverse `hit_xy_to_index` keeps
+    //  `std::map` because the float-pair key would need a custom
+    //  hasher; see D-10 option D (rounded-integer-mm key) for the
+    //  proper fix.
+    std::unordered_map<int, std::array<float, 2>> index_to_hit_xy; ///< global index → {x, y} mm.
+    std::map<std::array<float, 2>, int> hit_xy_to_index;           ///< {x, y} mm → global index.
     bool cache_index_to_xy_built{false};
     bool cache_xy_to_index_built{false};
 

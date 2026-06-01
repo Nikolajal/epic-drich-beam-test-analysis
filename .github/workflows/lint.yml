@@ -1,0 +1,50 @@
+# .github/workflows/lint.yml
+#
+# Static-lint guard for C++ sources.  Runs `tools/lint_codebase.py` —
+# a stdlib-only Python script that catches the bug classes we hit
+# during the Phase-5 GlobalIndex migration:
+#
+#   R1  Histogram `Fill(raw GlobalIndex, ...)` without an ordinal wrapper
+#   R2  Debug histogram names (test*, tmp*, foo*, debug*)
+#   R3  Commented-out function-call lines (silent disables)
+#   R4  Legacy Phase-4 bit-bashing formulas (GlobalIndex / 4, / 256, etc.)
+#
+# Trigger model mirrors clang-format.yml: PR-only (the primary path);
+# push to main/dev is defence-in-depth.  The fast path keeps the merge
+# button honest without nagging on every per-commit push to a feature
+# branch.
+#
+# The script is pure stdlib Python 3; no dependency install needed
+# beyond the ubuntu-latest default `python3`.  Local equivalent:
+#   python3 tools/lint_codebase.py
+#
+# Note on `check_qa.py`: that tool needs writer-output ROOT files to
+# walk, which CI doesn't have without seeded data.  It stays as a
+# local + dashboard tool; only `lint_codebase.py` is wired here.
+
+name: lint
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-lint:
+    name: Static C++ lint (tools/lint_codebase.py)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run lint_codebase.py
+        run: |
+          python3 tools/lint_codebase.py
+          # Exit code 0 = clean; non-zero (1) means findings were
+          # printed above — read the output, fix, push again.

@@ -1,6 +1,7 @@
 #include "../lib_loader.h"
-#include "util/root_io.h"
-#include "util/root_hist.h"
+#include "utility/root_io.h"
+#include "utility/root_hist.h"
+#include <mist/logger/logger.h>
 
 /**
  * @file ring_spatial_resolution.cpp
@@ -52,7 +53,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     TFilePtr input_file_recodata(TFile::Open(input_filename_recodata.c_str(), "READ"));
     if (!input_file_recodata || input_file_recodata->IsZombie())
     {
-        std::cerr << "[WARNING] Could not find recodata, making it" << std::endl;
+        mist::logger::error("[ring_spatial_resolution] Could not open recodata: " + input_filename_recodata);
         return;
     }
 
@@ -126,7 +127,7 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
                 //  Check the Hit has been labeled as ring-belonging
                 //  This is done through a simple DBSCAN implementation
                 //  Density-Based Spatial Clustering of Applications with Noise > https://it.wikipedia.org/wiki/DBSCAN
-                //  Clustering is done in R and t, \phi is ignored (radial simmetry of cricle)
+                //  Clustering is done in R and t, \phi is ignored (radial symmetry of circle)
                 //  Clustering is done in AlcorRecodata::find_rings(...)
                 //  TODO: add a flag for sensor type
                 if (!recodata->is_ring_tagged(current_hit))
@@ -200,12 +201,11 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
         //  R vs Ngamma for resolution estimation
         h_second_round_R_Ngamma->Fill(fit_result[2][0], selected_points.size());
 
-        //  Fitting the points, excluding one at a time
-        for (auto i_ter = 0; i_ter < selected_points.size(); i_ter++)
+        //  Fitting the points, excluding one at a time (leave-one-out)
+        for (auto excluded_point = 0; excluded_point < selected_points.size(); excluded_point++)
         {
-            fit_result = fit_circle(selected_points, {(float)found_ring_center_x, (float)found_ring_center_y, (float)found_ring_radius}, true, {i_ter});
-            //  Temp fix
-            auto radius = std::hypot(selected_points[i_ter][0] - found_ring_center_x, selected_points[i_ter][1] - found_ring_center_y);
+            fit_result = fit_circle(selected_points, {(float)found_ring_center_x, (float)found_ring_center_y, (float)found_ring_radius}, true, {excluded_point});
+            auto radius = std::hypot(selected_points[excluded_point][0] - found_ring_center_x, selected_points[excluded_point][1] - found_ring_center_y);
             h_second_round_R_excluded->Fill(fit_result[2][0] - radius);
             h_second_round_R_global->Fill(found_ring_radius - radius);
         }
@@ -255,6 +255,37 @@ void ring_spatial_resolution(std::string data_repository, std::string run_name, 
     f_resolution->SetParName(0, "SPSR");
     f_resolution->SetParName(1, "constant");
     g_resolution->Fit(f_resolution);
+
+    //  Single-photon spatial resolution (SPSR) extracted directly from the
+    //  leave-one-out radius residuals: width of (fit radius − excluded point
+    //  radius).  Gaussian-fitted to suppress non-Gaussian tails.
+    TF1 spsr_direct_fit("spsr_direct_fit", "gaus", -30, 30);
+    h_second_round_R_excluded->Fit(&spsr_direct_fit, "QNR");
+
+    // ── Persist to AnalysisResults ────────────────────────────────────────────
+    //  The ring fit is intrinsically over the *whole* ring — hits from both
+    //  SiPM models (1350 / 1375) are merged into one circle, so the spatial
+    //  resolution is not separable per sensor.  Results are therefore posted
+    //  under the "all" sensor tag.  (No hardcoded channel range exists in this
+    //  macro — selection is by ring-tag / afterpulse / time window — so no
+    //  config-driven sensor split is applicable.)
+    {
+        AnalysisResults ar(data_repository + "/standard_results.toml");
+        ar.update({
+                      //  SPSR resolution function: sigma_R(N) = sqrt(SPSR^2 / N + const^2)
+                      {{run_name, "all", "ring.spatial_resolution"}, {f_resolution->GetParameter(0), f_resolution->GetParError(0)}},
+                      {{run_name, "all", "ring.resolution_constant"}, {f_resolution->GetParameter(1), f_resolution->GetParError(1)}},
+
+                      //  Direct single-photon resolution (leave-one-out residual width)
+                      {{run_name, "all", "ring.spsr_sigma_mm"}, {spsr_direct_fit.GetParameter(2), spsr_direct_fit.GetParError(2)}},
+
+                      //  First-round mean ring radius (geometry reference)
+                      {{run_name, "all", "ring.radius_mm"}, {found_ring_radius, found_ring_radius_stddev}},
+                  },
+                  "recodata");
+
+        mist::logger::info("[ring_spatial_resolution] resolution results written to standard_results.toml for run " + run_name);
+    }
 
     //  Show fit result on Canvas
     gStyle->SetOptFit(111111);

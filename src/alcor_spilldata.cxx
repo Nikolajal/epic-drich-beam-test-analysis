@@ -1,4 +1,5 @@
 #include "alcor_spilldata.h"
+#include <algorithm>
 #include <unordered_map>
 
 // ============================================================================
@@ -87,10 +88,10 @@ void AlcorSpilldata::link_to_tree(TTree *input_tree)
     // refers to.  The slots live on the wrapper (this object) and were
     // anchored to spilldata's vectors in sync_ptrs_().  Since the wrapper
     // is non-movable, the addresses below remain valid for its lifetime.
-    input_tree->SetBranchAddress("dead_mask",         &dead_mask_list_ptr_);
+    input_tree->SetBranchAddress("dead_mask", &dead_mask_list_ptr_);
     input_tree->SetBranchAddress("participants_mask", &participants_mask_list_ptr_);
-    input_tree->SetBranchAddress("frame",             &frame_reference_ptr_);
-    input_tree->SetBranchAddress("lightdata",         &lightdata_list_in_frame_ptr_);
+    input_tree->SetBranchAddress("frame", &frame_reference_ptr_);
+    input_tree->SetBranchAddress("lightdata", &lightdata_list_in_frame_ptr_);
 }
 
 void AlcorSpilldata::write_to_tree(TTree *output_tree)
@@ -101,10 +102,10 @@ void AlcorSpilldata::write_to_tree(TTree *output_tree)
     // Branch() takes the address of the std::vector itself; ROOT iterates
     // it on each Fill.  Stable because the wrapper (and therefore
     // spilldata) is non-movable.
-    output_tree->Branch("dead_mask",         &spilldata.dead_mask_list);
+    output_tree->Branch("dead_mask", &spilldata.dead_mask_list);
     output_tree->Branch("participants_mask", &spilldata.participants_mask_list);
-    output_tree->Branch("frame",             &spilldata.frame_reference);
-    output_tree->Branch("lightdata",         &spilldata.lightdata_list_in_frame);
+    output_tree->Branch("frame", &spilldata.frame_reference);
+    output_tree->Branch("lightdata", &spilldata.lightdata_list_in_frame);
 }
 
 void AlcorSpilldata::prepare_tree_fill()
@@ -127,19 +128,21 @@ void AlcorSpilldata::prepare_tree_fill()
         spilldata.participants_mask_list.push_back({device, mask});
 
     //  3. Move non-suppressed frames into the flat vectors; skip deleted frames.
-    for (auto it = spilldata.frame_and_lightdata.begin();
-         it != spilldata.frame_and_lightdata.end();)
+    //     `frame_and_lightdata` is an unordered_map (O(1) insert/destroy), so
+    //     iteration is hash-bucket order, not ascending.  Downstream consumers
+    //     (recodata_writer, analysis macros) expect `frame_reference` ascending
+    //     — sort the keys once and pull the entries out in that order to keep
+    //     the on-disk invariant identical to the previous std::map output.
+    const auto ordered_keys = sorted_frame_ids(spilldata.frame_and_lightdata);
+    spilldata.frame_reference.reserve(ordered_keys.size());
+    spilldata.lightdata_list_in_frame.reserve(ordered_keys.size());
+    for (uint32_t key : ordered_keys)
     {
-        if (!frame_reference_for_deletion[it->first])
-        {
-            spilldata.frame_reference.push_back(it->first);
-            spilldata.lightdata_list_in_frame.push_back(std::move(it->second));
-            it = spilldata.frame_and_lightdata.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
+        if (frame_reference_for_deletion[key])
+            continue;
+        auto it = spilldata.frame_and_lightdata.find(key);
+        spilldata.frame_reference.push_back(key);
+        spilldata.lightdata_list_in_frame.push_back(std::move(it->second));
     }
 
     //  4. Clear consumed working maps.
@@ -182,4 +185,15 @@ void merge(AlcorSpilldataStruct &lhs, AlcorSpilldataStruct &&rhs)
         if (!inserted)
             merge_lightdata(it->second, std::move(rhs_data));
     }
+}
+
+std::vector<uint32_t> sorted_frame_ids(
+    const std::unordered_map<uint32_t, AlcorLightdataStruct> &frame_link)
+{
+    std::vector<uint32_t> keys;
+    keys.reserve(frame_link.size());
+    for (const auto &kv : frame_link)
+        keys.push_back(kv.first);
+    std::sort(keys.begin(), keys.end());
+    return keys;
 }

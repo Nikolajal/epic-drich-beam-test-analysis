@@ -1,0 +1,8 @@
+[[entry]]
+at        = "2026-05-29T19:02:28"
+source    = "dashboard"
+run       = "20260528-191848"
+field     = "beam_energy"
+old_value = 0
+new_value = 35
+

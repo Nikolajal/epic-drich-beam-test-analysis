@@ -1,0 +1,45 @@
+# readout_config.toml — ALCOR device and chip assignment per sub-detector role
+#
+# Devices are grouped by their physical role. The framer uses these lists to
+# route hits into the correct processing path (Cherenkov light, timing, tracking).
+# chips = "*" reads all 8 chips on the device; an explicit list reads only those chips.
+
+[readout]
+
+# ALCOR devices instrumented on the Cherenkov radiator PDUs.
+[readout.cherenkov]
+# SiPM model deployed on this role's PDUs.  Recognised tags today:
+# "1350" (Hamamatsu S13360-1350...), "1375" (S13360-1375...), "mixed"
+# (heterogeneous setup), or "" (unspecified).  Single source of truth
+# for downstream code that needs to tag results by sensor — the
+# AnalysisResults sensor dimension reads it from here, as do future
+# QA plots split by sensor.  Per-device override is a future extension.
+sensor_type = "mixed"
+devices = [
+    { id = 192, chips = "*", sensor = "1350" },
+    { id = 193, chips = "*", sensor = "1350" },
+    { id = 194, chips = "*", sensor = "1350" },
+    { id = 195, chips = "*", sensor = "1350" },
+    { id = 196, chips = "*", sensor = "1375" },
+    { id = 197, chips = "*", sensor = "1375" },
+    { id = 198, chips = "*", sensor = "1375" },
+    { id = 199, chips = "*", sensor = "1375" },
+]
+
+# ALCOR devices used as timing reference (e.g. MCP-PMT or fast scintillator).
+[readout.timing]
+devices = [
+    { id = 200, chips = [0, 2] },   # read only chips 0 and 2 (active channels on this board)
+]
+# Timing-trigger coincidence: both chips must fire EXACTLY this many channels,
+# and the chip0-chip1 mean-time difference must satisfy
+# |Δt - delta_center_ns| < delta_n_sigma * delta_window_ns.
+alive_channels  = [32, 31]   # [chip0, chip1] — chip1 has one known-dead channel
+delta_center_ns = -0.5
+delta_window_ns =  0.5
+delta_n_sigma   =  3.0
+
+# ALCOR devices dedicated to charged-particle tracking.
+# Empty → no standalone tracking device in this configuration.
+[readout.tracking]
+devices = []

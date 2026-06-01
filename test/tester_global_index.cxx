@@ -27,7 +27,7 @@
  * one CTest dashboard.
  */
 
-#include "util/global_index.h"
+#include "utility/global_index.h"
 
 #include <cstdint>
 #include <cstdlib>     // std::abort

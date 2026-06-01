@@ -2,19 +2,45 @@
 #
 # Build-only verification across the three major desktop platforms.
 #
+# ─────────────────────────────────────────────────────────────────────────────
+# Disabled 2026-05-27: ALL build jobs gated with `if: false`.
+#
+# Why: ROOT availability per platform is fragile in CI —
+#   - Linux:  Ubuntu noble dropped the apt `root-system` / `libroot-*-dev`
+#             packages (never officially maintained by CERN).
+#   - Windows: conda-forge has no `root` recipe for win-64; no maintained
+#             chocolatey package; vcpkg is slow and brittle.
+#   - macOS:  Homebrew `root` formula churns periodically.
+#
+# The workflow architecture (per-OS matrix, build/test/install steps, ROOT
+# provisioning via the OS-native package manager / conda-forge / Homebrew)
+# is preserved verbatim so it can be re-enabled stage-by-stage when there
+# is bandwidth to chase the per-platform issues again.
+#
+# To re-enable a single OS leg:
+#   - Find the corresponding job (build-linux / build-macos / build-windows).
+#   - Remove its `if: false` gate.
+#   - Push a branch with the change to validate against fresh runner images
+#     before merging into dev / main.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Original design notes (still valid intent, for future revival):
+#
 # The framework's runtime dependency on ROOT (≥ 6.x) makes a "build all the
 # things" job non-trivial on Windows — the official ROOT Windows binaries
 # are recent but the toolchain churn means Linux and macOS remain the
-# primary supported targets.  This workflow therefore splits into three
+# primary supported targets.  When enabled, this workflow splits into three
 # legs:
 #
-#   ubuntu-latest   — apt-installed ROOT, required-status check.
+#   ubuntu-latest   — conda-forge ROOT, required-status check.
 #   macos-latest    — Homebrew-installed ROOT, required-status check.
-#   windows-latest  — Conda-installed ROOT, allowed to fail (best-effort).
-#
-# The Windows leg is opt-out via `continue-on-error: true` so a ROOT/Conda
-# update doesn't block merges into main while the configuration stabilises;
-# remove that flag once the leg is reliably green.
+#   windows-latest  — conda-forge ROOT *(not currently available for win-64;
+#                     keep as architectural placeholder until a working
+#                     Windows ROOT provisioner is identified)*, marked
+#                     `continue-on-error: true` so a ROOT update doesn't
+#                     block merges into main while the configuration
+#                     stabilises.
 
 name: Build
 
@@ -31,30 +57,43 @@ concurrency:
 
 jobs:
   # -------------------------------------------------------------------------
-  # Linux — ROOT from APT (Ubuntu's ROOT package ships a ready-to-use
-  # toolchain with rootcling, RIO, Tree, Hist, Graf, Gui — everything our
-  # dictionary generation pipeline needs).
+  # Linux — ROOT from conda-forge.  Same provider as the Windows leg.
+  # The conda-forge `root` recipe ships rootcling + RIO + Tree + Hist +
+  # Graf + Gui — everything our dictionary generation pipeline needs —
+  # and tracks upstream ROOT releases across Ubuntu image refreshes
+  # (where the legacy Debian Science apt packages are no longer
+  # available on noble).
   # -------------------------------------------------------------------------
   build-linux:
     name: Linux / ${{ matrix.build_type }}
     runs-on: ubuntu-latest
+    if: false   # ── disabled 2026-05-27, see header.  Drop this line to re-enable.
     strategy:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
 
+    defaults:
+      run:
+        # Activate the conda env on every step so root-config / rootcling
+        # are on PATH for FindROOT.cmake + the build itself.
+        shell: bash -l {0}
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install ROOT and toolchain
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          activate-environment: btana
+          python-version: "3.11"
+
+      - name: Install ROOT and toolchain via conda-forge
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
-            root-system libroot-bindings-r-dev libroot-core-dev \
-            libroot-io-dev libroot-tree-dev libroot-hist-dev \
-            libroot-graf2d-dev libroot-graf3d-dev libroot-gui-dev
+          conda install -n btana -c conda-forge -y \
+            root cmake ninja cxx-compiler
 
       - name: Configure
         run: |
@@ -81,6 +120,7 @@ jobs:
   build-macos:
     name: macOS / ${{ matrix.build_type }}
     runs-on: macos-latest
+    if: false   # ── disabled 2026-05-27, see header.  Drop this line to re-enable.
     strategy:
       fail-fast: false
       matrix:
@@ -88,7 +128,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install ROOT and toolchain
         run: |
@@ -127,6 +167,9 @@ jobs:
   build-windows:
     name: Windows / ${{ matrix.build_type }} (best-effort)
     runs-on: windows-latest
+    if: false   # ── disabled 2026-05-27, see header.  conda-forge has no
+                #    win-64 root recipe today; revival needs a working
+                #    Windows ROOT provisioner (root.cern tarball, vcpkg, …).
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -139,7 +182,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3

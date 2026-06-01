@@ -1,0 +1,16 @@
+/*!
+ * @page top_readme Project README
+ *
+ * The repo-root @c README.md is reproduced below as a regular Doxygen
+ * page.  Doxygen's `IMPLICIT_DIR_DOCS = YES` (kept on so that
+ * `include/triggers/README.md` and friends still serve as directory
+ * docs) would otherwise treat the top-level README as the description
+ * of the repo-root dir — which Doxygen doesn't scan — and the content
+ * would land nowhere.  This wrapper sidesteps that by giving the
+ * README an explicit page id so it gets a real HTML page.
+ *
+ * `EXAMPLE_PATH` is set to `..` in Doxyfile so the relative path below
+ * resolves from the project root.
+ *
+ * @include README.md
+ */
