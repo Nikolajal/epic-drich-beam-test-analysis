@@ -24,6 +24,7 @@
  *   finalize-QA         (single-threaded post-loop)
  */
 
+#include <array>
 #include <map>
 #include <utility>
 #include <vector>
@@ -61,7 +62,7 @@ struct RingFitResult
 
     //  Smeared (pixel-jittered, ±half-pitch uniform) siblings.
     //  Filled in parallel with the un-smeared versions in
-    //  `compute_ring_fit`, so the two histograms can be cross-checked.
+    //  `fit_collected_ring_hits`, so the two histograms can be cross-checked.
     //  Variance subtraction recipe:
     //
     //      σ²_intrinsic  =  σ²_observed  −  k · (pitch² / 12)
@@ -73,6 +74,15 @@ struct RingFitResult
     //  `get_hit_*_rnd`).  At 3 mm pitch, k=1 ⇒ 0.75 mm², k=2 ⇒ 1.50 mm².
     std::vector<float> radial_per_hit_smeared;
     std::vector<float> loo_residuals_smeared;
+
+    //  (x, y) [mm] of every cherenkov hit selected by the hardware-trigger
+    //  timing cut ([hardware_ring_dt_min_ns, hardware_ring_dt_max_ns] around
+    //  the trigger ref time) — i.e. the in-time trigger-Cherenkov hits, the
+    //  same set the ring fit ran on.  Accumulated across frames into the
+    //  trigger-Cherenkov hitmap.  Smeared positions (pixel-jittered) so the
+    //  map isn't a discrete pixel comb.  Populated even when the fit fails /
+    //  too few hits, so the hitmap shows ALL in-cut hits.
+    std::vector<std::array<float, 2>> hit_xy;
 };
 
 // ─────────────────────────────────────────────────────────────────────

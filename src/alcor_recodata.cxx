@@ -295,7 +295,7 @@ void AlcorRecodata::find_rings_hough(float threshold_fraction, int min_hits)
     }
 }
 //  CONVENTION-BREAK NOTICE — see same notice in src/alcor_finedata.cxx.
-//  `is_ring_tagged` was inline in the header until the 2026-05-27 IWYU
+//  `is_ring_tagged` was inline in the header until the IWYU
 //  sweep; that sweep was driven by a misdiagnosed autoload problem.
 //  Per project convention the body belongs in the header.  Not reverting
 //  blindly; do not generalise.

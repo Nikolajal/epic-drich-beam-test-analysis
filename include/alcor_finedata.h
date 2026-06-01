@@ -41,7 +41,7 @@
 //
 //  The forward decls below + the out-of-line method bodies in
 //  alcor_finedata.cxx (look for the matching "CONVENTION-BREAK" marker)
-//  exist because of a 2026-05-27 IWYU sweep that turned out to be
+//  exist because of an IWYU sweep that turned out to be
 //  driven by a misdiagnosis: the macro `.x` failures it was chasing
 //  were a LinkDef / autoload problem, NOT a "framework headers must be
 //  self-sufficient" problem.

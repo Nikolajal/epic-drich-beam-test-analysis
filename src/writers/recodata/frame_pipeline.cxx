@@ -85,29 +85,42 @@ FrameResult process_frame_pure(AlcorLightdata &lightdata,
         break;
     }
 
-    //  Ring detection + fits (only if frame carries the Hough trigger).
-    if (res.accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_))
+    //  Ring detection + fit on HARDWARE-trigger frames.  The streaming/
+    //  Hough self-trigger that tags ring hits is disabled in QA mode, so
+    //  instead we reconstruct the ring from every non-afterpulse cherenkov
+    //  hit within ±dt_cut of the hardware trigger's reference time.
     {
-        for (const auto &hit_struct : lightdata.get_cherenkov_hits_link())
+        //  Reference time = the first genuine hardware trigger in the frame
+        //  (skip the synthetic markers + the derived ring triggers).
+        const TriggerEvent *hw_trig = nullptr;
+        for (const auto &[idx, trig] : res.accepted_triggers)
         {
-            AlcorFinedata fh(hit_struct);
-            if (fh.has_mask_bit(HitmaskHoughRingTagSecond))
-            {
-                res.frame_has_second_ring = true;
-                break;
-            }
+            if (idx == TriggerFirstFrames || idx == TriggerStartOfSpill ||
+                idx == _TRIGGER_UNKNOWN_ ||
+                idx == _TRIGGER_STREAMING_RING_FOUND_ ||
+                idx == _TRIGGER_HOUGH_RING_FOUND_)
+                continue;
+            hw_trig = &trig;
+            break;
         }
-        //  do_loo gated by the recodata config knob.
-        //  `skip_loo_residuals = true` (typically in
-        //  conf/QA/recodata.toml) disables the per-hit
-        //  leave-one-out fit loop — the biggest single
-        //  speedup lever for QA mode at the cost of no
-        //  σ_photon measurement.  See RecodataConfigStruct.
-        const bool do_loo = !ctx.ring_ctx.cfg.skip_loo_residuals;
-        res.first = compute_ring_fit(HitmaskHoughRingTagFirst,
-                                     lightdata, do_loo, ctx.ring_ctx);
-        res.second = compute_ring_fit(HitmaskHoughRingTagSecond,
-                                      lightdata, do_loo, ctx.ring_ctx);
+        if (hw_trig)
+        {
+            //  do_loo gated by the recodata config knob.
+            //  `skip_loo_residuals = true` (typically in
+            //  conf/QA/streaming.toml's [streaming_hough] table) disables
+            //  the per-hit leave-one-out
+            //  fit loop — the biggest QA speedup lever, at the cost of no
+            //  σ_photon measurement.  See RecodataConfigStruct.
+            const bool do_loo = !ctx.ring_ctx.cfg.skip_loo_residuals;
+            res.first = compute_ring_fit_timewindow(
+                hw_trig->fine_time,
+                ctx.ring_ctx.cfg.hardware_ring_dt_min_ns,
+                ctx.ring_ctx.cfg.hardware_ring_dt_max_ns,
+                lightdata, do_loo, ctx.ring_ctx);
+            //  No Hough → no first/second ring separation; the time-window
+            //  fit is the single reconstructed ring (second stays empty).
+            res.frame_has_second_ring = false;
+        }
     }
     return res;
 }

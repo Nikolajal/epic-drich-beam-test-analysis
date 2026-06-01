@@ -1,6 +1,8 @@
 #include "../lib_loader.h"
 #include "utility/root_io.h"
 #include "utility/root_hist.h"
+#include "utility/config_reader.h"
+#include <mist/logger/logger.h>
 
 // ─── Global analysis parameters ──────────────────────────────────────────────
 
@@ -16,20 +18,10 @@ static constexpr float kRHi = 125.f;
 static constexpr float kFitLo = 30.f; // fit start — avoids low-R structure
 static constexpr float kFitHi = 80.f; // fit high limit — truncates high-R tail
 
-enum class SensorType
-{
-    k1350,
-    k1375,
-    kUnknown
-};
-static SensorType sensor_type(int device)
-{
-    if (device >= 192 && device <= 195)
-        return SensorType::k1350;
-    if (device >= 196 && device <= 199)
-        return SensorType::k1375;
-    return SensorType::kUnknown;
-}
+// SiPM-model split ("1350" / "1375") is resolved per channel from the readout
+// config's `cherenkov` role via `sensor_for(device)` — the single source of
+// truth — NOT hardcoded by device range.  See dark_count_rate.cpp for the
+// canonical pattern.
 
 // ─── radial_efficiency ───────────────────────────────────────────────────────
 TH1F *radial_efficiency(TH2F *h_rphi, const TAxis *ref_axis,
@@ -133,8 +125,16 @@ static void store_result(FitResultMap &out, const std::string &hname,
 
 void photon_number(std::string data_repository, std::string run_name,
                    FitResultMap &fit_results = dummy_map,
-                   int max_frames = 10000000)
+                   int max_frames = 10000000,
+                   std::string readout_config_file = "conf/readout_config.toml")
 {
+    //  SiPM model per channel from the readout config (single source of truth).
+    ReadoutConfigList readout_config(readout_config_reader(readout_config_file));
+    const ReadoutConfigStruct *cherenkov = readout_config.find_by_name("cherenkov");
+    if (!cherenkov)
+        mist::logger::warning("[photon_number] no 'cherenkov' role in " + readout_config_file +
+                              " — per-sensor split disabled");
+
     std::string fname = data_repository + "/" + run_name + "/recodata.root";
     TFilePtr f_in(TFile::Open(fname.c_str(), "READ"));
     if (!f_in || f_in->IsZombie())
@@ -284,10 +284,10 @@ void photon_number(std::string data_repository, std::string run_name,
                 int gidx = reco->get_global_index(ih);
                 float cx = reco->get_hit_x(ih);
                 float cy = reco->get_hit_y(ih);
-                SensorType st = sensor_type(reco->get_device(ih));
-                TH2F *h_cov_st = (st == SensorType::k1350)   ? h_rphi_cov_1350
-                                 : (st == SensorType::k1375) ? h_rphi_cov_1375
-                                                             : nullptr;
+                std::string sensor = cherenkov ? cherenkov->sensor_for(reco->get_device(ih)) : "";
+                TH2F *h_cov_st = (sensor == "1350")   ? h_rphi_cov_1350
+                                 : (sensor == "1375") ? h_rphi_cov_1375
+                                                      : nullptr;
 
                 auto it = ch_bins_cache.find(gidx);
                 if (it != ch_bins_cache.end())
@@ -364,10 +364,10 @@ void photon_number(std::string data_repository, std::string run_name,
                 (in_gap ? h_r_in_gap : h_r_ex_gap)->Fill(r);
                 if (!in_gap)
                 {
-                    auto st = sensor_type(reco->get_device(ih));
-                    if (st == SensorType::k1350)
+                    std::string sensor = cherenkov ? cherenkov->sensor_for(reco->get_device(ih)) : "";
+                    if (sensor == "1350")
                         h_r_ex_gap_1350->Fill(r);
-                    else if (st == SensorType::k1375)
+                    else if (sensor == "1375")
                         h_r_ex_gap_1375->Fill(r);
                 }
             }
@@ -397,10 +397,10 @@ void photon_number(std::string data_repository, std::string run_name,
             (in_gap ? h_r_in_gap_dcr : h_r_ex_gap_dcr)->Fill(r);
             if (!in_gap)
             {
-                auto st = sensor_type(reco->get_device(ih));
-                if (st == SensorType::k1350)
+                std::string sensor = cherenkov ? cherenkov->sensor_for(reco->get_device(ih)) : "";
+                if (sensor == "1350")
                     h_r_ex_gap_1350_dcr->Fill(r);
-                else if (st == SensorType::k1375)
+                else if (sensor == "1375")
                     h_r_ex_gap_1375_dcr->Fill(r);
             }
         }
@@ -707,8 +707,8 @@ void photon_number(std::string data_repository, std::string run_name,
     fit_line_color = kRed;
     fit_r_dist(h_r_ex_gap_1375);
     auto *leg = new TLegend(0.6, 0.7, 0.88, 0.88);
-    leg->AddEntry(h_r_ex_gap_1350, "S13360-1350 (dev 192-195)", "l");
-    leg->AddEntry(h_r_ex_gap_1375, "S13360-1375 (dev 196-199)", "l");
+    leg->AddEntry(h_r_ex_gap_1350, "S13360-1350", "l");
+    leg->AddEntry(h_r_ex_gap_1375, "S13360-1375", "l");
     leg->Draw();
     c5->cd(2);
     RootHist<TH1F> h_ratio(static_cast<TH1F *>(h_r_ex_gap_1375->Clone("h_sensor_ratio")));

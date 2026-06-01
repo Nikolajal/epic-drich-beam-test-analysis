@@ -1,31 +1,36 @@
-"""Rsync wrapper for the Run Manager's Download button.
+"""Acquisition wrapper for the Run Manager's Download button.
 
-Reads ``[rsync]`` from ``qa_quicklook/qa_quicklook.toml`` and builds
-the argv to fetch a single run directory from the DAQ machine.
-No magic — a hand-built wrapper that surfaces explicit errors when
-the remote isn't configured, leaving the operator in control of the
-actual transfer.
+Scheme-aware: one ``[source].address`` picks the transfer backend (see
+:func:`detect_backend` / :func:`build_argv`):
 
-The Run Manager streams the rsync output through the same
-``JobRunner`` that drives writers, so progress lines + per-run Stop
-+ the Active-runs panel all work the same way.  The synthetic
-"writer" tag for the lock file is just ``"download"`` — the lock
-model doesn't care that it isn't a real writer binary.
+  - ``user@host:path``       → rsync over ssh (the DAQ dock; default)
+  - ``/abs/path`` / ``file://…`` → local copy (a mounted sandbox)
+  - ``https://…``            → online store via curl/wget (STUB — the
+                               per-run delivery shape isn't wired yet)
 
-Convention for the remote layout:
+No magic — a hand-built wrapper that surfaces explicit errors when the
+source isn't configured (or the backend isn't implemented), leaving the
+operator in control of the actual transfer.
 
-  - ``[rsync].remote_host``      → ssh-addressable host
-                                   (e.g. ``"drich-daq.local"``)
-  - ``[rsync].remote_data_dir``  → absolute path under which run
-                                   subdirectories live on the DAQ host
-  - ``[rsync].local_data_dir``   → project-relative path for the local
-                                   ``Data/`` mirror; resolved against
-                                   ``repo_root`` if not absolute
-  - ``[rsync].extra_args``       → extra flags forwarded verbatim
-                                   to rsync (defaults to ``-av``)
+The Run Manager streams the transfer output through the same
+``JobRunner`` that drives writers, so progress lines + per-run Stop +
+the Active-runs panel all work the same way regardless of backend.  The
+synthetic "writer" tag for the lock file is just ``"download"``.
 
-A blank ``remote_host`` is the documented "disabled" sentinel — the
-button raises a clear error rather than silently doing nothing.
+Config (``qa_quicklook/qa_quicklook.toml``):
+
+  - ``[source].address``        → the scheme-dispatched source (above).
+  - ``[source].local_data_dir`` → project-relative local ``Data/`` mirror
+                                   (resolved against ``repo_root``); falls
+                                   back to ``[rsync].local_data_dir``.
+  - ``[source].extra_args``     → flags forwarded to the transfer tool;
+                                   falls back to ``[rsync].extra_args``.
+
+Legacy ``[rsync].remote_host`` + ``remote_data_dir`` are still honoured:
+when ``[source].address`` is blank they're synthesised into the ssh form
+``<remote_host>:<remote_data_dir>``.  A blank source (neither form
+configured) is the "disabled" sentinel — the button raises a clear
+error rather than silently doing nothing.
 """
 
 from __future__ import annotations
@@ -38,27 +43,104 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+#  Acquisition backends — the transfer tool chosen from the source
+#  address scheme (see :func:`detect_backend`).
+BACKEND_RSYNC = "rsync"   # user@host:path  →  rsync over ssh (the DAQ dock)
+BACKEND_HTTPS = "https"   # http(s)://…     →  curl/wget (online store; stub)
+BACKEND_LOCAL = "local"   # file://… or /abs/path  →  local copy
+
+
+def detect_backend(address: str) -> str:
+    """Pick the acquisition backend from a source address.
+
+    The operator configures ONE ``[source].address`` and the transfer
+    tool is inferred from its shape — exactly the "I give you the
+    address, you figure out how to fetch it" model:
+
+      * ``https://…`` / ``http://…``     → :data:`BACKEND_HTTPS`
+      * ``file://…`` or a bare path      → :data:`BACKEND_LOCAL`
+      * ``user@host:path`` / ``host:path`` → :data:`BACKEND_RSYNC`
+
+    The rsync form is recognised by a ``:`` whose left side carries no
+    ``/`` (i.e. an ssh ``host:path``, not a URL path or a Unix path).
+    Empty / unrecognised → ``BACKEND_RSYNC`` (the historical default).
+    """
+    a = (address or "").strip()
+    if a.startswith(("https://", "http://")):
+        return BACKEND_HTTPS
+    if a.startswith("file://"):
+        return BACKEND_LOCAL
+    head = a.split(":", 1)[0]
+    if ":" in a and "/" not in head:
+        return BACKEND_RSYNC
+    if a.startswith(("/", "./", "../")):
+        return BACKEND_LOCAL
+    return BACKEND_RSYNC
+
+
 @dataclass
 class RsyncConfig:
-    """Parsed ``[rsync]`` section from ``qa_quicklook.toml``."""
+    """Parsed acquisition config from ``qa_quicklook.toml``.
+
+    Backed by ``[source].address`` (the scheme-dispatched form) when
+    present, falling back to the legacy ``[rsync].remote_host`` +
+    ``remote_data_dir`` pair for back-compat.  Name kept as
+    ``RsyncConfig`` so existing callers don't churn.
+    """
 
     remote_host: str = ""
     remote_data_dir: str = ""
     local_data_dir: str = "Data"
     extra_args: str = "-av"
+    source_address: str = ""   # [source].address — overrides remote_host/dir
+
+    def resolved_address(self) -> str:
+        """The effective source address: ``[source].address`` if set,
+        else the ssh ``host:dir`` synthesised from the legacy ``[rsync]``
+        pair.  Empty when neither is configured."""
+        if self.source_address.strip():
+            return self.source_address.strip()
+        host = self.remote_host.strip()
+        base = self.remote_data_dir.strip()
+        if host and base:
+            return f"{host}:{base}"
+        return ""
+
+    @property
+    def backend(self) -> str:
+        """Acquisition backend inferred from :meth:`resolved_address`."""
+        return detect_backend(self.resolved_address())
+
+    def rsync_host_dir(self) -> tuple[str, str]:
+        """``(host, dir)`` for the ssh/rsync backend, derived from the
+        resolved address (so a ``[source].address``-only config works,
+        not just the legacy ``[rsync]`` fields).  Returns ``("", "")``
+        when the backend isn't rsync or the address has no ``host:dir``
+        split — the remote-listing path uses this to refuse non-ssh
+        sources cleanly."""
+        if self.backend != BACKEND_RSYNC:
+            return "", ""
+        addr = self.resolved_address()
+        if ":" not in addr:
+            return "", ""
+        host, _, base = addr.partition(":")
+        return host.strip(), base.strip()
 
     @property
     def is_configured(self) -> bool:
-        """True iff the remote endpoint is fully filled in."""
-        return bool(self.remote_host.strip()) and bool(self.remote_data_dir.strip())
+        """True iff a source address is available (either form)."""
+        return bool(self.resolved_address())
 
 
 def load_config(dashboard_config: Path) -> RsyncConfig:
-    """Read the ``[rsync]`` table from ``dashboard_config``.
+    """Read the source config from ``dashboard_config``.
+
+    Prefers the ``[source]`` table and falls back to the legacy
+    ``[rsync]`` table.
 
     Returns a default-constructed ``RsyncConfig`` (which reads as
     ``is_configured = False``) when the file is missing, unparseable,
-    or has no ``[rsync]`` section.  No exception — the Run Manager
+    or has neither section.  No exception — the Run Manager
     surfaces the "not configured" state via the Download button's
     tooltip + a clear error dialog when clicked.
     """
@@ -73,14 +155,22 @@ def load_config(dashboard_config: Path) -> RsyncConfig:
             data = tomllib.load(fh)
     except Exception:  # noqa: BLE001
         return RsyncConfig()
-    rs = data.get("rsync") or {}
-    if not isinstance(rs, dict):
-        return RsyncConfig()
+    rs = data.get("rsync")
+    rs = rs if isinstance(rs, dict) else {}
+    src = data.get("source")
+    src = src if isinstance(src, dict) else {}
+
+    #  [source] is the new scheme-dispatched form; [rsync] is the legacy
+    #  fallback for each field, so old configs keep working untouched.
+    def _pick(key: str, default: str) -> str:
+        return str(src.get(key) or rs.get(key) or default)
+
     return RsyncConfig(
         remote_host=str(rs.get("remote_host", "") or ""),
         remote_data_dir=str(rs.get("remote_data_dir", "") or ""),
-        local_data_dir=str(rs.get("local_data_dir", "Data") or "Data"),
-        extra_args=str(rs.get("extra_args", "-av") or "-av"),
+        local_data_dir=_pick("local_data_dir", "Data"),
+        extra_args=_pick("extra_args", "-av"),
+        source_address=str(src.get("address", "") or ""),
     )
 
 
@@ -172,26 +262,31 @@ def save_address(dashboard_config: Path,
 
 
 def build_argv(cfg: RsyncConfig, run_id: str, repo_root: Path) -> list[str]:
-    """Compose the rsync argv for a single run directory.
+    """Compose the acquisition argv for a single run directory.
+
+    Dispatches on ``cfg.backend`` (inferred from the source address):
+
+      * ``rsync`` — ``rsync <extra> <addr>/<run_id> <local>/`` (the DAQ
+        dock; current behaviour).
+      * ``local`` — ``rsync <extra> <path>/<run_id> <local>/`` against a
+        local/file:// path (no host), so a mounted sandbox works today.
+      * ``https`` — STUB: raises ``NotImplementedError`` until the online
+        store exists and its per-run delivery shape is decided.
+
+    No trailing slash on the source so the *run_id* subdir is copied as
+    a whole under the local dir (``<local>/<run_id>/…``).
 
     Raises:
-        ValueError: when ``cfg`` is not fully configured or ``run_id``
-                    is empty / whitespace.
-
-    Layout::
-
-        rsync <extra_args> <remote_host>:<remote_data_dir>/<run_id> <local_data_dir>/
-
-    No trailing slash on the source so rsync copies the *run_id*
-    subdir as a whole under the local dir (i.e. you get
-    ``<local_data_dir>/<run_id>/...``, not the contents merged into
-    ``<local_data_dir>``).
+        ValueError: ``cfg`` not configured or ``run_id`` blank.
+        NotImplementedError: the resolved backend has no implementation
+            yet (https).
     """
     if not cfg.is_configured:
         raise ValueError(
-            "rsync remote is not configured — set "
-            "[rsync].remote_host and [rsync].remote_data_dir in "
-            "qa_quicklook/qa_quicklook.toml (Settings tab)."
+            "acquisition source is not configured — set "
+            "[source].address (or the legacy [rsync].remote_host + "
+            "remote_data_dir) in qa_quicklook/qa_quicklook.toml "
+            "(Settings tab)."
         )
     run_id = run_id.strip()
     if not run_id:
@@ -200,14 +295,37 @@ def build_argv(cfg: RsyncConfig, run_id: str, repo_root: Path) -> list[str]:
     local_dir = Path(cfg.local_data_dir)
     if not local_dir.is_absolute():
         local_dir = repo_root / local_dir
+    local_arg = str(local_dir).rstrip("/") + "/"
 
-    remote_path = f"{cfg.remote_data_dir.rstrip('/')}/{run_id}"
-    remote = f"{cfg.remote_host}:{remote_path}"
+    backend = cfg.backend
+    address = cfg.resolved_address()
 
-    argv: list[str] = ["rsync"]
+    if backend == BACKEND_HTTPS:
+        #  Online-store backend — intentionally a stub.  The dispatch +
+        #  rsync path are live; the https fetch shape (tarball-per-run
+        #  vs recursive vs manifest) is deferred until the store exists.
+        raise NotImplementedError(
+            f"https acquisition backend not implemented yet for "
+            f"{address!r} — only ssh/rsync (user@host:path) and local "
+            f"paths are supported today.  The online-store fetch shape "
+            f"is still to be decided."
+        )
+
+    if backend == BACKEND_LOCAL:
+        src_root = address[len("file://"):] if address.startswith("file://") else address
+        source = f"{src_root.rstrip('/')}/{run_id}"
+        argv: list[str] = ["rsync"]
+        argv.extend(shlex.split(cfg.extra_args) if cfg.extra_args else [])
+        argv.append(source)
+        argv.append(local_arg)
+        return argv
+
+    #  Default: rsync over ssh (user@host:path).
+    source = f"{address.rstrip('/')}/{run_id}"
+    argv = ["rsync"]
     argv.extend(shlex.split(cfg.extra_args) if cfg.extra_args else [])
-    argv.append(remote)
-    argv.append(str(local_dir).rstrip("/") + "/")
+    argv.append(source)
+    argv.append(local_arg)
     return argv
 
 
@@ -346,13 +464,25 @@ def list_remote_runs(
     import subprocess
     if not cfg.is_configured:
         return [], (
-            "rsync remote is not configured — set [rsync].remote_host "
-            "and [rsync].remote_data_dir in qa_quicklook/qa_quicklook.toml."
+            "acquisition source is not configured — set [source].address "
+            "(or [rsync].remote_host + remote_data_dir) in "
+            "qa_quicklook/qa_quicklook.toml."
         )
 
-    remote_dir = cfg.remote_data_dir.rstrip("/")
-    if not remote_dir:
-        return [], "remote_data_dir is empty"
+    #  Remote listing is an ssh operation — only meaningful for the
+    #  rsync/ssh backend.  Derive host+dir from the resolved address so
+    #  a [source].address-only config works (not just the legacy
+    #  [rsync] fields).
+    if cfg.backend != BACKEND_RSYNC:
+        return [], (
+            f"remote run listing is only available for ssh/rsync sources; "
+            f"the configured source is a '{cfg.backend}' target — type the "
+            f"run id manually."
+        )
+    remote_host, remote_dir = cfg.rsync_host_dir()
+    remote_dir = remote_dir.rstrip("/")
+    if not remote_host or not remote_dir:
+        return [], "source address is not a valid ssh host:dir"
 
     #  shlex.quote so a directory with spaces or shell metacharacters
     #  in [rsync].remote_data_dir doesn't tear the script open.
@@ -364,7 +494,7 @@ def list_remote_runs(
              "-o", "BatchMode=yes",
              "-o", f"ConnectTimeout={max(2, timeout_s // 2)}",
              "-o", "StrictHostKeyChecking=accept-new",
-             cfg.remote_host, script],
+             remote_host, script],
             capture_output=True, text=True,
             timeout=timeout_s,
         )

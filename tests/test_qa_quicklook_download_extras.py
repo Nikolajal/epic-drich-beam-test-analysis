@@ -193,7 +193,7 @@ class TestListRemoteRuns(unittest.TestCase):
             download.RsyncConfig(), self.repo_root,
         )
         self.assertEqual(entries, [])
-        self.assertIn("rsync remote is not configured", err)
+        self.assertIn("not configured", err)
 
     def test_happy_path_sorts_newest_first(self) -> None:
         stdout = (
@@ -296,6 +296,70 @@ class TestListRemoteRuns(unittest.TestCase):
         #  wraps a path with a space in single-quotes.
         script = captured["argv"][-1]
         self.assertIn("'/srv/data dir/2026'", script)
+
+
+class TestSchemeAwareAcquisition(unittest.TestCase):
+    """Scheme-dispatched acquisition backend (rsync / https / local)."""
+
+    def test_detect_backend(self) -> None:
+        d = download
+        self.assertEqual(d.detect_backend("eic@eic701:/data"), d.BACKEND_RSYNC)
+        self.assertEqual(d.detect_backend("eic701:/data"), d.BACKEND_RSYNC)
+        self.assertEqual(d.detect_backend("https://s/runs"), d.BACKEND_HTTPS)
+        self.assertEqual(d.detect_backend("http://s/runs"), d.BACKEND_HTTPS)
+        self.assertEqual(d.detect_backend("file:///mnt/s"), d.BACKEND_LOCAL)
+        self.assertEqual(d.detect_backend("/mnt/sandbox"), d.BACKEND_LOCAL)
+        self.assertEqual(d.detect_backend(""), d.BACKEND_RSYNC)
+
+    def test_rsync_address_argv(self) -> None:
+        cfg = download.RsyncConfig(source_address="eic@eic701:/daq/data")
+        argv = download.build_argv(cfg, "20260101-120000", Path("."))
+        self.assertEqual(
+            argv,
+            ["rsync", "-av", "eic@eic701:/daq/data/20260101-120000", "Data/"])
+
+    def test_legacy_rsync_fields_back_compat(self) -> None:
+        #  Old [rsync].remote_host + remote_data_dir must produce the
+        #  same argv as the new [source].address form.
+        cfg = download.RsyncConfig(
+            remote_host="eic@eic701", remote_data_dir="/daq/data")
+        argv = download.build_argv(cfg, "20260101-120000", Path("."))
+        self.assertEqual(
+            argv,
+            ["rsync", "-av", "eic@eic701:/daq/data/20260101-120000", "Data/"])
+
+    def test_local_path_argv(self) -> None:
+        cfg = download.RsyncConfig(source_address="/mnt/sandbox")
+        argv = download.build_argv(cfg, "20260101-120000", Path("."))
+        self.assertEqual(argv[-2], "/mnt/sandbox/20260101-120000")
+
+    def test_https_backend_is_stub(self) -> None:
+        cfg = download.RsyncConfig(source_address="https://store/runs")
+        with self.assertRaises(NotImplementedError):
+            download.build_argv(cfg, "20260101-120000", Path("."))
+
+    def test_rsync_host_dir_from_source_address(self) -> None:
+        cfg = download.RsyncConfig(source_address="eic@eic701:/daq/data")
+        self.assertEqual(cfg.rsync_host_dir(), ("eic@eic701", "/daq/data"))
+
+    def test_list_remote_runs_refuses_non_ssh_source(self) -> None:
+        #  Regression: a [source].address-only https/local target must
+        #  refuse the ssh listing cleanly (not silently ssh an empty host).
+        cfg = download.RsyncConfig(source_address="https://store/runs")
+        entries, err = download.list_remote_runs(cfg, Path("."))
+        self.assertEqual(entries, [])
+        self.assertIn("ssh/rsync", err)
+
+    def test_source_section_overrides_rsync(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            cfgp = Path(td) / "qa_quicklook.toml"
+            cfgp.write_text(
+                '[rsync]\nremote_host = "old@h"\nremote_data_dir = "/old"\n'
+                '[source]\naddress = "https://new/runs"\n')
+            cfg = download.load_config(cfgp)
+            self.assertEqual(cfg.resolved_address(), "https://new/runs")
+            self.assertEqual(cfg.backend, download.BACKEND_HTTPS)
 
 
 if __name__ == "__main__":

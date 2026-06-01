@@ -2,9 +2,15 @@
 #include <mist/logger/logger.h>
 #include <stdio.h>
 #include <CLI/CLI.hpp>
+#include <TROOT.h>
 
 int main(int argc, char **argv)
 {
+    //  Force ROOT batch mode before any TCanvas is created: the writer
+    //  renders QA PDFs via off-screen canvases.  Without this, ROOT opens a
+    //  blank Cocoa/X window per canvas at finalize, which steals OS focus
+    //  when the run finishes.
+    gROOT->SetBatch(kTRUE);
 
     CLI::App app{"Beam test analysis"};
 
@@ -16,7 +22,7 @@ int main(int argc, char **argv)
     bool force_rebuild = false;
     bool force_upstream = false;
     bool qa_mode = false;
-    //  Sweep audit (2026-05-30): accept --threads as a no-op so the
+    //  Sweep audit: accept --threads as a no-op so the
     //  uniform qa_pipeline.py invocation doesn't reject this stage.
     //  recotrack doesn't yet plumb thread parallelism through; the
     //  CLI just needs to swallow the flag.  Same parking pattern in

@@ -1,4 +1,4 @@
-"""QA tab — per-step sub-tabs (Lightdata / Recodata / Recotrack / Macros).
+"""QA tab — three sub-tabs: General (chaptered overview) / Full plots / Macros.
 
 Layout
 ------
@@ -25,6 +25,8 @@ Macros sub-tab is a placeholder until we wire bespoke ROOT macros in.
 
 from __future__ import annotations
 
+import os
+import weakref
 from pathlib import Path
 from typing import Optional
 
@@ -137,11 +139,12 @@ STEPS: tuple[tuple[str, str, str, str], ...] = (
 # display order.  ``general`` and ``full_plots`` are special: General
 # is a curated overview (one representative plot per topic), Full plots
 # is the legacy pipeline-stage drill-down (Lightdata / Recodata / …).
+# Only three sub-tabs: General (the curated, chaptered overview), Full plots
+# (per-writer drill-down), and Macros.  The intermediate topic tabs (Triggers /
+# Pixel noise / Calibration) were retired — the General chapters cover that
+# grouping now, and Full plots remains the exhaustive per-writer view.
 TOPICS: tuple[tuple[str, str, str], ...] = (
-    ("general",      "General",       "Curated overview — one plot per topic"),
-    ("triggers",     "Triggers",      "Trigger matrix, per-trigger Δt vs spill, streaming-score threshold setter, ring finder QA"),
-    ("noise",        "Pixel noise",   "DCR, afterpulse near/far, cross-talk physics/electrical"),
-    ("calibration",  "Calibration",   "Pulser anchor-Δt, fine-time calibration, timing alignment"),
+    ("general",      "General",       "Curated overview — all QA chapters for the run"),
     ("full_plots",   "Full plots",    "Pipeline-stage drill-down: every PDF the writers emitted, grouped by writer"),
 )
 
@@ -234,6 +237,11 @@ _TILE_GRID_MAX_COLS = 4
 class QaView(QtWidgets.QWidget):
     """QA tab — see module docstring."""
 
+    #  Emitted when the operator picks a different run here, so the app
+    #  keeps the Run Manager's picker in sync.  Suppressed during a
+    #  programmatic ``set_selected_run`` (guarded by ``_syncing_run``).
+    run_selected = QtCore.Signal(str)
+
     def __init__(
         self,
         database_path: Path,
@@ -245,6 +253,7 @@ class QaView(QtWidgets.QWidget):
         self._data_dir = data_dir
         self._records: list[rundb.RunRecord] = []
         self._current_run_id: Optional[str] = None
+        self._syncing_run = False
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -467,6 +476,26 @@ class QaView(QtWidgets.QWidget):
     def _on_run_changed(self, run_id: str) -> None:
         self._current_run_id = run_id or None
         self._refresh_current_page()
+        #  Broadcast for cross-tab sync unless this change came from the
+        #  sync itself (avoids a ping-pong between the two pickers).
+        if not self._syncing_run and run_id:
+            self.run_selected.emit(run_id)
+
+    def set_selected_run(self, run_id: str) -> None:
+        """Programmatically select ``run_id`` here without re-broadcasting.
+
+        No-op when the run isn't in the QA picker or is already current.
+        """
+        if not run_id or run_id == self._run_combo.currentText():
+            return
+        idx = self._run_combo.findText(run_id)
+        if idx < 0:
+            return
+        self._syncing_run = True
+        try:
+            self._run_combo.setCurrentIndex(idx)
+        finally:
+            self._syncing_run = False
 
     def _on_sub_tab_changed(self, _idx: int) -> None:
         self._refresh_current_page()
@@ -1037,6 +1066,101 @@ class _ResponsiveTileGrid(QtWidgets.QWidget):
                     tile.setFixedHeight(h)
 
 
+class _ThumbRenderTask(QtCore.QRunnable):
+    """Worker job: rasterise page 1 of a PDF to a ``QImage`` off the GUI thread.
+
+    Each task creates its OWN ``QPdfDocument`` (QtPdf is reentrant, so distinct
+    instances render concurrently on different threads); the result QImage is
+    handed back to the main thread via the pool's signal, where it's turned
+    into a QPixmap (QPixmap is GUI-thread-only) and mounted on the tile.
+    """
+
+    def __init__(self, tile_ref, pdf_path: Path, height_px: int, signal) -> None:
+        super().__init__()
+        self._tile_ref = tile_ref
+        self._pdf_path = pdf_path
+        self._height_px = height_px
+        self._signal = signal
+
+    def run(self) -> None:  # worker thread
+        image = None
+        try:
+            from PySide6 import QtPdf
+            doc = QtPdf.QPdfDocument()
+            doc.load(self._pdf_path.as_posix())
+            if doc.pageCount() >= 1:
+                ps = doc.pagePointSize(0)
+                page_h = max(1.0, float(ps.height()))
+                page_w = max(1.0, float(ps.width()))
+                scale = self._height_px / page_h
+                target_w = max(1, int(round(page_w * scale)))
+                image = doc.render(
+                    0, QtCore.QSize(target_w, self._height_px))
+        except Exception:  # noqa: BLE001
+            image = None
+        self._signal.emit(self._tile_ref, image)
+
+
+class _ThumbRenderPool(QtCore.QObject):
+    """Parallel background renderer for :class:`_PdfTile` thumbnails.
+
+    Each thumbnail is a *blocking* ``QPdfDocument`` render; building a page full
+    of tiles on the GUI thread froze the UI.  Tiles instead show a placeholder
+    and submit a job here, run across a ``QThreadPool`` (N = cores − 1).  The
+    rendered QImage comes back to the GUI thread via a queued signal, becomes a
+    QPixmap, and is mounted on the tile — so the window stays responsive and the
+    plots fill in concurrently.  Submission order sets priority, so the first
+    (top-of-page) tiles render first.
+    """
+
+    rendered = QtCore.Signal(object, object)  # (weakref tile, QImage|None)
+
+    _instance: "Optional[_ThumbRenderPool]" = None
+
+    @classmethod
+    def instance(cls) -> "_ThumbRenderPool":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pool = QtCore.QThreadPool(self)
+        self._pool.setMaxThreadCount(max(2, (os.cpu_count() or 4) - 1))
+        self._seq = 0
+        #  Queued (default cross-thread) delivery → runs on the GUI thread.
+        self.rendered.connect(self._on_rendered)
+
+    def submit(self, tile: "_PdfTile") -> None:
+        self._seq += 1
+        task = _ThumbRenderTask(
+            weakref.ref(tile), tile._pdf_path,
+            type(tile)._THUMB_HEIGHT_PX, self.rendered)
+        #  Higher priority = sooner; earlier submissions (top tiles) win.
+        self._pool.start(task, -self._seq)
+
+    def _on_rendered(self, tile_ref, image) -> None:  # GUI thread
+        tile = tile_ref()
+        if tile is None:
+            return
+        if image is None or image.isNull():
+            tile._on_async_pixmap(None)
+            return
+        pixmap = QtGui.QPixmap.fromImage(image)
+        #  Populate the process-wide thumb cache so a re-render is instant.
+        try:
+            mtime_ns = tile._pdf_path.stat().st_mtime_ns
+            cache = _PdfTile._THUMB_CACHE
+            cache[(str(tile._pdf_path), mtime_ns)] = pixmap
+            if len(cache) > _PdfTile._THUMB_CACHE_MAX:
+                for k in list(cache.keys())[
+                        :len(cache) - _PdfTile._THUMB_CACHE_MAX]:
+                    cache.pop(k, None)
+        except OSError:
+            pass
+        tile._on_async_pixmap(pixmap)
+
+
 class _PdfTile(QtWidgets.QFrame):
     """Single PDF — fast thumbnail (page 1 raster, cached) + click-to-zoom.
 
@@ -1125,21 +1249,24 @@ class _PdfTile(QtWidgets.QFrame):
         head.addWidget(open_btn)
         v.addLayout(head)
 
-        # Thumbnail (cheap to render, cached).  Click → big modal.
-        thumb = self._get_or_render_thumb()
-        if thumb is not None:
-            tlabel = _ClickableThumb(thumb, aspect_override=self._aspect_override)
-            tlabel.clicked.connect(self._open_modal)
-            tlabel.setToolTip("Click to open inline at full size")
-            v.addWidget(tlabel, 1)
-            self._thumb = tlabel
+        # Thumbnail.  Rendered in the BACKGROUND (via _ThumbRenderQueue) so a
+        # page full of tiles never blocks: install a cached thumb immediately
+        # if we have one, else show a placeholder and enqueue an async render
+        # that swaps it in when ready.  Click (once rendered) → big modal.
+        self._layout = v
+        self._placeholder: QtWidgets.QWidget | None = None
+        cached = self._cached_thumb()
+        if cached is not None:
+            self._install_thumb(cached)
         elif self._have_qt_pdf:
-            err = QtWidgets.QLabel(
-                "(could not render preview — use Open ↗)"
-            )
-            err.setObjectName("muted")
-            err.setStyleSheet("font-style: italic;")
-            v.addWidget(err)
+            ph = QtWidgets.QLabel("rendering…")
+            ph.setObjectName("muted")
+            ph.setAlignment(QtCore.Qt.AlignCenter)
+            ph.setMinimumHeight(150)
+            ph.setStyleSheet("font-style: italic; color: #888;")
+            v.addWidget(ph, 1)
+            self._placeholder = ph
+            _ThumbRenderPool.instance().submit(self)
         else:
             msg = QtWidgets.QLabel(
                 "Inline PDF preview needs PySide6's QtPdf module "
@@ -1227,6 +1354,41 @@ class _PdfTile(QtWidgets.QFrame):
             return QtGui.QPixmap.fromImage(image)
         except Exception:  # noqa: BLE001
             return None
+
+    def _cached_thumb(self) -> Optional[QtGui.QPixmap]:
+        """Return the cached page-1 thumbnail WITHOUT rendering (None on miss)."""
+        if not self._have_qt_pdf:
+            return None
+        try:
+            mtime_ns = self._pdf_path.stat().st_mtime_ns
+        except OSError:
+            return None
+        return type(self)._THUMB_CACHE.get((str(self._pdf_path), mtime_ns))
+
+    def _install_thumb(self, pixmap: QtGui.QPixmap) -> None:
+        """Mount the rendered thumbnail as the clickable preview."""
+        tlabel = _ClickableThumb(pixmap, aspect_override=self._aspect_override)
+        tlabel.clicked.connect(self._open_modal)
+        tlabel.setToolTip("Click to open inline at full size")
+        self._layout.addWidget(tlabel, 1)
+        self._thumb = tlabel
+
+    def _on_async_pixmap(self, pixmap: Optional[QtGui.QPixmap]) -> None:
+        """GUI-thread callback from :class:`_ThumbRenderPool`: drop the
+        placeholder and mount the rendered thumbnail (or an error note)."""
+        if self._thumb is not None:
+            return  # already installed (e.g. a re-entrant render)
+        if self._placeholder is not None:
+            self._placeholder.setParent(None)
+            self._placeholder.deleteLater()
+            self._placeholder = None
+        if pixmap is not None:
+            self._install_thumb(pixmap)
+        elif self._have_qt_pdf:
+            err = QtWidgets.QLabel("(could not render preview — use Open ↗)")
+            err.setObjectName("muted")
+            err.setStyleSheet("font-style: italic;")
+            self._layout.addWidget(err)
 
     # ----- actions ------------------------------------------------------
 
@@ -1401,6 +1563,7 @@ class _ThumbnailTile(QtWidgets.QFrame):
     _PICKER_HISTS = frozenset({
         "h_streaming_score_noise",
         "h_streaming_score_data",
+        "h_streaming_score_inbeam",
     })
 
     def __init__(
@@ -1709,7 +1872,6 @@ class _InteractivePlotDialog(QtWidgets.QDialog):
         self._ax.set_yscale("log" if on else "linear")
         # log Y can crash on bins ≤ 0; clip the floor when going log.
         if on:
-            import numpy as np
             ymin, ymax = self._ax.get_ylim()
             positive_floor = max(0.5, 0.5)
             self._ax.set_ylim(positive_floor, max(ymax, positive_floor * 10))
@@ -1917,9 +2079,10 @@ class _StreamingScorePickerDialog(QtWidgets.QDialog):
     """Interactive n_σ cut on the streaming-score canvas.
 
     The shifter opens this by clicking the ``h_streaming_score_noise``
-    or ``h_streaming_score_data`` thumbnail in QA → Lightdata.  Both
-    hists overlay on a shared log-Y axis (red = noise / first-frames,
-    blue = data-taking — same scheme the C++ writer paints with).  A
+    or ``h_streaming_score_data`` thumbnail in QA → Lightdata.  The
+    hists overlay on a shared log-Y axis (blue = DCR / first-frames,
+    red = signal / data-taking, violet = in-beam bkg — same scheme the
+    C++ writer paints with).  A
     draggable vertical line marks the candidate cut; the side panel
     shows four live quantities (``P(misfire)``, ``Acceptance``, ``S/N``
     above cut, raw data count above cut).  "Save to rundb" commits via
@@ -1965,17 +2128,21 @@ class _StreamingScorePickerDialog(QtWidgets.QDialog):
         from . import streaming_picker as _sp
         h_noise = thumbs.load_histogram(root_path, "h_streaming_score_noise")
         h_data = thumbs.load_histogram(root_path, "h_streaming_score_data")
+        h_inbeam = thumbs.load_histogram(root_path, "h_streaming_score_inbeam")
         self._noise_counts, edges_n = self._to_arrays(h_noise)
         self._data_counts, edges_d = self._to_arrays(h_data)
-        # Both hists share a booking — pick whichever edges exist.  If
-        # both are missing we still show the dialog with a single-bin
+        self._inbeam_counts, edges_i = self._to_arrays(h_inbeam)
+        # All three hists share a booking — pick whichever edges exist.
+        # If all are missing we still show the dialog with a single-bin
         # placeholder so the operator sees what went wrong rather than
         # a silent failure.
-        self._edges = edges_n if edges_n else edges_d or [0.0, 50.0]
+        self._edges = edges_n if edges_n else (edges_d or edges_i or [0.0, 50.0])
         if not self._noise_counts:
             self._noise_counts = [0.0] * (len(self._edges) - 1)
         if not self._data_counts:
             self._data_counts = [0.0] * (len(self._edges) - 1)
+        if not self._inbeam_counts:
+            self._inbeam_counts = [0.0] * (len(self._edges) - 1)
 
         # ── Seed the cut ────────────────────────────────────────────
         self._rundb_saved_value = self._read_saved_rundb_value()
@@ -2143,17 +2310,21 @@ class _StreamingScorePickerDialog(QtWidgets.QDialog):
         # Step hists.  ``where='post'`` mirrors how matplotlib renders
         # bin counts as constant-on-bin-interval, same convention
         # ``thumbs.render_histogram`` uses for TH1s.
-        centres = [
-            0.5 * (self._edges[i] + self._edges[i + 1])
-            for i in range(len(self._edges) - 1)
-        ]
-        ax.step(self._edges[:-1], self._noise_counts, where="post",
-                color="#D04A4A" if self._dark else "#B03030",
-                linewidth=1.6, label="noise (first-frames)")
+        #  Colour scheme matches the C++ writer's 05_streaming_score PDF:
+        #  DCR / noise (first-frames) = blue, signal / data-taking = red,
+        #  in-beam bkg (pre-trigger) = violet.
         ax.step(self._edges[:-1], self._data_counts, where="post",
+                color="#D04A4A" if self._dark else "#B03030",
+                linewidth=1.6, label="signal (data-taking)")
+        ax.step(self._edges[:-1], self._noise_counts, where="post",
                 color="#4A8BD0" if self._dark else "#1F4E8B",
-                linewidth=1.6, label="data-taking")
-        max_y = max([1.0, *self._noise_counts, *self._data_counts])
+                linewidth=1.6, label="DCR (first-frames)")
+        if any(c > 0 for c in self._inbeam_counts):
+            ax.step(self._edges[:-1], self._inbeam_counts, where="post",
+                    color="#B07AD0" if self._dark else "#8030B0",
+                    linewidth=1.6, label="in-beam bkg (pre-trigger)")
+        max_y = max([1.0, *self._noise_counts, *self._data_counts,
+                     *self._inbeam_counts])
         #  Log-Y is the natural axis for the score (heavy noise tail,
         #  long data tail), but matplotlib emits a warning + flips to
         #  lin internally when both samples are empty.  Pre-empt that
@@ -2354,6 +2525,94 @@ def _count_tree_hists(node: dict) -> int:
     for sub in node.get("subdirs", {}).values():
         n += _count_tree_hists(sub)
     return n
+
+
+class _CollapsibleSection(QtWidgets.QFrame):
+    """A collapsible General-overview chapter with a LAZILY-built body.
+
+    A bold, clickable header (▾ / ▸) that shows/hides its body.  The body
+    is constructed on the FIRST expand via the ``body_builder`` callback,
+    not at creation — critical for load time, because each PDF tile blocks
+    on a synchronous ``QPdfDocument`` render, so eagerly building every
+    chapter's tiles made opening the QA page slow.  A collapsed chapter
+    therefore costs nothing but its header.  Default collapsed.
+
+    ``body_builder(section)`` is called once, with this section, and should
+    populate it via :meth:`add_widget`.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        count_text: str = "",
+        subtitle: str = "",
+        expanded: bool = False,
+        body_builder=None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("cardSurface")
+        self._title = title
+        self._count_text = count_text
+        self._body_builder = body_builder
+        self._body_built = False
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 14)
+        outer.setSpacing(8)
+
+        self._toggle = QtWidgets.QToolButton()
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(expanded)
+        self._toggle.setStyleSheet(
+            "QToolButton { border: none; text-align: left;"
+            "             padding: 2px 4px; }"
+        )
+        f = self._toggle.font()
+        f.setBold(True)
+        f.setPointSize(f.pointSize() + 1)
+        self._toggle.setFont(f)
+        self._toggle.toggled.connect(self._on_toggle)
+        outer.addWidget(self._toggle)
+
+        if subtitle:
+            sub = QtWidgets.QLabel(subtitle)
+            sub.setObjectName("muted")
+            sub.setStyleSheet("font-style: italic; font-size: 11px;")
+            sub.setWordWrap(True)
+            outer.addWidget(sub)
+
+        self._body = QtWidgets.QWidget()
+        self._body_layout = QtWidgets.QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(10)
+        self._body.setVisible(expanded)
+        outer.addWidget(self._body)
+
+        if expanded:
+            self._build_body()
+        self._sync_header(expanded)
+
+    def add_widget(self, w: QtWidgets.QWidget) -> None:
+        self._body_layout.addWidget(w)
+
+    def _build_body(self) -> None:
+        if self._body_built:
+            return
+        self._body_built = True
+        if self._body_builder is not None:
+            self._body_builder(self)
+
+    def _sync_header(self, expanded: bool) -> None:
+        arrow = "▾" if expanded else "▸"
+        suffix = f"    ·  {self._count_text}" if self._count_text else ""
+        self._toggle.setText(f"{arrow}  {self._title}{suffix}")
+
+    def _on_toggle(self, expanded: bool) -> None:
+        if expanded:
+            self._build_body()
+        self._body.setVisible(expanded)
+        self._sync_header(expanded)
 
 
 class _CollapsibleDirCard(QtWidgets.QFrame):
@@ -2759,14 +3018,10 @@ class _TrendTile(QtWidgets.QFrame):
                 color=fg,
             )
 
-        #  Compact x-tick labels: ``YYYYMMDD-HHMMSS`` → ``HHMMSS``.
-        #  Drop the date prefix because the trend window is short
-        #  enough that the time alone disambiguates; keeping the
-        #  date would crowd out every other tick on a 320 px tile.
-        labels = []
-        for p in series.points:
-            tail = p.run_id.split("-", 1)[-1] if "-" in p.run_id else p.run_id
-            labels.append(tail)
+        #  Full run id (``YYYYMMDD-HHMMSS``) on the x-ticks so the date
+        #  is visible, not just the time — the label thinning below
+        #  keeps it to ~8 ticks so the full ids still fit on the tile.
+        labels = [p.run_id for p in series.points]
         #  Thin the labels if the window is dense — show at most
         #  ~8 ticks even at N = 20+.
         stride = max(1, len(xs) // 8)
@@ -2779,10 +3034,13 @@ class _TrendTile(QtWidgets.QFrame):
         ax.tick_params(axis="y", labelsize=7, colors=fg)
         for spine in ax.spines.values():
             spine.set_color(muted)
-        ax.set_ylabel(
-            series.metric.unit or "",
-            fontsize=7, color=fg,
-        )
+        #  Y-axis carries the metric label (so the σ tile reads
+        #  "Photon-yield σ" rather than the bare unit it shares with
+        #  ⟨N_γ⟩); unit appended when present.
+        y_lbl = series.metric.label
+        if series.metric.unit:
+            y_lbl += f"  [{series.metric.unit}]"
+        ax.set_ylabel(y_lbl, fontsize=7, color=fg)
         if series.metric.y_floor_zero:
             ax.set_ylim(bottom=0)
         ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.5, color=muted)
@@ -2811,26 +3069,47 @@ class _GeneralQaPage(QtWidgets.QWidget):
     # ``(row_label, ordered tuple of PDF basenames)``.
     # PDF basenames are matched after stripping the ``NN_`` writer-order
     # prefix (same convention as ``topic_of``).
+    #  Curated collapsible chapters.  The per-trigger "Triggers" chapter is
+    #  built separately (one row per fired trigger) and inserted after Timing.
     _GENERAL_ROWS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("Data-taking health", (
             "trigger_matrix.pdf",
             "frames_per_spill.pdf",
             "trigger_qa.pdf",
+            "coverage_map_xy.pdf",          # cartesian coverage + readiness %
         )),
         ("Sensor health", (
+            "dcr_per_channel.pdf",          # per-channel DCR rate (kHz) + averages
             "dcr_hitmap.pdf",
+            "afterpulse_per_channel.pdf",   # per-channel afterpulse % + averages
             "afterpulse_hitmap.pdf",
-            "coverage_map_rphi.pdf",
         )),
-        ("Cherenkov physics", (
-            "ring_centre_xy.pdf",
-            "N_gamma_per_ring_summary.pdf",
-            "streaming_score.pdf",
-        )),
-        ("Timing / calibration", (
+        ("Timing", (
             "timing_alignment.pdf",
             "anchor_dt_vs_spill.pdf",
+            "timing_hit_map.pdf",           # chip-0 vs chip-1 coincidence occupancy
         )),
+        ("Cherenkov", (
+            "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring
+            "ring_centre_xy.pdf",
+            "N_gamma_per_ring_summary.pdf",   # N_photons per ring
+            "sigma_photon_summary.pdf",       # single-photon σ per ring
+            "streaming_score.pdf",
+            "radial_fit_ring1.pdf",           # ring 1 radial Gauss+pol3 fit → N_γ
+            "radial_fit_ring2.pdf",           # ring 2
+            "radial_fit_ring1_dual.pdf",      # ring 1, dual-ring events
+            "radial_fit_ring1_solo.pdf",      # ring 1, solo-ring events
+        )),
+    )
+
+    #  Per-trigger standard plot set for the Triggers chapter — one row per
+    #  fired trigger, these filename stems (with the trigger name appended)
+    #  laid out left-to-right in this order.  Missing ones are dropped.
+    _PER_TRIGGER_PLOTS: tuple[str, ...] = (
+        "anchor_dt_",        # same-frame Δt vs spill (DCR baseline)
+        "trigger_dt_",       # consecutive-firing Δt vs spill (rate stability)
+        "trigcher_dt_",      # trigger–Cherenkov Δt (coincidence timing)
+        "trigcher_hitmap_",  # in-window Cherenkov hitmap (the ring)
     )
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -2918,101 +3197,108 @@ class _GeneralQaPage(QtWidgets.QWidget):
         # has emitted every plot yet — e.g. a fresh run that hasn't
         # been through recodata yet still shows its lightdata row).
         # All tiles use square aspect so the four rows align visually.
-        rows_with_tiles: list[tuple[str, list[QtWidgets.QWidget]]] = []
+        #  Store the PDF PATHS per chapter — the _PdfTile widgets (each a
+        #  blocking render) are built lazily by the chapter's body_builder on
+        #  first expand, so opening the page costs only headers.
+        rows_with_paths: list[tuple[str, list[Path]]] = []
         total_headline_tiles = 0
         for row_label, picks in self._GENERAL_ROWS:
-            row_tiles: list[QtWidgets.QWidget] = []
-            for pick in picks:
-                pdf = emitted.get(pick)
-                if pdf is None:
-                    continue
-                row_tiles.append(_PdfTile(
-                    pdf, have_qt_pdf=have_qt_pdf, aspect_override=1.0,
-                ))
-            if row_tiles:
-                rows_with_tiles.append((row_label, row_tiles))
-                total_headline_tiles += len(row_tiles)
+            paths = [emitted[pick] for pick in picks if pick in emitted]
+            if paths:
+                rows_with_paths.append((row_label, paths))
+                total_headline_tiles += len(paths)
 
-        #  Per-hardware-trigger anchor-Δt fan-out.  The lightdata writer
-        #  emits one PDF per registered hardware trigger (each filename
-        #  shaped ``NN_anchor_dt_<trigger_name>.pdf``); each shows the
-        #  trigger's same-frame Δt main pad together with the ±1 rollover
-        #  zoom pads filled by the rollover-lookup pass.  Discovery is
-        #  filesystem-driven rather than from `_GENERAL_HEADLINES`
-        #  because the trigger set is run-dependent (config-wired) and
-        #  hard-coding it would silently drop newly-added triggers.
-        #  Sorted alphabetically so the row order is stable across
-        #  re-renders.  Reuses the same square aspect as the static
-        #  headlines so the rows tile uniformly.
-        per_trigger_tiles: list[QtWidgets.QWidget] = []
-        for stripped, pdf in sorted(emitted.items()):
-            if not stripped.startswith("anchor_dt_"):
-                continue
-            # Skip the pulser one — that's already in the calibration
-            # headline.  Its stripped name is bare ``anchor_dt_vs_spill``;
-            # the lightdata per-trigger ones embed the trigger name.
-            if stripped == "anchor_dt_vs_spill.pdf":
-                continue
-            per_trigger_tiles.append(_PdfTile(
-                pdf, have_qt_pdf=have_qt_pdf, aspect_override=1.0,
-            ))
+        #  Triggers chapter: one row per fired trigger.  The fired-trigger
+        #  set is discovered from the per-trigger PDF stems (filesystem-
+        #  driven, so a newly-wired trigger appears automatically), and each
+        #  trigger's row carries the standard plot set in _PER_TRIGGER_PLOTS
+        #  order (anchor Δt · consecutive Δt · trigger–Cherenkov Δt · in-window
+        #  hitmap); missing plots are dropped.
+        def _trigger_of(stem: str) -> Optional[str]:
+            for prefix in self._PER_TRIGGER_PLOTS:
+                if stem.startswith(prefix):
+                    name = stem[len(prefix):]
+                    #  anchor_dt_vs_spill is the pulser calibration plot
+                    #  (Timing chapter), not a per-trigger fan-out member.
+                    if prefix == "anchor_dt_" and name == "vs_spill":
+                        return None
+                    return name
+            return None
 
-        # One card per non-empty thematic row — each headed with the
-        # row label and the per-row tile count.  Cards stack vertically;
-        # within each, the responsive grid tiles wrap horizontally so
-        # a wide window collapses a 3-tile row onto one line.
-        for row_label, row_tiles in rows_with_tiles:
-            row_picks = next(
-                (picks for label, picks in self._GENERAL_ROWS
-                 if label == row_label),
-                (),
-            )
-            holder = QtWidgets.QFrame()
-            holder.setObjectName("cardSurface")
-            v = QtWidgets.QVBoxLayout(holder)
-            v.setContentsMargins(14, 12, 14, 14)
-            v.setSpacing(10)
-            head = QtWidgets.QLabel(
-                f"<b>{row_label}</b>  ·  "
-                f"{len(row_tiles)} of {len(row_picks)}")
-            head.setTextFormat(QtCore.Qt.RichText)
-            v.addWidget(head)
-            v.addWidget(_ResponsiveTileGrid(
-                row_tiles, tile_min_width=_PDF_TILE_MIN_PX,
-            ))
-            self._body_layout.addWidget(holder)
+        trigger_names: set[str] = set()
+        for stem in emitted:
+            base = stem[:-4] if stem.endswith(".pdf") else stem
+            tname = _trigger_of(base)
+            if tname:
+                trigger_names.add(tname)
 
-        #  Per-hardware-trigger anchor-Δt section — only built when at
-        #  least one trigger fired enough to emit its anchor PDF.  Lives
-        #  in its own card under the headline row so the row count is
-        #  obvious and operators can scan the trigger fan-out at a
-        #  glance without it bleeding into the curated headlines.
-        if per_trigger_tiles:
-            trig_holder = QtWidgets.QFrame()
-            trig_holder.setObjectName("cardSurface")
-            tv = QtWidgets.QVBoxLayout(trig_holder)
-            tv.setContentsMargins(14, 12, 14, 14)
-            tv.setSpacing(10)
-            trig_head = QtWidgets.QLabel(
-                f"<b>Per-hardware-trigger anchor Δt</b>  ·  "
-                f"{len(per_trigger_tiles)} trigger(s) fired"
-            )
-            trig_head.setTextFormat(QtCore.Qt.RichText)
-            tv.addWidget(trig_head)
-            trig_sub = QtWidgets.QLabel(
-                "Same-frame Δt (main pad) + ±1 rollover zoom pads "
-                "(filled via the rollover lookup so the DCR baseline "
-                "around each away-side is visible). One tile per "
-                "registered hardware trigger that actually fired."
-            )
-            trig_sub.setObjectName("muted")
-            trig_sub.setStyleSheet("font-style: italic; font-size: 11px;")
-            trig_sub.setWordWrap(True)
-            tv.addWidget(trig_sub)
-            tv.addWidget(_ResponsiveTileGrid(
-                per_trigger_tiles, tile_min_width=_PDF_TILE_MIN_PX,
-            ))
-            self._body_layout.addWidget(trig_holder)
+        trigger_rows: list[tuple[str, list[Path]]] = []
+        n_trigger_tiles = 0
+        for tname in sorted(trigger_names):
+            paths = [emitted[f"{prefix}{tname}.pdf"]
+                     for prefix in self._PER_TRIGGER_PLOTS
+                     if f"{prefix}{tname}.pdf" in emitted]
+            if paths:
+                trigger_rows.append((tname, paths))
+                n_trigger_tiles += len(paths)
+
+        def _make_tiles(paths: list[Path]) -> list[QtWidgets.QWidget]:
+            return [_PdfTile(p, have_qt_pdf=have_qt_pdf, aspect_override=1.0)
+                    for p in paths]
+
+        # One collapsible chapter per non-empty curated row, plus the
+        # per-trigger Triggers chapter inserted right after Timing.  Chapters
+        # are expanded by default — their PDF tiles render in the background
+        # (see _ThumbRenderQueue), so building them all up-front no longer
+        # blocks; the tiles just fill in progressively while you browse.
+        def _render_curated_chapter(label: str, paths: list[Path]) -> None:
+            picks = next(
+                (p for lbl, p in self._GENERAL_ROWS if lbl == label), ())
+
+            def builder(sec: _CollapsibleSection) -> None:
+                sec.add_widget(_ResponsiveTileGrid(
+                    _make_tiles(paths), tile_min_width=_PDF_TILE_MIN_PX))
+
+            self._body_layout.addWidget(_CollapsibleSection(
+                label, count_text=f"{len(paths)} of {len(picks)}",
+                expanded=True, body_builder=builder))
+
+        def _render_triggers_chapter() -> None:
+            if not trigger_rows:
+                return
+
+            def builder(sec: _CollapsibleSection) -> None:
+                for tname, paths in trigger_rows:
+                    row_box = QtWidgets.QWidget()
+                    rb = QtWidgets.QVBoxLayout(row_box)
+                    rb.setContentsMargins(0, 0, 0, 0)
+                    rb.setSpacing(4)
+                    lbl = QtWidgets.QLabel(f"<b>{tname}</b>")
+                    lbl.setTextFormat(QtCore.Qt.RichText)
+                    rb.addWidget(lbl)
+                    rb.addWidget(_ResponsiveTileGrid(
+                        _make_tiles(paths), tile_min_width=_PDF_TILE_MIN_PX))
+                    sec.add_widget(row_box)
+
+            self._body_layout.addWidget(_CollapsibleSection(
+                "Triggers",
+                count_text=f"{len(trigger_rows)} trigger(s) fired",
+                subtitle=(
+                    "One row per fired trigger — anchor Δt vs spill · "
+                    "consecutive-firing Δt · trigger–Cherenkov Δt · "
+                    "in-window Cherenkov hitmap (the config timing cut)."),
+                expanded=True, body_builder=builder))
+
+        rendered_triggers = False
+        for row_label, paths in rows_with_paths:
+            _render_curated_chapter(row_label, paths)
+            if row_label == "Timing":
+                _render_triggers_chapter()
+                rendered_triggers = True
+        if not rendered_triggers:
+            #  Timing chapter was empty (or absent) — append Triggers at the
+            #  end so it still shows.
+            _render_triggers_chapter()
 
         #  Cross-run trends — independent of headlines.  Even when a
         #  fresh run hasn't emitted PDFs yet, the trend tiles still
@@ -3022,7 +3308,7 @@ class _GeneralQaPage(QtWidgets.QWidget):
         n_trend_pts = self._append_trend_section(data_dir)
 
         if (total_headline_tiles == 0
-                and not per_trigger_tiles
+                and n_trigger_tiles == 0
                 and n_trend_pts == 0):
             self._status.setText(
                 f"run: {run_id}  ·  no headline plots emitted yet")
@@ -3032,9 +3318,9 @@ class _GeneralQaPage(QtWidgets.QWidget):
         if total_headline_tiles:
             bits.append(
                 f"{total_headline_tiles} headline plot(s) "
-                f"in {len(rows_with_tiles)} row(s)")
-        if per_trigger_tiles:
-            bits.append(f"{len(per_trigger_tiles)} trigger anchor plot(s)")
+                f"in {len(rows_with_paths)} chapter(s)")
+        if n_trigger_tiles:
+            bits.append(f"{len(trigger_rows)} trigger row(s)")
         if n_trend_pts:
             bits.append(f"{n_trend_pts} trend point(s)")
         self._status.setText(f"run: {run_id}  ·  " + "  ·  ".join(bits))
@@ -3063,7 +3349,12 @@ class _GeneralQaPage(QtWidgets.QWidget):
             return 0
 
         repo_root = data_dir.parent
-        results_path = repo_root / "standard_results.toml"
+        #  The writers publish to ``<data_repository>/standard_results.toml``
+        #  — i.e. INSIDE the Data dir, not next to it.  (The C++ comments
+        #  say "<repo>/…" but data_repository is the Data path, so the
+        #  file lands in Data/.)  Read it where it's actually written;
+        #  reading repo_root/ left the trends silently empty.
+        results_path = data_dir / "standard_results.toml"
         config_path = repo_root / "qa_quicklook" / "qa_quicklook.toml"
         n_runs = cross_run_trends.read_trend_runs_n(config_path)
         all_series = cross_run_trends.load_trends(

@@ -188,8 +188,9 @@ under Run Info → reflects the same data layer):
 > historical context (why the choice was made + what trade-offs were
 > evaluated).  A clean rewrite into a "shipped-feature summary +
 > current limitations + next steps" section is tracked as a Sunday
-> follow-up (see ``CLEAN_OFF.md``); for now this banner makes the
-> shipped status unambiguous on a casual read.
+> follow-up (the "qa_quicklook/DISCUSSION.md rewrite" Doc row in
+> ``BACKLOG.md``); for now this banner makes the shipped status
+> unambiguous on a casual read.
 >
 > Current open items (now-shipped section is below for reference):
 > * Atomic flock + tmp+rename for ``update()`` — concept from

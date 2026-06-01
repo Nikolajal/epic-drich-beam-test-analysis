@@ -37,13 +37,26 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
         ctx.h_streaming_score_noise->Scale(1.0 / ctx.h_streaming_score_noise->GetEntries());
     if (ctx.h_streaming_score_data->GetEntries() > 0)
         ctx.h_streaming_score_data->Scale(1.0 / ctx.h_streaming_score_data->GetEntries());
+    //  In-beam (pre-trigger) sample — same per-entry normalisation so
+    //  all three curves share the probability-per-bin axis and their
+    //  above-threshold integrals are directly comparable.  Guarded for
+    //  null in case an older caller doesn't populate it.
+    if (ctx.h_streaming_score_inbeam &&
+        ctx.h_streaming_score_inbeam->GetEntries() > 0)
+        ctx.h_streaming_score_inbeam->Scale(
+            1.0 / ctx.h_streaming_score_inbeam->GetEntries());
     ctx.h_streaming_score_noise->GetYaxis()->SetTitle("probability per bin");
     ctx.h_streaming_score_data->GetYaxis()->SetTitle("probability per bin");
     ctx.h_streaming_score_noise->Write();
     ctx.h_streaming_score_data->Write();
+    if (ctx.h_streaming_score_inbeam)
+    {
+        ctx.h_streaming_score_inbeam->GetYaxis()->SetTitle("probability per bin");
+        ctx.h_streaming_score_inbeam->Write();
+    }
 
     //  Pre-made overlay canvas for visual threshold tuning.
-    //  Noise (first-frames) in red, data-taking in blue, log-Y so the
+    //  Noise/DCR (first-frames) in blue, signal/data-taking in red, log-Y so the
     //  tails separating signal from noise are visible across many
     //  decades.  The canvas is built self-contained: clones of the
     //  hists (detached from the output TDirectory and marked
@@ -54,7 +67,7 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
     {
         TCanvas *c_streaming_score_overlay = new TCanvas(
             "c_streaming_score_overlay",
-            "Streaming-trigger score: noise (red) vs data (blue)",
+            "Streaming-trigger score: noise (blue) vs data (red)",
             1600, 800);
         c_streaming_score_overlay->cd();
         c_streaming_score_overlay->SetLogy();
@@ -124,7 +137,7 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
         ctx.h_ring_hit_arc_dist_first->Write();
         ctx.h_ring_hit_arc_dist_second->Write();
 
-        //  ("Fit rings/" subfolder removed 2026-05-26 — fit_circle work
+        //  ("Fit rings/" subfolder removed — fit_circle work
         //   moved entirely to recodata.  See recodata.root's `Rings/`
         //   subfolder for all fit-derived QA.)
 
@@ -141,7 +154,7 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
         ctx.h_ring_peak_votes_vs_active_first_dual->Write();
         ctx.h_ring_hit_arc_dist_first_dual->Write();
 
-        //  ("Fit rings (dual)/" subfolder removed 2026-05-26.)
+        //  ("Fit rings (dual)/" subfolder removed.)
 
         //  Solo-ring mirror — complement of (dual).  Together they
         //  partition the full first-ring sample, so any systematic
@@ -156,7 +169,7 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
         ctx.h_ring_peak_votes_vs_active_first_solo->Write();
         ctx.h_ring_hit_arc_dist_first_solo->Write();
 
-        //  ("Fit rings (solo)/" subfolder removed 2026-05-26.)
+        //  ("Fit rings (solo)/" subfolder removed.)
 
         streaming_trigger_dir->cd(); // restore parent for any later writes
     }

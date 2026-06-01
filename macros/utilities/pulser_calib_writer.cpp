@@ -42,8 +42,16 @@
 #include <cmath>
 #include <string>
 
+#include <TROOT.h>
+
 int main(int argc, char **argv)
 {
+    //  Force ROOT batch mode before any TCanvas is created: the writer
+    //  renders QA PDFs via off-screen canvases.  Without this, ROOT opens a
+    //  blank Cocoa/X window per canvas at finalize, which steals OS focus
+    //  when the run finishes.
+    gROOT->SetBatch(kTRUE);
+
     CLI::App app{"Pulser-driven fine-time calibration writer"};
 
     std::string data_repository;

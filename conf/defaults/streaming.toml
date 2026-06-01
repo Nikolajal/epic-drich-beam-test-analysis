@@ -2,7 +2,8 @@
 #
 # Two stages share this file:
 #   [streaming_trigger]  — stage 1: DCR-weighted score + time clustering
-#   [streaming_hough]    — stage 2: Hough ring finder + fit_circle refinement
+#   [streaming_hough]    — stage 2: Hough ring finder (centre/radius
+#                          refinement happens in recodata, not here)
 #
 # Both stages are documented in include/triggers/streaming/DISCUSSION.md.
 # The framer does NOT read this file — these are writer-side knobs.  The
@@ -31,6 +32,13 @@
 [streaming_trigger]
 time_window_ns      =   20.0    # sliding-window width (ns)
 min_noise_hits      =   10.0    # min noise-sample hits for a channel to enter the weight bundle
+# In-beam-background QA sample (the violet curve on 05_streaming_score):
+# scored per hit over a band ending `inbeam_pretrigger_offset_ns` before each
+# hardware trigger, `inbeam_sample_width_ns` wide.  Tune the offset to move the
+# guard band; widen the width for more in-beam statistics.
+inbeam_pretrigger_offset_ns = 40.0   # band ends this many ns before the trigger
+inbeam_sample_width_ns      = 600.0  # band width sampled per hit (→ −640..−40 ns) — wide for in-beam stats
+default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a non-Hough hardware trigger
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — Hough ring finder (gated on stage 1)
@@ -47,9 +55,9 @@ min_noise_hits      =   10.0    # min noise-sample hits for a channel to enter t
 #
 # `time_window_ns` (inherited from [streaming_trigger]) and `max_rings`
 # (hardcoded to 2) are intentional non-knobs.
-# `fit_circle_init_{x,y,r}` were removed 2026-05-30 (C3.5) — recodata
-# seeds the per-ring refit from the Hough peak.  Configs that still
-# carry the keys log a one-shot deprecation warning per key.
+# `fit_circle_init_{x,y,r}` were removed (C3.5) — recodata seeds the
+# per-ring refit from the Hough peak.  Configs that still carry the keys
+# log a one-shot deprecation warning per key.
 [streaming_hough]
 
 # Hough accumulator geometry — set once at writer init via
@@ -139,11 +147,10 @@ threshold_fraction       =   0.33    # relative floor: min fraction of currently
                                      # Raise to suppress a duplicate ring 2
                                      # (R_first ≈ R_second in `Hough rings/`).
 min_hits_slack           =   0.75    # ring-acceptance slack on the absolute vote
-                                     # floor (0..1).  Leave at 0.75 unless
-                                     # explicitly studying the absolute floor.
-                                     # Aligned with config_reader.h default 2026-05-30
-                                     # (was 0.50 — orphan "legacy default for offline
-                                     # workflows" with no live consumer; sweep audit).
+                                     # floor (0..1):  min_hits = floor(min_active ×
+                                     # this).  Leave at 0.75 unless you're explicitly
+                                     # studying the absolute floor.  Matches the
+                                     # config_reader.h default.
 hough_threshold_fraction =   0.0035  # Hough entry gate, as a fraction of active
                                      # Cherenkov channels.  Raise to suppress
                                      # random-noise ring candidates and to
@@ -189,3 +196,41 @@ aggregation_window_cells =     2     # 1 = single-cell peak (legacy); 2 = aggreg
 # the per-ring refit from the Hough peak's (cx, cy, radius) directly.
 # Keys retained in old TOMLs are tolerated (warning + ignored) for one
 # release; the warning + tolerance go away in v2.1.
+
+# ────────────────────────────────────────────────────────────────
+# Recodata ring-reconstruction knobs (formerly conf/recodata.toml).
+#
+# These five live here, in [streaming_hough], because they must stay
+# consistent with the Hough geometry above — recodata re-fits the same
+# rings the Hough stage seeds.  Read by `recodata_conf_reader` (which
+# also pulls the coverage-map geometry from mapping_conf.toml's
+# [coverage] table) and consumed by recodata_writer + lightdata_writer.
+# The coverage-map geometry keys live in mapping_conf.toml.
+# ────────────────────────────────────────────────────────────────
+
+# Coincidence window (ns, relative to a hardware trigger's reference
+# time) for selecting cherenkov hits for the ring fit on hardware-trigger
+# frames (used when the Hough self-trigger isn't tagging ring hits, e.g.
+# QA mode).  A hit is kept when dt_min <= (t_hit - t_ref) <= dt_max —
+# asymmetric, since the Cherenkov light sits in a band after the trigger.
+# Also drives the per-trigger in-window Cherenkov hitmaps in lightdata.
+hardware_ring_dt_min_ns  =  -30.0
+hardware_ring_dt_max_ns  =   30.0
+
+# Minimum hits per ring for the re-fit to be attempted.  Below this the
+# ring is skipped (no N_photons / radial fill).  Matches the upstream
+# Hough min_hits floor so the recodata and lightdata views agree on what
+# counts as a ring.
+min_hits_per_ring        =    5
+
+# Channel-on-arc bandwidth [mm] used by `azimuthal_coverage_fraction`:
+# a channel counts as "on the ring" if |r_ch - R| < delta_r.  Should
+# match `collection_radius` above so the f_coverage estimate is
+# consistent with the hit-assignment cut.
+delta_r_for_coverage_mm  =    3.0
+
+# Skip the per-hit leave-one-out residual loop in compute_ring_fit_pure.
+# false = production (σ_photon measured).  The QA streaming.toml sets
+# this true — the biggest single speedup lever for --QA mode, at the
+# cost of no σ_photon measurement (h_residual_vs_n_* stay empty).
+skip_loo_residuals       =  false

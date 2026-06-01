@@ -318,3 +318,31 @@ bool run_streaming_trigger_weighted(
     std::vector<std::tuple<int, float, float>> &carry_over_hits, // (idx, time_ns, weight)
     TH1F *h_score_for_qa,
     float frame_length_ns);
+
+/**
+ * @brief Fill @p hist with the per-hit standardised score of every
+ *        modelled hit in `[t_lo_ns, t_hi_ns]`, sampled with the SAME
+ *        sliding window as @ref run_streaming_trigger_weighted.
+ *
+ * Used for the "in-beam background" sample.  Filling once per hit
+ * (conditioned on a hit being present) matches exactly how the noise
+ * (first-frames) and data curves are filled, so all three are directly
+ * comparable on one n_σ axis.  A single unconditioned fixed window
+ * instead, being empty ~90% of the time, would dump those empties into
+ * `n_σ ≈ (0 − N_modelled)/σ_S < 0` underflow and spuriously suppress the
+ * curve below the DCR baseline — but in-beam = DCR + beam-induced, so it
+ * can only sit at/above DCR.
+ *
+ * The window accumulates hits up to @p time_window_ns before @p t_lo_ns
+ * so the running score is correct at the region's left edge.  No trigger
+ * is emitted.  No-op when the bundle isn't built (`σ == 0`) or @p hist is
+ * null.  Hits are assumed time-ordered within the frame.
+ */
+void fill_window_score_samples(
+    AlcorSpilldata &current_spill,
+    int frame_id,
+    const StreamingTriggerWeights &weights,
+    float t_lo_ns,
+    float t_hi_ns,
+    float time_window_ns,
+    TH1F *hist);

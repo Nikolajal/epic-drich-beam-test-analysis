@@ -6,6 +6,8 @@
 #include "TF1.h"
 #include "TNamed.h"
 #include "TCanvas.h"
+#include "TPad.h"
+#include "TLatex.h"
 #include "TPaveText.h"
 #include "TStyle.h"
 #include "TROOT.h"
@@ -22,7 +24,7 @@
 #include "writers/recodata/types.h"          // RingFitResult, FrameResult, RingFillHists, RadialFitResult, VsNFitResult
 #include "writers/recodata/radial_fit.h"     // fit_radial_distribution
 #include "writers/recodata/sigma_vs_n_fit.h" // fit_sigma_vs_n
-#include "writers/recodata/ring_compute.h"   // compute_ring_fit, fill_ring_hists, refit_and_fill_ring
+#include "writers/recodata/ring_compute.h"   // compute_ring_fit_timewindow, fill_ring_hists
 #include "writers/recodata/frame_pipeline.h" // process_frame_pure (parallel-dispatch entry point)
 //  Live-QA pipeline: coverage map + eff(R) helpers
 //  + per-ring fit_circle re-run on mask-tagged hits → N_photons /
@@ -45,7 +47,6 @@
 //  scope struct).  They've been lifted to
 //  `include/writers/recodata/types.h` so the per-frame compute and
 //  finalize-QA split translation units can share the same definitions.
-using ::btana::recodata::compute_ring_fit;
 using ::btana::recodata::fill_ring_hists;
 using ::btana::recodata::fit_radial_distribution;
 using ::btana::recodata::fit_sigma_vs_n;
@@ -53,7 +54,6 @@ using ::btana::recodata::FrameProcessContext;
 using ::btana::recodata::FrameResult;
 using ::btana::recodata::process_frame_pure;
 using ::btana::recodata::RadialFitResult;
-using ::btana::recodata::refit_and_fill_ring;
 using ::btana::recodata::RingComputeContext;
 using ::btana::recodata::RingFillHists;
 using ::btana::recodata::RingFitResult;
@@ -68,7 +68,6 @@ void recodata_writer(
     std::string mapping_conf,
     std::string trigger_conf,
     std::string framer_conf,
-    std::string recodata_conf,
     std::string streaming_conf)
 {
     //  Clean PDF rendering — no stats box on any saved canvas.
@@ -150,7 +149,7 @@ void recodata_writer(
     //  ``fine_calib.txt`` path has been retired (task #172);
     //  ``read_calib_from_file`` hard-errors on non-`.toml` inputs.
     //
-    //  Sweep audit (2026-05-30): wrap in try/catch with fallback —
+    //  Sweep audit: wrap in try/catch with fallback —
     //  same correctness fix applied to the lightdata caller.  C4.4
     //  promoted schema-mismatch + zero-entry from warning to
     //  std::runtime_error; an uncaught throw here aborts the recodata
@@ -240,12 +239,19 @@ void recodata_writer(
     // position-cache convention in Mapping.cxx and the MIST
     // HoughTransform `lut_key`.
     std::map<int, std::array<float, 2>> index_to_hit_xy;
+
+    //  Average detector readiness for the run = active channels / full
+    //  detector channels.  Set once the spill-weighted channel_weights
+    //  are built (below) and printed on the XY coverage map.  Uses the
+    //  CHANNEL-COUNT ratio, not the per-bin coverage mean: a whole
+    //  missing readout (e.g. rdo-193, absent by default → 1/8 of the
+    //  detector) must drag this down, which a mean over only the
+    //  populated bins would silently ignore.
+    double detector_readiness = 0.0;
     {
-        constexpr int kDeviceLo = 192;
-        constexpr int kDeviceHi = 224;
         const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
         constexpr int kChannelHi = 64;
-        for (int device = kDeviceLo; device < kDeviceHi; ++device)
+        for (int device = ::gidx::kFirstDevice; device < ::gidx::kDeviceUpperBound; ++device)
             for (int chip = 0; chip < max_chip; ++chip)
                 for (int channel = 0; channel < kChannelHi; ++channel)
                 {
@@ -279,7 +285,7 @@ void recodata_writer(
 
     RootHist<TH2F> h_trigger_qa(
         "h_trigger_qa",
-        "Trigger selection QA;trigger;outcome",
+        "Trigger selection QA;trigger;",  // no Y title — the bin labels (accepted / edge-rejected / duplicate-rejected) carry it
         n_triggers, 0, n_triggers,
         3, 0, 3);
     for (int i = 0; i < n_triggers; ++i)
@@ -349,7 +355,7 @@ void recodata_writer(
     //
     //  V1 scope: no φ-gap split, no sensor-model split, no time-window
     //  variants.  All deferred to a finer-analysis follow-up.
-    auto recodata_cfg = recodata_conf_reader(recodata_conf);
+    auto recodata_cfg = recodata_conf_reader(streaming_conf, mapping_conf);
     //  Reuse the lightdata-side streaming/Hough QA knob for the centre
     //  (c_x, c_y) QA half-range so both writers stay in lock-step.  We
     //  only read the one field we need; the rest of streaming_hough_cfg
@@ -357,8 +363,8 @@ void recodata_writer(
     auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf);
 
     //  Captured-once state for the per-frame, per-ring compute
-    //  helpers (`compute_ring_fit`, `refit_and_fill_ring`).  Geometry +
-    //  config knobs that don't change during the loop.  See
+    //  helpers (`compute_ring_fit_timewindow`, `fill_ring_hists`).
+    //  Geometry + config knobs that don't change during the loop.  See
     //  `include/writers/recodata/ring_compute.h`.
     const RingComputeContext ring_ctx{index_to_hit_xy, recodata_cfg};
 
@@ -494,6 +500,15 @@ void recodata_writer(
                                       kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
                                       kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
 
+    //  In-cut trigger-Cherenkov hitmap: the (x, y) of every cherenkov hit
+    //  selected by the hardware-trigger TIMING CUT from the config
+    //  ([recodata] hardware_ring_dt_min_ns … hardware_ring_dt_max_ns around
+    //  the trigger ref time) — the same in-time hits the ring fit runs on.
+    //  Full detector range (±99 mm, 0.5 mm bins) so the Cherenkov ring shows.
+    RootHist<TH2F> h_trigger_cherenkov_hitmap(
+        "h_trigger_cherenkov_hitmap", ";x (mm);y (mm)",
+        396, -99, 99, 396, -99, 99);
+
     //  Per-hit radial residual vs N_hits (LEAVE-ONE-OUT fit).
     //
     //  For each hit i in a ring, run `fit_circle` with `exclude_points
@@ -560,21 +575,18 @@ void recodata_writer(
                                                       kNHitsBins, kNHitsXLo, kNHitsXHi, 100, -5.f, 5.f);
 
     //  Per-frame, per-ring compute helpers live in their own
-    //  translation unit since 2026-05-27 (Phase D of the recodata
-    //  modularization).  See `include/writers/recodata/ring_compute.h`:
-    //   - `compute_ring_fit(ring_bit, lightdata, do_loo, ring_ctx)` —
-    //     pure compute, returns a `RingFitResult`; safe on worker
-    //     threads.  Initial guess: hit centroid + median radius
-    //     (no dependence on the streaming-Hough `fit_circle_init_*`
-    //     knobs).  `do_loo = false` skips the per-hit LOO loop.
+    //  translation unit (Phase D of the recodata modularization).  See
+    //  `include/writers/recodata/ring_compute.h`:
+    //   - `compute_ring_fit_timewindow(t_ref, dt_min, dt_max, lightdata,
+    //     do_loo, ring_ctx)` — pure compute, returns a `RingFitResult`;
+    //     safe on worker threads.  Selects non-afterpulse cherenkov hits
+    //     within [dt_min, dt_max] of the hardware-trigger ref time; initial
+    //     guess is hit centroid + median radius.  `do_loo = false` skips
+    //     the per-hit LOO loop.
     //   - `fill_ring_hists(result, bundle)` — drain, mutates the
     //     histograms in `bundle` (any pointer may be nullptr to skip).
-    //   - `refit_and_fill_ring(ring_bit, bundle, lightdata, ring_ctx)` —
-    //     compose-then-drain wrapper for the serial code path; gates
-    //     do_loo on `bundle.h_residual_vs_n` AND the cfg's
-    //     `skip_loo_residuals` knob.
-    //  All three take `ring_ctx` (declared above) for the geometry +
-    //  config bundle that used to be captured by reference.
+    //  Both take `ring_ctx` (declared above) for the geometry + config
+    //  bundle that used to be captured by reference.
 
     //  Enable a 50 MB tree cache before the two GetEntry passes (§4.7 minimum
     //  mitigation): the second full pass over the spill tree (calibration loop
@@ -657,7 +669,7 @@ void recodata_writer(
         //  Start-of-spill event: dead lane map
         auto lanes_participating = spilldata->get_not_dead_participants();
         for (auto [device, lanes] : lanes_participating)
-            if (device < 200)
+            if (device < ::gidx::kTimingDeviceLo)
                 for (auto current_lane : lanes)
                     for (auto i_channel = 0; i_channel < 8; ++i_channel)
                     {
@@ -710,8 +722,8 @@ void recodata_writer(
         //  counter mutation.  Thread-safe (only reads from shared
         //  refs in `FrameProcessContext`; writes only to its local
         //  FrameResult).  Body lifted to
-        //  `src/writers/recodata/frame_pipeline.cxx` in Phase G2
-        //  (2026-05-27) — the function signature now makes the
+        //  `src/writers/recodata/frame_pipeline.cxx` in Phase G2 —
+        //  the function signature now makes the
         //  parallel contract visible at the call site.
         //  ───────────────────────────────────────────────────────────────────
 
@@ -771,8 +783,19 @@ void recodata_writer(
             for (const auto &chrk : lightdata.get_cherenkov_hits_link())
                 recodata.add_hit(chrk);
 
-            //  Radiator QA — drain the precomputed RingFitResults.
-            if (res.accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_))
+            //  In-cut trigger-Cherenkov hitmap: accumulate the (x, y) of every
+            //  cherenkov hit that passed the hardware-trigger timing cut
+            //  ([recodata] hardware_ring_dt_min_ns … hardware_ring_dt_max_ns),
+            //  regardless of whether the ring fit converged — so the map shows
+            //  the full in-time occupancy (the Cherenkov ring).  res.first.hit_xy
+            //  carries the in-cut hits from compute_ring_fit_timewindow.
+            for (const auto &p : res.first.hit_xy)
+                h_trigger_cherenkov_hitmap->Fill(p[0], p[1]);
+
+            //  Radiator QA — drain the precomputed RingFitResults.  Now
+            //  gated on a successful reconstruction (hardware-trigger
+            //  time-window fit) rather than the Hough self-trigger.
+            if (res.first.fit_ok || res.second.fit_ok)
             {
                 RingFillHists first_hists;
                 first_hists.h_nhits = h_nhits_first.get();
@@ -967,6 +990,13 @@ void recodata_writer(
     //  FIXED nominal centre from `[recodata].nominal_centre_{x,y}_mm`;
     //  the radial hists' R values come from PER-EVENT Hough/fit
     //  centres.  Discrepancy < 1 % at observed centre wander.
+    //
+    //  Headline N_γ / single-photon σ for the cross-run AnalysisResults
+    //  publish below.  Captured from the primary-ring radial fit INSIDE
+    //  the Rings block; its locals don't survive to the publish, so we
+    //  hoist the scalars here.
+    double pub_n_gamma = 0.0, pub_sigma = 0.0, pub_sigma_err = 0.0;
+    bool pub_have_ring = false;
     {
         // Subfolder name: "Rings/" — contents are per-ring observables
         // from the Hough output, not per-radiator-material splits.  The
@@ -1010,6 +1040,25 @@ void recodata_writer(
                                    total_physics, channel_weights.size(),
                                    index_to_hit_xy.size())
                                    .Data());
+            //  Detector readiness = the SPILL-WEIGHTED average fraction
+            //  of active channels.  Each channel_weight already sums the
+            //  physics-weighted fraction of spills that channel was
+            //  active (∈ [0, 1]; a channel live every spill → ~1, one
+            //  live half the spills → ~0.5, a never-seen channel like a
+            //  missing rdo → 0 / absent).  Summing those weights and
+            //  dividing by the FULL configured channel count
+            //  (index_to_hit_xy, from the mapping geometry) therefore
+            //  combines BOTH effects the operator asked for: the
+            //  whole-readout gap (rdo-193 always 0) AND the per-spill
+            //  channel drift (others come and go), averaged over the run.
+            if (!index_to_hit_xy.empty())
+            {
+                double weight_sum = 0.0;
+                for (const auto &[ch, w] : channel_weights)
+                    weight_sum += w;
+                detector_readiness =
+                    weight_sum / static_cast<double>(index_to_hit_xy.size());
+            }
         }
         else
         {
@@ -1036,10 +1085,28 @@ void recodata_writer(
         h_coverage_map_rphi->SetName("h_coverage_map_rphi");
         h_coverage_map_rphi->SetTitle(";#phi (rad);R (mm)");
 
+        //  Cartesian (x, y) coverage map — the operator-facing view
+        //  (the rφ map stays for eff(R)).  Same channel footprints +
+        //  spill-activity weights, just rasterised in (c_x, c_y).  Range
+        //  mirrors the lightdata hitmaps (±99 mm, 396 bins).
+        std::unique_ptr<TH2F> h_coverage_map_xy(
+            util::radiator_efficiency::build_coverage_map_xy(
+                index_to_hit_xy,
+                396, -99.f, 99.f,
+                396, -99.f, 99.f,
+                recodata_cfg.channel_half_width_mm,
+                channel_weights.empty() ? nullptr : &channel_weights));
+        h_coverage_map_xy->SetName("h_coverage_map_xy");
+        h_coverage_map_xy->SetTitle(";c_{x} (mm);c_{y} (mm)");
+        //  Average detector readiness (the active/full-detector channel
+        //  ratio computed above) is printed on the XY-map PDF emitted in
+        //  the save block below.
+
         TDirectory *rings_dir = output_file->mkdir("Rings");
         rings_dir->cd();
 
         h_coverage_map_rphi->Write();
+        h_coverage_map_xy->Write();
 
         //  eff(R) — owned locally; written below into the same dir.
         //  Use the per-ring radial hist's X-axis so the binning matches
@@ -1100,7 +1167,7 @@ void recodata_writer(
 
         //  ── Crystal-Ball + pol3 fit on the eff-corrected radial
         //     hist  Ported from
-        //     `macros/examples/photon_number_new.cpp`'s
+        //     `photon_number_new.cpp`'s
         //     `fit_radial_distribution` lambda (lines 952–1037).
         //
         //  Recipe:
@@ -1140,9 +1207,9 @@ void recodata_writer(
         //  explicitly rather than looking up by name — was previously a
         //  gDirectory dependency that broke when h_R writes came AFTER
         //  the fit calls in the finalize block (n_rings = 0 bug, fixed
-        //  by 2026-05-26 by making it a parameter).
+        //  by making it a parameter).
         //
-        //  In-function lambda was lifted to a free function on 2026-05-27
+        //  In-function lambda was lifted to a free function
         //  to reduce `recodata_writer.cxx` from 2.2k lines (DISCUSSION
         //  modularisation pass).  See `writers/recodata/radial_fit.h`
         //  for the signature; behavior is identical, verified against
@@ -1172,6 +1239,18 @@ void recodata_writer(
                                 recodata_cfg, data_repository, run_name, radial_results);
         fit_radial_distribution(h_radial_first_solo_smeared.get(), h_R_first_solo.get(), "h_radial_first_solo_smeared",
                                 recodata_cfg, data_repository, run_name, radial_results);
+
+        //  Capture the primary-ring (first, un-smeared) fit for the
+        //  cross-run publish — N_γ + single-photon σ (radial peak width).
+        for (const auto &rr : radial_results)
+            if (rr.name == "h_radial_first")
+            {
+                pub_n_gamma = rr.n_gamma;
+                pub_sigma = rr.peak_sigma;
+                pub_sigma_err = rr.peak_sigma_err;
+                pub_have_ring = (rr.n_gamma > 0.0);
+                break;
+            }
 
         //  ── Persistent CB+pol3 summary plots ──────────────────────
         //  Three bin-labeled TH1Fs collecting the headline numbers
@@ -1228,6 +1307,7 @@ void recodata_writer(
         h_sigma_second->Write();
         h_centre_xy_first->Write();
         h_centre_xy_second->Write();
+        h_trigger_cherenkov_hitmap->Write();
 
         //  vs_n fitting recipe
         //
@@ -1258,7 +1338,7 @@ void recodata_writer(
         //  TH1F.  Type lives in `include/writers/recodata/types.h`.
         std::vector<VsNFitResult> vs_n_results;
 
-        //  In-function lambda was lifted to a free function on 2026-05-27
+        //  In-function lambda was lifted to a free function
         //  (DISCUSSION modularisation pass).  See
         //  `writers/recodata/sigma_vs_n_fit.h` for the signature.
 
@@ -1378,14 +1458,14 @@ void recodata_writer(
             .add("nominal_centre_x_mm",       recodata_cfg.nominal_centre_x_mm)
             .add("nominal_centre_y_mm",       recodata_cfg.nominal_centre_y_mm);
         //  Conf-file paths + verbatim TOML bodies for every conf the
-        //  writer reads (mapping, trigger, framer, recodata) plus the
-        //  streaming conf that's only forwarded to the lightdata
-        //  cascade on --force-upstream (recorded anyway so the
+        //  writer reads (mapping — now also carries the [coverage]
+        //  geometry, trigger, framer) plus the streaming conf (which
+        //  carries the [streaming_hough] ring-reco knobs and is also
+        //  forwarded to the lightdata cascade on --force-upstream so the
         //  cascade is reproducible from this file alone).
         dump.add_conf_file("mapping_conf",   mapping_conf)
             .add_conf_file("trigger_conf",   trigger_conf)
             .add_conf_file("framer_conf",    framer_conf)
-            .add_conf_file("recodata_conf",  recodata_conf)
             .add_conf_file("streaming_conf", streaming_conf);
     }
 
@@ -1435,10 +1515,10 @@ void recodata_writer(
             util::qa::crop_pdf_inplace(path);
         };
 
-        //  01 frames_per_spill — TH2F with bin-labelled Y; "colz text"
+        //  01 frames_per_spill — TH2F with bin-labelled Y; "colz text90"
         //     so the per-(spill, outcome) counts are readable.
         h_frames_per_spill->GetYaxis()->SetLabelSize(0.030);
-        save_one(1, "frames_per_spill", h_frames_per_spill.get(), "colz text");
+        save_one(1, "frames_per_spill", h_frames_per_spill.get(), "colz text90");
 
         //  02 trigger_qa — TH2F with X = trigger name, Y = outcome.
         //     Use the same X-axis rotation idiom as the lightdata
@@ -1446,40 +1526,170 @@ void recodata_writer(
         h_trigger_qa->GetXaxis()->LabelsOption("v");
         h_trigger_qa->GetXaxis()->SetLabelSize(0.028);
         h_trigger_qa->GetYaxis()->SetLabelSize(0.030);
-        save_one(2, "trigger_qa", h_trigger_qa.get(), "colz text");
+        save_one(2, "trigger_qa", h_trigger_qa.get(), "colz text90");
 
-        //  03 coverage_map_rphi — TH2F in (φ, R).  Out of immediate
-        //     scope here; reach into the open output file.
-        if (auto *cov = output_file->Get<TH2F>("Rings/h_coverage_map_rphi"))
-            save_one(3, "coverage_map_rphi", cov, "colz");
+        //  03 coverage_map_xy — cartesian coverage, the operator-facing
+        //     view (the rφ map stays in the ROOT file for eff(R) but is
+        //     no longer the headline).  Bespoke save: draw colz + print
+        //     the average detector readiness (active / full-detector
+        //     channel ratio) as a banner at the top.
+        if (auto *cov_xy = output_file->Get<TH2F>("Rings/h_coverage_map_xy"))
+        {
+            TCanvas c("c_qa_recodata_03_coverage_map_xy", "", 1000, 1000);
+            c.SetLeftMargin(0.14);
+            c.SetRightMargin(0.16);
+            c.SetTopMargin(0.10);
+            cov_xy->Draw("colz");
+            TLatex banner;
+            banner.SetNDC();
+            banner.SetTextFont(42);
+            banner.SetTextSize(0.030);
+            banner.DrawLatex(
+                0.14, 0.93,
+                TString::Format(
+                    "Average detector readiness: %.1f%%  "
+                    "(active / full-detector channels)",
+                    100.0 * detector_readiness));
+            const auto path =
+                util::qa::pdf_path(run_dir, "recodata", 3, "coverage_map_xy");
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        }
 
-        //  04 ring_centre_xy — first-ring centre map; same source.
+        //  04 ring_centre_xy — first-ring centre map with NARROW marginal X
+        //  (top) and Y (right) projection strips that SHARE the map's axes
+        //  (same binning): c_x and c_y are labelled once on the MAP (bottom +
+        //  left, the outer side away from each strip), the strips hide their
+        //  copies.  No colz palette (the projections convey the density).  The
+        //  Y-projection grows rightward (outward).  Small black "best centre"
+        //  (peak c_x, c_y) text in the top-left corner.
         if (auto *cxy = output_file->Get<TH2F>("Rings/h_centre_xy_first"))
-            save_one(4, "ring_centre_xy", cxy, "colz");
+        {
+            std::unique_ptr<TH1D> px(cxy->ProjectionX("h_centre_x_first"));
+            std::unique_ptr<TH1D> py(cxy->ProjectionY("h_centre_y_first"));
+            px->SetDirectory(nullptr);
+            py->SetDirectory(nullptr);
+            px->SetTitle("");
+            py->SetTitle("");
+            px->SetFillColor(kAzure - 9);
+            py->SetFillColor(kAzure - 9);
+            px->SetLineColor(kAzure + 2);
+            py->SetLineColor(kAzure + 2);
+            //  Best centre = peak (mode) of each projection.
+            const double best_x = px->GetEntries() > 0
+                ? px->GetXaxis()->GetBinCenter(px->GetMaximumBin())
+                : 0.0;
+            const double best_y = py->GetEntries() > 0
+                ? py->GetXaxis()->GetBinCenter(py->GetMaximumBin())
+                : 0.0;
 
-        //  05 N_gamma_per_ring_summary — TH1F built inside the
-        //     build_radial_summary lambda above and deleted after
-        //     Write(); read back from the file.
+            TCanvas c("c_qa_recodata_04_ring_centre_xy", "", 1000, 1000);
+            const double kYW = 0.18; // Y-projection strip width (right)
+            const double kXH = 0.18; // X-projection strip height (top)
+            //  Map + X-proj share left/right margins → the c_x axes line up;
+            //  map + Y-proj share top/bottom margins → the c_y axes line up.
+            //  Map keeps its c_x (bottom) + c_y (left) axis margins; the
+            //  strip-facing margins are ZERO so the projections butt right up
+            //  against the map (no gap).
+            const double kL = 0.11, kB = 0.10;
+            TPad p2d("p2d_centre", "", 0.00, 0.00, 1.00 - kYW, 1.00 - kXH);
+            TPad pxp("pxproj_centre", "", 0.00, 1.00 - kXH, 1.00 - kYW, 1.00);
+            TPad pyp("pyproj_centre", "", 1.00 - kYW, 0.00, 1.00, 1.00 - kXH);
+            p2d.SetLeftMargin(kL);
+            p2d.SetRightMargin(0.0);  // butt against the Y-projection
+            p2d.SetBottomMargin(kB);
+            p2d.SetTopMargin(0.0);    // butt against the X-projection
+            pxp.SetLeftMargin(kL);
+            pxp.SetRightMargin(0.0);
+            pxp.SetBottomMargin(0.0); // touch the map's top
+            pxp.SetTopMargin(0.04);
+            pyp.SetLeftMargin(0.0);   // touch the map's right
+            pyp.SetRightMargin(0.04);
+            pyp.SetBottomMargin(kB);
+            pyp.SetTopMargin(0.0);
+            p2d.Draw();
+            pxp.Draw();
+            pyp.Draw();
+
+            //  Shared axes labelled ONCE on the MAP (the outer side, away from
+            //  each strip): c_x on the bottom, c_y on the left.  The strips
+            //  hide their duplicate axis labels.  The Y-projection uses the
+            //  natural hbar orientation (bars grow rightward, away from the
+            //  map) — no content negation, so its fill renders normally.
+            p2d.cd();
+            cxy->Draw("col"); // no colz palette; keep default c_x/c_y axes
+            pxp.cd();
+            px->GetXaxis()->SetLabelSize(0.0);
+            px->GetXaxis()->SetTickLength(0.0);
+            px->Draw("hist");
+            pyp.cd();
+            //  hbar: GetXaxis() is the bin axis (c_y) — read off the map's
+            //  left axis, so hide it; GetYaxis() is the count/value axis —
+            //  SHOW it (scaled up for the narrow strip) so the Y-projection
+            //  has a visible scale like the X-projection does.
+            py->GetXaxis()->SetLabelSize(0.0);
+            py->GetXaxis()->SetTickLength(0.0);
+            py->GetYaxis()->SetLabelSize(0.07);
+            py->GetYaxis()->SetNdivisions(204);
+            py->Draw("hbar");
+
+            c.cd();
+            TLatex txt;
+            txt.SetNDC();
+            txt.SetTextSize(0.017);
+            txt.SetTextColor(kBlack);
+            //  Top-RIGHT free corner — outside all three pads (above the
+            //  Y-projection strip), so it never overlaps a histogram.
+            txt.DrawLatex(0.845, 0.955, "Best centre");
+            txt.DrawLatex(0.845, 0.920,
+                          TString::Format("c_{x} = %.1f mm", best_x));
+            txt.DrawLatex(0.845, 0.885,
+                          TString::Format("c_{y} = %.1f mm", best_y));
+
+            const auto path =
+                util::qa::pdf_path(run_dir, "recodata", 4, "ring_centre_xy");
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        }
+
+        //  04 trigger_cherenkov_hitmap — (x, y) of every cherenkov hit inside
+        //  the hardware-trigger timing cut ([recodata] hardware_ring_dt_min_ns
+        //  … hardware_ring_dt_max_ns).  The in-time trigger-Cherenkov occupancy
+        //  → the Cherenkov ring.
+        if (auto *hm = output_file->Get<TH2F>("Rings/h_trigger_cherenkov_hitmap"))
+            save_one(4, "trigger_cherenkov_hitmap", hm, "colz");
+
+        //  05 N_gamma_per_ring_summary — per-ring photon count (= the
+        //     N_photons headline).  TH1F built inside the build_radial_
+        //     summary lambda above and deleted after Write(); read back
+        //     from the file.
         if (auto *ng = output_file->Get<TH1F>("Rings/h_N_gamma_per_ring_summary"))
             save_one(5, "N_gamma_per_ring_summary", ng, "hist text");
+
+        //  06 sigma_photon_summary — per-ring single-photon resolution
+        //     σ_photon (mm), the other Cherenkov headline the operator
+        //     watches alongside N_γ.  Same read-back-from-file pattern.
+        if (auto *sg = output_file->Get<TH1F>("Rings/h_sigma_photon_summary"))
+            save_one(6, "sigma_photon_summary", sg, "hist text");
     }
 
     //  ---
     //  --- Publish cross-run scalars to AnalysisResults.
     //
-    //  Same dual-backend store (<repo>/standard_results.{root,toml})
+    //  Same store (``<data_repository>/standard_results.toml`` =
+    //  ``Data/standard_results.toml``; the .root backend was dropped)
     //  that lightdata + recotrack write to.  Sensor key is "all" —
     //  per-sensor splitting (1350 / 1375) would require redoing the
     //  fits per sensor, which is downstream-macro work; the dashboard
     //  trend reader can already slice on "all".
     {
-        //  Sibling of the run directories — i.e. ``<repo>/standard_results.toml``
+        //  Sibling of the run directories — i.e. ``<data_repository>/standard_results.toml`` (= ``Data/``)
         //  — so the cross-run aggregate lives next to the per-run data
         //  it summarises.  Earlier ``extData/`` literal was a stale
         //  hard-code from the legacy macro paths and failed to open
         //  whenever the dashboard launched from a different cwd.
         AnalysisResults ar(data_repository + "/standard_results.toml");
-        ar.update(ResultMap{
+        ResultMap rm{
             {{run_name, "all", "recodata.n_spills"},
              {static_cast<double>(all_spills), 0.0}},
             {{run_name, "all", "recodata.frame_size"},
@@ -1488,7 +1698,17 @@ void recodata_writer(
              {static_cast<double>(recodata_cfg.nominal_centre_x_mm), 0.0}},
             {{run_name, "all", "recodata.nominal_centre_y_mm"},
              {static_cast<double>(recodata_cfg.nominal_centre_y_mm), 0.0}},
-        }, /*source=*/"recodata");
+        };
+        //  Freshly-fitted primary-ring N_γ + single-photon σ — only when a
+        //  ring was actually reconstructed this run, so the cross-run
+        //  trends reflect THIS run's physics instead of stale leftovers.
+        //  Keys match cross_run_trends.DEFAULT_METRICS (full.n_gamma/full.sigma).
+        if (pub_have_ring)
+        {
+            rm[{run_name, "all", "full.n_gamma"}] = {pub_n_gamma, 0.0};
+            rm[{run_name, "all", "full.sigma"}]   = {pub_sigma, pub_sigma_err};
+        }
+        ar.update(rm, /*source=*/"recodata");
     }
     //
     //  input_file and output_file closed automatically by TFilePtr dtors.

@@ -58,9 +58,10 @@ struct FrameProcessContext
  * @brief Pure per-frame compute pass.
  *
  * Reads triggers + Cherenkov hits from @p lightdata, gates on the
- * edge-rejection window + duplicate-trigger checks, runs ring fits
- * via @ref compute_ring_fit if the Hough trigger fired, and packages
- * everything into a `FrameResult` for the serial drain.
+ * edge-rejection window + duplicate-trigger checks, runs the ring fit
+ * via @ref compute_ring_fit_timewindow on the first hardware-trigger
+ * reference time, and packages everything into a `FrameResult` for the
+ * serial drain.
  *
  * Mutates nothing in @p ctx; safe to call concurrently from
  * `std::async` worker threads.

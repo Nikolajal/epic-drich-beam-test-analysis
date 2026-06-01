@@ -3,7 +3,7 @@
 The trigger subsystem has two largely-orthogonal halves:
 
 1. **Hardware-trigger source schema** — how `[[trigger]]` entries in
-   `conf/trigger_conf.<year>.toml` map to physical channels.  Defines
+   `conf/trigger_conf.toml` (a symlink; year variants under `conf/sets/<year>/`) map to physical channels.  Defines
    the schema types, the TOML reader, and the runtime registry used
    for histogram bin labelling.
 2. **Streaming software trigger pipeline** — a two-stage pre-filter

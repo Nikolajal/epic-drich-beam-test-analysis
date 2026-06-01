@@ -65,7 +65,10 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    GIT_TAG        dev
+    # Pinned to an immutable SHA for a reproducible v2.0.0 build — this is the
+    # commit the release was built and tested against.  Bump deliberately when
+    # adopting newer MIST; do not float back to a branch name for releases.
+    GIT_TAG        96c6f5a779ca9456abadf754b0be9b31ed312f71
 )
 FetchContent_MakeAvailable(mist)
 

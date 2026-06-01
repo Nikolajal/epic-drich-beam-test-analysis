@@ -27,7 +27,7 @@ from typing import Any, Iterable, Optional
 import tomlkit
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .toml_model import Leaf, walk_leaves
+from .toml_model import Leaf
 
 
 class TomlForm(QtWidgets.QWidget):

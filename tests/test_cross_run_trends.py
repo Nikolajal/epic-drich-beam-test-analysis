@@ -52,8 +52,7 @@ def _write_synthetic_results(path: Path) -> None:
 
       - 20251111-100000 — earliest; only ``full.n_gamma``, no DCR pair.
       - 20260527-073111 — DCR pair present, ``full`` quantities absent.
-      - 20260528-191848 — full record (n_gamma + sigma + DCR pair +
-        streaming.n_fires).
+      - 20260528-191848 — full record (n_gamma + sigma + DCR pair).
       - 20260530-120000 — n_events == 0  (rate must NOT divide-by-zero;
         missing).
 
@@ -85,9 +84,6 @@ def _write_synthetic_results(path: Path) -> None:
 
         [results."20260528-191848".all."lightdata.n_events"]
         value = 100000.0
-
-        [results."20260528-191848".all."streaming.n_fires"]
-        value = 482.0
 
         [results."20260530-120000".all."lightdata.n_dcr_hits"]
         value = 10.0
@@ -184,22 +180,6 @@ class ExtractSeriesTests(unittest.TestCase):
         )
         self.assertEqual(series.points, [])
         self.assertEqual(series.missing, ["20260530-120000"])
-
-    def test_streaming_fires_absent_on_legacy_runs(self) -> None:
-        # The aspirational metric — writer doesn't publish it for the
-        # legacy fixture runs, so every point should be missing.
-        metric = next(
-            m for m in DEFAULT_METRICS if m.key == "n_streaming_fires")
-        ids = ["20251111-100000", "20260527-073111", "20260528-191848"]
-        series = extract_series(self._results, metric, ids)
-        # Only the run that explicitly published streaming.n_fires is
-        # present.
-        self.assertEqual([p.run_id for p in series.points],
-                         ["20260528-191848"])
-        self.assertEqual(
-            series.missing,
-            ["20251111-100000", "20260527-073111"],
-        )
 
 
 class LoadTrendsTests(unittest.TestCase):

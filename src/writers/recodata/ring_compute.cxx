@@ -3,12 +3,10 @@
  * @brief Implementation of the per-frame, per-ring compute helpers
  *        declared in `writers/recodata/ring_compute.h`.
  *
- * Lifted verbatim (with the lambda captures replaced by an explicit
- * @ref btana::recodata::RingComputeContext) from the in-function
- * `compute_ring_fit_pure`, `fill_ring_hists`, and `refit_and_fill_ring`
+ * Lifted (with the lambda captures replaced by an explicit
+ * @ref btana::recodata::RingComputeContext) from the per-frame ring-fit
  * lambdas formerly inside `src/recodata_writer.cxx`.  Algorithms are
- * unchanged; bit-identical output was verified against a pre-refactor
- * baseline snapshot at extraction time (snapshot since pruned).
+ * unchanged.
  */
 
 #include "writers/recodata/ring_compute.h"
@@ -29,37 +27,26 @@
 namespace btana::recodata
 {
 
-RingFitResult compute_ring_fit(HitMask ring_bit,
-                               AlcorLightdata &lightdata,
-                               bool do_loo,
-                               const RingComputeContext &ctx)
+//  Selection-agnostic fit core.  Given the collected ring hits (the
+//  parallel AlcorFinedata array + pixel-centre + per-hit smeared (x,y)),
+//  run the circle fit, radial-residual σ, azimuthal coverage and the
+//  optional LOO residuals.  Hit SELECTION (the ±Δt time window) is done by
+//  `compute_ring_fit_timewindow` below; this core is factored out so the
+//  selection and the fit stay decoupled.
+static RingFitResult fit_collected_ring_hits(
+    std::vector<AlcorFinedata> &ring_fdata,
+    std::vector<std::array<float, 2>> &ring_hits,
+    std::vector<std::array<float, 2>> &ring_hits_smeared,
+    bool do_loo,
+    const RingComputeContext &ctx)
 {
     RingFitResult out;
-
-    //  Collect both pixel-centre and a SINGLE pixel-jittered sample
-    //  per hit.  Drawing one smeared sample per hit at this point keeps
-    //  the LOO loop, the smeared radial hist, and the smeared σ-vs-N
-    //  hist all consistent (they see the same realisation of pixel
-    //  jitter for hit i).  Drawing fresh samples per accessor call
-    //  would inflate the variance and decorrelate the cross-checks.
-    std::vector<AlcorFinedata> ring_fdata; ///< parallel array — kept only for the per-hit accessor mid-loop
-    std::vector<std::array<float, 2>> ring_hits;
-    std::vector<std::array<float, 2>> ring_hits_smeared;
-    ring_fdata.reserve(40);
-    ring_hits.reserve(40);
-    ring_hits_smeared.reserve(40);
-
-    for (const auto &hit_struct : lightdata.get_cherenkov_hits_link())
-    {
-        AlcorFinedata fh(hit_struct);
-        if (!fh.has_mask_bit(ring_bit))
-            continue;
-        ring_fdata.push_back(fh);
-        ring_hits.push_back({fh.get_hit_x(), fh.get_hit_y()});
-        //  Single per-hit smeared sample, captured once here.
-        ring_hits_smeared.push_back({fh.get_hit_x_rnd(), fh.get_hit_y_rnd()});
-    }
     out.n_hits = static_cast<int>(ring_hits.size());
+    //  Carry the in-cut hit positions back for the trigger-Cherenkov hitmap —
+    //  smeared so the map isn't a discrete pixel comb.  Recorded BEFORE the
+    //  min-hits gate so the hitmap shows every in-cut hit, even on frames with
+    //  too few hits to attempt a fit.
+    out.hit_xy = ring_hits_smeared;
     if (out.n_hits < ctx.cfg.min_hits_per_ring)
         return out; // fit_ok stays false
 
@@ -113,7 +100,7 @@ RingFitResult compute_ring_fit(HitMask ring_bit,
 
     out.f_coverage = util::radiator_efficiency::azimuthal_coverage_fraction(
         ctx.index_to_hit_xy, out.cx, out.cy, out.R,
-        ctx.cfg.delta_r_for_coverage_mm);
+        ctx.cfg.delta_r_for_coverage_mm, ctx.cfg.channel_half_width_mm);
 
     //  LOO residuals (optional — gate on do_loo).
     if (do_loo)
@@ -146,6 +133,41 @@ RingFitResult compute_ring_fit(HitMask ring_bit,
 
     out.fit_ok = true;
     return out;
+}
+
+RingFitResult compute_ring_fit_timewindow(float t_ref_ns,
+                                          float dt_min_ns,
+                                          float dt_max_ns,
+                                          AlcorLightdata &lightdata,
+                                          bool do_loo,
+                                          const RingComputeContext &ctx)
+{
+    //  Time-window selection: every non-afterpulse cherenkov hit whose
+    //  (t_hit − t_ref) falls in [dt_min_ns, dt_max_ns] of the hardware-
+    //  trigger reference time.  Used by recodata to reconstruct rings on
+    //  hardware-trigger frames where the streaming/Hough self-trigger
+    //  (which tags ring hits) is disabled (e.g. QA mode).  Shares the fit
+    //  core with the Hough-tagged path.
+    std::vector<AlcorFinedata> ring_fdata;
+    std::vector<std::array<float, 2>> ring_hits;
+    std::vector<std::array<float, 2>> ring_hits_smeared;
+    ring_fdata.reserve(40);
+    ring_hits.reserve(40);
+    ring_hits_smeared.reserve(40);
+    for (const auto &hit_struct : lightdata.get_cherenkov_hits_link())
+    {
+        AlcorFinedata fh(hit_struct);
+        if (fh.is_afterpulse())
+            continue;
+        const float dt = fh.get_time_ns() - t_ref_ns;
+        if (dt < dt_min_ns || dt > dt_max_ns)
+            continue;
+        ring_fdata.push_back(fh);
+        ring_hits.push_back({fh.get_hit_x(), fh.get_hit_y()});
+        ring_hits_smeared.push_back({fh.get_hit_x_rnd(), fh.get_hit_y_rnd()});
+    }
+    return fit_collected_ring_hits(ring_fdata, ring_hits, ring_hits_smeared,
+                                   do_loo, ctx);
 }
 
 void fill_ring_hists(const RingFitResult &r, const RingFillHists &h)
@@ -192,8 +214,8 @@ void fill_ring_hists(const RingFitResult &r, const RingFillHists &h)
 
     //  Smeared siblings — same indexing as the un-smeared loops.
     //  `radial_per_hit_smeared` and `loo_residuals_smeared` are filled
-    //  by `compute_ring_fit` using a single per-hit jitter sample, so
-    //  the (pixel-centre, smeared) hist pair shares the same hit set.
+    //  by `fit_collected_ring_hits` using a single per-hit jitter sample,
+    //  so the (pixel-centre, smeared) hist pair shares the same hit set.
     if (h.h_radial_smeared)
         for (float r_hit : r.radial_per_hit_smeared)
             h.h_radial_smeared->Fill(r_hit);
@@ -207,23 +229,6 @@ void fill_ring_hists(const RingFitResult &r, const RingFillHists &h)
     if (h.h_residual_vs_n_split_smeared)
         for (float dev : r.loo_residuals_smeared)
             h.h_residual_vs_n_split_smeared->Fill(r.n_hits, dev);
-}
-
-bool refit_and_fill_ring(HitMask ring_bit,
-                         const RingFillHists &h,
-                         AlcorLightdata &lightdata,
-                         const RingComputeContext &ctx)
-{
-    //  `do_loo` is on by default but gated off by the
-    //  `skip_loo_residuals` knob in conf/recodata.toml (typically
-    //  set in conf/QA/recodata.toml).  When off, the LOO loop is
-    //  skipped saving ~N extra fit_circle calls per ring per
-    //  event; the per-hit residual hists then stay empty and the
-    //  σ_photon fit at finalize silently no-ops.
-    const bool do_loo = !ctx.cfg.skip_loo_residuals && (h.h_residual_vs_n || h.h_residual_vs_n_split || h.h_residual_vs_n_smeared || h.h_residual_vs_n_split_smeared);
-    const RingFitResult r = compute_ring_fit(ring_bit, lightdata, do_loo, ctx);
-    fill_ring_hists(r, h);
-    return r.fit_ok;
 }
 
 } // namespace btana::recodata

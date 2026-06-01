@@ -155,7 +155,7 @@ void fill_dcr_afterpulse_ct_qa(
             //  Physical CT requires strictly positive Δt (causal optical/charge coupling)
             const bool is_phys = dt >= 0 &&
                                  hit.x > -990.f && ct_hits[j].x > -990.f &&
-                                 std::hypot(ct_hits[j].x - hit.x, ct_hits[j].y - hit.y) <= 3.2f;
+                                 std::hypot(ct_hits[j].x - hit.x, ct_hits[j].y - hit.y) <= qa_cfg.ct_phys_radius_mm;
             //  Fill Δt for all neighbour types — used for DCR sideband estimation
             if (is_phys && h.h_phys_ct_dt)
                 h.h_phys_ct_dt->Fill(static_cast<double>(dt));
