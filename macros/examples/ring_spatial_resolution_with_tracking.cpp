@@ -293,16 +293,18 @@ void ring_spatial_resolution_with_tracking(std::string data_repository, std::str
     {
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update({
-            {{run_name, "all", "ring.spatial_resolution.tracked"},
-             {f_resolution->GetParameter(0), f_resolution->GetParError(0)}},
-            {{run_name, "all", "ring.spatial_resolution_const.tracked"},
-             {f_resolution->GetParameter(1), f_resolution->GetParError(1)}},
-            {{run_name, "all", "ring.radius_mm.tracked"},
-             {(double)found_ring_radius, (double)found_ring_radius_stddev}},
-        }, "recotrack");
+                      {{run_name, "all", "ring.spatial_resolution.tracked"},
+                       {f_resolution->GetParameter(0), f_resolution->GetParError(0)}},
+                      {{run_name, "all", "ring.spatial_resolution_const.tracked"},
+                       {f_resolution->GetParameter(1), f_resolution->GetParError(1)}},
+                      {{run_name, "all", "ring.radius_mm.tracked"},
+                       {(double)found_ring_radius, (double)found_ring_radius_stddev}},
+                  },
+                  "recotrack");
 
         mist::logger::info("[ring_spatial_resolution_with_tracking] resolution fit "
-                           "written to standard_results.toml for run " + run_name);
+                           "written to standard_results.toml for run " +
+                           run_name);
     }
 
     //  Show fit result on Canvas

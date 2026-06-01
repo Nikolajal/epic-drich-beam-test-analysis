@@ -251,23 +251,23 @@ public:
     {
         if (ordinal < 0)
             return std::nullopt;
-        const int tdc_idx       = ordinal & 0x3;
-        const int channel_ord   = ordinal >> 2;
+        const int tdc_idx = ordinal & 0x3;
+        const int channel_ord = ordinal >> 2;
         if constexpr (gidx::kUsesSplitInTwo)
         {
             constexpr int kChansPerDevice = 256;
-            constexpr int kChansPerChip   = 32;
-            const int device_offset       = channel_ord / kChansPerDevice;
-            const int device_id           = gidx::kFirstDevice + device_offset;
-            const int channel_in_device   = channel_ord % kChansPerDevice;
-            const int real_chip_id        = channel_in_device / kChansPerChip;
-            const int chip_local_chan     = channel_in_device % kChansPerChip;
+            constexpr int kChansPerChip = 32;
+            const int device_offset = channel_ord / kChansPerDevice;
+            const int device_id = gidx::kFirstDevice + device_offset;
+            const int channel_in_device = channel_ord % kChansPerDevice;
+            const int real_chip_id = channel_in_device / kChansPerChip;
+            const int chip_local_chan = channel_in_device % kChansPerChip;
             //  Recover the new-layout (chip_logical, channel_logical)
             //  pair from (real_chip_id, chip_local_chan).  In the
             //  split-in-two scheme each pair of hardware chips maps
             //  to one logical chip with channels [0..63]; the upper
             //  32 channels come from the odd-indexed real chip.
-            const int chip_logical    = real_chip_id / 2;
+            const int chip_logical = real_chip_id / 2;
             const int channel_logical = chip_local_chan + (real_chip_id & 1 ? 32 : 0);
             //  FIFO follows the same packing the writers use
             //  elsewhere (see pulser_calib_writer).
@@ -277,13 +277,13 @@ public:
         else
         {
             constexpr int kChansPerDevice = 512;
-            constexpr int kChansPerChip   = 64;
-            const int device_offset     = channel_ord / kChansPerDevice;
-            const int device_id         = gidx::kFirstDevice + device_offset;
+            constexpr int kChansPerChip = 64;
+            const int device_offset = channel_ord / kChansPerDevice;
+            const int device_id = gidx::kFirstDevice + device_offset;
             const int channel_in_device = channel_ord % kChansPerDevice;
-            const int chip_id           = channel_in_device / kChansPerChip;
-            const int channel_id        = channel_in_device % kChansPerChip;
-            const int fifo_id           = 4 * chip_id + ((channel_id & 31) >> 3);
+            const int chip_id = channel_in_device / kChansPerChip;
+            const int channel_id = channel_in_device % kChansPerChip;
+            const int fifo_id = 4 * chip_id + ((channel_id & 31) >> 3);
             return try_from_components(device_id, fifo_id, chip_id, channel_id, tdc_idx);
         }
     }
@@ -484,8 +484,7 @@ public:
     /// every component and uniquely identifies a TDC across the whole
     /// detector.  Kept here only for downstream callers that haven't
     /// migrated yet; do not use in new code.
-    [[deprecated("Use GlobalIndex::raw() as the calibration key — calib_index() collides across devices.")]]
-    [[nodiscard]] constexpr int
+    [[deprecated("Use GlobalIndex::raw() as the calibration key — calib_index() collides across devices.")]] [[nodiscard]] constexpr int
     calib_index() const noexcept
     {
         return tdc() + 4 * eo_channel() + 128 * real_chip();

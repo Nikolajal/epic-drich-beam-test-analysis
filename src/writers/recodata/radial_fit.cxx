@@ -13,7 +13,7 @@
  */
 
 #include "writers/recodata/radial_fit.h"
-#include "utility/qa_publish.h"  // util::qa::pdf_path — land PDFs under qa/recodata/
+#include "utility/qa_publish.h" // util::qa::pdf_path — land PDFs under qa/recodata/
 
 #include <algorithm> // std::clamp
 #include <memory>    // std::unique_ptr
@@ -185,8 +185,8 @@ void fit_radial_distribution(TH1F *h,
     for (int i = 0; i < 7; ++i)
         ring_fit.SetParName(i, parnames[i]);
     ring_fit.SetParameters(amp_seed, peak_seed, sigma_seed,
-                         bg_prefit.GetParameter(0), bg_prefit.GetParameter(1),
-                         bg_prefit.GetParameter(2), bg_prefit.GetParameter(3));
+                           bg_prefit.GetParameter(0), bg_prefit.GetParameter(1),
+                           bg_prefit.GetParameter(2), bg_prefit.GetParameter(3));
     ring_fit.SetParLimits(0, 0., 1e9);
     ring_fit.SetParLimits(2, 1.5, 5.0); // peak σ physically bounded
 

@@ -28,12 +28,12 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <sys/file.h>      // flock(2) — POSIX advisory file lock
+#include <sys/file.h> // flock(2) — POSIX advisory file lock
 #include <system_error>
-#include <unistd.h>        // close(2), getpid(2)
+#include <unistd.h> // close(2), getpid(2)
 
-#include "utility/audit.h"        // per-write provenance log
-#include "utility/toml_utils.h"   // toml++
+#include "utility/audit.h"      // per-write provenance log
+#include "utility/toml_utils.h" // toml++
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  AnalysisResults::load
@@ -238,7 +238,7 @@ void AnalysisResults::update(const ResultMap &entries,
         {
             mist::logger::error("[AnalysisResults] flock(LOCK_EX) failed on " +
                                 lock_path + " — proceeding without lock "
-                                "(concurrent writes may interleave)");
+                                            "(concurrent writes may interleave)");
             ::close(lock_fd);
             lock_fd = -1;
         }

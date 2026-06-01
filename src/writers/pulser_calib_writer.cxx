@@ -245,7 +245,7 @@ struct ChannelResult
 template <int N>
 inline bool solve_spd(const double normal_matrix[N * N],
                       const double rhs[N],
-                      double       solution[N])
+                      double solution[N])
 {
     //  Step 1 — Cholesky factorisation: normal_matrix = L · Lᵀ
     //  with L lower-triangular, stored in `cholesky_lower`.
@@ -335,9 +335,9 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     //  The fine span feeds the slope guard later: a TDC that saw too
     //  few distinct fine bins has no lever arm for its slope fit and
     //  is pinned to the default.
-    long  hits_per_tdc[4] = {0, 0, 0, 0};
-    int   fine_min_per_tdc[4] = {256, 256, 256, 256};
-    int   fine_max_per_tdc[4] = {-1, -1, -1, -1};
+    long hits_per_tdc[4] = {0, 0, 0, 0};
+    int fine_min_per_tdc[4] = {256, 256, 256, 256};
+    int fine_max_per_tdc[4] = {-1, -1, -1, -1};
     for (auto &spill_bucket : bucket.per_spill)
         for (const auto &hit : spill_bucket.hits)
         {
@@ -362,7 +362,7 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     //  TOML knob > 0 ⇒ operator pins the period (e.g. 320000 cc for a
     //  1 kHz pulser at 320 MHz).  Otherwise leave the period as a
     //  free 9th fit parameter for a blind detector-level estimate.
-    const bool   fit_period_from_data = !(cfg.pulser_period_cc > 0.0);
+    const bool fit_period_from_data = !(cfg.pulser_period_cc > 0.0);
     const double nominal_period_cc =
         cfg.pulser_period_cc > 0.0 ? cfg.pulser_period_cc : 320000.0;
 
@@ -374,8 +374,8 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     //  Total of 9 unknowns — fixed by the architecture.
     constexpr int NUM_FIT_PARAMS = 9;
     static constexpr int OFFSET_PARAM_BASE = 0; // θ_t lives at index t
-    static constexpr int SLOPE_PARAM_BASE  = 4; // a_t lives at index t + 4
-    static constexpr int PERIOD_PARAM_IDX  = 8;
+    static constexpr int SLOPE_PARAM_BASE = 4;  // a_t lives at index t + 4
+    static constexpr int PERIOD_PARAM_IDX = 8;
     //  At most 5 unknowns per pair row contribute (2 offsets + 2
     //  slopes + 1 period).  We accumulate Aᵀ·A and Aᵀ·y as a sparse
     //  rank-1 update per pair — O(25) flops per pair, no inner-loop
@@ -383,8 +383,8 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     static constexpr int MAX_NONZEROS_PER_PAIR_ROW = 5;
 
     double normal_matrix[NUM_FIT_PARAMS * NUM_FIT_PARAMS] = {};
-    double rhs_vector   [NUM_FIT_PARAMS] = {};
-    long   pair_count_used = 0;     // pairs that pass the safety filter
+    double rhs_vector[NUM_FIT_PARAMS] = {};
+    long pair_count_used = 0;             // pairs that pass the safety filter
     double pair_target_sum_squared = 0.0; // accumulated Σ y² for chi² recovery
 
     //  build_normal_equations — assemble (normal_matrix, rhs_vector,
@@ -399,7 +399,7 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     {
         std::fill_n(normal_matrix, NUM_FIT_PARAMS * NUM_FIT_PARAMS, 0.0);
         std::fill_n(rhs_vector, NUM_FIT_PARAMS, 0.0);
-        pair_count_used         = 0;
+        pair_count_used = 0;
         pair_target_sum_squared = 0.0;
         for (const auto &spill_bucket : bucket.per_spill)
         {
@@ -446,9 +446,9 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
                 //         T + (θ_curr − θ_prev)
                 //           + (fine_curr · a_curr − fine_prev · a_prev)
                 //  Each contribution is one nonzero column entry.
-                int    sparse_col_indices[MAX_NONZEROS_PER_PAIR_ROW];
-                double sparse_col_values [MAX_NONZEROS_PER_PAIR_ROW];
-                int    num_nonzeros = 0;
+                int sparse_col_indices[MAX_NONZEROS_PER_PAIR_ROW];
+                double sparse_col_values[MAX_NONZEROS_PER_PAIR_ROW];
+                int num_nonzeros = 0;
 
                 //  Offsets: contribute only when the two hits are on
                 //  different TDCs (otherwise θ_curr − θ_prev = 0).
@@ -456,11 +456,11 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
                 {
                     sparse_col_indices[num_nonzeros] =
                         OFFSET_PARAM_BASE + curr_hit.tdc;
-                    sparse_col_values [num_nonzeros] = +1.0;
+                    sparse_col_values[num_nonzeros] = +1.0;
                     ++num_nonzeros;
                     sparse_col_indices[num_nonzeros] =
                         OFFSET_PARAM_BASE + prev_hit.tdc;
-                    sparse_col_values [num_nonzeros] = -1.0;
+                    sparse_col_values[num_nonzeros] = -1.0;
                     ++num_nonzeros;
                 }
                 //  Slopes: always two entries (+f_curr, -f_prev).
@@ -469,12 +469,12 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
                 //  automatically.
                 sparse_col_indices[num_nonzeros] =
                     SLOPE_PARAM_BASE + curr_hit.tdc;
-                sparse_col_values [num_nonzeros] =
+                sparse_col_values[num_nonzeros] =
                     +static_cast<double>(curr_hit.fine);
                 ++num_nonzeros;
                 sparse_col_indices[num_nonzeros] =
                     SLOPE_PARAM_BASE + prev_hit.tdc;
-                sparse_col_values [num_nonzeros] =
+                sparse_col_values[num_nonzeros] =
                     -static_cast<double>(prev_hit.fine);
                 ++num_nonzeros;
                 //  Period: only when T is a free parameter.  Row
@@ -483,7 +483,7 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
                 if (fit_period_from_data)
                 {
                     sparse_col_indices[num_nonzeros] = PERIOD_PARAM_IDX;
-                    sparse_col_values [num_nonzeros] = -1.0;
+                    sparse_col_values[num_nonzeros] = -1.0;
                     ++num_nonzeros;
                 }
 
@@ -491,8 +491,8 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
                 //  absorbs the constant; when fixed, we move T to the
                 //  target.
                 const double pair_target_cc = fit_period_from_data
-                    ? pair_coarse_diff_cc
-                    : (pair_coarse_diff_cc - nominal_period_cc);
+                                                  ? pair_coarse_diff_cc
+                                                  : (pair_coarse_diff_cc - nominal_period_cc);
 
                 //  Rank-1 update of Aᵀ·A and Aᵀ·y.
                 for (int outer = 0; outer < num_nonzeros; ++outer)
@@ -500,11 +500,10 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
                     rhs_vector[sparse_col_indices[outer]] +=
                         sparse_col_values[outer] * pair_target_cc;
                     for (int inner = 0; inner < num_nonzeros; ++inner)
-                        normal_matrix[
-                            sparse_col_indices[outer] * NUM_FIT_PARAMS +
-                            sparse_col_indices[inner]] +=
-                                sparse_col_values[outer] *
-                                sparse_col_values[inner];
+                        normal_matrix[sparse_col_indices[outer] * NUM_FIT_PARAMS +
+                                      sparse_col_indices[inner]] +=
+                            sparse_col_values[outer] *
+                            sparse_col_values[inner];
                 }
                 pair_target_sum_squared += pair_target_cc * pair_target_cc;
                 ++pair_count_used;
@@ -519,8 +518,8 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     for (int tdc_idx = 0; tdc_idx < 4; ++tdc_idx)
     {
         const int fine_span = (fine_max_per_tdc[tdc_idx] >= fine_min_per_tdc[tdc_idx])
-            ? (fine_max_per_tdc[tdc_idx] - fine_min_per_tdc[tdc_idx] + 1)
-            : 0;
+                                  ? (fine_max_per_tdc[tdc_idx] - fine_min_per_tdc[tdc_idx] + 1)
+                                  : 0;
         if (fine_span < cfg.slope_fit_min_fine_span)
             slope_guard_fired[tdc_idx] = true;
     }
@@ -603,15 +602,15 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     long slipped_hits_per_tdc[4] = {0, 0, 0, 0};
     {
         const double period_used_cc = fit_period_from_data
-            ? fitted_params[PERIOD_PARAM_IDX]
-            : nominal_period_cc;
-        const double slip_confidence_thr_cc      = cfg.slip_confidence_cc;
-        const double max_snap_fraction           = cfg.slip_max_snap_fraction;
+                                          ? fitted_params[PERIOD_PARAM_IDX]
+                                          : nominal_period_cc;
+        const double slip_confidence_thr_cc = cfg.slip_confidence_cc;
+        const double max_snap_fraction = cfg.slip_max_snap_fraction;
         constexpr std::size_t MIN_HITS_PER_TDC_FOR_MEDIAN = 4;
 
         //  Reusable scratch buffers — allocated once, reused per
         //  (spill, TDC).  Outer index is the TDC slot (0..3).
-        std::vector<int>    hit_indices_per_tdc[4];
+        std::vector<int> hit_indices_per_tdc[4];
         std::vector<double> phase_residuals_per_tdc[4];
         std::vector<double> sorted_phase_residuals_per_tdc[4];
         bool any_hits_were_snapped = false;
@@ -652,8 +651,7 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
             //  and snap, with the safety check on snap fraction.
             for (int tdc_idx = 0; tdc_idx < 4; ++tdc_idx)
             {
-                if (phase_residuals_per_tdc[tdc_idx].size()
-                    < MIN_HITS_PER_TDC_FOR_MEDIAN)
+                if (phase_residuals_per_tdc[tdc_idx].size() < MIN_HITS_PER_TDC_FOR_MEDIAN)
                     continue;
 
                 sorted_phase_residuals_per_tdc[tdc_idx] =
@@ -762,8 +760,8 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
     //  one pass.
     double total_chi2 = 0.0;
     const double period_used_cc = fit_period_from_data
-        ? fitted_params[PERIOD_PARAM_IDX]
-        : nominal_period_cc;
+                                      ? fitted_params[PERIOD_PARAM_IDX]
+                                      : nominal_period_cc;
     for (const auto &spill_bucket : bucket.per_spill)
     {
         const auto &hits = spill_bucket.hits;
@@ -812,8 +810,8 @@ ChannelResult fit_channel(const ChannelKey &channel_key, ChannelBucket bucket,
         result.tdc[tdc_idx].b =
             fitted_params[OFFSET_PARAM_BASE + tdc_idx];
         result.tdc[tdc_idx].a = slope_guard_fired[tdc_idx]
-            ? cfg.default_slope_cc_per_bin
-            : fitted_params[SLOPE_PARAM_BASE + tdc_idx];
+                                    ? cfg.default_slope_cc_per_bin
+                                    : fitted_params[SLOPE_PARAM_BASE + tdc_idx];
         //  Per-TDC residual sigma is not propagated yet — the v2
         //  consumers don't need it.  Computing it would require the
         //  per-parameter variance from the Aᵀ·A inverse diagonal,
@@ -900,22 +898,25 @@ void pulser_calib_writer(
     if (anchor_device_override >= 0 && anchor_device_override != cfg.anchor_device)
     {
         mist::logger::info(TString::Format(
-            "(pulser_calib_writer) CLI override: anchor_device %d -> %d",
-            cfg.anchor_device, anchor_device_override).Data());
+                               "(pulser_calib_writer) CLI override: anchor_device %d -> %d",
+                               cfg.anchor_device, anchor_device_override)
+                               .Data());
         cfg.anchor_device = anchor_device_override;
     }
     if (anchor_chip_override >= 0 && anchor_chip_override != cfg.anchor_chip)
     {
         mist::logger::info(TString::Format(
-            "(pulser_calib_writer) CLI override: anchor_chip %d -> %d",
-            cfg.anchor_chip, anchor_chip_override).Data());
+                               "(pulser_calib_writer) CLI override: anchor_chip %d -> %d",
+                               cfg.anchor_chip, anchor_chip_override)
+                               .Data());
         cfg.anchor_chip = anchor_chip_override;
     }
     if (anchor_eo_channel_override >= 0 && anchor_eo_channel_override != cfg.anchor_eo_channel)
     {
         mist::logger::info(TString::Format(
-            "(pulser_calib_writer) CLI override: anchor_eo_channel %d -> %d",
-            cfg.anchor_eo_channel, anchor_eo_channel_override).Data());
+                               "(pulser_calib_writer) CLI override: anchor_eo_channel %d -> %d",
+                               cfg.anchor_eo_channel, anchor_eo_channel_override)
+                               .Data());
         cfg.anchor_eo_channel = anchor_eo_channel_override;
     }
     //  Pulser period override: dashboard hands us pulser frequency in
@@ -927,8 +928,9 @@ void pulser_calib_writer(
     if (pulser_period_cc_override >= 0.0 && pulser_period_cc_override != cfg.pulser_period_cc)
     {
         mist::logger::info(TString::Format(
-            "(pulser_calib_writer) CLI override: pulser_period_cc %.3f -> %.3f",
-            cfg.pulser_period_cc, pulser_period_cc_override).Data());
+                               "(pulser_calib_writer) CLI override: pulser_period_cc %.3f -> %.3f",
+                               cfg.pulser_period_cc, pulser_period_cc_override)
+                               .Data());
         cfg.pulser_period_cc = pulser_period_cc_override;
     }
     const auto resolved = resolve_fine_calib_path(cfg, run_dir);
@@ -966,7 +968,7 @@ void pulser_calib_writer(
     std::map<ChannelKey, ChannelBucket> channels;
     long total_hits_read = 0;
     long total_hits_rejected_fine_oob = 0; //  fine bin outside [fine_min_valid, fine_max_valid]
-    int  spills_seen = 0;
+    int spills_seen = 0;
     const int fine_lo = cfg.fine_min_valid;
     const int fine_hi = cfg.fine_max_valid;
 
@@ -1023,7 +1025,7 @@ void pulser_calib_writer(
             channel_hit.abs_coarse_cc =
                 static_cast<int64_t>(alcor_hit.get_coarse_global_time());
             channel_hit.fine = static_cast<uint8_t>(fine_value);
-            channel_hit.tdc  = static_cast<uint8_t>(tdc_idx);
+            channel_hit.tdc = static_cast<uint8_t>(tdc_idx);
 
             auto &bucket = channels[channel_key];
             //  Grow per-spill vector lazily — sparsity is okay
@@ -1087,10 +1089,10 @@ void pulser_calib_writer(
     //  placeholder so the histogram exists (empty) without booby-trapping
     //  downstream readers.  Re-applied after the pulser
     //  refactor restored the bug pattern.
-    const int    anchor_n_x_bins = std::max(1, spills_seen);
-    const double anchor_x_hi     = (spills_seen > 0)
-                                       ? (spills_seen - 0.5)
-                                       : 0.5;
+    const int anchor_n_x_bins = std::max(1, spills_seen);
+    const double anchor_x_hi = (spills_seen > 0)
+                                   ? (spills_seen - 0.5)
+                                   : 0.5;
     auto h_anchor_dt_vs_spill = std::make_unique<TH2F>(
         "h_anchor_dt_vs_spill",
         //  TLatex codes (#Delta etc.) so the title renders properly —
@@ -1123,9 +1125,10 @@ void pulser_calib_writer(
     if (anchor_it == channels.end())
     {
         mist::logger::warning(TString::Format(
-            "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
-            "ingested hits — anchor-Δ diagnostic will be empty.",
-            cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel).Data());
+                                  "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
+                                  "ingested hits — anchor-Δ diagnostic will be empty.",
+                                  cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                                  .Data());
     }
     else
     {
@@ -1140,7 +1143,7 @@ void pulser_calib_writer(
             for (int s = 0; s < n_spills; ++s)
             {
                 const auto &anchor_hits = anchor_bucket.per_spill[s].hits;
-                const auto &ch_hits     = ch_bucket.per_spill[s].hits;
+                const auto &ch_hits = ch_bucket.per_spill[s].hits;
                 const int n_pairs = static_cast<int>(std::min(
                     anchor_hits.size(), ch_hits.size()));
                 for (int i = 0; i < n_pairs; ++i)
@@ -1153,9 +1156,10 @@ void pulser_calib_writer(
             }
         }
         mist::logger::info(TString::Format(
-            "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
-            "(channel, anchor) pairs across %d spills",
-            n_anchor_pairs_filled, spills_seen).Data());
+                               "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
+                               "(channel, anchor) pairs across %d spills",
+                               n_anchor_pairs_filled, spills_seen)
+                               .Data());
     }
 
     //  ── Per-channel closed-form fits, parallel ───────────────────
@@ -1351,7 +1355,8 @@ void pulser_calib_writer(
         std::string lower_ext_lc = lower_ext;
         std::transform(lower_ext_lc.begin(), lower_ext_lc.end(),
                        lower_ext_lc.begin(),
-                       [](unsigned char ch) { return std::tolower(ch); });
+                       [](unsigned char ch)
+                       { return std::tolower(ch); });
         const bool emit_toml = (lower_ext_lc == ".toml");
 
         std::ofstream out(fine_calib_path);
@@ -1391,8 +1396,8 @@ void pulser_calib_writer(
                 pt.key.device, fifo, pt.key.chip, pt.key.eo_channel, pt.tdc_idx);
             if (!gi)
                 continue;
-            const uint32_t key       = gi->raw();
-            const int      method_id = static_cast<int>(CalibrationMethod::AlcorV2FitCalib);
+            const uint32_t key = gi->raw();
+            const int method_id = static_cast<int>(CalibrationMethod::AlcorV2FitCalib);
             //  v2 / v3 wire convention: p0 = a, p1 = -b, p2 = sigma.
             if (emit_toml)
             {
@@ -1901,9 +1906,10 @@ void pulser_calib_writer(
             util::qa::AnchorDtCanvasOpts opts;
             opts.rollover_cc = BTANA_ALCOR_ROLLOVER_TO_CC;
             opts.title = TString::Format(
-                "#Deltat_{trg} vs spill   "
-                "(channel #minus anchor: device %d, chip %d, channel %d)",
-                cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel).Data();
+                             "#Deltat_{trg} vs spill   "
+                             "(channel #minus anchor: device %d, chip %d, channel %d)",
+                             cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                             .Data();
             opts.pdf_path = pdf.string();
             opts.logger_prefix = "(pulser_calib_writer)";
             util::qa::render_anchor_dt_canvas(*h_anchor_dt_vs_spill, opts);
@@ -1949,27 +1955,27 @@ void pulser_calib_writer(
     //  QA dashboard reads them with one code path.
     {
         util::ConfigDump dump(qa.get());
-        dump.add("anchor_device",                 cfg.anchor_device)
-            .add("anchor_chip",                   cfg.anchor_chip)
-            .add("anchor_eo_channel",             cfg.anchor_eo_channel)
-            .add("min_hits_per_tdc",              cfg.min_hits_per_tdc)
-            .add("min_hits_per_tdc_per_spill",    cfg.min_hits_per_tdc_per_spill)
-            .add("fine_min_valid",                cfg.fine_min_valid)
-            .add("fine_max_valid",                cfg.fine_max_valid)
-            .add("slope_fit_min_fine_span",       cfg.slope_fit_min_fine_span)
-            .add("default_slope_cc_per_bin",      cfg.default_slope_cc_per_bin)
-            .add("slope_min",                     cfg.slope_min)
-            .add("slope_max",                     cfg.slope_max)
-            .add("b_min",                         cfg.b_min)
-            .add("b_max",                         cfg.b_max)
-            .add("pulser_period_cc",              cfg.pulser_period_cc)
+        dump.add("anchor_device", cfg.anchor_device)
+            .add("anchor_chip", cfg.anchor_chip)
+            .add("anchor_eo_channel", cfg.anchor_eo_channel)
+            .add("min_hits_per_tdc", cfg.min_hits_per_tdc)
+            .add("min_hits_per_tdc_per_spill", cfg.min_hits_per_tdc_per_spill)
+            .add("fine_min_valid", cfg.fine_min_valid)
+            .add("fine_max_valid", cfg.fine_max_valid)
+            .add("slope_fit_min_fine_span", cfg.slope_fit_min_fine_span)
+            .add("default_slope_cc_per_bin", cfg.default_slope_cc_per_bin)
+            .add("slope_min", cfg.slope_min)
+            .add("slope_max", cfg.slope_max)
+            .add("b_min", cfg.b_min)
+            .add("b_max", cfg.b_max)
+            .add("pulser_period_cc", cfg.pulser_period_cc)
             .add("consecutive_pair_tolerance_cc", cfg.consecutive_pair_tolerance_cc)
-            .add("slip_confidence_cc",            cfg.slip_confidence_cc)
-            .add("slip_max_snap_fraction",        cfg.slip_max_snap_fraction);
+            .add("slip_confidence_cc", cfg.slip_confidence_cc)
+            .add("slip_max_snap_fraction", cfg.slip_max_snap_fraction);
         //  Runtime flags + the conf-file paths used at load time.
         dump.add("force_rebuild", cfg.force_rebuild)
             .add_path("override_path", cfg.override_path)
-            .add_path("default_path",  cfg.default_path);
+            .add_path("default_path", cfg.default_path);
         //  Verbatim TOML body of whichever calibration conf was picked
         //  up (override takes precedence over the default).  Was
         //  missing in v1 — the dashboard now has the same "[toml
@@ -2000,13 +2006,14 @@ void pulser_calib_writer(
         //  under data_repository (``Data/``), NOT the repo root.
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
-            {{run_name, "all", "calibration.total_hits_read"},
-             {static_cast<double>(total_hits_read), 0.0}},
-            {{run_name, "all", "calibration.spills_seen"},
-             {static_cast<double>(spills_seen), 0.0}},
-            {{run_name, "all", "calibration.n_published_tdcs"},
-             {static_cast<double>(published.size()), 0.0}},
-        }, /*source=*/"calibration");
+                      {{run_name, "all", "calibration.total_hits_read"},
+                       {static_cast<double>(total_hits_read), 0.0}},
+                      {{run_name, "all", "calibration.spills_seen"},
+                       {static_cast<double>(spills_seen), 0.0}},
+                      {{run_name, "all", "calibration.n_published_tdcs"},
+                       {static_cast<double>(published.size()), 0.0}},
+                  },
+                  /*source=*/"calibration");
     }
 
     mist::logger::info("(pulser_calib_writer) === DONE ===");

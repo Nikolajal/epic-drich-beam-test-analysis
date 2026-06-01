@@ -92,12 +92,12 @@ public:
 
     // ---- Numeric scalars → TParameter<T> ----------------------------
 
-    ConfigDump &add(const std::string &name, int value)         { return write_param(name, value); }
-    ConfigDump &add(const std::string &name, long value)        { return write_param(name, value); }
-    ConfigDump &add(const std::string &name, long long value)   { return write_param(name, value); }
-    ConfigDump &add(const std::string &name, unsigned value)    { return write_param(name, value); }
-    ConfigDump &add(const std::string &name, float value)       { return write_param(name, static_cast<double>(value)); }
-    ConfigDump &add(const std::string &name, double value)      { return write_param(name, value); }
+    ConfigDump &add(const std::string &name, int value) { return write_param(name, value); }
+    ConfigDump &add(const std::string &name, long value) { return write_param(name, value); }
+    ConfigDump &add(const std::string &name, long long value) { return write_param(name, value); }
+    ConfigDump &add(const std::string &name, unsigned value) { return write_param(name, value); }
+    ConfigDump &add(const std::string &name, float value) { return write_param(name, static_cast<double>(value)); }
+    ConfigDump &add(const std::string &name, double value) { return write_param(name, value); }
 
     // ---- Booleans → TNamed("true"/"false") --------------------------
     //
