@@ -131,6 +131,32 @@ def build_scatter(
     return points, skipped
 
 
+def build_overlay(
+    results: dict,
+    records: list,
+    runlists: list[tuple[str, list[str]]],
+    y_metric: MetricSpec,
+    x_field: Optional[str] = None,
+    z_field: Optional[str] = None,
+    x_metric: Optional[MetricSpec] = None,
+) -> list[tuple[str, list[ScatterPoint], list[str]]]:
+    """Build one scatter series per runlist, for overlaying on one plot.
+
+    ``runlists`` is an ordered list of ``(name, run_ids)`` pairs.  Each is
+    fed through :func:`build_scatter` with the shared Y / X / Z selection,
+    so every series uses the same axes.  Returns
+    ``[(name, points, skipped), …]`` in the input order — the caller picks
+    a colour per series and assembles the legend.  Series order is
+    preserved so colour assignment is stable across repaints.
+    """
+    return [
+        (name, *build_scatter(
+            results, records, run_ids, y_metric,
+            x_field=x_field, z_field=z_field, x_metric=x_metric))
+        for name, run_ids in runlists
+    ]
+
+
 def jitter_x(
     points: list[ScatterPoint],
     spread_frac: float = 0.012,
@@ -171,5 +197,6 @@ __all__ = [
     "BEAM_AXIS_FIELDS",
     "ScatterPoint",
     "build_scatter",
+    "build_overlay",
     "jitter_x",
 ]

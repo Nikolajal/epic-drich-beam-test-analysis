@@ -104,5 +104,43 @@ class JitterTests(unittest.TestCase):
         self.assertEqual(mrs.jitter_x([]), [])
 
 
+class OverlayTests(unittest.TestCase):
+    def test_one_series_per_runlist_in_order(self) -> None:
+        results = _results(**{
+            "20251101-100000": 5.0,
+            "20251101-110000": 7.0,
+            "20251102-100000": 9.0,
+        })
+        records = [
+            _record("20251101-100000", v_bias=45.0),
+            _record("20251101-110000", v_bias=48.0),
+            _record("20251102-100000", v_bias=50.0),
+        ]
+        runlists = [
+            ("A", ["20251101-100000", "20251101-110000"]),
+            ("B", ["20251102-100000"]),
+        ]
+        out = mrs.build_overlay(results, records, runlists, _METRIC, x_field="v_bias")
+        #  Series order preserved (drives stable colour assignment).
+        self.assertEqual([name for name, _, _ in out], ["A", "B"])
+        self.assertEqual(len(out[0][1]), 2)        # A → two points
+        self.assertEqual(len(out[1][1]), 1)        # B → one point
+        self.assertEqual(out[1][1][0].x, 50.0)
+
+    def test_missing_data_surfaces_per_series_skipped(self) -> None:
+        results = _results(**{"20251101-100000": 5.0})  # only one run has Y
+        records = [
+            _record("20251101-100000", v_bias=45.0),
+            _record("20251101-110000", v_bias=48.0),
+        ]
+        out = mrs.build_overlay(
+            results, records,
+            [("A", ["20251101-100000", "20251101-110000"])],
+            _METRIC, x_field="v_bias")
+        _name, pts, skipped = out[0]
+        self.assertEqual(len(pts), 1)
+        self.assertIn("20251101-110000", skipped)
+
+
 if __name__ == "__main__":
     unittest.main()
