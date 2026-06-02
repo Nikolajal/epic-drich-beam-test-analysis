@@ -50,11 +50,10 @@ def _write_synthetic_results(path: Path) -> None:
 
     Runs (chronological):
 
-      - 20251111-100000 — earliest; only ``full.n_gamma``, no DCR pair.
-      - 20260527-073111 — DCR pair present, ``full`` quantities absent.
-      - 20260528-191848 — full record (n_gamma + sigma + DCR pair).
-      - 20260530-120000 — n_events == 0  (rate must NOT divide-by-zero;
-        missing).
+      - 20251111-100000 — earliest; only ``full.n_gamma``.
+      - 20260527-073111 — dcr_mean_khz present, ``full`` quantities absent.
+      - 20260528-191848 — full record (n_gamma + sigma + dcr_mean_khz +
+        lane_failure_rate).
 
     Plus one "noise" run that lives under sensor ``"1350"`` only — used
     to confirm a sensor mismatch is recorded as missing, not silently
@@ -66,11 +65,8 @@ def _write_synthetic_results(path: Path) -> None:
         value = 18.5
         error = 0.4
 
-        [results."20260527-073111".all."lightdata.n_dcr_hits"]
-        value = 159363.0
-
-        [results."20260527-073111".all."lightdata.n_events"]
-        value = 1521873.0
+        [results."20260527-073111".all."lightdata.dcr_mean_khz"]
+        value = 4.5
 
         [results."20260528-191848".all."full.n_gamma"]
         value = 24.1
@@ -79,17 +75,11 @@ def _write_synthetic_results(path: Path) -> None:
         [results."20260528-191848".all."full.sigma"]
         value = 2.07
 
-        [results."20260528-191848".all."lightdata.n_dcr_hits"]
-        value = 50000.0
+        [results."20260528-191848".all."lightdata.dcr_mean_khz"]
+        value = 6.0
 
-        [results."20260528-191848".all."lightdata.n_events"]
-        value = 100000.0
-
-        [results."20260530-120000".all."lightdata.n_dcr_hits"]
-        value = 10.0
-
-        [results."20260530-120000".all."lightdata.n_events"]
-        value = 0.0
+        [results."20260528-191848".all."lightdata.lane_failure_rate"]
+        value = 0.12
 
         [results."20260101-010101"."1350"."dcr.mean"]
         value = 2.7
@@ -164,22 +154,20 @@ class ExtractSeriesTests(unittest.TestCase):
         self.assertEqual(series.points, [])
         self.assertEqual(series.missing, ["20260101-010101"])
 
-    def test_dcr_rate_derive_computes_ratio(self) -> None:
+    def test_dcr_rate_pulls_mean_khz(self) -> None:
+        # dcr_rate now reads the published kHz scalar directly (no derive).
         metric = next(m for m in DEFAULT_METRICS if m.key == "dcr_rate")
-        ids = ["20260528-191848"]
-        series = extract_series(self._results, metric, ids)
+        series = extract_series(self._results, metric, ["20260528-191848"])
         self.assertEqual(len(series.points), 1)
-        self.assertAlmostEqual(series.points[0].value, 50000.0 / 100000.0)
+        self.assertAlmostEqual(series.points[0].value, 6.0)
 
-    def test_dcr_rate_skips_zero_event_runs(self) -> None:
-        metric = next(m for m in DEFAULT_METRICS if m.key == "dcr_rate")
-        # 20260530-120000 has n_events == 0 — must be missing, not
-        # a ZeroDivisionError.
-        series = extract_series(
-            self._results, metric, ["20260530-120000"],
+    def test_lane_failure_rate_pulls_fraction(self) -> None:
+        metric = next(
+            m for m in DEFAULT_METRICS if m.key == "lane_failure_rate"
         )
-        self.assertEqual(series.points, [])
-        self.assertEqual(series.missing, ["20260530-120000"])
+        series = extract_series(self._results, metric, ["20260528-191848"])
+        self.assertEqual(len(series.points), 1)
+        self.assertAlmostEqual(series.points[0].value, 0.12)
 
 
 class LoadTrendsTests(unittest.TestCase):

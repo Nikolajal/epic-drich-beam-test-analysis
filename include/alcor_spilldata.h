@@ -221,6 +221,14 @@ public:
      */
     std::map<uint32_t, std::vector<uint8_t>> get_not_dead_participants();
 
+    /**
+     * @brief Returns, per device, the list of channels that participated but
+     *        were marked **dead** this spill (start-of-spill marker with a
+     *        non-zero coarse time).  The complement of
+     *        @ref get_not_dead_participants over the participant set.
+     */
+    std::map<uint32_t, std::vector<uint8_t>> get_dead_participants();
+
     /// @brief Returns @c true if this object contains any spill data.
     bool has_data() const noexcept { return !spilldata.participants_mask.empty() || !spilldata.participants_mask_list.empty(); }
 

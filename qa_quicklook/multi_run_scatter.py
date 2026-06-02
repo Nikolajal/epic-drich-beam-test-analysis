@@ -67,10 +67,11 @@ def build_scatter(
     records: list,
     run_ids: list[str],
     y_metric: MetricSpec,
-    x_field: str,
+    x_field: Optional[str] = None,
     z_field: Optional[str] = None,
+    x_metric: Optional[MetricSpec] = None,
 ) -> tuple[list[ScatterPoint], list[str]]:
-    """Join QA-quantity Y with beam-info X (and optional Z) per run.
+    """Join QA-quantity Y with X (and optional colour Z) per run.
 
     Parameters
     ----------
@@ -86,6 +87,12 @@ def build_scatter(
         Which QA quantity drives Y (a ``cross_run_trends.MetricSpec``).
     x_field, z_field
         Run-card field names for the X axis and the optional Z (colour).
+    x_metric
+        When given, the X axis is a *measured* QA quantity (read from
+        ``results`` via the same extractor as Y) rather than a beam-info
+        field — e.g. ``lightdata.dcr_mean_khz`` for a failure-rate-vs-DCR
+        curve.  Takes priority over ``x_field``; exactly one of the two
+        should be supplied.
 
     Returns ``(points, skipped)`` — ``skipped`` lists run ids dropped
     because they lacked a Y value or a numeric X (so the caller can
@@ -98,21 +105,56 @@ def build_scatter(
     y_series = extract_series(results, y_metric, run_ids)
     y_by_id = {p.run_id: (p.value, p.error) for p in y_series.points}
 
+    #  X from a measured quantity (same extractor) or a beam-info field.
+    x_by_id: Optional[dict[str, float]] = None
+    if x_metric is not None:
+        x_series = extract_series(results, x_metric, run_ids)
+        x_by_id = {p.run_id: p.value for p in x_series.points}
+
     points: list[ScatterPoint] = []
     skipped: list[str] = list(y_series.missing)  # runs with no Y datum
     for run_id in run_ids:
         if run_id not in y_by_id:
             continue  # already in skipped via y_series.missing
-        rec = rec_by_id.get(run_id)
-        x = _coerce_float(rec.get(x_field)) if rec is not None else None
+        if x_by_id is not None:
+            x = x_by_id.get(run_id)
+        else:
+            rec = rec_by_id.get(run_id)
+            x = _coerce_float(rec.get(x_field)) if rec is not None else None
         if x is None:
             skipped.append(run_id)
             continue
-        z = (_coerce_float(rec.get(z_field))
-             if (rec is not None and z_field) else None)
+        z = (_coerce_float(rec_by_id.get(run_id).get(z_field))
+             if (z_field and rec_by_id.get(run_id) is not None) else None)
         y_val, y_err = y_by_id[run_id]
         points.append(ScatterPoint(run_id, x, y_val, y_err, z))
     return points, skipped
+
+
+def build_overlay(
+    results: dict,
+    records: list,
+    runlists: list[tuple[str, list[str]]],
+    y_metric: MetricSpec,
+    x_field: Optional[str] = None,
+    z_field: Optional[str] = None,
+    x_metric: Optional[MetricSpec] = None,
+) -> list[tuple[str, list[ScatterPoint], list[str]]]:
+    """Build one scatter series per runlist, for overlaying on one plot.
+
+    ``runlists`` is an ordered list of ``(name, run_ids)`` pairs.  Each is
+    fed through :func:`build_scatter` with the shared Y / X / Z selection,
+    so every series uses the same axes.  Returns
+    ``[(name, points, skipped), …]`` in the input order — the caller picks
+    a colour per series and assembles the legend.  Series order is
+    preserved so colour assignment is stable across repaints.
+    """
+    return [
+        (name, *build_scatter(
+            results, records, run_ids, y_metric,
+            x_field=x_field, z_field=z_field, x_metric=x_metric))
+        for name, run_ids in runlists
+    ]
 
 
 def jitter_x(
@@ -155,5 +197,6 @@ __all__ = [
     "BEAM_AXIS_FIELDS",
     "ScatterPoint",
     "build_scatter",
+    "build_overlay",
     "jitter_x",
 ]
