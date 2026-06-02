@@ -150,7 +150,7 @@ DEFAULT_METRICS: tuple[MetricSpec, ...] = (
     ),
     MetricSpec(
         key="dcr_rate",
-        label="DCR rate  ⟨kHz⟩",
+        label="DCR rate",
         quantity="lightdata.dcr_mean_khz",
         unit="kHz",
         y_floor_zero=True,
