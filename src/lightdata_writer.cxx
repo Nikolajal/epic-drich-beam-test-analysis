@@ -777,6 +777,16 @@ void lightdata_writer(
     // reset at the start of each spill and the in-loop rebuild block.
     StreamingTriggerWeights streaming_weights;
 
+    //  ── Readout-resilience accumulators (lane_failure_rate) ──────────────
+    //  Detector-wide dead-lane fraction = (dead cherenkov lane-spills) /
+    //  (participant cherenkov lane-spills).  A lane is a "participant" in a
+    //  spill if it sent a start-of-spill marker; "dead" if that marker carried
+    //  a non-zero coarse time.  Exposure-normalised (denominator = participant
+    //  lane × spill), so lanes that come online / drop out across the fill are
+    //  handled without a fixed lane count.  Timing device(s) excluded.
+    long long dead_lane_spills = 0;
+    long long participant_lane_spills = 0;
+
     // Use a while-loop instead of a for-loop so we can restart the multi-bar
     // BEFORE the next next_spill() call — which itself updates the framer
     // subtask, so the restart must precede it to actually reset the clock.
@@ -845,6 +855,23 @@ void lightdata_writer(
                     }
 
         n_active_cherenkov_channels = active_sensors.size();
+
+        //  ── Readout-resilience tally ─────────────────────────────────────
+        //  Count cherenkov (device < timing) dead vs participant lanes this
+        //  spill.  ``lanes_participating`` holds the alive lanes; participants
+        //  = alive + dead, so the denominator below is the full reported set.
+        {
+            auto lanes_dead = spilldata.get_dead_participants();
+            long long alive_cher = 0, dead_cher = 0;
+            for (const auto &[device, lanes] : lanes_participating)
+                if (device < ::gidx::kTimingDeviceLo)
+                    alive_cher += static_cast<long long>(lanes.size());
+            for (const auto &[device, lanes] : lanes_dead)
+                if (device < ::gidx::kTimingDeviceLo)
+                    dead_cher += static_cast<long long>(lanes.size());
+            dead_lane_spills += dead_cher;
+            participant_lane_spills += alive_cher + dead_cher;
+        }
 
         //  Streaming-trigger weights
         //  The bundle itself is run-scope (declared above the spill loop),
@@ -3535,19 +3562,64 @@ void lightdata_writer(
         //  ``extData/`` hard-code failed whenever the writer was
         //  launched from a cwd that didn't happen to have an
         //  ``extData/`` directory — the dashboard does exactly that.
+        //  ── Rate-ified QA scalars + readout-resilience metrics ───────────
+        //  dcr_mean_khz: mean single-pixel dark rate, averaged over the
+        //  cherenkov channels that saw noise hits.  The per-channel TProfile
+        //  was scaled to kHz in the "--- DCR" finalize block above, so its bin
+        //  contents are already kHz; average them with equal per-channel
+        //  weight.  This is the data-rate axis for the resilience study.
+        double dcr_sum_khz = 0.0;
+        long dcr_channels = 0;
+        for (int b = 1; b <= h_dcr_per_channel->GetNbinsX(); ++b)
+            if (h_dcr_per_channel->GetBinEntries(b) > 0.0)
+            {
+                dcr_sum_khz += h_dcr_per_channel->GetBinContent(b);
+                ++dcr_channels;
+            }
+        const double dcr_mean_khz =
+            dcr_channels > 0 ? dcr_sum_khz / dcr_channels : 0.0;
+
+        //  afterpulse_prob: DCR-subtracted afterpulse probability (%), averaged
+        //  over channels.  The per-channel TProfile bin means are already the
+        //  100·(P_near − P_far) probability; equal per-channel weighting.
+        double ap_sum = 0.0;
+        long ap_channels = 0;
+        for (int b = 1; b <= h_afterpulse_per_channel->GetNbinsX(); ++b)
+            if (h_afterpulse_per_channel->GetBinEntries(b) > 0.0)
+            {
+                ap_sum += h_afterpulse_per_channel->GetBinContent(b);
+                ++ap_channels;
+            }
+        const double afterpulse_prob = ap_channels > 0 ? ap_sum / ap_channels : 0.0;
+
+        //  lane_failure_rate: detector-wide dead-lane fraction in [0, 1],
+        //  exposure-normalised over participant lane-spills (see the
+        //  accumulators above the spill loop).  The resilience response axis.
+        const double lane_failure_rate =
+            participant_lane_spills > 0
+                ? static_cast<double>(dead_lane_spills) /
+                      static_cast<double>(participant_lane_spills)
+                : 0.0;
+
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
-                      // n_events: total trigger-matrix entries (≈ frames processed).
-                      {{run_name, sensor, "lightdata.n_events"},
+                      //  n_selected_frames: trigger-matrix entries ≈ frames that
+                      //  passed selection (NOT distinct physics events).  Kept as
+                      //  a throughput measure; renamed from the misleading
+                      //  "n_events".
+                      {{run_name, sensor, "lightdata.n_selected_frames"},
                        {static_cast<double>(h2_trigger_matrix->GetEntries()), 0.0}},
-                      // n_dcr_hits: total entries in the single-pixel-noise hitmap.
-                      {{run_name, sensor, "lightdata.n_dcr_hits"},
-                       {static_cast<double>(h_dcr_hitmap->GetEntries()), 0.0}},
-                      // n_afterpulse_hits: subtracted afterpulse-hitmap integral
-                      // (can be negative when the subtraction overshoots — useful
-                      // diagnostic on its own).
-                      {{run_name, sensor, "lightdata.n_afterpulse_hits"},
-                       {static_cast<double>(h_afterpulse_hitmap->GetEntries()), 0.0}},
+                      //  afterpulse_prob: DCR-subtracted afterpulse probability (%).
+                      {{run_name, sensor, "lightdata.afterpulse_prob"},
+                       {afterpulse_prob, 0.0}},
+                      //  dcr_mean_khz: mean single-pixel dark rate (kHz).  The
+                      //  data-rate axis.  Sensor-agnostic → published under "all".
+                      {{run_name, "all", "lightdata.dcr_mean_khz"},
+                       {dcr_mean_khz, 0.0}},
+                      //  lane_failure_rate: detector-wide dead-lane fraction.  The
+                      //  resilience response axis.  Sensor-agnostic → "all".
+                      {{run_name, "all", "lightdata.lane_failure_rate"},
+                       {lane_failure_rate, 0.0}},
                   },
                   /*source=*/"lightdata");
     }
