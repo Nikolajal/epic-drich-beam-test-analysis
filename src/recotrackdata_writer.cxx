@@ -234,8 +234,6 @@ void recotrackdata_writer(
                        {static_cast<double>(recotrack_events_counter), 0.0}},
                       {{run_name, "all", "recotrack.n_spills"},
                        {static_cast<double>(n_spils), 0.0}},
-                      {{run_name, "all", "recotrack.n_frames"},
-                       {static_cast<double>(n_frames), 0.0}},
                   },
                   /*source=*/"recotrack");
     }
