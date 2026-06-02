@@ -264,7 +264,7 @@ bool run_streaming_trigger(AlcorSpilldata &current_spill,
 
     //  Helper: median of a sorted vector of floats.
     //  Precondition: times must be sorted, size > 0.
-    auto median_of = [](std::vector<float> times) -> float
+    auto median_of = [](const std::vector<float> &times) -> float
     {
         //  Already sorted
         //  std::sort(times.begin(), times.end());
@@ -373,8 +373,17 @@ bool run_streaming_trigger_weighted(
     //  sorting cherenkov_finedata_hits by time desynchronises the two, so
     //  the mask write-back below needs orig_idx[ihit] to hit the correct
     //  row in cherenkov_hits.  See the v0 path above for the same fix.
-    std::vector<AlcorFinedata> cherenkov_finedata_hits;
-    std::vector<int> orig_idx;
+    //  Scratch buffers reused across frames: one allocation lifecycle instead
+    //  of a fresh vector per frame.  `clear()` retains capacity, so after the
+    //  first few frames these allocate ~nothing.  This path is serial on the
+    //  main thread (see the streaming/Hough serial note); `thread_local` keeps
+    //  it correct if that ever changes.  Clarity change, NOT a measured speedup
+    //  — see triggers/streaming/DISCUSSION.md §1.7 for the A/B that found no win.
+    static thread_local std::vector<AlcorFinedata> cherenkov_finedata_hits;
+    static thread_local std::vector<int> orig_idx;
+    static thread_local std::vector<AlcorFinedata> sorted_scratch;
+    cherenkov_finedata_hits.clear();
+    orig_idx.clear();
     cherenkov_finedata_hits.reserve(cherenkov_hits.size());
     orig_idx.reserve(cherenkov_hits.size());
     for (int i = 0; i < static_cast<int>(cherenkov_hits.size()); ++i)
@@ -386,18 +395,21 @@ bool run_streaming_trigger_weighted(
               [&](int a, int b)
               { return cherenkov_finedata_hits[a] < cherenkov_finedata_hits[b]; });
     {
-        std::vector<AlcorFinedata> tmp;
-        tmp.reserve(cherenkov_finedata_hits.size());
+        //  Reorder into the reused `sorted_scratch`, then swap buffers (both
+        //  static → their capacities ping-pong, no per-frame allocation).
+        sorted_scratch.clear();
+        sorted_scratch.reserve(cherenkov_finedata_hits.size());
         for (int i : orig_idx)
-            tmp.push_back(cherenkov_finedata_hits[i]);
-        cherenkov_finedata_hits.swap(tmp);
+            sorted_scratch.push_back(cherenkov_finedata_hits[i]);
+        cherenkov_finedata_hits.swap(sorted_scratch);
     }
 
     //  Deque entries carry the per-channel weight so eviction can update the
     //  running sum without a second lookup.
     //  {original_index, time_ns, weight}
     using WinEntry = std::tuple<int, float, float>;
-    std::deque<WinEntry> window;
+    static thread_local std::deque<WinEntry> window;
+    window.clear();
     float running_score = 0.f;
     for (const auto &entry : carry_over_hits)
     {
@@ -405,14 +417,15 @@ bool run_streaming_trigger_weighted(
         running_score += std::get<2>(entry);
     }
 
-    std::vector<float> peak_times;
+    static thread_local std::vector<float> peak_times;
+    peak_times.clear();
     bool in_cluster = false;
     float peak_score = 0.f;
     int peak_count = 0; // kept for QA histograms that bin on hit count
     bool has_fired = false;
 
     // ── Helpers (verbatim from v0 — algorithmic shape is unchanged) ──
-    auto median_of = [](std::vector<float> times) -> float
+    auto median_of = [](const std::vector<float> &times) -> float
     {
         const int n = static_cast<int>(times.size());
         return (n % 2 == 1) ? times[n / 2]
