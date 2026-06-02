@@ -438,7 +438,13 @@ private:
     /** @brief Accumulated framed data for the current spill. */
     AlcorSpilldata spilldata;
 
-    /** @brief One data streamer per input file. */
+    /** @brief One data streamer per input file.
+     *
+     *  All input FIFO files are opened at once and held open for the whole run:
+     *  the time-merge needs every lane resident to decide when a spill/frame is
+     *  complete.  This concurrency is the dominant peak-RSS cost (~27 MB/file ×
+     *  N files); it is NOT the basket buffer size (tested) and is only reducible
+     *  via sequential reading — a memory↔CPU trade.  See DISCUSSION.md D-14. */
     std::vector<AlcorDataStreamer> data_streams;
 
     /// @}
