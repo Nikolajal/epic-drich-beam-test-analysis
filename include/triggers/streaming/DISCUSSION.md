@@ -434,6 +434,40 @@ Four improvements are explicitly **out of scope** for v1:
   hits-per-cluster so the ceiling can be tuned from data, in the same
   spirit as the noise-vs-data overlay used for the lower bound.
 
+### 1.7  Per-frame scratch-buffer lifecycle  *(clarity cleanup, no perf win)*
+
+`run_streaming_trigger_weighted` runs once per frame and, in the original
+form, allocated a fresh set of working vectors each call:
+`cherenkov_finedata_hits`, `orig_idx`, the sort-reorder `tmp`, the
+sliding-`window` deque, and `peak_times`.  They are now **`static
+thread_local` + `clear()` at entry** — one allocation lifecycle reused
+across frames (`clear()` keeps capacity, so after the first few frames
+these allocate ~nothing).  The score path is serial on the main thread
+(see the streaming/Hough serial note in the parent DISCUSSION); the
+`thread_local` keeps it correct if that ever changes.  The `median_of`
+lambdas also take `const std::vector<float>&` instead of by-value.
+
+**This is a clarity/lifecycle change, NOT a measured speedup.**  The
+hypothesis was that per-frame vector churn was a dominant malloc/free
+cost (it showed up heavily in `sample`).  A controlled before/after A/B
+(5-spill `--QA` on 20251119-010426, same continuous machine load,
+3× POST bracketing 2× PRE) found **no win**:
+
+| | wall (s) | mean | max RSS (GB) | mean |
+| --- | --- | --- | --- | --- |
+| PRE (per-frame alloc) | 114.5, 116.4 | ~115.5 | 11.70, 10.58 | ~11.1 |
+| POST (reused buffers) | 118.1, 111.8, 119.7 | ~116.5 | 9.64, 11.29, 11.95 | ~11.0 |
+
+Wall flat (POST marginally slower, noise); RSS flat (POST produced both
+the lowest *and* the highest single sample).  So the per-frame
+allocations are **not** the wall-clock or RSS driver — the allocator
+absorbs the churn cheaply, or the real cost lives elsewhere (framer
+per-hit reconstruction, all-thread allocation, dense-map scans).  Kept
+because reused buffers are simpler than per-frame ones and cannot be
+slower, but it carries **no** performance claim.  To find the real hot
+points, **heap-profile** rather than reason from `sample` stacks — same
+lesson as the `get_phase` fusion (see `include/utility/DISCUSSION.md`).
+
 ---
 
 ## 2.  Hough stage  (`triggers/streaming/hough.{h,cxx}`)
