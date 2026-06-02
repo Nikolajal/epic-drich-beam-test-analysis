@@ -2,6 +2,31 @@ cmake_minimum_required(VERSION 3.16)
 project(beam_test_analysis LANGUAGES CXX)
 
 # ----------------------------
+# Build-provenance version stamp
+# ----------------------------
+#  Capture `git describe` so every writer can stamp its output ROOT
+#  files with the release the binary was built from (see
+#  include/version.h.in → util::ConfigDump).  Configure-time: reconfigure
+#  after tagging to refresh.  --always falls back to a short SHA when no
+#  tag is reachable; "unknown" only if git itself is unavailable.
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE BTANA_GIT_DESCRIBE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT BTANA_GIT_DESCRIBE)
+    set(BTANA_GIT_DESCRIBE "unknown")
+endif()
+message(STATUS "beam_test_analysis version stamp: ${BTANA_GIT_DESCRIBE}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/version.h"
+    @ONLY
+)
+
+# ----------------------------
 # Set default install prefix (user-local) if not specified
 # ----------------------------
 if(NOT CMAKE_INSTALL_PREFIX)
@@ -202,6 +227,7 @@ configure_file(
 target_include_directories(beam_test_analysis
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>  # generated version.h
         $<INSTALL_INTERFACE:include>
         ${tomlplusplus_SOURCE_DIR}/include
     # mist headers are transitively available via mist::mist —
