@@ -48,7 +48,7 @@ struct StreamingTriggerFinalizeContext
     // ── Score hists (top-level "Streaming Trigger/")
     TH1F *h_streaming_score_noise;
     TH1F *h_streaming_score_data;
-    TH1F *h_streaming_score_inbeam;  // in-beam (pre-trigger) sample
+    TH1F *h_streaming_score_inbeam; // in-beam (pre-trigger) sample
 
     // ── Top-level streaming-trigger hitmaps + ring-finder summaries
     TH2F *h_streaming_trigger_full_hitmap;

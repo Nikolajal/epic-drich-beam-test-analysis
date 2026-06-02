@@ -61,7 +61,7 @@ int main(int argc, char **argv)
     //  identifies itself correctly, but no positional ``.root`` to
     //  trigger the auto-open behaviour.
     int stub_argc = 1;
-    char *stub_argv[2] = { argv[0], nullptr };
+    char *stub_argv[2] = {argv[0], nullptr};
     TApplication app("qa_tbrowser", &stub_argc, stub_argv);
 
     //  Force native canvas (Cocoa on macOS, X11 on Linux).  Web

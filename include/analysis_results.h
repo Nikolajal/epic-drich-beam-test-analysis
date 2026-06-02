@@ -41,7 +41,7 @@
 #include <tuple>
 #include <vector>
 
-#include "TGraphErrors.h"   // for make_graph() return type
+#include "TGraphErrors.h" // for make_graph() return type
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ResultKey
@@ -200,7 +200,9 @@ public:
      */
     void update(const ResultKey &key, double value, double error = 0.,
                 const std::string &source = "") const
-    { update(ResultMap{{key, {value, error}}}, source); }
+    {
+        update(ResultMap{{key, {value, error}}}, source);
+    }
 
     /**
      * @brief Return the filesystem path this handle points to.

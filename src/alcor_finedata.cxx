@@ -1,6 +1,6 @@
 #include "alcor_finedata.h"
 #include <mist/logger/logger.h>
-#include "alcor_data.h"        // HitMask, BTANA_ALCOR_{ROLLOVER_TO_CC,CC_TO_NS}
+#include "alcor_data.h"           // HitMask, BTANA_ALCOR_{ROLLOVER_TO_CC,CC_TO_NS}
 #include "utility/global_index.h" // ::GlobalIndex full definition
 #include "utility/toml_utils.h"   // toml_parse_with_cutoff for TOML calib reader
 #include "TROOT.h"
@@ -29,7 +29,8 @@ bool path_has_toml_extension(const std::string &path)
         return false;
     std::string tail = path.substr(path.size() - 5);
     std::transform(tail.begin(), tail.end(), tail.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
+                   [](unsigned char c)
+                   { return std::tolower(c); });
     return tail == ".toml";
 }
 } // namespace
@@ -171,7 +172,7 @@ void AlcorFinedata::write_calib_to_file(const std::string &filename)
         throw std::runtime_error(
             "(AlcorFinedata::write_calib_to_file) refuse to write '" +
             filename + "': only the .toml v3 schema is supported. "
-            "Pass a path ending in .toml.");
+                       "Pass a path ending in .toml.");
 
     mist::logger::info(
         "(AlcorFinedata::write_calib_to_file) writing calibration to " +
@@ -225,7 +226,7 @@ void AlcorFinedata::read_calib_from_file(const std::string &filename, bool clear
         throw std::runtime_error(
             "(AlcorFinedata::read_calib_from_file) refuse to read '" +
             filename + "': only the .toml v3 schema is supported. "
-            "Regenerate this calibration with pulser_calib_writer.");
+                       "Regenerate this calibration with pulser_calib_writer.");
 
     std::unique_lock<std::shared_mutex> lock(calibration_mutex);
     if (clear_first)
@@ -287,11 +288,11 @@ void AlcorFinedata::read_calib_from_file(const std::string &filename, bool clear
         const auto *entry = node.as_table();
         if (!entry)
             continue;
-        const auto key       = (*entry)["key"].value<int64_t>();
+        const auto key = (*entry)["key"].value<int64_t>();
         const auto method_in = (*entry)["method"].value<int64_t>();
-        const auto a         = (*entry)["a"].value<double>();
-        const auto minus_b   = (*entry)["minus_b"].value<double>();
-        const auto sigma     = (*entry)["sigma"].value<double>();
+        const auto a = (*entry)["a"].value<double>();
+        const auto minus_b = (*entry)["minus_b"].value<double>();
+        const auto sigma = (*entry)["sigma"].value<double>();
         if (!key || !method_in || !a || !minus_b || !sigma)
             continue;
         const auto key_u32 = static_cast<uint32_t>(*key);
@@ -352,7 +353,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         //  resets the retry counter so the first non-overwrite call
         //  after this starts the retry-every-N clock at zero.
         low_stats_keys_.clear();
-        low_stats_call_count_   = 0;
+        low_stats_call_count_ = 0;
         low_stats_cached_skips_ = 0;
     }
     else
@@ -370,7 +371,8 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         {
             mist::logger::info(
                 "(AlcorFinedata::generate_calibration) low-stats retry — "
-                "clearing " + std::to_string(low_stats_keys_.size()) +
+                "clearing " +
+                std::to_string(low_stats_keys_.size()) +
                 " cached channels (call " +
                 std::to_string(low_stats_call_count_) + ", period " +
                 std::to_string(low_stats_retry_period_) + ")");
@@ -395,11 +397,11 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
     fine_dist_fit_function.SetParLimits(3, 80., 120.);
 
     const auto calibrated_channels_before = calibration_parameters.size();
-    long       n_skipped_low_stats        = 0;
-    long       n_skipped_low_stats_cached = 0;
-    long       n_skipped_unconverged      = 0;
-    long       n_skipped_no_global_index  = 0;
-    long       n_fit_exceptions           = 0;  // C4.5
+    long n_skipped_low_stats = 0;
+    long n_skipped_low_stats_cached = 0;
+    long n_skipped_unconverged = 0;
+    long n_skipped_no_global_index = 0;
+    long n_fit_exceptions = 0; // C4.5
 
     //  The histogram's x-axis is filled via `GlobalIndex::tdc_ordinal()`
     //  in parallel_streaming_framer.cxx, so xbin-1 is the dense
@@ -412,7 +414,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
     const int n_bins_x = calibration_histogram->GetNbinsX();
     for (int xbin = 1; xbin <= n_bins_x; ++xbin)
     {
-        const int  ordinal     = xbin - 1;
+        const int ordinal = xbin - 1;
         const auto global_index = ::GlobalIndex::try_from_tdc_ordinal(ordinal);
         if (!global_index)
         {
@@ -458,7 +460,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         //  entries on the rising side, first 0-entry bin after that
         //  on the falling side.
         double first_edge_seed = 0;
-        double last_edge_seed  = 0;
+        double last_edge_seed = 0;
         for (int ibin = 1; ibin <= projection->GetNbinsX(); ++ibin)
         {
             if (projection->GetBinContent(ibin) > 5 && first_edge_seed < 1)
@@ -504,24 +506,22 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         //  dominates total fit cost (see BACKLOG P 0.35).  Saves
         //  ~1.5–2 s on the cold spill, negligible on warm spills.
         constexpr float kExpectedEdgeSpanFineBins = 62.5f;
-        constexpr float kEdgeSpanTolerance        = 10.0f;
-        constexpr float kRetrySeedJitterFineBins  = 1.5f;
-        constexpr int   kFitRetryCap              = 3;
+        constexpr float kEdgeSpanTolerance = 10.0f;
+        constexpr float kRetrySeedJitterFineBins = 1.5f;
+        constexpr int kFitRetryCap = 3;
         float first_edge = static_cast<float>(fine_dist_fit_function.GetParameter(2));
-        float last_edge  = static_cast<float>(fine_dist_fit_function.GetParameter(3));
+        float last_edge = static_cast<float>(fine_dist_fit_function.GetParameter(3));
         for (int retry = 0; retry < kFitRetryCap; ++retry)
         {
-            if (std::fabs(last_edge - first_edge - kExpectedEdgeSpanFineBins)
-                < kEdgeSpanTolerance)
+            if (std::fabs(last_edge - first_edge - kExpectedEdgeSpanFineBins) < kEdgeSpanTolerance)
                 break;
             //  Deterministic seed jitter — alternating sign per retry
             //  drives the fit to opposite sides of the original seed
             //  basin.  Bounded ParLimits keep the perturbation valid.
             const float sign = (retry % 2 == 0) ? +1.f : -1.f;
-            const float dx = sign * static_cast<float>(retry + 1)
-                                   * kRetrySeedJitterFineBins;
+            const float dx = sign * static_cast<float>(retry + 1) * kRetrySeedJitterFineBins;
             fine_dist_fit_function.SetParameter(2, first_edge_seed + dx);
-            fine_dist_fit_function.SetParameter(3, last_edge_seed  - dx);
+            fine_dist_fit_function.SetParameter(3, last_edge_seed - dx);
             //  C4.5 — same try/catch as the initial fit; on exception
             //  abandon the retry loop, treat as unconverged.
             try
@@ -534,7 +534,7 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
                 break;
             }
             first_edge = static_cast<float>(fine_dist_fit_function.GetParameter(2));
-            last_edge  = static_cast<float>(fine_dist_fit_function.GetParameter(3));
+            last_edge = static_cast<float>(fine_dist_fit_function.GetParameter(3));
         }
         if (std::fabs(last_edge - first_edge - kExpectedEdgeSpanFineBins) > kEdgeSpanTolerance)
         {
@@ -542,8 +542,8 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
             continue;
         }
 
-        calibration_parameters[key]      = {first_edge, last_edge, 0.0f};
-        channel_calibration_method[key]  = CalibrationMethod::AlcorV2BaseCalib;
+        calibration_parameters[key] = {first_edge, last_edge, 0.0f};
+        channel_calibration_method[key] = CalibrationMethod::AlcorV2BaseCalib;
     }
 
     const auto calibrated_channels_after = calibration_parameters.size();

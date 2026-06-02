@@ -175,9 +175,10 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                         if (*p < 2)
                         {
                             mist::logger::warning(TString::Format(
-                                "(readout_config_reader) [readout.%s] alive_channels entry %d < 2 "
-                                "would divide by zero in the same-channel calibration; clamping to 2.",
-                                cfg_name.c_str(), *p).Data());
+                                                      "(readout_config_reader) [readout.%s] alive_channels entry %d < 2 "
+                                                      "would divide by zero in the same-channel calibration; clamping to 2.",
+                                                      cfg_name.c_str(), *p)
+                                                      .Data());
                             *p = 2;
                         }
                 }
@@ -256,12 +257,13 @@ std::vector<ReadoutConfigStruct> readout_config_reader(std::string config_file)
                                 i = j;
                             }
                             else
-                                break;  // non-numeric, non-separator → stop
+                                break; // non-numeric, non-separator → stop
                         }
                         if (!any)
                             mist::logger::warning(TString::Format(
-                                "(readout_config_reader) Unknown chips token '%s' for device %d",
-                                s.c_str(), device).Data());
+                                                      "(readout_config_reader) Unknown chips token '%s' for device %d",
+                                                      s.c_str(), device)
+                                                      .Data());
                     }
                 }
                 else if (auto *chips_array = chips_node->as_array())
@@ -715,8 +717,8 @@ void RunInfo::read_database(std::string filename)
             //  means "use the streaming-conf default" — same semantic
             //  as the field being absent.
             cur.streaming_n_sigma_threshold = run_tbl->get("streaming_n_sigma_threshold")
-                ? static_cast<float>(run_tbl->get("streaming_n_sigma_threshold")->value_or(0.0))
-                : (prev() ? prev()->streaming_n_sigma_threshold : 0.f);
+                                                  ? static_cast<float>(run_tbl->get("streaming_n_sigma_threshold")->value_or(0.0))
+                                                  : (prev() ? prev()->streaming_n_sigma_threshold : 0.f);
 
             //  Radiators
             if (auto rad_node = run_tbl->get("radiators"))
@@ -948,10 +950,11 @@ streaming_hough_conf_reader(std::string config_file)
             if ((*sh_table)[key])
             {
                 mist::logger::warning(TString::Format(
-                    "(streaming_hough_conf_reader) `%s` is deprecated and "
-                    "IGNORED (recodata seeds the fit from the Hough peak). "
-                    "Remove the key from your config to silence this warning.",
-                    key).Data());
+                                          "(streaming_hough_conf_reader) `%s` is deprecated and "
+                                          "IGNORED (recodata seeds the fit from the Hough peak). "
+                                          "Remove the key from your config to silence this warning.",
+                                          key)
+                                          .Data());
             }
         }
 
