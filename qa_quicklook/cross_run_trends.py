@@ -27,10 +27,11 @@ returned :class:`TrendSeries` lists into matplotlib tiles.  Tests in
 ``tests/test_cross_run_trends.py`` exercise this module against a
 synthetic TOML without touching Qt or the real data dir.
 
-The default metric list (:data:`DEFAULT_METRICS`) reflects the three
+The default metric list (:data:`DEFAULT_METRICS`) reflects the
 observables we cleared with the operators: photon yield
-(``full.n_gamma``), photon-yield width (``full.sigma``), and DCR rate
-per event (derived from ``lightdata.n_dcr_hits / n_events``).
+(``full.n_gamma``), photon-yield width (``full.sigma``), mean dark-count
+rate (``lightdata.dcr_mean_khz``, kHz), and the readout-resilience
+lane-failure fraction (``lightdata.lane_failure_rate``).
 """
 
 from __future__ import annotations
@@ -130,33 +131,6 @@ class MetricSpec:
             )
 
 
-# ---------------------------------------------------------------------------
-# Derived-metric helpers
-# ---------------------------------------------------------------------------
-
-
-def _derive_dcr_rate_per_event(qmap: dict) -> Optional[tuple[float, float]]:
-    """DCR-hit rate per event — ``n_dcr_hits / n_events``.
-
-    Returns ``None`` when either input is missing or ``n_events`` is
-    zero / negative.  Error propagation assumes the dominant
-    uncertainty is on ``n_dcr_hits`` (the denominator is a
-    well-counted integer); we forward ``error / n_events`` so a
-    writer that did publish an error keeps it on the rate.
-
-    No per-active-channel normalisation: the writers don't currently
-    publish ``n_active_channels`` in ``standard_results.toml``.  When
-    they do, swap the divisor in here — the tile config doesn't change.
-    """
-    dcr = qmap.get("lightdata.n_dcr_hits")
-    nev = qmap.get("lightdata.n_events")
-    if dcr is None or nev is None:
-        return None
-    if nev.value <= 0:
-        return None
-    return (dcr.value / nev.value, dcr.error / nev.value)
-
-
 #  Default trend tiles — kept narrow on purpose.  The General tab is
 #  meant to be the "fast triage" surface; deep dives live in Full plots.
 DEFAULT_METRICS: tuple[MetricSpec, ...] = (
@@ -176,9 +150,16 @@ DEFAULT_METRICS: tuple[MetricSpec, ...] = (
     ),
     MetricSpec(
         key="dcr_rate",
-        label="DCR rate / event",
-        derive=_derive_dcr_rate_per_event,
-        unit="hits / event",
+        label="DCR rate",
+        quantity="lightdata.dcr_mean_khz",
+        unit="kHz",
+        y_floor_zero=True,
+    ),
+    MetricSpec(
+        key="lane_failure_rate",
+        label="Lane-failure rate",
+        quantity="lightdata.lane_failure_rate",
+        unit="fraction",
         y_floor_zero=True,
     ),
 )

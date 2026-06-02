@@ -74,6 +74,46 @@ std::map<uint32_t, std::vector<uint8_t>> AlcorSpilldata::get_not_dead_participan
     return result;
 }
 
+std::map<uint32_t, std::vector<uint8_t>> AlcorSpilldata::get_dead_participants()
+{
+    std::map<uint32_t, std::vector<uint8_t>> result;
+
+    //  Prefer the flat-list representation (populated after TTree::GetEntry).
+    if (!spilldata.dead_mask_list.empty())
+    {
+        //  device → participants-mask lookup, so we can restrict dead bits to
+        //  lanes that actually reported this spill (a stale dead bit on a lane
+        //  that never participated must not be counted as a failure).
+        std::unordered_map<uint8_t, uint32_t> device_to_part;
+        device_to_part.reserve(spilldata.participants_mask_list.size());
+        for (const auto &pm : spilldata.participants_mask_list)
+            device_to_part.emplace(pm.device, pm.mask);
+
+        for (const auto &dm : spilldata.dead_mask_list)
+        {
+            uint32_t part_mask = 0;
+            if (auto it = device_to_part.find(dm.device);
+                it != device_to_part.end())
+                part_mask = it->second;
+            result[dm.device] = decode_bits(dm.mask & part_mask);
+        }
+    }
+    else
+    {
+        //  Fall back to the map representation (online processing).
+        for (const auto &[device, dead_mask] : spilldata.dead_mask)
+        {
+            uint32_t part_mask = 0;
+            if (auto it = spilldata.participants_mask.find(device);
+                it != spilldata.participants_mask.end())
+                part_mask = it->second;
+            result[device] = decode_bits(dead_mask & part_mask);
+        }
+    }
+
+    return result;
+}
+
 // ============================================================================
 //  AlcorSpilldata — ROOT TTree I/O
 // ============================================================================

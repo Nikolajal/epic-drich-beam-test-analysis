@@ -1,4 +1,4 @@
-# `macros/working/` — personal scratch space (NOT tracked)
+# macros/working/ — personal scratch space (NOT tracked)
 
 This directory is a per-operator scratch area for **personal, throwaway, or
 in-development ROOT macros**. Everything here is git-ignored except this
