@@ -627,6 +627,60 @@ Rationale:
 
 ---
 
+### D-14 — `lightdata_writer` memory profile (why peak RSS ≈ 8.5 GB)
+
+**Status:** investigated + measured (2026-06-02, branch
+`dev_investigate_performance`).  Conclusion: **the RSS scales with the number of
+concurrently-open streams — it is the cost of the all-streams time-merge, not a
+fixable leak.**  One residual unknown remains (the exact call-site identity of the
+~3 MB heap blocks; see below).  Relates to [D-09](#d-09--framer-worker-pool--thread-count-formula).
+
+**What it is NOT (ruled out empirically).**  `vmmap` showed file-backed
+"mapped file" at only ~114 MB resident — so ROOT does **not** slurp the 7.3 GB
+raw into RAM; `AlcorDataStreamer` is genuinely incremental
+(`tree->GetEntry(cursor++)`, one buffer).  The RSS is MALLOC heap.  QA
+histograms are only ~150–200 MB (the largest single chunk is the per-worker
+`h2_fine_tune` clone — TH2F 10000×256 = 10.2 MB × n_workers, transient per
+spill, `parallel_streaming_framer.cxx:608`).  Per-frame scratch churn in the
+streaming trigger is also not it (separately A/B'd, no win — see
+[`include/triggers/streaming/DISCUSSION.md`](include/triggers/streaming/DISCUSSION.md) §1.7).
+
+**What it IS.**  Two structural costs:
+1. **~6 GB — 231 input streams open concurrently** (one `AlcorDataStreamer` per
+   FIFO file; `parallel_streaming_framer.cxx:54-57`).  The heap dump put the bytes
+   in **~3 MB blocks (`3136KB[1700]` ≈ 5.2 GB)** ≈ 231 files × ~7 buffers each, so
+   the cost scales with the **number of concurrently-open files** (~27 MB/file).
+   This is the price of the time-merge: hits from every lane interleave in global
+   time, so **all streams must be resident to decide when a spill/frame is
+   complete.**  ⚠️ **Residual unknown:** the per-file ~27 MB is basket-size-
+   *independent* (see levers), so the exact identity of those 3 MB blocks is not
+   pinned to a call site — confirming it needs a `MallocStackLogging` /
+   `malloc_history --highWaterMark` run (deferred).  What's certain: it scales
+   with open-file count and does **not** shrink with basket size.
+2. **~2 GB — per-spill `frame_map`** (per-worker `unordered_map<frame, 4 hit
+   vectors>`, merged into `spilldata.frame_and_lightdata`), a sawtooth that
+   drops at each spill boundary.
+
+**Levers — tested:**
+- **Shrink the per-branch read buffer (3 MB baskets): does NOT help.**
+  `SetBasketSize` is a no-op on read (it only sizes *write* baskets).  Physically
+  repacking a file to 256 KB baskets changed per-file read RSS by ~1.5 MB
+  (26.9 → 25.4 MB over a 227.9 MB base) — i.e. the per-file cost is basket-size-
+  *independent*, so "read 1 MB not 30 MB" is not achievable at the ROOT level.
+  (Caveat: this was a *single-file* probe; it cannot exhibit any cross-file
+  interaction, but it does establish basket size is not the per-file lever.)
+  `SetCacheSize` gave only ~9 % on one file.
+- **Drop unused input branches:** only `counter` qualifies (`type` is required —
+  `is_start/end_spill()` drive framing).  ~0.7 GB, but **within the ~2 GB
+  run-to-run RSS noise** (observed 9.2 vs 11.1 GB on identical runs) → marginal,
+  not pursued.
+- **Sequential / staged stream reading** (don't hold all files open at once):
+  the *only* real memory lever, but it's a pure **memory↔CPU trade** (re-reads,
+  loses the single-pass merge).  Parked — not worth the CPU on current hardware.
+  Revisit only if a memory-constrained deployment forces it.
+
+---
+
 ## TODOs — concrete fixes in the queue
 
 Code-work items that don't need a design decision — just hands on the keyboard
