@@ -1,4 +1,4 @@
-# `include/utility/` — focused helper headers
+# include/utility/ — focused helper headers
 
 Small, mostly header-only utilities consumed across the framework.
 Group them here so the public top-level umbrella stays readable, and
