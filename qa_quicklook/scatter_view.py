@@ -65,9 +65,10 @@ class MultiRunScatterView(QtWidgets.QWidget):
         outer.setSpacing(8)
 
         intro = QtWidgets.QLabel(
-            "First-level QA quantity vs beam condition across a runlist.  "
-            "Pick a runlist, a Y quantity, an X beam-info, and optionally "
-            "a colour (Z) axis.  Runs at the same X are nudged apart."
+            "First-level QA quantity vs beam condition — or vs another QA "
+            "quantity — across a runlist.  Pick a runlist, a Y quantity, an "
+            "X (beam-info or a QA quantity), and optionally a colour (Z).  "
+            "Tick ‘connect’ for a sorted curve, e.g. lane-failure vs DCR."
         )
         intro.setObjectName("muted")
         intro.setStyleSheet("font-style: italic; font-size: 11px;")
@@ -84,11 +85,21 @@ class MultiRunScatterView(QtWidgets.QWidget):
         self._z_combo = QtWidgets.QComboBox()
         for m in cross_run_trends.DEFAULT_METRICS:
             self._y_combo.addItem(m.label, m.key)
+        #  X can be a beam-info field (from the run database) or a measured
+        #  QA quantity (from standard_results.toml).  The latter enables
+        #  measured-vs-measured plots — e.g. lane-failure-rate vs DCR.
         for f in multi_run_scatter.BEAM_AXIS_FIELDS:
-            self._x_combo.addItem(f, f)
+            self._x_combo.addItem(f, ("field", f))
+        for m in cross_run_trends.DEFAULT_METRICS:
+            self._x_combo.addItem(f"{m.label}  (QA)", ("metric", m.key))
         self._z_combo.addItem(_NONE_LABEL, "")
         for f in multi_run_scatter.BEAM_AXIS_FIELDS:
             self._z_combo.addItem(f, f)
+        self._connect_chk = QtWidgets.QCheckBox("connect")
+        self._connect_chk.setToolTip(
+            "Join points with a line, sorted by X — e.g. the lane-failure-"
+            "rate vs DCR resilience curve.  Disables the cluster jitter."
+        )
 
         for lbl, w in (("Runlist:", self._runlist_combo),
                        ("Y:", self._y_combo),
@@ -96,6 +107,7 @@ class MultiRunScatterView(QtWidgets.QWidget):
                        ("colour:", self._z_combo)):
             bar.addWidget(QtWidgets.QLabel(lbl))
             bar.addWidget(w)
+        bar.addWidget(self._connect_chk)
         bar.addStretch(1)
         refresh = QtWidgets.QPushButton(" ⟳ ")
         refresh.setToolTip("Reload runlists + results from disk")
@@ -106,6 +118,7 @@ class MultiRunScatterView(QtWidgets.QWidget):
         for w in (self._runlist_combo, self._y_combo,
                   self._x_combo, self._z_combo):
             w.currentIndexChanged.connect(lambda _i: self._replot())
+        self._connect_chk.toggled.connect(lambda _c: self._replot())
 
         # ── Canvas ──────────────────────────────────────────────────
         self._have_mpl = True
@@ -170,11 +183,28 @@ class MultiRunScatterView(QtWidgets.QWidget):
              if m.key == self._y_combo.currentData()),
             cross_run_trends.DEFAULT_METRICS[0],
         )
-        x_field = self._x_combo.currentData()
+        #  X axis: a beam-info field (run database) or a measured QA
+        #  quantity (standard_results.toml).
+        x_sel = self._x_combo.currentData()
+        x_kind, x_key = (x_sel if isinstance(x_sel, tuple)
+                         else ("field", x_sel))
+        x_metric = None
+        x_field = None
+        if x_kind == "metric":
+            x_metric = next(
+                (m for m in cross_run_trends.DEFAULT_METRICS
+                 if m.key == x_key), None)
+            x_label = (x_metric.label + (f"  [{x_metric.unit}]"
+                                         if x_metric.unit else "")
+                       if x_metric else x_key)
+        else:
+            x_field = x_key
+            x_label = x_key
         z_field = self._z_combo.currentData() or None
 
         points, skipped = multi_run_scatter.build_scatter(
-            results, records, run_ids, metric, x_field, z_field)
+            results, records, run_ids, metric,
+            x_field=x_field, z_field=z_field, x_metric=x_metric)
 
         if not points:
             self._status.setText(
@@ -185,7 +215,11 @@ class MultiRunScatterView(QtWidgets.QWidget):
             self._canvas.draw_idle()
             return
 
-        xs = multi_run_scatter.jitter_x(points)
+        #  Curve mode: connect points sorted by X (e.g. failure-rate vs
+        #  DCR) and drop the cluster jitter so the line is faithful.
+        connect = self._connect_chk.isChecked()
+        xs = ([p.x for p in points] if connect
+              else multi_run_scatter.jitter_x(points))
         ys = [p.y for p in points]
         yerr = [p.y_err if p.y_err else 0.0 for p in points]
 
@@ -198,17 +232,23 @@ class MultiRunScatterView(QtWidgets.QWidget):
         else:
             self._ax.scatter(xs, ys, s=42, color="#1F77B4",
                             edgecolors="black", linewidths=0.4, zorder=3)
+        if connect:
+            order = sorted(range(len(points)), key=lambda i: points[i].x)
+            self._ax.plot([points[i].x for i in order],
+                          [points[i].y for i in order],
+                          "-", color="#1F77B4", linewidth=1.2,
+                          alpha=0.8, zorder=2)
         if any(yerr):
             self._ax.errorbar(xs, ys, yerr=yerr, fmt="none",
                             ecolor="#888888", elinewidth=0.7,
                             capsize=2, zorder=2)
 
-        self._ax.set_xlabel(x_field)
+        self._ax.set_xlabel(x_label)
         self._ax.set_ylabel(metric.label + (f"  [{metric.unit}]" if metric.unit else ""))
         if metric.y_floor_zero:
             self._ax.set_ylim(bottom=0)
         self._ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.5)
-        self._ax.set_title(f"{metric.label}  vs  {x_field}   ·   {name}")
+        self._ax.set_title(f"{metric.label}  vs  {x_label}   ·   {name}")
         foot = f"{len(points)} run(s)"
         if skipped:
             foot += f"  ·  {len(skipped)} skipped"
