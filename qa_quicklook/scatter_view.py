@@ -118,12 +118,12 @@ class MultiRunScatterView(QtWidgets.QWidget):
         #  QA quantity (from standard_results.toml).  The latter enables
         #  measured-vs-measured plots — e.g. lane-failure-rate vs DCR.
         for f in multi_run_scatter.BEAM_AXIS_FIELDS:
-            self._x_combo.addItem(f, ("field", f))
+            self._x_combo.addItem(multi_run_scatter.field_label(f), ("field", f))
         for m in cross_run_trends.DEFAULT_METRICS:
             self._x_combo.addItem(f"{m.label}  (QA)", ("metric", m.key))
         self._z_combo.addItem(_NONE_LABEL, "")
         for f in multi_run_scatter.BEAM_AXIS_FIELDS:
-            self._z_combo.addItem(f, f)
+            self._z_combo.addItem(multi_run_scatter.field_label(f), f)
         self._connect_chk = QtWidgets.QCheckBox("connect")
         self._connect_chk.setToolTip(
             "Join points with a line, sorted by X — e.g. the lane-failure-"
@@ -259,7 +259,7 @@ class MultiRunScatterView(QtWidgets.QWidget):
                        if x_metric else x_key)
         else:
             x_field = x_key
-            x_label = x_key
+            x_label = multi_run_scatter.field_label(x_key)
         z_field = self._z_combo.currentData() or None
 
         connect = self._connect_chk.isChecked()
@@ -299,9 +299,7 @@ class MultiRunScatterView(QtWidgets.QWidget):
                 sc = self._ax.scatter(xs, ys, c=zs, cmap="viridis", s=42,
                                       edgecolors="black", linewidths=0.4, zorder=3)
                 cb = self._fig.colorbar(sc, ax=self._ax, pad=0.01)
-                cb.set_label(multi_run_scatter.field_label(z_field)
-                             if hasattr(multi_run_scatter, "field_label")
-                             else z_field)
+                cb.set_label(multi_run_scatter.field_label(z_field))
                 colour = "#1F77B4"
             else:
                 self._ax.scatter(xs, ys, s=42, color="#1F77B4",

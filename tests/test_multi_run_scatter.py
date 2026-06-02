@@ -142,5 +142,16 @@ class OverlayTests(unittest.TestCase):
         self.assertIn("20251101-110000", skipped)
 
 
+class FieldLabelTests(unittest.TestCase):
+    def test_every_beam_axis_field_has_a_friendly_label(self) -> None:
+        #  No raw snake_case key should leak into the pickers.
+        for f in mrs.BEAM_AXIS_FIELDS:
+            self.assertIn(f, mrs.FIELD_LABELS)
+            self.assertNotEqual(mrs.field_label(f), f)
+
+    def test_unknown_field_falls_back_to_raw_key(self) -> None:
+        self.assertEqual(mrs.field_label("not_a_field"), "not_a_field")
+
+
 if __name__ == "__main__":
     unittest.main()
