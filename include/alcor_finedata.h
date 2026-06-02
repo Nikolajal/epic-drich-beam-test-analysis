@@ -6,15 +6,15 @@
  *
  * Extends @ref AlcorData with three-parameter sigmoid calibration applied
  * to the raw 0..127 fine-time bin to yield a fractional clock-cycle phase.
- * The class also owns the global calibration store (per-channel parameter
- * maps + the per-channel calibration-method registry); accessors and
- * mutators on those static maps are guarded by an internal
+ * The class also owns the global calibration store — one per-channel table
+ * fusing the 3 parameters and the calibration method (@ref CalibrationEntry);
+ * accessors and mutators on that static table are guarded by an internal
  * @c std::shared_mutex so the framer can build calibrations on one thread
  * while readers query phases on another.
  *
  * @par Thread safety
- * The static @c calibration_parameters, @c channel_calibration_method, and
- * @c default_calibration_method maps are protected by @c calibration_mutex.
+ * The static @c calibration_table_ (fused per-channel params + method) and
+ * @c default_calibration_method are protected by @c calibration_mutex.
  * Public getters take a shared lock; setters and @ref generate_calibration
  * take an exclusive lock.  Do not call public locking accessors while already
  * holding the mutex — @c std::shared_mutex is not reentrant.
@@ -163,6 +163,24 @@ enum class CalibrationMethod : uint8_t
     AlcorV2FitCalib = 1,  ///< Fit-based phase correction.
 };
 
+/**
+ * @brief Per-channel calibration record: the 3-parameter array fused with its
+ *        phase-correction method.
+ *
+ * Bundling the two into one table (was the parallel
+ * @c calibration_parameters + @c channel_calibration_method maps) halves the
+ * per-hit map lookups in @ref AlcorFinedata::get_phase — one
+ * @c unordered_map::find instead of two, over ~100M hits/run.  The default
+ * @c method mirrors @c default_calibration_method's initial value, so an entry
+ * created params-first (the unused @c set_param* path) still reads back the
+ * default method.
+ */
+struct CalibrationEntry
+{
+    std::array<float, 3> params{0.f, 0.f, 0.f};                     ///< [edge0/a, edge1/−b, sigma/c]
+    CalibrationMethod method = CalibrationMethod::AlcorV2BaseCalib; ///< per-channel phase method
+};
+
 // =============================================================================
 
 /**
@@ -177,7 +195,7 @@ enum class CalibrationMethod : uint8_t
      *   or plain files.
      *
      * The fine-time phase is computed from the calibration parameters stored in
-     * the static @c calibration_parameters map.
+     * the static @c calibration_table_.
      */
 class AlcorFinedata
 {
@@ -282,7 +300,7 @@ public:
 
     /**
      * @brief Returns the calibrated fine-time phase in clock cycles.
-     * Computed from the 3-parameter calibration stored in @c calibration_parameters.
+     * Computed from the 3-parameter calibration stored in @c calibration_table_.
      */
     float get_phase() const;
 
@@ -559,8 +577,8 @@ public:
     static float get_param0(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
-        auto it = calibration_parameters.find(GlobalIndex);
-        return (it != calibration_parameters.end()) ? it->second[0] : 0.f;
+        auto it = calibration_table_.find(GlobalIndex);
+        return (it != calibration_table_.end()) ? it->second.params[0] : 0.f;
     }
 
     /**
@@ -570,8 +588,8 @@ public:
     static float get_param1(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
-        auto it = calibration_parameters.find(GlobalIndex);
-        return (it != calibration_parameters.end()) ? it->second[1] : 0.f;
+        auto it = calibration_table_.find(GlobalIndex);
+        return (it != calibration_table_.end()) ? it->second.params[1] : 0.f;
     }
 
     /**
@@ -581,8 +599,8 @@ public:
     static float get_param2(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
-        auto it = calibration_parameters.find(GlobalIndex);
-        return (it != calibration_parameters.end()) ? it->second[2] : 0.f;
+        auto it = calibration_table_.find(GlobalIndex);
+        return (it != calibration_table_.end()) ? it->second.params[2] : 0.f;
     }
 
     /// @}
@@ -602,7 +620,7 @@ public:
     static void set_param0(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
-        calibration_parameters[GlobalIndex][0] = value;
+        calibration_table_[GlobalIndex].params[0] = value;
     }
 
     /**
@@ -613,7 +631,7 @@ public:
     static void set_param1(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
-        calibration_parameters[GlobalIndex][1] = value;
+        calibration_table_[GlobalIndex].params[1] = value;
     }
 
     /**
@@ -624,7 +642,7 @@ public:
     static void set_param2(uint32_t GlobalIndex, float value)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
-        calibration_parameters[GlobalIndex][2] = value;
+        calibration_table_[GlobalIndex].params[2] = value;
     }
 
     /// @}
@@ -662,7 +680,7 @@ public:
      * @brief Derives calibration parameters from a 2D fine-time histogram.
      *
      * Fits each Y-slice of @p calibration_histogram to extract the 3 calibration
-     * parameters and populates the static @c calibration_parameters map.
+     * parameters and populates the static @c calibration_table_.
      *
      * @param calibration_histogram 2D histogram with TDC index on X and fine
      *                              counts on Y, typically accumulated during a
@@ -717,7 +735,7 @@ public:
     static void set_calibration_method(uint32_t GlobalIndex, CalibrationMethod method)
     {
         std::unique_lock<std::shared_mutex> lock(calibration_mutex);
-        channel_calibration_method[GlobalIndex] = method;
+        calibration_table_[GlobalIndex].method = method;
     }
 
     // Setter — global default
@@ -740,8 +758,8 @@ public:
     static CalibrationMethod get_calibration_method(uint32_t GlobalIndex)
     {
         std::shared_lock<std::shared_mutex> lock(calibration_mutex);
-        auto it = channel_calibration_method.find(GlobalIndex);
-        return (it != channel_calibration_method.end()) ? it->second : default_calibration_method;
+        auto it = calibration_table_.find(GlobalIndex);
+        return (it != calibration_table_.end()) ? it->second.method : default_calibration_method;
     }
 
     /**
@@ -882,14 +900,12 @@ private:
     //  the legacy fine_calib.txt format with last-write-wins behaviour.
     //  Now uses the raw GlobalIndex value, which encodes every component
     //  (device, fifo, chip, channel, tdc) plus the validity bit.
-    inline static std::unordered_map<uint32_t, std::array<float, 3>> calibration_parameters = {};
+    //  Fuses the former parallel calibration_parameters + channel_calibration_method
+    //  maps into one @ref CalibrationEntry record, so the per-hit get_phase()
+    //  path costs a single unordered_map::find instead of two.
+    inline static std::unordered_map<uint32_t, CalibrationEntry> calibration_table_ = {};
 
-    /** @brief Per-channel phase-correction method override.
-     *  @note Protected by @c calibration_mutex. */
-    //  Keyed by `GlobalIndex::raw()`, parallel to @ref calibration_parameters above.
-    inline static std::unordered_map<uint32_t, CalibrationMethod> channel_calibration_method = {};
-
-    /** @brief Fallback method for channels absent from channel_calibration_method.
+    /** @brief Fallback method for channels absent from @c calibration_table_.
      *  @note Protected by @c calibration_mutex. */
     inline static CalibrationMethod default_calibration_method = CalibrationMethod::AlcorV2BaseCalib;
 

@@ -53,7 +53,7 @@
  *  - **TDC-level**: the full (device, FIFO, chip, channel, TDC) address.
  *    Identifies one of four TDCs on a specific channel.  This is the
  *    @c GlobalIndex raw value by default.  Used by per-TDC calibration
- *    (`AlcorFinedata::calibration_parameters`).
+ *    (`AlcorFinedata::calibration_table_`).
  *  - **Global-channel-level**: same address with the TDC bits zeroed.
  *    Identifies a single SiPM channel (one of the ~512 logical channels
  *    per device) without distinguishing which of its 4 TDCs fired.  Used
