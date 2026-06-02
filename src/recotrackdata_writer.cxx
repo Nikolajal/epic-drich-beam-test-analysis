@@ -205,15 +205,15 @@ void recotrackdata_writer(
     //  in ConfigDump's ctor) restores gDirectory on dtor.
     {
         util::ConfigDump dump(output_file.get());
-        dump.add("max_frames",          max_frames)
-            .add("force_rebuild",       force_rebuild)
-            .add("force_upstream",      force_upstream)
+        dump.add("max_frames", max_frames)
+            .add("force_rebuild", force_rebuild)
+            .add("force_upstream", force_upstream)
             .add_path("input_recodata_root", input_filename_recodata)
-            .add_path("input_tracks_txt",    input_filename_recotrackdata)
+            .add_path("input_tracks_txt", input_filename_recotrackdata)
             .add_path("track_data_repository", track_data_repository)
-            .add_path("track_run_name",        track_run_name)
+            .add_path("track_run_name", track_run_name)
             .add("frames_matched_to_tracks", recotrack_events_counter)
-            .add("spills_seen",              n_spils);
+            .add("spills_seen", n_spils);
     }
 
     //  ---
@@ -230,13 +230,14 @@ void recotrackdata_writer(
         //  a stale hard-code.
         AnalysisResults ar(data_repository + "/standard_results.toml");
         ar.update(ResultMap{
-            {{run_name, "all", "recotrack.n_matched_tracks"},
-             {static_cast<double>(recotrack_events_counter), 0.0}},
-            {{run_name, "all", "recotrack.n_spills"},
-             {static_cast<double>(n_spils), 0.0}},
-            {{run_name, "all", "recotrack.n_frames"},
-             {static_cast<double>(n_frames), 0.0}},
-        }, /*source=*/"recotrack");
+                      {{run_name, "all", "recotrack.n_matched_tracks"},
+                       {static_cast<double>(recotrack_events_counter), 0.0}},
+                      {{run_name, "all", "recotrack.n_spills"},
+                       {static_cast<double>(n_spils), 0.0}},
+                      {{run_name, "all", "recotrack.n_frames"},
+                       {static_cast<double>(n_frames), 0.0}},
+                  },
+                  /*source=*/"recotrack");
     }
     // unique_ptr<TFile> dtor calls Close() and deletes the object — no manual
     // output_file->Close(); + leak.

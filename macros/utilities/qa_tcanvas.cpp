@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     {
         std::string a = argv[i];
         if (a.empty() || a[0] == '-')
-            continue;  // ignore flags TApplication may want
+            continue; // ignore flags TApplication may want
         if (file_path.empty())
             file_path = a;
         else if (hist_path.empty())

@@ -416,7 +416,7 @@ private:
     //  hasher; see D-10 option D (rounded-integer-mm key) for the
     //  proper fix.
     std::unordered_map<int, std::array<float, 2>> index_to_hit_xy; ///< global index → {x, y} mm.
-    std::map<std::array<float, 2>, int> hit_xy_to_index; ///< {x, y} mm → global index.
+    std::map<std::array<float, 2>, int> hit_xy_to_index;           ///< {x, y} mm → global index.
     bool cache_index_to_xy_built{false};
     bool cache_xy_to_index_built{false};
 

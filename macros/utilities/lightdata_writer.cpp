@@ -74,15 +74,15 @@ int main(int argc, char **argv)
     auto *p_framer = app.add_option("--framer-conf", framer_config_file);
     auto *p_streaming = app.add_option("--streaming-conf", streaming_config_file);
     app.add_option("--run-database", run_database_file,
-        "Per-run metadata TOML (e.g. run-lists/2026.database.toml).  "
-        "When supplied, the streaming-trigger n_sigma threshold for "
-        "the active run is pulled from this file's "
-        "`streaming_n_sigma_threshold` field and overrides the "
-        "streaming-conf default.");
+                   "Per-run metadata TOML (e.g. run-lists/2026.database.toml).  "
+                   "When supplied, the streaming-trigger n_sigma threshold for "
+                   "the active run is pulled from this file's "
+                   "`streaming_n_sigma_threshold` field and overrides the "
+                   "streaming-conf default.");
     app.add_option("--n-sigma-threshold", n_sigma_threshold_cli,
-        "Direct override for `[streaming_trigger].n_sigma_threshold`.  "
-        "Takes priority over --run-database; 0 disables this override "
-        "path (legacy behaviour).");
+                   "Direct override for `[streaming_trigger].n_sigma_threshold`.  "
+                   "Takes priority over --run-database; 0 disables this override "
+                   "path (legacy behaviour).");
     app.add_flag("--force-rebuild", force_rebuild);
     //  Fast-feedback QA mode.  Looks for tuned overrides under conf/QA/
     //  (currently: conf/QA/streaming.toml with raised Hough thresholds,
@@ -156,7 +156,7 @@ int main(int argc, char **argv)
             [&](const std::string &rid) -> float
         {
             if (qa_mode)
-                return 0.f;  // QA mode: never override (see comment above)
+                return 0.f; // QA mode: never override (see comment above)
             if (n_sigma_threshold_cli > 0.f)
                 return n_sigma_threshold_cli;
             if (run_database_file.empty())

@@ -237,7 +237,8 @@ bool run_streaming_trigger(AlcorSpilldata &current_spill,
     //  operator< would use, then materialise the time-sorted finedata vector
     //  through the permutation.  Two-pass keeps the permutation explicit.
     std::sort(orig_idx.begin(), orig_idx.end(),
-              [&](int a, int b) { return cherenkov_finedata_hits[a] < cherenkov_finedata_hits[b]; });
+              [&](int a, int b)
+              { return cherenkov_finedata_hits[a] < cherenkov_finedata_hits[b]; });
     {
         std::vector<AlcorFinedata> tmp;
         tmp.reserve(cherenkov_finedata_hits.size());
@@ -382,7 +383,8 @@ bool run_streaming_trigger_weighted(
         orig_idx.push_back(i);
     }
     std::sort(orig_idx.begin(), orig_idx.end(),
-              [&](int a, int b) { return cherenkov_finedata_hits[a] < cherenkov_finedata_hits[b]; });
+              [&](int a, int b)
+              { return cherenkov_finedata_hits[a] < cherenkov_finedata_hits[b]; });
     {
         std::vector<AlcorFinedata> tmp;
         tmp.reserve(cherenkov_finedata_hits.size());
@@ -552,7 +554,7 @@ void fill_window_score_samples(
     //  first, mirroring the explicit sort in run_streaming_trigger_weighted.
     //  No index-permutation tracking is needed here: this routine only fills
     //  a QA histogram and never writes hit masks back.
-    std::vector<std::pair<float, int>> sorted_hits;  // (time_ns, channel_ord)
+    std::vector<std::pair<float, int>> sorted_hits; // (time_ns, channel_ord)
     sorted_hits.reserve(cherenkov_hits.size());
     for (auto &hit_struct : cherenkov_hits)
     {
@@ -564,7 +566,8 @@ void fill_window_score_samples(
             ::GlobalIndex(hit.get_global_index()).channel_ordinal());
     }
     std::sort(sorted_hits.begin(), sorted_hits.end(),
-              [](const auto &a, const auto &b) { return a.first < b.first; });
+              [](const auto &a, const auto &b)
+              { return a.first < b.first; });
 
     //  Sliding window mirroring run_streaming_trigger_weighted: maintain
     //  a running score over the trailing time_window_ns and fill once per
@@ -572,12 +575,12 @@ void fill_window_score_samples(
     //  still accumulates hits before t_lo so the running score is correct
     //  at the region's left edge.  Hits are now time-ordered, so we can stop
     //  once past t_hi.
-    std::deque<std::pair<float, float>> window;  // (time, weight)
+    std::deque<std::pair<float, float>> window; // (time, weight)
     float running_score = 0.f;
     for (const auto &[t, channel_ord] : sorted_hits)
     {
         if (t > t_hi_ns)
-            break;  // time-ordered → nothing more in range
+            break; // time-ordered → nothing more in range
 
         //  Evict front-of-window hits outside the trailing window.
         while (!window.empty() && (t - window.front().first) > time_window_ns)
