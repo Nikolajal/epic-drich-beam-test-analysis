@@ -85,10 +85,10 @@ class MultiRunScatterView(QtWidgets.QWidget):
         for m in cross_run_trends.DEFAULT_METRICS:
             self._y_combo.addItem(m.label, m.key)
         for f in multi_run_scatter.BEAM_AXIS_FIELDS:
-            self._x_combo.addItem(f, f)
+            self._x_combo.addItem(multi_run_scatter.field_label(f), f)
         self._z_combo.addItem(_NONE_LABEL, "")
         for f in multi_run_scatter.BEAM_AXIS_FIELDS:
-            self._z_combo.addItem(f, f)
+            self._z_combo.addItem(multi_run_scatter.field_label(f), f)
 
         for lbl, w in (("Runlist:", self._runlist_combo),
                        ("Y:", self._y_combo),
@@ -194,7 +194,7 @@ class MultiRunScatterView(QtWidgets.QWidget):
             sc = self._ax.scatter(xs, ys, c=zs, cmap="viridis", s=42,
                                   edgecolors="black", linewidths=0.4, zorder=3)
             cb = self._fig.colorbar(sc, ax=self._ax, pad=0.01)
-            cb.set_label(z_field)
+            cb.set_label(multi_run_scatter.field_label(z_field))
         else:
             self._ax.scatter(xs, ys, s=42, color="#1F77B4",
                             edgecolors="black", linewidths=0.4, zorder=3)
@@ -203,12 +203,13 @@ class MultiRunScatterView(QtWidgets.QWidget):
                             ecolor="#888888", elinewidth=0.7,
                             capsize=2, zorder=2)
 
-        self._ax.set_xlabel(x_field)
+        x_label = multi_run_scatter.field_label(x_field)
+        self._ax.set_xlabel(x_label)
         self._ax.set_ylabel(metric.label + (f"  [{metric.unit}]" if metric.unit else ""))
         if metric.y_floor_zero:
             self._ax.set_ylim(bottom=0)
         self._ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.5)
-        self._ax.set_title(f"{metric.label}  vs  {x_field}   ·   {name}")
+        self._ax.set_title(f"{metric.label}  vs  {x_label}   ·   {name}")
         foot = f"{len(points)} run(s)"
         if skipped:
             foot += f"  ·  {len(skipped)} skipped"

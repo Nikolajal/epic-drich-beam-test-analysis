@@ -39,6 +39,25 @@ BEAM_AXIS_FIELDS: tuple[str, ...] = (
     "n_spills",
 )
 
+#  Human-readable labels for the beam-axis fields, kept in step with the
+#  Google-Sheets column names (``sheets_sync.FIELD_DISPLAY``) so the
+#  dashboard pickers, the axis/colour-bar labels, and the shared sheet all
+#  read the same way instead of exposing raw ``snake_case`` keys.
+FIELD_LABELS: dict[str, str] = {
+    "v_bias":      "V_bias (V)",
+    "beam_energy": "Energy (GeV)",
+    "temperature": "Temp (°C)",
+    "mirror_mm":   "Mirror A (mm)",
+    "deltathr":    "DThr",
+    "n_spills":    "N spills",
+}
+
+
+def field_label(field: str) -> str:
+    """Friendly display label for a beam-axis *field*; falls back to the
+    raw key for anything not in :data:`FIELD_LABELS`."""
+    return FIELD_LABELS.get(field, field)
+
 
 @dataclass(frozen=True)
 class ScatterPoint:
@@ -153,6 +172,8 @@ def jitter_x(
 
 __all__ = [
     "BEAM_AXIS_FIELDS",
+    "FIELD_LABELS",
+    "field_label",
     "ScatterPoint",
     "build_scatter",
     "jitter_x",
