@@ -65,6 +65,7 @@ int main(int argc, char **argv)
     int anchor_device_override = -1;
     int anchor_chip_override = -1;
     int anchor_eo_channel_override = -1;
+    int anchor_fifo_override = -1;
     //  Pulser frequency override (Hz).  -1.0 = no override; positive
     //  values are converted to ``pulser_period_cc`` below using the
     //  320 MHz ALCOR clock.  Mirrors what the operator types on the
@@ -87,6 +88,11 @@ int main(int argc, char **argv)
                    "-1 keeps the TOML value.");
     app.add_option("--anchor-eo-channel", anchor_eo_channel_override,
                    "Override calibration_conf.toml's anchor_eo_channel.  "
+                   "-1 keeps the TOML value.");
+    app.add_option("--anchor-fifo", anchor_fifo_override,
+                   "Override calibration_conf.toml's anchor_fifo.  Set >= 0 to "
+                   "salvage the pulsed reference by (anchor_device, anchor_fifo) "
+                   "-- e.g. the KC705 testpulse on device 200 / FIFO 32.  "
                    "-1 keeps the TOML value.");
     app.add_option("--pulser-frequency-hz", pulser_frequency_hz_override,
                    "Override calibration_conf.toml's pulser period from a "
@@ -126,6 +132,7 @@ int main(int argc, char **argv)
                                anchor_device_override,
                                anchor_chip_override,
                                anchor_eo_channel_override,
+                               anchor_fifo_override,
                                pulser_period_cc_override);
     return 0;
 }

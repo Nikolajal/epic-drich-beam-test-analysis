@@ -24,11 +24,19 @@
 [calibration]
 
 # ── Anchor channel ──────────────────────────────────────────────────
-# The channel pulsed by the external pulser; serves as the per-pulse
-# coincidence reference.  Convention: dRICH 2026 test-beam uses 192/0/0.
+# The pulsed reference signal; serves as the per-pulse timing reference.
+# Two modes:
+#   * anchor_fifo < 0  → legacy CHANNEL anchor, addressed by
+#     (anchor_device, anchor_chip, anchor_eo_channel).
+#   * anchor_fifo >= 0 → FIFO-salvage anchor: the reference is read out by
+#     ALCOR on a dedicated FIFO (coarse only; tdc/fine/pixel/column all -1,
+#     so it has no valid channel ordinal).  Hits matching
+#     (anchor_device, anchor_fifo) are salvaged by (device, fifo) and used
+#     as the reference.  dRICH 2026: the KC705 testpulse is device 200 / FIFO 32.
 anchor_device     = 200
 anchor_chip       = 0
 anchor_eo_channel = 0
+anchor_fifo       = 32
 
 # ── Fit thresholds ──────────────────────────────────────────────────
 # Cumulative hit floor for publishing a per-GlobalIndex calibration.

@@ -375,6 +375,14 @@ struct CalibConfigStruct
     int anchor_chip = 0;
     /// @brief Anchor channel — even-odd channel index within the chip (0..31).
     int anchor_eo_channel = 0;
+    /// @brief Anchor reference FIFO — the pulsed reference signal (e.g. the
+    /// KC705 testpulse) is read out by ALCOR on a dedicated FIFO with
+    /// `tdc/fine/pixel/column` all sentinel (-1), so it has NO valid channel
+    /// ordinal and is dropped by the normal tdc/fine/channel path.  When
+    /// `anchor_fifo >= 0`, hits matching `(anchor_device, anchor_fifo)` are
+    /// salvaged by (device, fifo) and kept as the anchor reference (coarse
+    /// only).  Default -1 disables the salvage (legacy channel-anchor mode).
+    int anchor_fifo = -1;
 
     /// @brief Minimum cumulative hits (across all spills) on a single
     /// GlobalIndex before its `(a, b)` fit is published.  GlobalIndex's

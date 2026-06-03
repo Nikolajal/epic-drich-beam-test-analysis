@@ -151,6 +151,19 @@ struct ChannelBucket
     std::vector<SpillBucket> per_spill;
 };
 
+//  Anchor reference signal (e.g. the KC705 testpulse) read out by ALCOR on a
+//  dedicated FIFO.  It carries only a coarse counter — `tdc/fine/pixel/column`
+//  are all sentinel (-1), so it has NO valid channel ordinal and cannot live
+//  in `ChannelBucket` (keyed by device/chip/eo_channel).  Salvaged by
+//  (device, fifo) and kept as a per-spill list of anchor-pulse coarse times.
+struct AnchorBucket
+{
+    //  per_spill_coarse[s] = anchor-pulse get_coarse_global_time() values in
+    //  spill s, in read (time) order.  The pulse period is ~constant
+    //  (the testpulse cadence), so consecutive diffs ≈ the nominal period.
+    std::vector<std::vector<int64_t>> per_spill_coarse;
+};
+
 // ---------------------------------------------------------------------------
 //  Per-channel fit — CLOSED-FORM linear least squares.
 //
@@ -873,6 +886,7 @@ void pulser_calib_writer(
     int anchor_device_override,
     int anchor_chip_override,
     int anchor_eo_channel_override,
+    int anchor_fifo_override,
     double pulser_period_cc_override)
 {
     namespace fs = std::filesystem;
@@ -918,6 +932,14 @@ void pulser_calib_writer(
                                cfg.anchor_eo_channel, anchor_eo_channel_override)
                                .Data());
         cfg.anchor_eo_channel = anchor_eo_channel_override;
+    }
+    if (anchor_fifo_override >= 0 && anchor_fifo_override != cfg.anchor_fifo)
+    {
+        mist::logger::info(TString::Format(
+                               "(pulser_calib_writer) CLI override: anchor_fifo %d -> %d",
+                               cfg.anchor_fifo, anchor_fifo_override)
+                               .Data());
+        cfg.anchor_fifo = anchor_fifo_override;
     }
     //  Pulser period override: dashboard hands us pulser frequency in
     //  Hz, the CLI driver converts to ``cc`` via the 320 MHz clock
@@ -966,6 +988,8 @@ void pulser_calib_writer(
                        " FIFO files; reading + bucketing per channel");
 
     std::map<ChannelKey, ChannelBucket> channels;
+    AnchorBucket anchor;          //  salvaged (device, anchor_fifo) reference pulses
+    long total_anchor_hits = 0;   //  count of salvaged anchor pulses
     long total_hits_read = 0;
     long total_hits_rejected_fine_oob = 0; //  fine bin outside [fine_min_valid, fine_max_valid]
     int spills_seen = 0;
@@ -997,6 +1021,30 @@ void pulser_calib_writer(
                 continue; //  hits before the first start_spill (rare; defensive)
             if (max_spill > 0 && spill_idx >= max_spill)
                 continue;
+
+            //  ── Anchor salvage ───────────────────────────────────────────
+            //  The pulsed reference (e.g. KC705 testpulse) is read out on a
+            //  dedicated FIFO with tdc/fine/pixel/column all = -1.  It has no
+            //  valid channel ordinal and would be dropped by the tdc/fine
+            //  filters and the (device,chip,eo_channel) keying below.  Catch
+            //  it FIRST by (device, fifo) and keep its coarse-global time as
+            //  the per-spill anchor reference.  Active only when configured.
+            //  The anchor PULSES are `trigger_tag` (type 9); the same FIFO
+            //  also carries start_spill (7) / end_spill (15) markers, which
+            //  must NOT be salvaged as pulses.  Require trigger_tag so a
+            //  markers-only run salvages 0 (not a stray end-marker).
+            if (cfg.anchor_fifo >= 0 &&
+                alcor_hit.get_device() == cfg.anchor_device &&
+                alcor_hit.get_fifo() == cfg.anchor_fifo &&
+                alcor_hit.is_trigger_tag())
+            {
+                if (static_cast<int>(anchor.per_spill_coarse.size()) <= spill_idx)
+                    anchor.per_spill_coarse.resize(spill_idx + 1);
+                anchor.per_spill_coarse[spill_idx].push_back(
+                    static_cast<int64_t>(alcor_hit.get_coarse_global_time()));
+                ++total_anchor_hits;
+                continue;
+            }
 
             const int tdc_idx = alcor_hit.get_tdc();
             if (tdc_idx < 0 || tdc_idx > 3)
@@ -1038,6 +1086,13 @@ void pulser_calib_writer(
     }
     mist::logger::info("(pulser_calib_writer) ingested " + std::to_string(total_hits_read) +
                        " hits across " + std::to_string(channels.size()) + " channels");
+    if (cfg.anchor_fifo >= 0)
+        mist::logger::info(TString::Format(
+                               "(pulser_calib_writer) salvaged %ld anchor pulses from "
+                               "(device=%d, fifo=%d) across %zu spills",
+                               total_anchor_hits, cfg.anchor_device, cfg.anchor_fifo,
+                               anchor.per_spill_coarse.size())
+                               .Data());
     if (total_hits_rejected_fine_oob > 0)
     {
         const double rejected_frac =
@@ -1116,50 +1171,172 @@ void pulser_calib_writer(
     // place it explicitly under Diagnostics/ later.
     h_anchor_dt_vs_spill->SetDirectory(nullptr);
 
-    const ChannelKey anchor_key{
-        static_cast<uint16_t>(cfg.anchor_device),
-        static_cast<uint16_t>(cfg.anchor_chip),
-        static_cast<uint16_t>(cfg.anchor_eo_channel)};
-    auto anchor_it = channels.find(anchor_key);
-    long n_anchor_pairs_filled = 0;
-    if (anchor_it == channels.end())
+    //  ── Consecutive anchor-pulse Δt (the pulse cadence) ───────────────
+    //  The anchor's OWN cadence: the time between consecutive salvaged
+    //  pulses (coarse[i] − coarse[i-1]).  For a healthy pulser this is a
+    //  tight GAUSSIAN at the pulse period; its mean is the average pulse
+    //  RATE (= 320 MHz clock / period_cc) and its width is the cadence
+    //  jitter.  Missed pulses produce 2×/3× satellite peaks, which we
+    //  exclude by windowing the fit to ±30 % of the (robust) median
+    //  period.  Only meaningful in FIFO-salvage mode (the pulse train).
+    std::unique_ptr<TH1F> h_anchor_consecutive_dt;
+    double anchor_period_cc = 0.0;
+    double anchor_jitter_cc = 0.0;
+    double anchor_rate_hz = 0.0;
+    long n_anchor_consecutive_filled = 0;
+    if (cfg.anchor_fifo >= 0)
     {
-        mist::logger::warning(TString::Format(
-                                  "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
-                                  "ingested hits — anchor-Δ diagnostic will be empty.",
-                                  cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
-                                  .Data());
+        std::vector<double> diffs;
+        for (const auto &pulses : anchor.per_spill_coarse)
+            for (size_t i = 1; i < pulses.size(); ++i)
+                diffs.push_back(
+                    static_cast<double>(pulses[i] - pulses[i - 1]));
+        if (!diffs.empty())
+        {
+            //  Robust period seed = median (immune to the missed-pulse
+            //  2×/3× tail that would drag a plain mean upward).
+            auto mid = diffs.begin() +
+                       static_cast<std::ptrdiff_t>(diffs.size() / 2);
+            std::nth_element(diffs.begin(), mid, diffs.end());
+            const double med = *mid;
+            const double lo = 0.7 * med, hi = 1.3 * med;
+            h_anchor_consecutive_dt = std::make_unique<TH1F>(
+                "h_anchor_consecutive_dt",
+                "consecutive anchor-pulse #Deltat;"
+                "#Deltat (cc)  = c_{i} #minus c_{i-1};pulses",
+                200, lo, hi);
+            h_anchor_consecutive_dt->SetDirectory(nullptr);
+            for (double d : diffs)
+                if (d >= lo && d < hi)
+                {
+                    h_anchor_consecutive_dt->Fill(d);
+                    ++n_anchor_consecutive_filled;
+                }
+            //  Gaussian fit → period (mean) + jitter (σ); fall back to the
+            //  histogram moments if the fit fails to converge.
+            anchor_period_cc = h_anchor_consecutive_dt->GetMean();
+            anchor_jitter_cc = h_anchor_consecutive_dt->GetRMS();
+            if (h_anchor_consecutive_dt->GetEntries() > 0)
+            {
+                h_anchor_consecutive_dt->Fit("gaus", "RQ0");
+                if (auto *fn = h_anchor_consecutive_dt->GetFunction("gaus"))
+                {
+                    anchor_period_cc = fn->GetParameter(1);
+                    anchor_jitter_cc = fn->GetParameter(2);
+                }
+            }
+            //  Average rate: clock (cc/s) ÷ period (cc) = pulses/s.  The
+            //  320 MHz ALCOR clock is the same one CC_TO_NS = 3.125 encodes.
+            constexpr double kAlcorClockHz = 320.0e6;
+            anchor_rate_hz = (anchor_period_cc > 0.0)
+                                 ? kAlcorClockHz / anchor_period_cc
+                                 : 0.0;
+            mist::logger::info(
+                TString::Format(
+                    "(pulser_calib_writer) anchor cadence: period = %.2f cc "
+                    "(%.1f ns), jitter #sigma = %.2f cc, average rate = "
+                    "%.4g Hz (%.4f MHz) from %ld in-window diffs",
+                    anchor_period_cc, anchor_period_cc * CC_TO_NS,
+                    anchor_jitter_cc, anchor_rate_hz, anchor_rate_hz / 1e6,
+                    n_anchor_consecutive_filled)
+                    .Data());
+        }
     }
-    else
+
+    long n_anchor_pairs_filled = 0;
+    if (cfg.anchor_fifo >= 0 && !anchor.per_spill_coarse.empty())
     {
-        const auto &anchor_bucket = anchor_it->second;
+        //  ── FIFO-salvage anchor ──────────────────────────────────────
+        //  The reference is the salvaged (device, anchor_fifo) pulse train
+        //  (e.g. KC705 testpulse), not an addressable channel.  Reference
+        //  EACH channel hit to the NEAREST anchor pulse in the same spill:
+        //  Δt = channel_coarse − nearest_anchor_coarse.  The per-spill
+        //  anchor coarse list is strictly monotonic (rollover increments
+        //  cleanly → get_coarse_global_time() never decreases; verified),
+        //  so it is already sorted and a binary search finds the nearest.
         for (const auto &[ch_key, ch_bucket] : channels)
         {
-            // Cap at the shorter per_spill so we don't read past the
-            // end of either channel's sparse vector.
             const int n_spills = static_cast<int>(std::min(
-                anchor_bucket.per_spill.size(),
-                ch_bucket.per_spill.size()));
+                anchor.per_spill_coarse.size(), ch_bucket.per_spill.size()));
             for (int s = 0; s < n_spills; ++s)
             {
-                const auto &anchor_hits = anchor_bucket.per_spill[s].hits;
-                const auto &ch_hits = ch_bucket.per_spill[s].hits;
-                const int n_pairs = static_cast<int>(std::min(
-                    anchor_hits.size(), ch_hits.size()));
-                for (int i = 0; i < n_pairs; ++i)
+                const auto &anchors = anchor.per_spill_coarse[s];
+                if (anchors.empty())
+                    continue;
+                for (const auto &ch_hit : ch_bucket.per_spill[s].hits)
                 {
-                    const double dc = static_cast<double>(
-                        ch_hits[i].abs_coarse_cc - anchor_hits[i].abs_coarse_cc);
-                    h_anchor_dt_vs_spill->Fill(s, dc);
+                    const int64_t tc = ch_hit.abs_coarse_cc;
+                    const auto it =
+                        std::lower_bound(anchors.begin(), anchors.end(), tc);
+                    int64_t nearest;
+                    if (it == anchors.begin())
+                        nearest = anchors.front();
+                    else if (it == anchors.end())
+                        nearest = anchors.back();
+                    else
+                    {
+                        const int64_t hi = *it, lo = *(it - 1);
+                        nearest = (tc - lo <= hi - tc) ? lo : hi;
+                    }
+                    h_anchor_dt_vs_spill->Fill(
+                        s, static_cast<double>(tc - nearest));
                     ++n_anchor_pairs_filled;
                 }
             }
         }
         mist::logger::info(TString::Format(
                                "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
-                               "(channel, anchor) pairs across %d spills",
-                               n_anchor_pairs_filled, spills_seen)
+                               "(channel hit, nearest FIFO-%d anchor pulse) pairs across %d spills",
+                               n_anchor_pairs_filled, cfg.anchor_fifo, spills_seen)
                                .Data());
+    }
+    else
+    {
+        //  ── Legacy channel anchor ────────────────────────────────────
+        const ChannelKey anchor_key{
+            static_cast<uint16_t>(cfg.anchor_device),
+            static_cast<uint16_t>(cfg.anchor_chip),
+            static_cast<uint16_t>(cfg.anchor_eo_channel)};
+        auto anchor_it = channels.find(anchor_key);
+        if (anchor_it == channels.end())
+        {
+            mist::logger::warning(TString::Format(
+                                      "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
+                                      "ingested hits — anchor-Δ diagnostic will be empty.",
+                                      cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                                      .Data());
+        }
+        else
+        {
+            const auto &anchor_bucket = anchor_it->second;
+            for (const auto &[ch_key, ch_bucket] : channels)
+            {
+                // Cap at the shorter per_spill so we don't read past the
+                // end of either channel's sparse vector.
+                const int n_spills = static_cast<int>(std::min(
+                    anchor_bucket.per_spill.size(),
+                    ch_bucket.per_spill.size()));
+                for (int s = 0; s < n_spills; ++s)
+                {
+                    const auto &anchor_hits = anchor_bucket.per_spill[s].hits;
+                    const auto &ch_hits = ch_bucket.per_spill[s].hits;
+                    const int n_pairs = static_cast<int>(std::min(
+                        anchor_hits.size(), ch_hits.size()));
+                    for (int i = 0; i < n_pairs; ++i)
+                    {
+                        const double dc = static_cast<double>(
+                            ch_hits[i].abs_coarse_cc - anchor_hits[i].abs_coarse_cc);
+                        h_anchor_dt_vs_spill->Fill(s, dc);
+                        ++n_anchor_pairs_filled;
+                    }
+                }
+            }
+            mist::logger::info(TString::Format(
+                                   "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
+                                   "(channel, anchor) pairs across %d spills",
+                                   n_anchor_pairs_filled, spills_seen)
+                                   .Data());
+        }
     }
 
     //  ── Per-channel closed-form fits, parallel ───────────────────
@@ -1905,14 +2082,53 @@ void pulser_calib_writer(
                 pulser_run_dir, "calibration", 5, "anchor_dt_vs_spill");
             util::qa::AnchorDtCanvasOpts opts;
             opts.rollover_cc = BTANA_ALCOR_ROLLOVER_TO_CC;
-            opts.title = TString::Format(
-                             "#Deltat_{trg} vs spill   "
-                             "(channel #minus anchor: device %d, chip %d, channel %d)",
-                             cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
-                             .Data();
+            opts.title =
+                (cfg.anchor_fifo >= 0)
+                    ? TString::Format(
+                          "#Deltat_{trg} vs spill   "
+                          "(channel #minus nearest anchor pulse: device %d, FIFO %d)",
+                          cfg.anchor_device, cfg.anchor_fifo)
+                          .Data()
+                    : TString::Format(
+                          "#Deltat_{trg} vs spill   "
+                          "(channel #minus anchor: device %d, chip %d, channel %d)",
+                          cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                          .Data();
             opts.pdf_path = pdf.string();
             opts.logger_prefix = "(pulser_calib_writer)";
             util::qa::render_anchor_dt_canvas(*h_anchor_dt_vs_spill, opts);
+
+            //  Consecutive anchor-pulse Δt — the pulse cadence as a 1D
+            //  Gaussian (its own PDF, 06_anchor_consecutive_dt).  The fit
+            //  mean is the period; the title carries the derived average
+            //  rate.  Log-Y so the missed-pulse tail stays visible.
+            if (h_anchor_consecutive_dt &&
+                n_anchor_consecutive_filled > 0)
+            {
+                diag_dir->WriteObject(h_anchor_consecutive_dt.get(),
+                                      h_anchor_consecutive_dt->GetName());
+                const auto pdf_cons = util::qa::pdf_path(
+                    pulser_run_dir, "calibration", 6,
+                    "anchor_consecutive_dt");
+                TCanvas c_cons("c_anchor_consecutive_dt",
+                               "consecutive anchor dt", 900, 650);
+                c_cons.SetLogy();
+                h_anchor_consecutive_dt->SetTitle(
+                    TString::Format(
+                        "consecutive anchor-pulse #Deltat   (device %d, "
+                        "FIFO %d)   period = %.2f cc, rate = %.4f MHz;"
+                        "#Deltat (cc)  = c_{i} #minus c_{i-1};pulses",
+                        cfg.anchor_device, cfg.anchor_fifo, anchor_period_cc,
+                        anchor_rate_hz / 1e6));
+                h_anchor_consecutive_dt->SetLineColor(kAzure + 1);
+                h_anchor_consecutive_dt->Draw("HIST");
+                if (auto *fn = h_anchor_consecutive_dt->GetFunction("gaus"))
+                {
+                    fn->SetLineColor(kRed + 1);
+                    fn->Draw("SAME");
+                }
+                c_cons.SaveAs(pdf_cons.string().c_str());
+            }
         }
     }
 
