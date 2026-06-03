@@ -383,6 +383,13 @@ struct CalibConfigStruct
     /// salvaged by (device, fifo) and kept as the anchor reference (coarse
     /// only).  Default -1 disables the salvage (legacy channel-anchor mode).
     int anchor_fifo = -1;
+    /// @brief Anchor coincidence delay (cc) — mimics the trigger setup's
+    /// hardware delay.  Subtracted from the channel−anchor Δt so the
+    /// coincidence peak (which sits at the laser/cable delay, often far from
+    /// 0) shifts into the fixed ±250 cc Δt histogram window.  @c 0 (default)
+    /// auto-uses the MEASURED average peak position; any nonzero value pins
+    /// the delay explicitly (reproducible, trigger-style).
+    double anchor_delay_cc = 0.0;
 
     /// @brief Minimum cumulative hits (across all spills) on a single
     /// GlobalIndex before its `(a, b)` fit is published.  GlobalIndex's

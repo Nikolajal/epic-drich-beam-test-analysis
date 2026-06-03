@@ -38,6 +38,13 @@ anchor_chip       = 0
 anchor_eo_channel = 0
 anchor_fifo       = 32
 
+# Coincidence delay (cc) — mimics the trigger setup's hardware delay.
+# Subtracted from the channel-anchor Δt so the coincidence peak (sitting at
+# the laser/cable delay, often far from 0) shifts into the fixed ±250 cc
+# histogram window.  0 = auto (use the measured average peak); nonzero pins
+# the delay explicitly (reproducible).  dRICH 2026: the laser peak is ~7736 cc.
+anchor_delay_cc   = 0.0
+
 # ── Fit thresholds ──────────────────────────────────────────────────
 # Cumulative hit floor for publishing a per-GlobalIndex calibration.
 # Below this, the GlobalIndex is omitted from fine_calib.toml (downstream
