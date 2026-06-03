@@ -991,8 +991,8 @@ void pulser_calib_writer(
                        " FIFO files; reading + bucketing per channel");
 
     std::map<ChannelKey, ChannelBucket> channels;
-    AnchorBucket anchor;          //  salvaged (device, anchor_fifo) reference pulses
-    long total_anchor_hits = 0;   //  count of salvaged anchor pulses
+    AnchorBucket anchor;        //  salvaged (device, anchor_fifo) reference pulses
+    long total_anchor_hits = 0; //  count of salvaged anchor pulses
     long total_hits_read = 0;
     long total_hits_rejected_fine_oob = 0; //  fine bin outside [fine_min_valid, fine_max_valid]
     int spills_seen = 0;
@@ -1199,7 +1199,7 @@ void pulser_calib_writer(
     //  the per-pixel coincidence window → lights up the laser spot.  Rendered
     //  as PDF 08.
     std::unique_ptr<TH2F> h_coinc_map;
-    double coinc_shift_cc = 0.0;   // measured average peak position (cc)
+    double coinc_shift_cc = 0.0;    // measured average peak position (cc)
     double anchor_delay_used = 0.0; // delay actually subtracted (cc)
 
     //  ── Consecutive anchor-pulse Δt (the pulse cadence) ───────────────
@@ -1292,12 +1292,12 @@ void pulser_calib_writer(
                 if (measured != cfg.pulser_period_cc)
                 {
                     mist::logger::info(TString::Format(
-                        "(pulser_calib_writer) pulser_period_cc auto-set from "
-                        "anchor cadence: %.0f -> %.0f cc (%.4f MHz); was the "
-                        "TOML/default value",
-                        cfg.pulser_period_cc, measured,
-                        (measured > 0 ? 320.0e6 / measured / 1e6 : 0.0))
-                        .Data());
+                                           "(pulser_calib_writer) pulser_period_cc auto-set from "
+                                           "anchor cadence: %.0f -> %.0f cc (%.4f MHz); was the "
+                                           "TOML/default value",
+                                           cfg.pulser_period_cc, measured,
+                                           (measured > 0 ? 320.0e6 / measured / 1e6 : 0.0))
+                                           .Data());
                     cfg.pulser_period_cc = measured;
                 }
             }
@@ -1389,8 +1389,8 @@ void pulser_calib_writer(
         //  alignment.
         if (!ch_dt_for_map.empty())
         {
-            constexpr int kHalf = 2;       // ± window (cc) around each peak
-            const int kRange = dt_win;     // Δt confined to ±period/2
+            constexpr int kHalf = 2;   // ± window (cc) around each peak
+            const int kRange = dt_win; // Δt confined to ±period/2
             const int kNb = 2 * kRange + 1;
             //  PHYSICAL detector map: each lit pixel placed at its real (x, y)
             //  in mm via the channel→position Mapping (same geometry the
@@ -1443,9 +1443,10 @@ void pulser_calib_writer(
             }
             if (n_unmapped > 0)
                 mist::logger::warning(TString::Format(
-                    "(pulser_calib_writer) coincidence map: %ld lit pixels had "
-                    "no (x,y) in mapping_conf.toml (unplaced)", n_unmapped)
-                    .Data());
+                                          "(pulser_calib_writer) coincidence map: %ld lit pixels had "
+                                          "no (x,y) in mapping_conf.toml (unplaced)",
+                                          n_unmapped)
+                                          .Data());
             double med_shift = 0.0;
             if (!lit_shifts.empty())
             {
@@ -1477,12 +1478,12 @@ void pulser_calib_writer(
                     static_cast<double>(s16),
                     static_cast<double>(d16) - anchor_delay_used);
             mist::logger::info(TString::Format(
-                "(pulser_calib_writer) coincidence: %ld lit pixels, average "
-                "peak = %.0f cc (%.1f ns); delay subtracted = %.0f cc (%s) → "
-                "peak recentred in the ±250 cc window",
-                n_lit, med_shift, med_shift * CC_TO_NS, anchor_delay_used,
-                (cfg.anchor_delay_cc != 0.0) ? "configured" : "auto/measured")
-                .Data());
+                                   "(pulser_calib_writer) coincidence: %ld lit pixels, average "
+                                   "peak = %.0f cc (%.1f ns); delay subtracted = %.0f cc (%s) → "
+                                   "peak recentred in the ±250 cc window",
+                                   n_lit, med_shift, med_shift * CC_TO_NS, anchor_delay_used,
+                                   (cfg.anchor_delay_cc != 0.0) ? "configured" : "auto/measured")
+                                   .Data());
         }
     }
     else
@@ -2376,9 +2377,9 @@ void pulser_calib_writer(
                                      std::max(after_amp - ped_seed, 1.0),
                                      after_seed, 2.0, ped_seed);
                 f_full.SetParLimits(1, prompt_seed - 10.0, prompt_seed + 10.0);
-                f_full.SetParLimits(2, 0.3, 15.0);   // prompt σ
+                f_full.SetParLimits(2, 0.3, 15.0); // prompt σ
                 f_full.SetParLimits(4, after_seed - 10.0, after_seed + 10.0);
-                f_full.SetParLimits(5, 0.3, 15.0);   // afterpulse σ
+                f_full.SetParLimits(5, 0.3, 15.0); // afterpulse σ
                 f_full.SetParLimits(6, 0.0, h07->GetMaximum());
                 f_full.SetNpx(2000);
                 h07->Fit(&f_full, "Q0");
@@ -2424,15 +2425,16 @@ void pulser_calib_writer(
 
                 if (clean_peak)
                     mist::logger::info(TString::Format(
-                        "(pulser_calib_writer) coincidence: prompt #mu=%.2f ns "
-                        "#sigma=%.2f ns, %.3f%% of %ld pulses; afterpulse %s "
-                        "#mu=%.2f ns #sigma=%.2f ns, prob=%.3f%% (smaller/"
-                        "larger area); DCR pedestal=%.1f/bin",
-                        (anchor_delay_used + mu_p) * CC_TO_NS, sig_p * CC_TO_NS,
-                        100.0 * coinc_frac, total_anchor_hits,
-                        clean_after ? "" : "(weak)",
-                        (anchor_delay_used + mu_a) * CC_TO_NS,
-                        sig_a * CC_TO_NS, 100.0 * after_frac, ped).Data());
+                                           "(pulser_calib_writer) coincidence: prompt #mu=%.2f ns "
+                                           "#sigma=%.2f ns, %.3f%% of %ld pulses; afterpulse %s "
+                                           "#mu=%.2f ns #sigma=%.2f ns, prob=%.3f%% (smaller/"
+                                           "larger area); DCR pedestal=%.1f/bin",
+                                           (anchor_delay_used + mu_p) * CC_TO_NS, sig_p * CC_TO_NS,
+                                           100.0 * coinc_frac, total_anchor_hits,
+                                           clean_after ? "" : "(weak)",
+                                           (anchor_delay_used + mu_a) * CC_TO_NS,
+                                           sig_a * CC_TO_NS, 100.0 * after_frac, ped)
+                                           .Data());
                 else
                     mist::logger::info(
                         "(pulser_calib_writer) coincidence: no clean prompt "
@@ -2491,7 +2493,7 @@ void pulser_calib_writer(
                 c_1d.SetLogy();
                 gStyle->SetOptStat(0);
                 gStyle->SetOptFit(0);
-                h07->SetStats(0);          // no stat/fit box on the fit plot
+                h07->SetStats(0); // no stat/fit box on the fit plot
                 h07->SetLineColor(kAzure + 1);
                 h07->SetMinimum(0.5);
                 h07->Draw("HIST");
