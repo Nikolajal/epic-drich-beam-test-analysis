@@ -335,6 +335,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._livemon_worker = None
         self._build_remote_watcher()
 
+        # Snapshot of the config facets that drive the reactions in
+        # ``_on_dashboard_config_changed``.  Everything above was just
+        # built from the current file, so this reflects the applied
+        # state — the change handler diffs against it and only rebuilds
+        # the facet that actually moved.  Without this, every Settings
+        # edit (even an unrelated key) re-applied the theme, rebuilt the
+        # tab bar, and tore down + restarted the live-monitor / Sheets
+        # worker threads, the last blocking the UI thread on
+        # ``QThread.wait`` — which is what froze the dashboard on edit.
+        self._config_facets = self._read_config_facets()
+
     def _prewarm_qa_backends(self) -> None:
         import threading
 
@@ -594,29 +605,86 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:  # noqa: BLE001
             pass
 
+    def _read_config_facets(self) -> dict:
+        """Snapshot the dashboard-config slices the change handler reacts to.
+
+        Settings writes ``qa_quicklook.toml`` after every edit (a 500 ms
+        debounce), so ``_on_dashboard_config_changed`` fires constantly.
+        Each reaction it can run is expensive — re-applying the global
+        stylesheet, rebuilding the tab bar, and (the costly one) tearing
+        down + restarting the live-monitor / Sheets worker threads, which
+        blocks the UI thread on ``QThread.wait`` for up to 2 s while an
+        in-flight SSH poll drains.  Diffing these facets lets the handler
+        skip the reaction whose config section didn't actually move, so
+        editing an unrelated key (a retention count, an rsync path) no
+        longer freezes the UI.
+        """
+        ui = self._read_ui_config()
+        return {
+            # Drives _rebuild_tab_bar (Advanced QA tab visibility).
+            "show_advanced": bool(ui.get("show_advanced_qa", False)),
+            # Drives apply_current_theme (UI palette + plot theme).
+            "theme": (
+                str(ui.get("theme", "system")).lower(),
+                str(ui.get("plots_theme", "follow")).lower(),
+            ),
+            # Drives the Sheets-sync worker rebuild/reload.
+            "sheets": self._read_dashboard_section("sheets_sync"),
+            # Drives the live-monitor worker rebuild (the blocking one).
+            "livemon": self._read_dashboard_section("livemon"),
+        }
+
+    def _read_dashboard_section(self, name: str) -> dict:
+        """Return one top-level table from the dashboard config as a dict."""
+        if not self._dashboard_config.is_file():
+            return {}
+        try:
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:  # pragma: no cover
+                import tomli as tomllib  # type: ignore
+            with self._dashboard_config.open("rb") as fh:
+                data = tomllib.load(fh)
+        except Exception:  # noqa: BLE001
+            return {}
+        section = data.get(name, {})
+        return section if isinstance(section, dict) else {}
+
     def _on_dashboard_config_changed(self, qpath: str) -> None:
         # QFileSystemWatcher drops the path on editor-renames; re-add.
         if qpath not in self._config_watcher.files():
             self._config_watcher.addPath(qpath)
-        self._rebuild_tab_bar()
-        # The theme may have flipped too — re-apply.
-        self.apply_current_theme()
-        # The [sheets_sync] block may have flipped — let the worker
-        # re-read it.  If we never spun a worker up (config was
-        # disabled at construction) and it's now enabled, build one
-        # on the fly.
-        if self._sheets_worker is not None:
-            QtCore.QMetaObject.invokeMethod(
-                self._sheets_worker, "reload_config",
-                QtCore.Qt.QueuedConnection,
-            )
-        else:
-            self._build_sheets_sync()
-        # Live monitor — flipping [livemon] enabled in Settings now
-        # takes effect without a restart.  _build_remote_watcher is
-        # idempotent: stops the existing thread if any, starts a new
-        # one if enabled is now true.
-        self._on_dashboard_config_changed_livemon()
+
+        # Diff the new config against the applied snapshot and only run
+        # the reaction whose section changed.  A blanket rebuild-all here
+        # froze the UI on every Settings edit because rebuilding the
+        # live-monitor / Sheets threads blocks on ``QThread.wait``.
+        new = self._read_config_facets()
+        old = getattr(self, "_config_facets", {})
+        self._config_facets = new
+        if not old:
+            # Snapshot missing (shouldn't happen post-construction) —
+            # fall back to the old behaviour so nothing silently stalls.
+            old = {}
+
+        if new.get("show_advanced") != old.get("show_advanced"):
+            self._rebuild_tab_bar()
+        if new.get("theme") != old.get("theme"):
+            self.apply_current_theme()
+        if new.get("sheets") != old.get("sheets"):
+            # If we never spun a worker up (disabled at construction) and
+            # it's now enabled, build one; otherwise let it re-read.
+            if self._sheets_worker is not None:
+                QtCore.QMetaObject.invokeMethod(
+                    self._sheets_worker, "reload_config",
+                    QtCore.Qt.QueuedConnection,
+                )
+            else:
+                self._build_sheets_sync()
+        if new.get("livemon") != old.get("livemon"):
+            # _build_remote_watcher is idempotent: stops the existing
+            # thread if any, starts a new one if enabled is now true.
+            self._on_dashboard_config_changed_livemon()
 
     # ----- status bar / shortcuts ---------------------------------------
 
