@@ -5,13 +5,14 @@
  *
  * Convention (also in qa_quicklook/DISCUSSION.md):
  *
- *   Data/<run-id>/qa/<step>/NN_<name>.pdf
+ *   Data/<run-id>/qa/<step>/<name>.pdf
  *
  * where ``step`` is one of ``"lightdata"`` / ``"recodata"`` /
  * ``"recotrack"`` / ``"calibration"`` (or anything else; the
  * dashboard's per-step QA sub-tabs render whatever's there).
- * ``NN`` is a 2-digit prefix that governs display order — sort by
- * filename and you get the writer's intended order.
+ * Filenames are plain ``<name>.pdf`` — the dashboard's "Full plots"
+ * view sorts them alphabetically; topic routing and the curated
+ * General chapters key off the bare name.
  *
  * Why a helper instead of every writer rolling its own path?
  * The QA dashboard hard-codes the ``qa/<step>/`` convention; if a
@@ -24,7 +25,7 @@
  *     TCanvas c("c_trigger_qa", "", 1200, 800);
  *     // … draw …
  *     c.SaveAs(util::qa::pdf_path(run_dir, "lightdata", 1, "trigger_qa")
- *              .c_str());
+ *              .c_str());  // → Data/<run>/qa/lightdata/trigger_qa.pdf
  *
  * The parent directory is created on-demand.  The helper is
  * header-only — no source unit needed.
@@ -53,9 +54,9 @@ namespace util::qa
  * @param step     Pipeline step tag — should match what the QA tab
  *                 expects: ``"lightdata"`` / ``"recodata"`` /
  *                 ``"recotrack"`` / ``"calibration"``.
- * @param order    2-digit display-order prefix.  Sort-by-name
- *                 governs rendering order in the dashboard; pick
- *                 1, 2, 3 … per file in publication order.
+ * @param order    Accepted but ignored — retained so call sites stay
+ *                 unchanged.  Filenames carry no numeric prefix; the
+ *                 dashboard's "Full plots" view sorts alphabetically.
  * @param name     Short identifier for the plot (no spaces / no
  *                 extension — the helper appends ``.pdf``).
  *
@@ -73,18 +74,15 @@ inline std::filesystem::path pdf_path(const std::string &run_dir,
     // can't possibly recover from "QA dir not writable").
     std::filesystem::create_directories(dir);
 
-    // 2-digit zero-padded prefix so filename-sort = publication
-    // order across 1..99.  Anything past 99 still sorts correctly
-    // because the underscore between order and name keeps fields
-    // separated.
-    std::ostringstream basename;
-    if (order < 10 && order >= 0)
-        basename << "0" << order;
-    else
-        basename << order;
-    basename << "_" << name << ".pdf";
+    // Plain ``<name>.pdf`` — no numeric order prefix.  The dashboard's
+    // "Full plots" per-writer view falls back to alphabetical sort,
+    // which is good enough; topic routing and the curated General
+    // chapters key off the bare name already.  ``order`` is accepted
+    // but ignored — kept in the signature so de-numbering stays a
+    // one-place edit here and every call site is a no-op.
+    (void)order;
 
-    return dir / basename.str();
+    return dir / (name + ".pdf");
 }
 
 /**
