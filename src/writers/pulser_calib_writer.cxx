@@ -1457,12 +1457,20 @@ void pulser_calib_writer(
             coinc_shift_cc = med_shift;
 
             //  ── Delay (mimic trigger setup) ──────────────────────────
-            //  Subtract a delay so the coincidence peak lands inside the
-            //  fixed ±250 cc window.  cfg.anchor_delay_cc == 0 → auto-use the
-            //  MEASURED average peak; nonzero pins it (reproducible).
-            anchor_delay_used = (cfg.anchor_delay_cc != 0.0)
-                                    ? cfg.anchor_delay_cc
-                                    : coinc_shift_cc;
+            //  Subtract a delay so the coincidence peak lands inside the fixed
+            //  ±250 cc window.  Two modes:
+            //    cfg.anchor_delay_cc != 0  → PINNED: use it literally.
+            //    cfg.anchor_delay_cc == 0  → AUTO-PICKER: centre on the
+            //      MEASURED peak, but ONLY when it was picked up correctly —
+            //      i.e. enough lit pixels (a real coincidence spot).  Below
+            //      that floor the peak isn't trustworthy, so no shift (0) and
+            //      the run is not spuriously recentred.
+            constexpr long kMinLitForAutoDelay = 10;
+            const bool auto_picker = (cfg.anchor_delay_cc == 0.0);
+            const bool peak_ok = (n_lit >= kMinLitForAutoDelay);
+            anchor_delay_used = !auto_picker  ? cfg.anchor_delay_cc
+                                : peak_ok      ? coinc_shift_cc
+                                              : 0.0;
             //  1D integrated Δt — recentred by the delay (±100 cc window).
             for (const auto &[key, dts] : ch_dt_for_map)
                 for (int16_t d : dts)
@@ -1478,11 +1486,16 @@ void pulser_calib_writer(
                     static_cast<double>(s16),
                     static_cast<double>(d16) - anchor_delay_used);
             mist::logger::info(TString::Format(
-                                   "(pulser_calib_writer) coincidence: %ld lit pixels, average "
-                                   "peak = %.0f cc (%.1f ns); delay subtracted = %.0f cc (%s) → "
-                                   "peak recentred in the ±250 cc window",
-                                   n_lit, med_shift, med_shift * CC_TO_NS, anchor_delay_used,
-                                   (cfg.anchor_delay_cc != 0.0) ? "configured" : "auto/measured")
+                                   "(pulser_calib_writer) coincidence: %ld lit pixels, measured "
+                                   "average peak = %.0f cc (%.1f ns); delay subtracted = %.0f cc "
+                                   "[%s] -> peak %srecentred",
+                                   n_lit, med_shift, med_shift * CC_TO_NS,
+                                   anchor_delay_used,
+                                   !auto_picker ? "pinned"
+                                   : peak_ok    ? "auto-picker"
+                                                : "auto-picker: peak not "
+                                                  "confident, no shift",
+                                   (anchor_delay_used != 0.0) ? "" : "NOT ")
                                    .Data());
         }
     }
