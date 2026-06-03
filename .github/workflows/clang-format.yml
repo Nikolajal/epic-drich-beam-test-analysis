@@ -25,6 +25,17 @@
 # review).  PR is the right cut-off — that's where formatting MUST be
 # clean before merge.
 #
+# ── The gate job (`format-gate`) ────────────────────────────────────
+# The `format` job above is a CONVENIENCE (auto-pushes the fix), not a
+# gate: a maintainer who merges the instant they open the PR beats it,
+# and nothing blocks the merge.  `format-gate` is a separate READ-ONLY
+# job (`clang-format --dry-run -Werror`, no write perms, no push) whose
+# only job is to be RED on any diff and GREEN when clean.  Mark it a
+# REQUIRED status check on dev/main (branch protection — see
+# scripts/enable_branch_protection.sh) so the merge button stays locked
+# until formatting is clean.  After the `format` job pushes its fix, the
+# gate re-runs on that commit and goes green; the merge then unlocks.
+#
 # ── clang-format version pin ────────────────────────────────────────
 # Ubuntu noble's apt clang-format-18 produces output identical to
 # clang-format-22 (Homebrew) for this codebase under our `.clang-format`
@@ -151,3 +162,37 @@ jobs:
               echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
+
+  #  ── Read-only gate ──────────────────────────────────────────────────
+  #  The REQUIRED status check.  Never pushes, never fixes — just verifies.
+  #  Make this context required on dev/main (scripts/enable_branch_protection.sh)
+  #  so a PR cannot merge until it is green.  Runs on the auto-fix commit too,
+  #  so it flips green once `format` has pushed the fix.
+  format-gate:
+    name: clang-format gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format
+          clang-format --version
+
+      - name: Verify formatting (read-only, fail on diff)
+        run: |
+          set -e
+          mapfile -d '' files < <(find include src macros -type f \
+              \( -name '*.h' -o -name '*.cxx' -o -name '*.cpp' -o -name '*.hpp' \) \
+              -not -path '*/build/*' -not -path '*/_deps/*' -print0)
+          echo "Checking ${#files[@]} source files (dry-run)."
+          #  --dry-run -Werror: exit non-zero on ANY formatting diff, change
+          #  nothing on disk.  This is the gate the merge button waits on.
+          clang-format --dry-run -Werror --style=file "${files[@]}"

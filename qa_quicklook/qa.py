@@ -34,7 +34,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import cross_run_trends
 from . import qa_pipeline
-from . import retention
 from . import rundb
 from . import thumbs
 
@@ -354,9 +353,10 @@ class QaView(QtWidgets.QWidget):
         # allowlist-protected purge as ``qa_pipeline --clean``: the
         # ``qa/`` render tree, the writer output roots, and stray
         # run-root ``h_*.pdf``).  Raw DAQ device dirs and calibration
-        # files are never matched; pinned (``.qa_persistent``) runs are
-        # refused.  After the purge it also drops the in-process render
-        # caches and rebuilds, so the view reflects the now-empty QA.
+        # files are never matched; the ``.qa_persistent`` pin guards raw
+        # data only, so pinned runs clear like any other.  After the
+        # purge it drops the in-process render caches and rebuilds, so
+        # the view reflects the now-empty QA.
         self._clear_btn = QtWidgets.QPushButton(" 🗑  Clear QA ")
         f = self._clear_btn.font(); f.setPointSize(f.pointSize() + 2)
         self._clear_btn.setFont(f)
@@ -365,7 +365,8 @@ class QaView(QtWidgets.QWidget):
             "(the qa/ render tree + lightdata/recodata/recotrack output "
             "roots + stray h_*.pdf — same set as `qa_pipeline --clean`), "
             "then rebuild the view.  Raw device dirs and calibration "
-            "files are left untouched; pinned runs are skipped."
+            "files are left untouched.  Works on pinned runs too — the "
+            "pin protects raw data, not regenerable QA."
         )
         self._clear_btn.clicked.connect(self._on_clear_qa)
         top_row.addWidget(self._clear_btn)
@@ -521,8 +522,9 @@ class QaView(QtWidgets.QWidget):
             (``lightdata``/``recodata``/``recotrackdata.root``), and
             stray run-root ``h_*.pdf``.  Raw DAQ device dirs and
             calibration files are NEVER matched, so a mis-fire can't
-            destroy a run's inputs.  Pinned (``.qa_persistent``)
-            baselines are refused outright.
+            destroy a run's inputs.  The ``.qa_persistent`` pin guards
+            raw data only and does NOT exempt a run — its QA is still
+            regenerable, so pinned and unpinned runs clear alike.
           - IN PROCESS — the on-disk artefacts just vanished, so drop
             the process-wide PDF-thumbnail cache (keyed on path+mtime,
             else stale renders are served from RAM forever) and
@@ -544,17 +546,12 @@ class QaView(QtWidgets.QWidget):
                 f"Run directory not found:\n{run_dir}",
             )
             return
-        # Pinned baselines are exempt — the operator pinned this run to
-        # keep it, and the clean would drop recodata.root (costly to
-        # regenerate).  Unpin first to override.
-        if retention.is_persistent(run_dir):
-            QtWidgets.QMessageBox.information(
-                self, "Clear QA",
-                f"Run {self._current_run_id} is pinned (.qa_persistent) "
-                "and is exempt from Clear QA.\n\nUnpin it first if you "
-                "really want to purge its QA artefacts.",
-            )
-            return
+        # No pin exemption: ``.qa_persistent`` guards a run's RAW DAQ data
+        # against retention pruning — it says nothing about the QA
+        # artefacts, which are regenerable by re-running the pipeline.
+        # Clearing QA on a pinned baseline is therefore safe (the raw
+        # inputs the clean would need to rebuild are exactly what the pin
+        # protects), so Clear QA treats pinned and unpinned runs alike.
         confirm = QtWidgets.QMessageBox.question(
             self, "Clear QA",
             f"Delete the regenerable QA artefacts for "
