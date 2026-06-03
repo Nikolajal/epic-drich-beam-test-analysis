@@ -1468,9 +1468,9 @@ void pulser_calib_writer(
             constexpr long kMinLitForAutoDelay = 10;
             const bool auto_picker = (cfg.anchor_delay_cc == 0.0);
             const bool peak_ok = (n_lit >= kMinLitForAutoDelay);
-            anchor_delay_used = !auto_picker  ? cfg.anchor_delay_cc
-                                : peak_ok      ? coinc_shift_cc
-                                              : 0.0;
+            anchor_delay_used = !auto_picker ? cfg.anchor_delay_cc
+                                : peak_ok    ? coinc_shift_cc
+                                             : 0.0;
             //  1D integrated Δt — recentred by the delay (±100 cc window).
             for (const auto &[key, dts] : ch_dt_for_map)
                 for (int16_t d : dts)
