@@ -112,6 +112,11 @@ namespace btana
  *                                   @c -1 keeps the TOML value.
  * @param anchor_eo_channel_override CLI override for ``cfg.anchor_eo_channel``.
  *                                   @c -1 keeps the TOML value.
+ * @param anchor_fifo_override       CLI override for ``cfg.anchor_fifo``.
+ *                                   @c -1 keeps the TOML value.  Set ≥ 0 to
+ *                                   salvage the pulsed reference by
+ *                                   (anchor_device, anchor_fifo) — e.g. the
+ *                                   KC705 testpulse on device 200 / FIFO 32.
  * @param pulser_period_cc_override  CLI override for ``cfg.pulser_period_cc``.
  *                                   @c -1.0 keeps the TOML value;
  *                                   any value @c >= 0.0 wins (0.0
@@ -133,6 +138,7 @@ void pulser_calib_writer(
     int anchor_device_override = -1,
     int anchor_chip_override = -1,
     int anchor_eo_channel_override = -1,
+    int anchor_fifo_override = -1,
     double pulser_period_cc_override = -1.0);
 
 } // namespace btana

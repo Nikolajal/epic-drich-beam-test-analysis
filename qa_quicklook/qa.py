@@ -167,6 +167,12 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     # Pulser-calib-side anchor-Δt vs spill (single canvas per run) →
     # Calibration.  Match BEFORE the lightdata-side anchor_dt rule.
     (_re_topics.compile(r"^anchor_dt_vs_spill(\..*)?$"),         "calibration"),
+    # Pulser-calib anchor cadence (consecutive-Δt Gaussian) → Calibration.
+    (_re_topics.compile(r"^anchor_consecutive_dt(\..*)?$"),      "calibration"),
+    # Pulser-calib 1D channel−anchor Δt (coincidence distribution) → Calibration.
+    (_re_topics.compile(r"^anchor_dt_1d(\..*)?$"),               "calibration"),
+    # Pulser-calib coincidence hitmap (laser spot) → Calibration.
+    (_re_topics.compile(r"^coincidence_map(\..*)?$"),            "calibration"),
     # Lightdata per-trigger anchor-Δt PDFs → Triggers.
     (_re_topics.compile(r"^anchor_dt_.+(\..*)?$"),               "triggers"),
     # Per-trigger time-difference w/ Cherenkov → Triggers.
@@ -3151,9 +3157,14 @@ class _GeneralQaPage(QtWidgets.QWidget):
             "afterpulse_per_channel.pdf",   # per-channel afterpulse % + averages
             "afterpulse_hitmap.pdf",
         )),
+        ("Calibration", (
+            "anchor_dt_vs_spill.pdf",       # channel hit vs nearest anchor pulse
+            "anchor_dt_1d.pdf",             # channel-anchor Δt 1D (coincidence dist.)
+            "coincidence_map.pdf",          # laser spot: per-pixel coincidence map
+            "anchor_consecutive_dt.pdf",    # anchor cadence: Gaussian period + rate
+        )),
         ("Timing", (
             "timing_alignment.pdf",
-            "anchor_dt_vs_spill.pdf",
             "timing_hit_map.pdf",           # chip-0 vs chip-1 coincidence occupancy
         )),
         ("Cherenkov", (
