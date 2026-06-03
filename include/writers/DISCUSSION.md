@@ -116,8 +116,18 @@ originally inline in `pulser_calib_writer`.  Extracted 2026-05-29 to
 `include/writers/anchor_dt_canvas.h` / `src/writers/anchor_dt_canvas.cxx`
 so the same renderer covers both:
 
-- `pulser_calib_writer` — one canvas per run, anchor = a configured
-  channel (`cfg.anchor_device/chip/eo_channel`).
+- `pulser_calib_writer` — one canvas per run.  Two anchor modes:
+  *legacy channel* (`cfg.anchor_device/chip/eo_channel`, paired hit-by-hit)
+  and *FIFO-salvage* (`cfg.anchor_fifo ≥ 0`).  In FIFO-salvage mode the
+  pulsed reference (e.g. the KC705 testpulse, device 200 / FIFO 32) is read
+  out on a dedicated FIFO with `tdc/fine/pixel/column` all sentinel (-1) —
+  no valid channel ordinal — so it is salvaged by `(device, fifo)` (require
+  `trigger_tag`, type 9, to skip the spill markers) and each channel hit is
+  referenced to the *nearest* anchor pulse via binary search on the
+  per-spill (strictly monotonic) coarse list.  A companion 1D diagnostic
+  (`06_anchor_consecutive_dt`, not this 3-pad canvas) fits the consecutive
+  anchor-pulse Δt to a Gaussian → pulse period + jitter, and reports the
+  average rate (= 320 MHz clock / period_cc).
 - `lightdata_writer` — one canvas per ``TriggerNumber`` that fired
   ≥ 1 time in the run.  Anchor = the trigger's own coarse counter;
   Y = `c_hit − c_trigger` in cc.  Lazy-allocated per trigger; written
