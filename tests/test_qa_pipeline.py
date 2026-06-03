@@ -354,3 +354,79 @@ class TestStageNamesExport:
         assert qa_pipeline.STAGE_NAMES == (
             "lightdata", "recodata", "recotrack",
         )
+
+
+class TestCleanRunDir:
+    """``clean_run_dir`` is the allowlist-protected purge behind both
+    ``qa_pipeline --clean`` and the dashboard's Clear QA button.  It must
+    drop every regenerable artefact while leaving raw DAQ device dirs and
+    calibration files — a run's irreplaceable inputs — untouched."""
+
+    @staticmethod
+    def _populate(rd: Path) -> None:
+        """Lay down a realistic mix of regenerable + protected entries."""
+        #  Regenerable: qa/ render tree, writer output roots, stray PDFs.
+        for stage in ("lightdata", "recodata", "recotrack"):
+            (rd / "qa" / stage).mkdir(parents=True)
+            (rd / "qa" / stage / "plot.pdf").write_bytes(b"pdf")
+        (rd / "lightdata.root").write_bytes(b"root")
+        (rd / "recodata.root").write_bytes(b"root")
+        (rd / "recotrackdata.root").write_bytes(b"root")
+        (rd / "h_radial_fit.pdf").write_bytes(b"pdf")
+        (rd / "h_sigma_vs_n.pdf").write_bytes(b"pdf")
+        #  Protected: raw device dir + calibration files + a kept PDF
+        #  that isn't an h_-prefixed stray.
+        (rd / "rdo-0").mkdir()
+        (rd / "rdo-0" / "spill_000.dat").write_bytes(b"raw")
+        (rd / "fine_calibration.root").write_bytes(b"calib")
+        (rd / "timing_fine_calib.txt").write_bytes(b"calib")
+        (rd / "summary.pdf").write_bytes(b"pdf")
+
+    def test_removes_regenerable_keeps_inputs(self, tmp_path: Path) -> None:
+        rd = tmp_path / "20260101-100000"
+        rd.mkdir()
+        self._populate(rd)
+
+        removed = qa_pipeline.clean_run_dir(rd, lambda _m: None)
+
+        #  qa/ tree + 3 writer roots + 2 stray h_*.pdf = 6 entries.
+        assert removed == 6
+        assert not (rd / "qa").exists()
+        assert not (rd / "lightdata.root").exists()
+        assert not (rd / "recodata.root").exists()
+        assert not (rd / "recotrackdata.root").exists()
+        assert not (rd / "h_radial_fit.pdf").exists()
+        assert not (rd / "h_sigma_vs_n.pdf").exists()
+        #  Raw data + calibration + non-stray PDF survive untouched.
+        assert (rd / "rdo-0" / "spill_000.dat").read_bytes() == b"raw"
+        assert (rd / "fine_calibration.root").exists()
+        assert (rd / "timing_fine_calib.txt").exists()
+        assert (rd / "summary.pdf").exists()
+
+    def test_pinned_run_is_not_exempt(self, tmp_path: Path) -> None:
+        #  ``.qa_persistent`` guards RAW data against retention pruning;
+        #  it must NOT shield regenerable QA.  The purge ignores it (and
+        #  leaves the marker itself in place — it lives at the run root,
+        #  outside the allowlist).
+        rd = tmp_path / "20260101-110000"
+        rd.mkdir()
+        self._populate(rd)
+        (rd / ".qa_persistent").touch()
+
+        removed = qa_pipeline.clean_run_dir(rd, lambda _m: None)
+
+        assert removed == 6
+        assert not (rd / "qa").exists()
+        assert not (rd / "lightdata.root").exists()
+        assert (rd / ".qa_persistent").exists()
+
+    def test_dry_run_deletes_nothing(self, tmp_path: Path) -> None:
+        rd = tmp_path / "20260101-120000"
+        rd.mkdir()
+        self._populate(rd)
+
+        removed = qa_pipeline.clean_run_dir(rd, lambda _m: None, dry_run=True)
+
+        assert removed == 6
+        assert (rd / "qa").exists()
+        assert (rd / "lightdata.root").exists()
