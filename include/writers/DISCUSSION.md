@@ -127,7 +127,20 @@ so the same renderer covers both:
   per-spill (strictly monotonic) coarse list.  A companion 1D diagnostic
   (`06_anchor_consecutive_dt`, not this 3-pad canvas) fits the consecutive
   anchor-pulse Δt to a Gaussian → pulse period + jitter, and reports the
-  average rate (= 320 MHz clock / period_cc).
+  average rate (= 1 / (period_cc · CC_TO_NS)).
+  **Coincidence analysis (real-laser FIFO mode).** The channel−anchor Δt
+  peak sits at the laser/cable delay, often far from 0. Rather than chase it
+  with an adaptive window, a configurable **delay** (`cfg.anchor_delay_cc`,
+  mimicking the trigger setup; `0` = auto-use the measured average peak) is
+  subtracted so the peak lands in the fixed ±250 cc Δt-vs-spill canvas and
+  the ±100 cc integrated plot (`07`, 1 cc bins). `07` is fit with the full
+  model **pol0 (DCR) + gaus1 + gaus2** (components drawn individually,
+  log-Y); prompt = the larger-area Gaussian, afterpulse = the smaller, and
+  the **afterpulse probability = smaller area / larger area**. A physical
+  **coincidence hitmap** (`08`, x/y mm via the channel→position `Mapping`,
+  same 396² ±99 mm geometry as the lightdata hitmaps) lights up the laser
+  spot: per pixel, the raw hit count inside ±2 cc of that pixel's own peak
+  (significant pixels only).
 - `lightdata_writer` — one canvas per ``TriggerNumber`` that fired
   ≥ 1 time in the run.  Anchor = the trigger's own coarse counter;
   Y = `c_hit − c_trigger` in cc.  Lazy-allocated per trigger; written
