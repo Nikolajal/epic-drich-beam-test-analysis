@@ -131,8 +131,10 @@ so the same renderer covers both:
   **Coincidence analysis (real-laser FIFO mode).** The channel−anchor Δt
   peak sits at the laser/cable delay, often far from 0. Rather than chase it
   with an adaptive window, a configurable **delay** (`cfg.anchor_delay_cc`,
-  mimicking the trigger setup; `0` = auto-use the measured average peak) is
-  subtracted so the peak lands in the fixed ±250 cc Δt-vs-spill canvas and
+  mimicking the trigger setup; `0` = auto-picker — centre on the measured
+  peak when it is picked up correctly, i.e. enough lit pixels, else no shift;
+  nonzero pins the delay literally) is subtracted so the peak lands in the
+  fixed ±250 cc Δt-vs-spill canvas and
   the ±100 cc integrated plot (`07`, 1 cc bins). `07` is fit with the full
   model **pol0 (DCR) + gaus1 + gaus2** (components drawn individually,
   log-Y); prompt = the larger-area Gaussian, afterpulse = the smaller, and

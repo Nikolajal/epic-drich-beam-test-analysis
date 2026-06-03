@@ -387,8 +387,10 @@ struct CalibConfigStruct
     /// hardware delay.  Subtracted from the channel−anchor Δt so the
     /// coincidence peak (which sits at the laser/cable delay, often far from
     /// 0) shifts into the fixed ±250 cc Δt histogram window.  @c 0 (default)
-    /// auto-uses the MEASURED average peak position; any nonzero value pins
-    /// the delay explicitly (reproducible, trigger-style).
+    /// = AUTO-PICKER: centre on the MEASURED average peak, but only when it
+    /// was picked up correctly (enough lit pixels — a real coincidence spot);
+    /// below that floor no shift is applied.  Any nonzero value PINS the
+    /// delay literally (reproducible, trigger-style).
     double anchor_delay_cc = 0.0;
 
     /// @brief Minimum cumulative hits (across all spills) on a single
