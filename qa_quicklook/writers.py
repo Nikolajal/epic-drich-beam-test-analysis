@@ -137,6 +137,24 @@ _ANCHOR_EO_CHANNEL_FLAG = FlagSpec(
          "Blank → use the TOML value (typically 0).",
 )
 
+#  FIFO-salvage anchor.  The pulsed reference (e.g. the KC705 testpulse)
+#  is read out on a dedicated FIFO with tdc/fine/pixel/column all -1, so
+#  it has no valid channel ordinal — the chip/eo-channel anchor can't
+#  address it.  Setting anchor-fifo ≥ 0 salvages it by (device, fifo)
+#  instead.  (device, anchor-fifo) is the salvage key; (chip, eo-channel)
+#  is the legacy channel key.
+_ANCHOR_FIFO_FLAG = FlagSpec(
+    name="anchor-fifo",
+    label="Anchor FIFO",
+    kind="int",
+    default=None,
+    help="Per-launch override of calibration_conf.toml's anchor_fifo. "
+         "≥ 0 salvages the pulsed reference by (anchor_device, anchor_fifo) "
+         "— e.g. the KC705 testpulse on device 200 / FIFO 32 — instead of "
+         "the legacy chip/eo-channel anchor. Blank → use the TOML value "
+         "(dRICH 2026: 32).",
+)
+
 #  Pulser frequency override.  The TOML field is ``pulser_period_cc``
 #  (a clock-cycle count), but the operator dials Hz on the generator,
 #  so the form takes Hz and the CLI driver converts to cc via the
@@ -171,12 +189,15 @@ WRITERS: list[WriterSpec] = [
         # per-launch without rewriting the shared calibration_conf.toml.
         # Blank → fall through to TOML.  Order matters for the
         # 2-column form layout — pulser frequency pairs with Max spill
-        # on the first row (general knobs); the three anchor fields
-        # group together on the next rows (related provenance).
+        # on the first row (general knobs); the four anchor fields
+        # group on the next rows, paired by addressing mode:
+        # (device, FIFO) is the FIFO-salvage key, (chip, EO channel) the
+        # legacy channel key.
         flags=[
             _FORCE_REBUILD_FLAG,
             _MAX_SPILL_FLAG, _PULSER_FREQUENCY_FLAG,
-            _ANCHOR_DEVICE_FLAG, _ANCHOR_CHIP_FLAG, _ANCHOR_EO_CHANNEL_FLAG,
+            _ANCHOR_DEVICE_FLAG, _ANCHOR_FIFO_FLAG,
+            _ANCHOR_CHIP_FLAG, _ANCHOR_EO_CHANNEL_FLAG,
         ],
     ),
     WriterSpec(

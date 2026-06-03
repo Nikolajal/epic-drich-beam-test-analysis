@@ -239,7 +239,7 @@ long long render_anchor_dt_canvas(TH2F &h_anchor_dt_vs_spill,
     //  ``kTopMargin`` flows through the layout automatically.
     constexpr double kBannerH = 0.10;
     constexpr double kTopMargin = 0.02; // breathing room from banner
-    constexpr double kXAxisH = 0.06;    // x-axis labels + title area (canvas NDC)
+    constexpr double kXAxisH = 0.10;    // x-axis labels + title area (canvas NDC)
     //  plot_unit solves: banner + top_pad + main_pad + bot_pad = 1
     //  with top_pad = plot/(1−tm), main_pad = 5·plot, bot_pad = plot + xa
     //  ⇒ plot · (1/(1−tm) + 6) = 1 − banner − xa
