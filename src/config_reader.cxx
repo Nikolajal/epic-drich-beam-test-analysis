@@ -552,7 +552,7 @@ CalibConfigStruct calib_conf_reader(std::string config_file)
                                cfg.anchor_fifo,
                                cfg.anchor_fifo >= 0 ? " (FIFO-salvage anchor)" : " (channel anchor)",
                                cfg.anchor_delay_cc,
-                               cfg.anchor_delay_cc != 0.0 ? " (pinned)" : " (auto)")
+                               cfg.anchor_delay_cc != 0.0 ? " (pinned)" : " (auto-picker)")
                                .Data());
         mist::logger::info(TString::Format(
                                "(calib_conf_reader) thresholds: cumulative>=%d   per-spill>=%d",
