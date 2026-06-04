@@ -24,6 +24,7 @@
 #include "TMath.h"
 #include "TH1.h"
 #include <algorithm>
+#include <array>
 #include <numeric>
 
 // ── Timing-trigger coincidence params ─────────────────────────────────────
@@ -474,6 +475,19 @@ void lightdata_writer(
     constexpr int kMaxCherenkovChannelOrdinal = kCherenkovDeviceCount * kChansPerCherenkovDevice;
     //  --- DCR
     RootHist<TProfile> h_dcr_per_channel("h_dcr_per_channel", ";channel;DCR [kHz];", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
+    //  --- Timing-sensor DCR (device 200, chips 0/1).  Count noise-window
+    //  (first-frames) hits per timing channel; rate = hits / (n_noise_frames ×
+    //  frame_length).  Axis: chip0 → bins 0-31, chip1 → bins 32-63 (eo_channel
+    //  within chip).  Finalised + averaged after the spill loop.
+    RootHist<TH1F> h_timing_dcr_per_channel(
+        "h_timing_dcr_per_channel",
+        "timing-sensor DCR;timing channel (chip0:0-31 | chip1:32-63);DCR [kHz]",
+        64, 0, 64);
+    std::array<long, 64> timing_dcr_counts{};
+    long n_timing_noise_frames = 0;
+    double timing_dcr_mean_khz = 0.0;   // total average over all timing channels
+    double timing_dcr_chip0_khz = 0.0;  // chip-0 average (bins 0-31)
+    double timing_dcr_chip1_khz = 0.0;  // chip-1 average (bins 32-63)
     //  Smeared DCR hitmap — one fill per cherenkov Hit during noise (first-frames)
     //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Bin
     //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
@@ -1099,6 +1113,13 @@ void lightdata_writer(
             float timing_sum_0 = 0.f, timing_sum_1 = 0.f;
             std::unordered_set<int> seen_channels_0, seen_channels_1;
 
+            //  Timing-sensor DCR: this frame is part of the noise sample
+            //  (first-frames window) → its timing hits are dark counts.
+            const bool timing_dcr_noise_frame =
+                (static_cast<int>(frame_id) < framer_cfg.first_frames_trigger);
+            if (timing_dcr_noise_frame)
+                ++n_timing_noise_frames;
+
             //  Loop over timing hits
             for (const auto &raw_hit : timing_hits)
             {
@@ -1106,6 +1127,24 @@ void lightdata_writer(
                 const int chip = Hit.get_chip();
                 const int channel = Hit.get_global_channel_index();
                 const float time_ns = Hit.get_time_ns();
+
+                //  Count noise-window hits per timing channel for the DCR.
+                if (timing_dcr_noise_frame)
+                {
+                    //  get_eo_channel() spans a chip PAIR (0-31 even chip,
+                    //  32-63 odd chip), so reduce to the within-chip channel
+                    //  (0-31) first, then place the first timing chip in
+                    //  bins 0-31 and the second in 32-63.  This works whether
+                    //  the two timing chips are an even/odd pair (2026: 0,1)
+                    //  or both even (2025: 0,2 → both eo 0-31).
+                    const int ch_in_chip = Hit.get_eo_channel() % 32;
+                    const int loc =
+                        (chip == timing_chip_0_id) ? ch_in_chip
+                        : (chip == timing_chip_1_id) ? 32 + ch_in_chip
+                                                     : -1;
+                    if (loc >= 0 && loc < 64)
+                        ++timing_dcr_counts[static_cast<size_t>(loc)];
+                }
 
                 if (timing_chip_0_id >= 0 && chip == timing_chip_0_id && seen_channels_0.insert(channel).second)
                 {
@@ -1119,19 +1158,27 @@ void lightdata_writer(
                 }
             }
 
-            //  Excluding events with no timing
+            //  Occupancy map + "timing seen" flag publish for ANY timing
+            //  activity.  The map is the per-frame (n_chip0, n_chip1) pair
+            //  distribution — NOT the strict alive-channel trigger
+            //  coincidence — so a frame that fired only one chip is a real
+            //  point on that chip's axis and must be shown.  Gating this on
+            //  both chips hid every single-chip frame, leaving a live-but-
+            //  uncorrelated run (chips never coincident) with an empty map
+            //  and a skipped Timing/ directory.  A truly absent / powered-off
+            //  timing detector still fires neither chip, so the empty-card
+            //  guard (timing_data_seen) is preserved.
+            if (timing_hits_0 > 0 || timing_hits_1 > 0)
+            {
+                timing_data_seen = true;
+                h_timing_hit_map->Fill(timing_hits_0, timing_hits_1);
+            }
+
+            //  Δt reference + strict (alive-channel) coincidence need BOTH
+            //  chips: mean0/mean1 divide by the per-chip counts, and the
+            //  timing trigger is defined by the chip0–chip1 time delta.
             if (timing_hits_0 > 0 && timing_hits_1 > 0)
             {
-                //  C6 addendum: flip the run-level "did we see anything"
-                //  flag once any timing frame yields both chips firing.
-                //  We deliberately don't lower the bar to "any hit on
-                //  either chip" — the empty-card problem occurs when
-                //  the timing detector is plain absent / RDO off, in
-                //  which case neither chip fires.
-                timing_data_seen = true;
-                //  Fill occupancy matrix
-                h_timing_hit_map->Fill(timing_hits_0, timing_hits_1);
-
                 const float mean0 = timing_sum_0 / timing_hits_0;
                 const float mean1 = timing_sum_1 / timing_hits_1;
                 const float ref_timing = (mean0 + mean1) / 2.f;
@@ -2019,6 +2066,48 @@ void lightdata_writer(
     DCR_dir->cd();
     h_dcr_per_channel->Scale(1. / (framer_cfg.frame_length_ns() * 1.e-6));
     h_dcr_per_channel->Write();
+
+    //  --- Timing-sensor DCR: total noise-window counts → kHz per channel.
+    //  rate = n_hits / (n_noise_frames × frame_length_ns) × 1e6.  Average over
+    //  channels that fired at least once.
+    if (n_timing_noise_frames > 0 && framer_cfg.frame_length_ns() > 0.f)
+    {
+        const double inv_khz =
+            1.e6 / (static_cast<double>(n_timing_noise_frames) *
+                    static_cast<double>(framer_cfg.frame_length_ns()));
+        double sum_khz = 0.0, sum0 = 0.0, sum1 = 0.0;
+        int n_live = 0, n0 = 0, n1 = 0;
+        for (int i = 0; i < 64; ++i)
+            if (timing_dcr_counts[static_cast<size_t>(i)] > 0)
+            {
+                const double khz =
+                    static_cast<double>(timing_dcr_counts[static_cast<size_t>(i)]) *
+                    inv_khz;
+                h_timing_dcr_per_channel->SetBinContent(i + 1, khz);
+                sum_khz += khz;
+                ++n_live;
+                if (i < 32) { sum0 += khz; ++n0; }
+                else        { sum1 += khz; ++n1; }
+            }
+        timing_dcr_mean_khz = (n_live > 0) ? sum_khz / n_live : 0.0;
+        timing_dcr_chip0_khz = (n0 > 0) ? sum0 / n0 : 0.0;
+        timing_dcr_chip1_khz = (n1 > 0) ? sum1 / n1 : 0.0;
+        h_timing_dcr_per_channel->SetTitle(TString::Format(
+            "timing-sensor DCR  —  total avg %.2f kHz  (chip0 %.2f, chip1 "
+            "%.2f)  [%ld noise frames];"
+            "timing channel (chip0:0-31 | chip1:32-63);DCR [kHz]",
+            timing_dcr_mean_khz, timing_dcr_chip0_khz, timing_dcr_chip1_khz,
+            n_timing_noise_frames));
+        mist::logger::info(TString::Format(
+            "(lightdata_writer) timing-sensor DCR: total avg %.3f kHz "
+            "(chip0 %.3f, chip1 %.3f) over %d channels (%ld noise frames)",
+            timing_dcr_mean_khz, timing_dcr_chip0_khz, timing_dcr_chip1_khz,
+            n_live, n_timing_noise_frames).Data());
+    }
+    else
+        mist::logger::info("(lightdata_writer) timing-sensor DCR: no noise "
+                           "frames / timing hits — plot empty");
+    h_timing_dcr_per_channel->Write();
     h_dcr_hitmap->Write();
     h_afterpulse_near_per_channel->Write();
     h_afterpulse_near_hitmap->Write();
@@ -2314,6 +2403,32 @@ void lightdata_writer(
         }
         // 03 Single-pixel DCR hitmap — surfaces hot / dead channels.
         save_one(3, "dcr_hitmap", h_dcr_hitmap.get(), "colz");
+        //  Timing-sensor average DCR (device 200, chips 0/1) — per-channel
+        //  bars + horizontal average lines: total (green, full range), chip0
+        //  (blue, bins 0-31), chip1 (red, bins 32-63).
+        {
+            TCanvas c("c_qa_lightdata_07_timing_dcr_per_channel", "",
+                      1000, 1000);
+            c.SetLogy();  // DCR spans orders of magnitude across channels
+            h_timing_dcr_per_channel->SetStats(0);
+            h_timing_dcr_per_channel->Draw("hist");
+            TLine l_tot(0, timing_dcr_mean_khz, 64, timing_dcr_mean_khz);
+            l_tot.SetLineColor(kGreen + 2);
+            l_tot.SetLineWidth(2);
+            l_tot.Draw();
+            TLine l0(0, timing_dcr_chip0_khz, 32, timing_dcr_chip0_khz);
+            l0.SetLineColor(kAzure + 1);
+            l0.SetLineStyle(2);
+            l0.Draw();
+            TLine l1(32, timing_dcr_chip1_khz, 64, timing_dcr_chip1_khz);
+            l1.SetLineColor(kRed + 1);
+            l1.SetLineStyle(2);
+            l1.Draw();
+            const auto path = util::qa::pdf_path(
+                run_dir, "lightdata", 7, "timing_dcr_per_channel");
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+        }
         // 06 Per-channel DCR rate (kHz) + averages over all channels,
         //    per device (rdo), and per sensor.  Surfaced for the
         //    General overview's Sensor-health row.  Numbered 06 so it
@@ -2366,6 +2481,7 @@ void lightdata_writer(
             }
 
             TCanvas c("c_qa_lightdata_06_dcr_per_channel", "", 1400, 900);
+            c.SetLogy();  // DCR spans orders of magnitude across channels
             c.SetLeftMargin(0.10);
             c.SetRightMargin(0.04);
             c.SetBottomMargin(0.12);
@@ -2378,8 +2494,8 @@ void lightdata_writer(
             //  Two-column tabular layout (label left, value right at a fixed
             //  offset so the rates align as a table).  Left column = overall
             //  + per-sensor averages; right column = per-device averages.
-            //  Anchored high (linear Y — the DCR bulk sits low, leaving the
-            //  upper band clear).
+            //  NDC-anchored in the upper band so the table position is
+            //  independent of the (log) Y scale.
             constexpr double kColAlbl = 0.13, kColAval = 0.27; // left column
             constexpr double kColBlbl = 0.46, kColBval = 0.60; // right column
             constexpr double kRowDy = 0.030;
