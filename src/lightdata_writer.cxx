@@ -485,9 +485,9 @@ void lightdata_writer(
         64, 0, 64);
     std::array<long, 64> timing_dcr_counts{};
     long n_timing_noise_frames = 0;
-    double timing_dcr_mean_khz = 0.0;   // total average over all timing channels
-    double timing_dcr_chip0_khz = 0.0;  // chip-0 average (bins 0-31)
-    double timing_dcr_chip1_khz = 0.0;  // chip-1 average (bins 32-63)
+    double timing_dcr_mean_khz = 0.0;  // total average over all timing channels
+    double timing_dcr_chip0_khz = 0.0; // chip-0 average (bins 0-31)
+    double timing_dcr_chip1_khz = 0.0; // chip-1 average (bins 32-63)
     //  Smeared DCR hitmap — one fill per cherenkov Hit during noise (first-frames)
     //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Bin
     //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
@@ -1139,7 +1139,7 @@ void lightdata_writer(
                     //  or both even (2025: 0,2 → both eo 0-31).
                     const int ch_in_chip = Hit.get_eo_channel() % 32;
                     const int loc =
-                        (chip == timing_chip_0_id) ? ch_in_chip
+                        (chip == timing_chip_0_id)   ? ch_in_chip
                         : (chip == timing_chip_1_id) ? 32 + ch_in_chip
                                                      : -1;
                     if (loc >= 0 && loc < 64)
@@ -2086,8 +2086,16 @@ void lightdata_writer(
                 h_timing_dcr_per_channel->SetBinContent(i + 1, khz);
                 sum_khz += khz;
                 ++n_live;
-                if (i < 32) { sum0 += khz; ++n0; }
-                else        { sum1 += khz; ++n1; }
+                if (i < 32)
+                {
+                    sum0 += khz;
+                    ++n0;
+                }
+                else
+                {
+                    sum1 += khz;
+                    ++n1;
+                }
             }
         timing_dcr_mean_khz = (n_live > 0) ? sum_khz / n_live : 0.0;
         timing_dcr_chip0_khz = (n0 > 0) ? sum0 / n0 : 0.0;
@@ -2099,10 +2107,11 @@ void lightdata_writer(
             timing_dcr_mean_khz, timing_dcr_chip0_khz, timing_dcr_chip1_khz,
             n_timing_noise_frames));
         mist::logger::info(TString::Format(
-            "(lightdata_writer) timing-sensor DCR: total avg %.3f kHz "
-            "(chip0 %.3f, chip1 %.3f) over %d channels (%ld noise frames)",
-            timing_dcr_mean_khz, timing_dcr_chip0_khz, timing_dcr_chip1_khz,
-            n_live, n_timing_noise_frames).Data());
+                               "(lightdata_writer) timing-sensor DCR: total avg %.3f kHz "
+                               "(chip0 %.3f, chip1 %.3f) over %d channels (%ld noise frames)",
+                               timing_dcr_mean_khz, timing_dcr_chip0_khz, timing_dcr_chip1_khz,
+                               n_live, n_timing_noise_frames)
+                               .Data());
     }
     else
         mist::logger::info("(lightdata_writer) timing-sensor DCR: no noise "
@@ -2409,7 +2418,7 @@ void lightdata_writer(
         {
             TCanvas c("c_qa_lightdata_07_timing_dcr_per_channel", "",
                       1000, 1000);
-            c.SetLogy();  // DCR spans orders of magnitude across channels
+            c.SetLogy(); // DCR spans orders of magnitude across channels
             h_timing_dcr_per_channel->SetStats(0);
             h_timing_dcr_per_channel->Draw("hist");
             TLine l_tot(0, timing_dcr_mean_khz, 64, timing_dcr_mean_khz);
@@ -2481,7 +2490,7 @@ void lightdata_writer(
             }
 
             TCanvas c("c_qa_lightdata_06_dcr_per_channel", "", 1400, 900);
-            c.SetLogy();  // DCR spans orders of magnitude across channels
+            c.SetLogy(); // DCR spans orders of magnitude across channels
             c.SetLeftMargin(0.10);
             c.SetRightMargin(0.04);
             c.SetBottomMargin(0.12);
