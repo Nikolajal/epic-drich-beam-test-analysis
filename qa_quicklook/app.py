@@ -1135,7 +1135,7 @@ class MainWindow(QtWidgets.QMainWindow):
         qa.setProgram(self._qa_python())
         qa.setArguments([
             "-m", "qa_quicklook.qa_pipeline",
-            run_id, "--max-spill", "15", "--notify", "macos,file",
+            run_id, "--max-spill", "4", "--notify", "macos,file",
             "--data-repo", str(self._qa_data_repo()),
             #  Clean slate before every GUI-driven run — purge the
             #  regenerable QA artifacts (qa/ tree, writer output roots,
@@ -1304,7 +1304,7 @@ class MainWindow(QtWidgets.QMainWindow):
         qa.setArguments([
             "-m", "qa_quicklook.qa_pipeline",
             run_id,
-            "--max-spill", "15",
+            "--max-spill", "4",
             "--notify", "macos,file",
             "--data-repo", str(self._qa_data_repo()),
             #  Clean slate before every GUI-driven run (see the livemon
