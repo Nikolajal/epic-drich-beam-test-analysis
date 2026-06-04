@@ -34,6 +34,25 @@ AlcorDataStreamer::AlcorDataStreamer(const std::string &fname)
             device_id = -1;
         }
     }
+    else
+    {
+        //  KC705 timing / reference board lives under "kc705-NNN" (e.g. the
+        //  timing device 200).  Without this it would fall back to the
+        //  upstream device branch (written as 0) and never be attributed to
+        //  its real device id.
+        auto kc_pos = filename.find("kc705-");
+        if (kc_pos != std::string::npos)
+        {
+            try
+            {
+                device_id = std::stoi(filename.substr(kc_pos + 6));
+            }
+            catch (...)
+            {
+                device_id = -1;
+            }
+        }
+    }
     //  Recover the FIFO id from the filename (e.g. ".../alcdaq.fifo_07.root").
     //  Each input file contains data from a single FIFO, so we override the fifo
     //  branch per-Hit in read_next() whenever the in-data fifo disagrees with
