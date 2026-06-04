@@ -1311,6 +1311,21 @@ def _coerce_cell_value(text: str, original: Any) -> Any:
         return int(text.strip())
     if isinstance(original, float):
         return float(text.strip())
+    if isinstance(original, list):
+        #  Array cell (e.g. chips = [0, 1]).  Parse a CSV / bracketed list
+        #  back into a list of the original element type, so it round-trips
+        #  as a TOML array — NOT a quoted string like "[0, 1]" (which the
+        #  C++ readers then silently drop).
+        elem = original[0] if original else 0
+        parts = [p.strip() for p in text.strip().strip("[]").split(",")
+                 if p.strip()]
+        if isinstance(elem, bool):
+            return [p.lower() in {"true", "1", "yes", "on"} for p in parts]
+        if isinstance(elem, int):
+            return [int(p) for p in parts]
+        if isinstance(elem, float):
+            return [float(p) for p in parts]
+        return parts
     return text
 
 
