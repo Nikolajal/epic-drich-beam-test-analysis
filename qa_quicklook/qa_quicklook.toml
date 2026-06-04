@@ -27,7 +27,7 @@ address        = ""           # e.g. "eic@eic701:/data/2026-testbeam/runs" — e
 # ``rsync -av <remote_host>:<remote_data_dir>/<run_id> <local_data_dir>/``
 # so only the selected run id moves over the wire.
 remote_host      = "eic@eicserv01"         # SSH host (e.g. "drich-daq.local") — empty disables the Download button.
-remote_data_dir  = "/data/2026-testbeam/preparation/testpulse/"         # Absolute path on the DAQ host where run directories live.
+remote_data_dir  = "/data/2026-testbeam/preparation/physics/"         # Absolute path on the DAQ host where run directories live.
 local_data_dir   = "Data"     # Project-relative path where downloaded runs land.
 extra_args       = "-av"      # Extra flags forwarded to rsync (compression, partial, bandwidth limits, …).
 
