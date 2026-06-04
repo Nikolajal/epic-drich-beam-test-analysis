@@ -1201,6 +1201,11 @@ void pulser_calib_writer(
     std::unique_ptr<TH2F> h_coinc_map;
     double coinc_shift_cc = 0.0;    // measured average peak position (cc)
     double anchor_delay_used = 0.0; // delay actually subtracted (cc)
+    //  Afterpulse veto: a channel hit within 100 ns (= 32 cc) of the previous
+    //  KEPT hit on the same channel is an afterpulse — vetoed from every plot
+    //  (05/07/08).  Counters drive the reported afterpulse probability.
+    long n_ap_vetoed = 0;  // hits vetoed as afterpulses
+    long n_ap_primary = 0; // hits kept (first in their 100 ns window)
 
     //  ── Consecutive anchor-pulse Δt (the pulse cadence) ───────────────
     //  The anchor's OWN cadence: the time between consecutive salvaged
@@ -1341,9 +1346,21 @@ void pulser_calib_writer(
                 if (anchors.empty())
                     continue;
                 auto &dt_store = ch_dt_for_map[ch_key];
+                //  Afterpulse veto: keep the FIRST hit of each 100 ns window,
+                //  drop any later same-channel hit within 100 ns of it (it is
+                //  an afterpulse).  Hits are in FIFO/time order.
+                constexpr int64_t kVetoCc = 32;  // 100 ns / 3.125 ns-per-cc
+                int64_t last_kept = -1000000000; // first hit always kept
                 for (const auto &ch_hit : ch_bucket.per_spill[s].hits)
                 {
                     const int64_t tc = ch_hit.abs_coarse_cc;
+                    if (tc - last_kept < kVetoCc)
+                    {
+                        ++n_ap_vetoed; // afterpulse — excluded from all plots
+                        continue;
+                    }
+                    last_kept = tc;
+                    ++n_ap_primary;
                     const auto it =
                         std::lower_bound(anchors.begin(), anchors.end(), tc);
                     int64_t nearest;
@@ -1382,14 +1399,15 @@ void pulser_calib_writer(
         //  can differ per pixel (laser/cable delay) — which is exactly why
         //  the all-channel sum looks flat.  So detect the peak PER PIXEL:
         //  for each pixel build its own Δt histogram, take the tallest bin,
-        //  and map the EXCESS over that pixel's own DCR floor inside ±kHalf
-        //  cc of its peak.  A laser-lit pixel shows a sharp peak (large,
+        //  and map the EXCESS over that pixel's own DCR floor inside ±20 ns
+        //  of its peak.  A laser-lit pixel shows a sharp peak (large,
         //  significant excess); a DCR-only pixel is flat (≈ 0).  The map
         //  therefore reveals the illuminated spot independent of any global
         //  alignment.
         if (!ch_dt_for_map.empty())
         {
-            constexpr int kHalf = 2;   // ± window (cc) around each peak
+            //  ±20 ns window around each channel's own peak (3.125 ns/cc).
+            const int kHalf = static_cast<int>(std::lround(20.0 / CC_TO_NS));
             const int kRange = dt_win; // Δt confined to ±period/2
             const int kNb = 2 * kRange + 1;
             //  PHYSICAL detector map: each lit pixel placed at its real (x, y)
@@ -1417,24 +1435,29 @@ void pulser_calib_writer(
                         ++cnt[d + kRange];
                 const int peak = static_cast<int>(
                     std::max_element(cnt.begin(), cnt.end()) - cnt.begin());
-                const double bg =
-                    static_cast<double>(dts.size()) / kNb; // uniform/bin
+                //  RAW hit count in ±20 ns of this channel's peak — NO DCR
+                //  subtraction, NO significance gate.  Every channel with hits
+                //  is mapped; the laser-lit ones simply pile up more.
                 long s = 0;
                 for (int b = std::max(0, peak - kHalf);
                      b <= std::min(kNb - 1, peak + kHalf); ++b)
                     s += cnt[b];
-                const double nbins = 2 * kHalf + 1;
-                const double excess = s - nbins * bg;
-                //  Significance (excess over the DCR floor) only DECIDES which
-                //  pixels are lit; the value plotted is the RAW hit count in
-                //  the coincidence window (no DCR subtraction).
-                if (excess > 5.0 * std::sqrt(nbins * bg + 1.0))
+                if (s > 0)
                 {
                     const auto xy = pixmap.get_position_from_device_chip_eoch(
                         key.device, key.chip, key.eo_channel);
                     if (xy)
-                        h_coinc_map->Fill((*xy)[0], (*xy)[1],
-                                          static_cast<double>(s));
+                    {
+                        //  Smear with the project's dedicated pixel jitter:
+                        //  AlcorFinedata::get_hit_x_rnd()/get_hit_y_rnd()
+                        //  (uniform ±1.5 mm, thread-local mist::Rnd) — same as
+                        //  the lightdata hitmaps.  One smeared fill per hit.
+                        AlcorFinedata fd(AlcorFinedataStruct(
+                            0, 0, 0, (*xy)[0], (*xy)[1], 0, 0));
+                        for (long k = 0; k < s; ++k)
+                            h_coinc_map->Fill(fd.get_hit_x_rnd(),
+                                              fd.get_hit_y_rnd());
+                    }
                     else
                         ++n_unmapped;
                     lit_shifts.push_back(peak - kRange);
@@ -2419,34 +2442,45 @@ void pulser_calib_writer(
                 const double sig_a = std::abs(
                     f_full.GetParameter(g1_bigger ? 5 : 2));
 
-                const double n_prompt = std::max(a_g1, a_g2); // larger area
-                const double n_after = std::min(a_g1, a_g2);  // smaller area
+                const double n_prompt = std::max(a_g1, a_g2); // prompt area
+                //  CAVEAT (multi-RDO runs): the denominator is the salvaged
+                //  anchor-pulse count from a SINGLE (anchor_device, anchor_fifo)
+                //  FIFO, while n_prompt sums channel hits across ALL RDOs.  On
+                //  an integrated run (rdo-192..199, each with its own FIFO-32
+                //  testpulse) this makes coinc_frac read > 100 %.  It is only
+                //  correct on a single-RDO run, OR once the anchor is matched
+                //  PER RDO (each RDO's channels referenced to that RDO's own
+                //  FIFO-32 pulse train).  Per-RDO anchor = real follow-up; see
+                //  include/writers/DISCUSSION.md.
                 const double coinc_frac =
                     (total_anchor_hits > 0)
                         ? n_prompt / static_cast<double>(total_anchor_hits)
                         : 0.0;
-                //  Afterpulse probability = smaller integral / larger integral.
+
+                //  Afterpulse probability from the 100 ns per-channel VETO
+                //  applied above: a hit within 100 ns of the previous kept
+                //  hit was dropped from every plot (n_ap_vetoed) — the
+                //  afterpulse population.  Probability = vetoed / kept.
+                const double n_after = static_cast<double>(n_ap_vetoed);
                 const double after_frac =
-                    (n_prompt > 0.0) ? n_after / n_prompt : 0.0;
+                    (n_ap_primary > 0)
+                        ? n_after / static_cast<double>(n_ap_primary)
+                        : 0.0;
 
                 const bool clean_peak =
                     (sig_p > 0.3 && sig_p < 14.0 && ped > 0.0 &&
                      amp_p > 5.0 * std::sqrt(ped));
-                const bool clean_after =
-                    (clean_peak && sig_a < 14.0 &&
-                     amp_a > 5.0 * std::sqrt(ped) && after_frac > 0.001);
+                const bool clean_after = (clean_peak && n_ap_vetoed > 0);
 
                 if (clean_peak)
                     mist::logger::info(TString::Format(
                                            "(pulser_calib_writer) coincidence: prompt #mu=%.2f ns "
-                                           "#sigma=%.2f ns, %.3f%% of %ld pulses; afterpulse %s "
-                                           "#mu=%.2f ns #sigma=%.2f ns, prob=%.3f%% (smaller/"
-                                           "larger area); DCR pedestal=%.1f/bin",
+                                           "#sigma=%.2f ns, %.3f%% of %ld pulses; afterpulse "
+                                           "(100 ns veto): %ld vetoed / %ld kept = %.3f%% prob; "
+                                           "DCR pedestal=%.1f/bin",
                                            (anchor_delay_used + mu_p) * CC_TO_NS, sig_p * CC_TO_NS,
                                            100.0 * coinc_frac, total_anchor_hits,
-                                           clean_after ? "" : "(weak)",
-                                           (anchor_delay_used + mu_a) * CC_TO_NS,
-                                           sig_a * CC_TO_NS, 100.0 * after_frac, ped)
+                                           n_ap_vetoed, n_ap_primary, 100.0 * after_frac, ped)
                                            .Data());
                 else
                     mist::logger::info(
@@ -2530,10 +2564,12 @@ void pulser_calib_writer(
                              TString::Format("prompt (gaus 1): %.2f%% of pulses",
                                              100.0 * coinc_frac),
                              "l");
-                //  Afterpulse PROBABILITY = gaus2 area / gaus1 area (from fit).
+                //  Afterpulse PROBABILITY = 100 ns per-channel veto count
+                //  (vetoed / kept); the afterpulse hits are removed from every
+                //  plot, so this is a number, not a curve.
                 leg.AddEntry(&g_after,
                              TString::Format(
-                                 "afterpulse (gaus 2): P = %.2f%%",
+                                 "afterpulse (100 ns veto): P = %.2f%%",
                                  100.0 * after_frac),
                              "l");
                 leg.AddEntry(&g_ped, "DCR pedestal (pol0)", "l");
