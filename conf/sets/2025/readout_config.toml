@@ -27,12 +27,9 @@ devices = [
 ]
 
 # ALCOR devices used as timing reference (e.g. MCP-PMT or fast scintillator).
-# This default tracks the current campaign (2026: chips 0 and 1 = fifos 0-3
-# and 4-7).  Earlier campaigns are pinned under conf/sets/<year>/ — e.g. 2025
-# read chips 0 and 2 (fifos 0-3 and 8-11); switch_set("2025") repoints here.
 [readout.timing]
 devices = [
-    { id = 200, chips = [0, 1] },   # read only chips 0 and 1 (active channels on this board)
+    { id = 200, chips = [0, 2] },   # read only chips 0 and 2 (active channels on this board)
 ]
 # Timing-trigger coincidence: both chips must fire EXACTLY this many channels,
 # and the chip0-chip1 mean-time difference must satisfy
