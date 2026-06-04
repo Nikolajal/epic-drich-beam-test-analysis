@@ -315,8 +315,9 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         auto current_readout_tag_list = readout_config.find_by_device_and_chip(current_device, current_chip);
 
         // Stop streamer reading if not tagged for readout.
-        // Chip 24 (fifo 96-99) is the hardware trigger chip — always continue for it.
-        constexpr int trigger_chip = 99 / 4; // = 24
+        // Chip 8 (fifo 32-35) is the hardware trigger chip — always continue for it.
+        // TODO: outsource this to trigger_conf (per-trigger fifo) so it isn't hardcoded.
+        constexpr int trigger_chip = 32 / 4; // = 8
         if (current_readout_tag_list.size() == 0 && current_chip != trigger_chip)
             break;
 
