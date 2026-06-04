@@ -7,7 +7,7 @@ knows the QA cascade finished.
 
 Design ground rules (locked 2026-05-29 from the workflow audit):
 
-    --max-spill default     15            (caps shifter wall at ~10 min)
+    --max-spill default     4             (caps shifter wall at ~3 min)
     notify backend           macos / linux libnotify / windows silent
     manifest location        Data/<RUN>/qa/qa_pipeline_manifest.json
     reuse-existing-output    skip stage with "nothing to do"
@@ -22,7 +22,7 @@ CLI
     qa_pipeline RUN_ID
       [--data-repo PATH]      # defaults to <repo>/Data
       [--stages STAGES]       # comma-separated subset; default = all 3
-      [--max-spill N]         # default 15; 0 → no cap (every spill)
+      [--max-spill N]         # default 4; 0 → no cap (every spill)
       [--force-rebuild]       # forwarded to each stage
       [--force-upstream]      # cascades rebuild into earlier stages
       [--notify CSV]          # default 'macos,stdout,file' (auto-falls
@@ -767,7 +767,7 @@ def _build_argparser() -> argparse.ArgumentParser:
                    help="Data repo root (defaults to <project>/Data)")
     p.add_argument("--stages", default="lightdata,recodata,recotrack",
                    help="Comma-separated subset of stages to run")
-    p.add_argument("--max-spill", type=int, default=15,
+    p.add_argument("--max-spill", type=int, default=4,
                    help="--max-spill forwarded to each stage; 0 → no cap")
     p.add_argument("--threads", type=int, default=4,
                    help="--threads forwarded to each stage; default 4 "
