@@ -181,6 +181,11 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     # Ring finder QA from the Hough stage → Triggers.
     (_re_topics.compile(r"^.*ring_finder.*"),                    "triggers"),
     (_re_topics.compile(r"^.*hough.*"),                          "triggers"),
+    # Timing-sensor DCR — a per-channel dark-count measurement, so it
+    # belongs with the other DCR plots on Noise.  Match BEFORE the generic
+    # ``^timing.*`` alignment rule (which would otherwise steal it to
+    # Calibration purely because the name starts with "timing").
+    (_re_topics.compile(r"^timing_dcr.*"),                       "noise"),
     # Timing — chip-0/chip-1 alignment, ref-Δ.
     (_re_topics.compile(r"^timing.*"),                           "calibration"),
     (_re_topics.compile(r"^.*fine_calib.*"),                     "calibration"),
@@ -3163,6 +3168,7 @@ class _GeneralQaPage(QtWidgets.QWidget):
         ("Timing", (
             "timing_alignment.pdf",
             "timing_hit_map.pdf",           # chip-0 vs chip-1 coincidence occupancy
+            "timing_dcr_per_channel.pdf",   # per-channel timing-sensor DCR (kHz) + per-chip avgs
         )),
         ("Cherenkov", (
             "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring
