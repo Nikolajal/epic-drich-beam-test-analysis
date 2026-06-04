@@ -486,6 +486,10 @@ CalibConfigStruct calib_conf_reader(std::string config_file)
             cfg.anchor_chip = static_cast<int>(*v);
         if (auto v = (*t)["anchor_eo_channel"].value<int64_t>())
             cfg.anchor_eo_channel = static_cast<int>(*v);
+        if (auto v = (*t)["anchor_fifo"].value<int64_t>())
+            cfg.anchor_fifo = static_cast<int>(*v);
+        if (auto v = (*t)["anchor_delay_cc"].value<double>())
+            cfg.anchor_delay_cc = *v;
         if (auto v = (*t)["min_hits_per_tdc"].value<int64_t>())
             cfg.min_hits_per_tdc = static_cast<int>(*v);
         if (auto v = (*t)["min_hits_per_tdc_per_spill"].value<int64_t>())
@@ -543,8 +547,12 @@ CalibConfigStruct calib_conf_reader(std::string config_file)
         //  recotrackdata_writer: log every knob the writer will use,
         //  so the operator sees on stdout what's actually loaded.
         mist::logger::info(TString::Format(
-                               "(calib_conf_reader) anchor   : device:%d chip:%d eo_ch:%d",
-                               cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                               "(calib_conf_reader) anchor   : device:%d chip:%d eo_ch:%d  fifo:%d%s  delay:%.0f cc%s",
+                               cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel,
+                               cfg.anchor_fifo,
+                               cfg.anchor_fifo >= 0 ? " (FIFO-salvage anchor)" : " (channel anchor)",
+                               cfg.anchor_delay_cc,
+                               cfg.anchor_delay_cc != 0.0 ? " (pinned)" : " (auto-picker)")
                                .Data());
         mist::logger::info(TString::Format(
                                "(calib_conf_reader) thresholds: cumulative>=%d   per-spill>=%d",

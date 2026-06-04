@@ -316,6 +316,11 @@ def build_argv(cfg: RsyncConfig, run_id: str, repo_root: Path) -> list[str]:
         source = f"{src_root.rstrip('/')}/{run_id}"
         argv: list[str] = ["rsync"]
         argv.extend(shlex.split(cfg.extra_args) if cfg.extra_args else [])
+        #  Download ONLY *.root: skip the online-processing tree, recurse
+        #  every other dir, keep *.root, drop the rest.  Independent of the
+        #  user's extra_args — mirrors scripts/download_run.sh.
+        argv += ["--exclude=process-online/", "--include=*/",
+                 "--include=*.root", "--exclude=*"]
         argv.append(source)
         argv.append(local_arg)
         return argv
@@ -324,6 +329,9 @@ def build_argv(cfg: RsyncConfig, run_id: str, repo_root: Path) -> list[str]:
     source = f"{address.rstrip('/')}/{run_id}"
     argv = ["rsync"]
     argv.extend(shlex.split(cfg.extra_args) if cfg.extra_args else [])
+    #  Download ONLY *.root (see above).
+    argv += ["--exclude=process-online/", "--include=*/",
+             "--include=*.root", "--exclude=*"]
     argv.append(source)
     argv.append(local_arg)
     return argv

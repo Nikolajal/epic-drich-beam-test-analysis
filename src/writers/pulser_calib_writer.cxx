@@ -55,6 +55,8 @@
 
 #include "writers/pulser_calib.h"
 #include "writers/anchor_dt_canvas.h"
+#include "mapping.h"
+#include "utility/conf_path.h"
 
 #include "alcor_data.h"
 #include "analysis_results.h"
@@ -67,6 +69,7 @@
 
 #include <TCanvas.h>
 #include <TF1.h>
+#include <TLegend.h>
 #include <TFile.h>
 #include <TFitResult.h>
 #include <TFitResultPtr.h>
@@ -149,6 +152,19 @@ struct ChannelBucket
 {
     //  Sparse — only spills where the channel saw at least one hit.
     std::vector<SpillBucket> per_spill;
+};
+
+//  Anchor reference signal (e.g. the KC705 testpulse) read out by ALCOR on a
+//  dedicated FIFO.  It carries only a coarse counter — `tdc/fine/pixel/column`
+//  are all sentinel (-1), so it has NO valid channel ordinal and cannot live
+//  in `ChannelBucket` (keyed by device/chip/eo_channel).  Salvaged by
+//  (device, fifo) and kept as a per-spill list of anchor-pulse coarse times.
+struct AnchorBucket
+{
+    //  per_spill_coarse[s] = anchor-pulse get_coarse_global_time() values in
+    //  spill s, in read (time) order.  The pulse period is ~constant
+    //  (the testpulse cadence), so consecutive diffs ≈ the nominal period.
+    std::vector<std::vector<int64_t>> per_spill_coarse;
 };
 
 // ---------------------------------------------------------------------------
@@ -873,6 +889,7 @@ void pulser_calib_writer(
     int anchor_device_override,
     int anchor_chip_override,
     int anchor_eo_channel_override,
+    int anchor_fifo_override,
     double pulser_period_cc_override)
 {
     namespace fs = std::filesystem;
@@ -918,6 +935,14 @@ void pulser_calib_writer(
                                cfg.anchor_eo_channel, anchor_eo_channel_override)
                                .Data());
         cfg.anchor_eo_channel = anchor_eo_channel_override;
+    }
+    if (anchor_fifo_override >= 0 && anchor_fifo_override != cfg.anchor_fifo)
+    {
+        mist::logger::info(TString::Format(
+                               "(pulser_calib_writer) CLI override: anchor_fifo %d -> %d",
+                               cfg.anchor_fifo, anchor_fifo_override)
+                               .Data());
+        cfg.anchor_fifo = anchor_fifo_override;
     }
     //  Pulser period override: dashboard hands us pulser frequency in
     //  Hz, the CLI driver converts to ``cc`` via the 320 MHz clock
@@ -966,6 +991,8 @@ void pulser_calib_writer(
                        " FIFO files; reading + bucketing per channel");
 
     std::map<ChannelKey, ChannelBucket> channels;
+    AnchorBucket anchor;        //  salvaged (device, anchor_fifo) reference pulses
+    long total_anchor_hits = 0; //  count of salvaged anchor pulses
     long total_hits_read = 0;
     long total_hits_rejected_fine_oob = 0; //  fine bin outside [fine_min_valid, fine_max_valid]
     int spills_seen = 0;
@@ -997,6 +1024,30 @@ void pulser_calib_writer(
                 continue; //  hits before the first start_spill (rare; defensive)
             if (max_spill > 0 && spill_idx >= max_spill)
                 continue;
+
+            //  ── Anchor salvage ───────────────────────────────────────────
+            //  The pulsed reference (e.g. KC705 testpulse) is read out on a
+            //  dedicated FIFO with tdc/fine/pixel/column all = -1.  It has no
+            //  valid channel ordinal and would be dropped by the tdc/fine
+            //  filters and the (device,chip,eo_channel) keying below.  Catch
+            //  it FIRST by (device, fifo) and keep its coarse-global time as
+            //  the per-spill anchor reference.  Active only when configured.
+            //  The anchor PULSES are `trigger_tag` (type 9); the same FIFO
+            //  also carries start_spill (7) / end_spill (15) markers, which
+            //  must NOT be salvaged as pulses.  Require trigger_tag so a
+            //  markers-only run salvages 0 (not a stray end-marker).
+            if (cfg.anchor_fifo >= 0 &&
+                alcor_hit.get_device() == cfg.anchor_device &&
+                alcor_hit.get_fifo() == cfg.anchor_fifo &&
+                alcor_hit.is_trigger_tag())
+            {
+                if (static_cast<int>(anchor.per_spill_coarse.size()) <= spill_idx)
+                    anchor.per_spill_coarse.resize(spill_idx + 1);
+                anchor.per_spill_coarse[spill_idx].push_back(
+                    static_cast<int64_t>(alcor_hit.get_coarse_global_time()));
+                ++total_anchor_hits;
+                continue;
+            }
 
             const int tdc_idx = alcor_hit.get_tdc();
             if (tdc_idx < 0 || tdc_idx > 3)
@@ -1038,6 +1089,13 @@ void pulser_calib_writer(
     }
     mist::logger::info("(pulser_calib_writer) ingested " + std::to_string(total_hits_read) +
                        " hits across " + std::to_string(channels.size()) + " channels");
+    if (cfg.anchor_fifo >= 0)
+        mist::logger::info(TString::Format(
+                               "(pulser_calib_writer) salvaged %ld anchor pulses from "
+                               "(device=%d, fifo=%d) across %zu spills",
+                               total_anchor_hits, cfg.anchor_device, cfg.anchor_fifo,
+                               anchor.per_spill_coarse.size())
+                               .Data());
     if (total_hits_rejected_fine_oob > 0)
     {
         const double rejected_frac =
@@ -1116,50 +1174,402 @@ void pulser_calib_writer(
     // place it explicitly under Diagnostics/ later.
     h_anchor_dt_vs_spill->SetDirectory(nullptr);
 
-    const ChannelKey anchor_key{
-        static_cast<uint16_t>(cfg.anchor_device),
-        static_cast<uint16_t>(cfg.anchor_chip),
-        static_cast<uint16_t>(cfg.anchor_eo_channel)};
-    auto anchor_it = channels.find(anchor_key);
-    long n_anchor_pairs_filled = 0;
-    if (anchor_it == channels.end())
+    //  1D companion: the same channel−anchor Δt collapsed over spill —
+    //  the coincidence distribution.  A peak near 0 means the channel
+    //  hits are anchored to the reference; a flat band means they are
+    //  not (free-running anchor).  Fixed 1-cc binning over the main
+    //  coincidence window [−250, 250] cc (matches the 2D's centre pad).
+    //  Channel−anchor Δt: 1D distribution + coincidence map.  The Δt range
+    //  is set by the nearest-pulse window = ±period/2, so it MUST scale with
+    //  the pulser rate (±160 cc at 1 MHz, ±16000 cc at 10 kHz) — a fixed
+    //  FIXED ±250 cc histogram (1-cc bins).  The coincidence peak is brought
+    //  INTO this window by subtracting a delay (cfg.anchor_delay_cc, mimicking
+    //  the trigger setup) rather than chasing the peak with an adaptive range.
+    //  dt_win is the FULL nearest-pulse range (±period/2), used only to store
+    //  Δt for the peak/delay measurement + the per-pixel coincidence map.
+    auto h_anchor_dt_1d = std::make_unique<TH1F>(
+        "h_anchor_dt_1d",
+        "calibration anchor #Deltat (channel #minus anchor #minus delay);"
+        "#Deltat (cc)  = c_{ch} #minus c_{anchor} #minus delay;hits",
+        201, -100.5, 100.5);
+    h_anchor_dt_1d->SetDirectory(nullptr);
+    int dt_win = 250; // full nearest-pulse half-range (cc); set from period below
+
+    //  Coincidence hitmap (FIFO/laser mode): per-pixel count of hits inside
+    //  the per-pixel coincidence window → lights up the laser spot.  Rendered
+    //  as PDF 08.
+    std::unique_ptr<TH2F> h_coinc_map;
+    double coinc_shift_cc = 0.0;    // measured average peak position (cc)
+    double anchor_delay_used = 0.0; // delay actually subtracted (cc)
+    //  Afterpulse veto: a channel hit within 100 ns (= 32 cc) of the previous
+    //  KEPT hit on the same channel is an afterpulse — vetoed from every plot
+    //  (05/07/08).  Counters drive the reported afterpulse probability.
+    long n_ap_vetoed = 0;  // hits vetoed as afterpulses
+    long n_ap_primary = 0; // hits kept (first in their 100 ns window)
+
+    //  ── Consecutive anchor-pulse Δt (the pulse cadence) ───────────────
+    //  The anchor's OWN cadence: the time between consecutive salvaged
+    //  pulses (coarse[i] − coarse[i-1]).  For a healthy pulser this is a
+    //  tight GAUSSIAN at the pulse period; its mean is the average pulse
+    //  RATE (= 320 MHz clock / period_cc) and its width is the cadence
+    //  jitter.  Missed pulses produce 2×/3× satellite peaks, which we
+    //  exclude by windowing the fit to ±30 % of the (robust) median
+    //  period.  Only meaningful in FIFO-salvage mode (the pulse train).
+    std::unique_ptr<TH1F> h_anchor_consecutive_dt;
+    double anchor_period_cc = 0.0;
+    double anchor_jitter_cc = 0.0;
+    double anchor_rate_hz = 0.0;
+    long n_anchor_consecutive_filled = 0;
+    if (cfg.anchor_fifo >= 0)
     {
-        mist::logger::warning(TString::Format(
-                                  "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
-                                  "ingested hits — anchor-Δ diagnostic will be empty.",
-                                  cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
-                                  .Data());
+        std::vector<double> diffs;
+        for (const auto &pulses : anchor.per_spill_coarse)
+            for (size_t i = 1; i < pulses.size(); ++i)
+                diffs.push_back(
+                    static_cast<double>(pulses[i] - pulses[i - 1]));
+        if (!diffs.empty())
+        {
+            //  Robust period seed = median (immune to the missed-pulse
+            //  2×/3× tail that would drag a plain mean upward).
+            auto mid = diffs.begin() +
+                       static_cast<std::ptrdiff_t>(diffs.size() / 2);
+            std::nth_element(diffs.begin(), mid, diffs.end());
+            const double med = *mid;
+            const double lo = 0.7 * med, hi = 1.3 * med;
+            h_anchor_consecutive_dt = std::make_unique<TH1F>(
+                "h_anchor_consecutive_dt",
+                "consecutive anchor-pulse #Deltat;"
+                "#Deltat (cc)  = c_{i} #minus c_{i-1};pulses",
+                200, lo, hi);
+            h_anchor_consecutive_dt->SetDirectory(nullptr);
+            for (double d : diffs)
+                if (d >= lo && d < hi)
+                {
+                    h_anchor_consecutive_dt->Fill(d);
+                    ++n_anchor_consecutive_filled;
+                }
+            //  Period = the robust MEDIAN (immune to missed-pulse
+            //  sub-populations that can pull a Gaussian fit to a wrong
+            //  sub-peak — observed on multi-rate runs).  The Gaussian only
+            //  refines the JITTER (σ), and only when it lands on the median
+            //  (else keep the histogram RMS).
+            anchor_period_cc = med;
+            anchor_jitter_cc = h_anchor_consecutive_dt->GetRMS();
+            if (h_anchor_consecutive_dt->GetEntries() > 0)
+            {
+                h_anchor_consecutive_dt->Fit("gaus", "Q0");
+                if (auto *fn = h_anchor_consecutive_dt->GetFunction("gaus"))
+                {
+                    if (std::abs(fn->GetParameter(1) - med) < 0.05 * med)
+                        anchor_jitter_cc = std::abs(fn->GetParameter(2));
+                    else
+                        //  Fit landed off the median (missed-pulse sub-peak);
+                        //  drop it so the 06 plot doesn't draw a misleading line.
+                        h_anchor_consecutive_dt->GetListOfFunctions()->Remove(fn);
+                }
+            }
+            //  Average rate: convert the coarse-count period to NS first
+            //  (period_ns = period_cc · CC_TO_NS), then rate = 1 / period.
+            const double anchor_period_ns = anchor_period_cc * CC_TO_NS;
+            anchor_rate_hz =
+                (anchor_period_ns > 0.0) ? 1.0e9 / anchor_period_ns : 0.0;
+            mist::logger::info(
+                TString::Format(
+                    "(pulser_calib_writer) anchor cadence: period = %.2f cc "
+                    "(%.1f ns), jitter #sigma = %.2f cc, average rate = "
+                    "%.4g Hz (%.4f MHz) from %ld in-window diffs",
+                    anchor_period_cc, anchor_period_cc * CC_TO_NS,
+                    anchor_jitter_cc, anchor_rate_hz, anchor_rate_hz / 1e6,
+                    n_anchor_consecutive_filled)
+                    .Data());
+
+            //  Auto-derive the pulser period from the MEASURED anchor
+            //  cadence.  The external pulser drives both the FIFO anchor
+            //  and the laser, so the anchor's consecutive-Δt period IS the
+            //  channel pulse period.  Without this the fit keeps the 1 kHz
+            //  (320000 cc) TOML default, and the consecutive-pair selector
+            //  (|Δc − pulser_period_cc| < tol, line ~453) rejects every
+            //  real 1 MHz (320 cc) pair → no coincident pairs → empty fit.
+            //  An explicit --pulser-frequency-hz (override ≥ 0) still wins.
+            if (pulser_period_cc_override < 0.0 && anchor_period_cc > 0.0)
+            {
+                const double measured = std::round(anchor_period_cc);
+                if (measured != cfg.pulser_period_cc)
+                {
+                    mist::logger::info(TString::Format(
+                                           "(pulser_calib_writer) pulser_period_cc auto-set from "
+                                           "anchor cadence: %.0f -> %.0f cc (%.4f MHz); was the "
+                                           "TOML/default value",
+                                           cfg.pulser_period_cc, measured,
+                                           (measured > 0 ? 320.0e6 / measured / 1e6 : 0.0))
+                                           .Data());
+                    cfg.pulser_period_cc = measured;
+                }
+            }
+        }
     }
-    else
+
+    //  Δt STORAGE range = ±period/2 (the full nearest-pulse range) so the
+    //  peak/delay can be measured wherever it sits.  The DISPLAY histogram
+    //  stays the fixed ±250 cc created above; the peak is shifted into it by
+    //  the delay.  Capped at int16 for the per-pixel store.
+    if (cfg.anchor_fifo >= 0 && anchor_period_cc > 1.0)
+        dt_win = std::min(32000,
+                          std::max(250,
+                                   static_cast<int>(
+                                       std::round(anchor_period_cc / 2.0))));
+
+    long n_anchor_pairs_filled = 0;
+    if (cfg.anchor_fifo >= 0 && !anchor.per_spill_coarse.empty())
     {
-        const auto &anchor_bucket = anchor_it->second;
+        //  ── FIFO-salvage anchor ──────────────────────────────────────
+        //  The reference is the salvaged (device, anchor_fifo) pulse train
+        //  (e.g. KC705 testpulse), not an addressable channel.  Reference
+        //  EACH channel hit to the NEAREST anchor pulse in the same spill:
+        //  Δt = channel_coarse − nearest_anchor_coarse.  The per-spill
+        //  anchor coarse list is strictly monotonic (rollover increments
+        //  cleanly → get_coarse_global_time() never decreases; verified),
+        //  so it is already sorted and a binary search finds the nearest.
+        //  Per-pixel Δt store (chip, eo_channel) → in-window Δt values, used
+        //  after the loop to build the coincidence hitmap (laser spot).
+        std::map<ChannelKey, std::vector<int16_t>> ch_dt_for_map;
+        //  Flat (spill, Δt) store for the Δt-vs-spill 2D — filled post-loop
+        //  with the delay subtracted (same recentring as the 1D).
+        std::vector<std::pair<int16_t, int16_t>> dt2d;
         for (const auto &[ch_key, ch_bucket] : channels)
         {
-            // Cap at the shorter per_spill so we don't read past the
-            // end of either channel's sparse vector.
             const int n_spills = static_cast<int>(std::min(
-                anchor_bucket.per_spill.size(),
-                ch_bucket.per_spill.size()));
+                anchor.per_spill_coarse.size(), ch_bucket.per_spill.size()));
             for (int s = 0; s < n_spills; ++s)
             {
-                const auto &anchor_hits = anchor_bucket.per_spill[s].hits;
-                const auto &ch_hits = ch_bucket.per_spill[s].hits;
-                const int n_pairs = static_cast<int>(std::min(
-                    anchor_hits.size(), ch_hits.size()));
-                for (int i = 0; i < n_pairs; ++i)
+                const auto &anchors = anchor.per_spill_coarse[s];
+                if (anchors.empty())
+                    continue;
+                auto &dt_store = ch_dt_for_map[ch_key];
+                //  Afterpulse veto: keep the FIRST hit of each 100 ns window,
+                //  drop any later same-channel hit within 100 ns of it (it is
+                //  an afterpulse).  Hits are in FIFO/time order.
+                constexpr int64_t kVetoCc = 32;  // 100 ns / 3.125 ns-per-cc
+                int64_t last_kept = -1000000000; // first hit always kept
+                for (const auto &ch_hit : ch_bucket.per_spill[s].hits)
                 {
-                    const double dc = static_cast<double>(
-                        ch_hits[i].abs_coarse_cc - anchor_hits[i].abs_coarse_cc);
-                    h_anchor_dt_vs_spill->Fill(s, dc);
+                    const int64_t tc = ch_hit.abs_coarse_cc;
+                    if (tc - last_kept < kVetoCc)
+                    {
+                        ++n_ap_vetoed; // afterpulse — excluded from all plots
+                        continue;
+                    }
+                    last_kept = tc;
+                    ++n_ap_primary;
+                    const auto it =
+                        std::lower_bound(anchors.begin(), anchors.end(), tc);
+                    int64_t nearest;
+                    if (it == anchors.begin())
+                        nearest = anchors.front();
+                    else if (it == anchors.end())
+                        nearest = anchors.back();
+                    else
+                    {
+                        const int64_t hi = *it, lo = *(it - 1);
+                        nearest = (tc - lo <= hi - tc) ? lo : hi;
+                    }
+                    const int64_t dt = tc - nearest;
+                    //  Both the 2D (Δt vs spill) and the 1D are filled
+                    //  post-loop AFTER the delay is known, so the peak is
+                    //  recentred into the window in both.  Stash full-range
+                    //  Δt here (per-pixel for the map, flat for the 2D).
+                    if (dt >= -dt_win && dt <= dt_win)
+                    {
+                        dt_store.push_back(static_cast<int16_t>(dt));
+                        dt2d.emplace_back(static_cast<int16_t>(s),
+                                          static_cast<int16_t>(dt));
+                    }
                     ++n_anchor_pairs_filled;
                 }
             }
         }
         mist::logger::info(TString::Format(
                                "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
-                               "(channel, anchor) pairs across %d spills",
-                               n_anchor_pairs_filled, spills_seen)
+                               "(channel hit, nearest FIFO-%d anchor pulse) pairs across %d spills",
+                               n_anchor_pairs_filled, cfg.anchor_fifo, spills_seen)
                                .Data());
+
+        //  ── Coincidence hitmap (laser spot) ──────────────────────────
+        //  The coincidence peak is NARROW but SHIFTED by N cc, and the shift
+        //  can differ per pixel (laser/cable delay) — which is exactly why
+        //  the all-channel sum looks flat.  So detect the peak PER PIXEL:
+        //  for each pixel build its own Δt histogram, take the tallest bin,
+        //  and map the EXCESS over that pixel's own DCR floor inside ±20 ns
+        //  of its peak.  A laser-lit pixel shows a sharp peak (large,
+        //  significant excess); a DCR-only pixel is flat (≈ 0).  The map
+        //  therefore reveals the illuminated spot independent of any global
+        //  alignment.
+        if (!ch_dt_for_map.empty())
+        {
+            //  ±20 ns window around each channel's own peak (3.125 ns/cc).
+            const int kHalf = static_cast<int>(std::lround(20.0 / CC_TO_NS));
+            const int kRange = dt_win; // Δt confined to ±period/2
+            const int kNb = 2 * kRange + 1;
+            //  PHYSICAL detector map: each lit pixel placed at its real (x, y)
+            //  in mm via the channel→position Mapping (same geometry the
+            //  lightdata hitmaps use: 396×396 over ±99 mm).
+            Mapping pixmap(util::conf_path("mapping_conf.toml", std::string{}));
+            h_coinc_map = std::make_unique<TH2F>(
+                "h_coinc_map",
+                TString::Format(
+                    "coincidence hitmap (device %d, FIFO %d) — hits in the "
+                    "per-pixel coincidence window;x (mm);y (mm)",
+                    cfg.anchor_device, cfg.anchor_fifo),
+                396, -99, 99, 396, -99, 99);
+            h_coinc_map->SetDirectory(nullptr);
+
+            long n_lit = 0, n_unmapped = 0;
+            std::vector<double> lit_shifts;
+            for (const auto &[key, dts] : ch_dt_for_map)
+            {
+                if (dts.size() < 50)
+                    continue;
+                std::vector<int> cnt(kNb, 0);
+                for (int16_t d : dts)
+                    if (d >= -kRange && d <= kRange)
+                        ++cnt[d + kRange];
+                const int peak = static_cast<int>(
+                    std::max_element(cnt.begin(), cnt.end()) - cnt.begin());
+                //  RAW hit count in ±20 ns of this channel's peak — NO DCR
+                //  subtraction, NO significance gate.  Every channel with hits
+                //  is mapped; the laser-lit ones simply pile up more.
+                long s = 0;
+                for (int b = std::max(0, peak - kHalf);
+                     b <= std::min(kNb - 1, peak + kHalf); ++b)
+                    s += cnt[b];
+                if (s > 0)
+                {
+                    const auto xy = pixmap.get_position_from_device_chip_eoch(
+                        key.device, key.chip, key.eo_channel);
+                    if (xy)
+                    {
+                        //  Smear with the project's dedicated pixel jitter:
+                        //  AlcorFinedata::get_hit_x_rnd()/get_hit_y_rnd()
+                        //  (uniform ±1.5 mm, thread-local mist::Rnd) — same as
+                        //  the lightdata hitmaps.  One smeared fill per hit.
+                        AlcorFinedata fd(AlcorFinedataStruct(
+                            0, 0, 0, (*xy)[0], (*xy)[1], 0, 0));
+                        for (long k = 0; k < s; ++k)
+                            h_coinc_map->Fill(fd.get_hit_x_rnd(),
+                                              fd.get_hit_y_rnd());
+                    }
+                    else
+                        ++n_unmapped;
+                    lit_shifts.push_back(peak - kRange);
+                    ++n_lit;
+                }
+            }
+            if (n_unmapped > 0)
+                mist::logger::warning(TString::Format(
+                                          "(pulser_calib_writer) coincidence map: %ld lit pixels had "
+                                          "no (x,y) in mapping_conf.toml (unplaced)",
+                                          n_unmapped)
+                                          .Data());
+            double med_shift = 0.0;
+            if (!lit_shifts.empty())
+            {
+                auto m = lit_shifts.begin() + lit_shifts.size() / 2;
+                std::nth_element(lit_shifts.begin(), m, lit_shifts.end());
+                med_shift = *m;
+            }
+            coinc_shift_cc = med_shift;
+
+            //  ── Delay (mimic trigger setup) ──────────────────────────
+            //  Subtract a delay so the coincidence peak lands inside the fixed
+            //  ±250 cc window.  Two modes:
+            //    cfg.anchor_delay_cc != 0  → PINNED: use it literally.
+            //    cfg.anchor_delay_cc == 0  → AUTO-PICKER: centre on the
+            //      MEASURED peak, but ONLY when it was picked up correctly —
+            //      i.e. enough lit pixels (a real coincidence spot).  Below
+            //      that floor the peak isn't trustworthy, so no shift (0) and
+            //      the run is not spuriously recentred.
+            constexpr long kMinLitForAutoDelay = 10;
+            const bool auto_picker = (cfg.anchor_delay_cc == 0.0);
+            const bool peak_ok = (n_lit >= kMinLitForAutoDelay);
+            anchor_delay_used = !auto_picker ? cfg.anchor_delay_cc
+                                : peak_ok    ? coinc_shift_cc
+                                             : 0.0;
+            //  1D integrated Δt — recentred by the delay (±100 cc window).
+            for (const auto &[key, dts] : ch_dt_for_map)
+                for (int16_t d : dts)
+                {
+                    const double shifted = d - anchor_delay_used;
+                    if (shifted >= -100.5 && shifted <= 100.5)
+                        h_anchor_dt_1d->Fill(shifted);
+                }
+            //  2D Δt vs spill — recentred by the same delay so the peak
+            //  lands in the canvas main pad.
+            for (const auto &[s16, d16] : dt2d)
+                h_anchor_dt_vs_spill->Fill(
+                    static_cast<double>(s16),
+                    static_cast<double>(d16) - anchor_delay_used);
+            mist::logger::info(TString::Format(
+                                   "(pulser_calib_writer) coincidence: %ld lit pixels, measured "
+                                   "average peak = %.0f cc (%.1f ns); delay subtracted = %.0f cc "
+                                   "[%s] -> peak %srecentred",
+                                   n_lit, med_shift, med_shift * CC_TO_NS,
+                                   anchor_delay_used,
+                                   !auto_picker ? "pinned"
+                                   : peak_ok    ? "auto-picker"
+                                                : "auto-picker: peak not "
+                                                  "confident, no shift",
+                                   (anchor_delay_used != 0.0) ? "" : "NOT ")
+                                   .Data());
+        }
+    }
+    else
+    {
+        //  ── Legacy channel anchor ────────────────────────────────────
+        const ChannelKey anchor_key{
+            static_cast<uint16_t>(cfg.anchor_device),
+            static_cast<uint16_t>(cfg.anchor_chip),
+            static_cast<uint16_t>(cfg.anchor_eo_channel)};
+        auto anchor_it = channels.find(anchor_key);
+        if (anchor_it == channels.end())
+        {
+            mist::logger::warning(TString::Format(
+                                      "(pulser_calib_writer) anchor channel %d/%d/ch%d not present in "
+                                      "ingested hits — anchor-Δ diagnostic will be empty.",
+                                      cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                                      .Data());
+        }
+        else
+        {
+            const auto &anchor_bucket = anchor_it->second;
+            for (const auto &[ch_key, ch_bucket] : channels)
+            {
+                // Cap at the shorter per_spill so we don't read past the
+                // end of either channel's sparse vector.
+                const int n_spills = static_cast<int>(std::min(
+                    anchor_bucket.per_spill.size(),
+                    ch_bucket.per_spill.size()));
+                for (int s = 0; s < n_spills; ++s)
+                {
+                    const auto &anchor_hits = anchor_bucket.per_spill[s].hits;
+                    const auto &ch_hits = ch_bucket.per_spill[s].hits;
+                    const int n_pairs = static_cast<int>(std::min(
+                        anchor_hits.size(), ch_hits.size()));
+                    for (int i = 0; i < n_pairs; ++i)
+                    {
+                        const double dc = static_cast<double>(
+                            ch_hits[i].abs_coarse_cc - anchor_hits[i].abs_coarse_cc);
+                        h_anchor_dt_vs_spill->Fill(s, dc);
+                        h_anchor_dt_1d->Fill(dc);
+                        ++n_anchor_pairs_filled;
+                    }
+                }
+            }
+            mist::logger::info(TString::Format(
+                                   "(pulser_calib_writer) anchor-Δ diagnostic filled with %ld "
+                                   "(channel, anchor) pairs across %d spills",
+                                   n_anchor_pairs_filled, spills_seen)
+                                   .Data());
+        }
     }
 
     //  ── Per-channel closed-form fits, parallel ───────────────────
@@ -1905,14 +2315,284 @@ void pulser_calib_writer(
                 pulser_run_dir, "calibration", 5, "anchor_dt_vs_spill");
             util::qa::AnchorDtCanvasOpts opts;
             opts.rollover_cc = BTANA_ALCOR_ROLLOVER_TO_CC;
-            opts.title = TString::Format(
-                             "#Deltat_{trg} vs spill   "
-                             "(channel #minus anchor: device %d, chip %d, channel %d)",
-                             cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
-                             .Data();
+            opts.title =
+                (cfg.anchor_fifo >= 0)
+                    ? TString::Format(
+                          "#Deltat_{trg} vs spill   "
+                          "(channel #minus nearest anchor pulse: device %d, FIFO %d)",
+                          cfg.anchor_device, cfg.anchor_fifo)
+                          .Data()
+                    : TString::Format(
+                          "#Deltat_{trg} vs spill   "
+                          "(channel #minus anchor: device %d, chip %d, channel %d)",
+                          cfg.anchor_device, cfg.anchor_chip, cfg.anchor_eo_channel)
+                          .Data();
             opts.pdf_path = pdf.string();
             opts.logger_prefix = "(pulser_calib_writer)";
             util::qa::render_anchor_dt_canvas(*h_anchor_dt_vs_spill, opts);
+
+            //  Consecutive anchor-pulse Δt — the pulse cadence as a 1D
+            //  Gaussian (its own PDF, 06_anchor_consecutive_dt).  The fit
+            //  mean is the period; the title carries the derived average
+            //  rate.  Log-Y so the missed-pulse tail stays visible.
+            if (h_anchor_consecutive_dt &&
+                n_anchor_consecutive_filled > 0)
+            {
+                diag_dir->WriteObject(h_anchor_consecutive_dt.get(),
+                                      h_anchor_consecutive_dt->GetName());
+                const auto pdf_cons = util::qa::pdf_path(
+                    pulser_run_dir, "calibration", 6,
+                    "anchor_consecutive_dt");
+                TCanvas c_cons("c_anchor_consecutive_dt",
+                               "consecutive anchor dt", 1000, 1000);
+                c_cons.SetLogy();
+                h_anchor_consecutive_dt->SetTitle(
+                    TString::Format(
+                        "consecutive anchor-pulse #Deltat   (device %d, "
+                        "FIFO %d)   period = %.2f cc, rate = %.4f MHz;"
+                        "#Deltat (cc)  = c_{i} #minus c_{i-1};pulses",
+                        cfg.anchor_device, cfg.anchor_fifo, anchor_period_cc,
+                        anchor_rate_hz / 1e6));
+                h_anchor_consecutive_dt->SetLineColor(kAzure + 1);
+                h_anchor_consecutive_dt->Draw("HIST");
+                if (auto *fn = h_anchor_consecutive_dt->GetFunction("gaus"))
+                {
+                    fn->SetLineColor(kRed + 1);
+                    fn->Draw("SAME");
+                }
+                c_cons.SaveAs(pdf_cons.string().c_str());
+                //  ROOT wraps the canvas in A4 regardless of TCanvas size;
+                //  crop the MediaBox to the content box so the QA gallery
+                //  tiles uniformly (square, matching 05).
+                util::qa::crop_pdf_inplace(pdf_cons);
+            }
+
+            //  1D channel−anchor Δt (07) — the coincidence distribution.
+            //  A prompt peak near 0 ⇒ channels coincident with the laser
+            //  pulse (real light), sitting on a flat DCR pedestal; a flat
+            //  band ⇒ free-running anchor (no per-pulse coincidence).
+            //  We fit prompt Gaussian + flat pedestal, report the
+            //  coincidence rate as a fraction of anchor pulses, and scan
+            //  for an afterpulse secondary peak (a physical-light signature).
+            if (h_anchor_dt_1d && h_anchor_dt_1d->GetEntries() > 0)
+            {
+                diag_dir->WriteObject(h_anchor_dt_1d.get(),
+                                      h_anchor_dt_1d->GetName());
+                //  Fixed ±250 cc, 1-cc bins; the peak is delay-shifted into it.
+                TH1F *h07 = h_anchor_dt_1d.get();
+                const double peak_seed =
+                    h07->GetBinCenter(h07->GetMaximumBin());
+
+                //  FULL model: pol0 (DCR floor) + gaus1 (prompt coincidence)
+                //  + gaus2 (afterpulse).  1-cc bins over ±100 cc — no comb, so
+                //  the fitted Gaussian AREAS give the counts directly
+                //  (area = amp·σ·√2π).  Seeds: prompt = tallest bin (delay-
+                //  centred ≈ 0); afterpulse = tallest bin OUTSIDE the prompt
+                //  ±5 cc core; pedestal = histogram minimum.
+                const double kSqrt2Pi =
+                    std::sqrt(2.0 * 3.14159265358979323846);
+                const double prompt_seed = peak_seed;
+                double after_seed = 0.0, after_amp = 0.0;
+                for (int b = 1; b <= h07->GetNbinsX(); ++b)
+                {
+                    const double c = h07->GetBinCenter(b);
+                    if (std::abs(c - prompt_seed) < 5.0)
+                        continue;
+                    if (h07->GetBinContent(b) > after_amp)
+                    {
+                        after_amp = h07->GetBinContent(b);
+                        after_seed = c;
+                    }
+                }
+                const double ped_seed = std::max(1.0, h07->GetMinimum());
+                const double xlo = h07->GetXaxis()->GetXmin();
+                const double xhi = h07->GetXaxis()->GetXmax();
+
+                TF1 f_full("f_full", "gaus(0)+gaus(3)+pol0(6)", xlo, xhi);
+                f_full.SetParameters(h07->GetMaximum(), prompt_seed, 2.0,
+                                     std::max(after_amp - ped_seed, 1.0),
+                                     after_seed, 2.0, ped_seed);
+                f_full.SetParLimits(1, prompt_seed - 10.0, prompt_seed + 10.0);
+                f_full.SetParLimits(2, 0.3, 15.0); // prompt σ
+                f_full.SetParLimits(4, after_seed - 10.0, after_seed + 10.0);
+                f_full.SetParLimits(5, 0.3, 15.0); // afterpulse σ
+                f_full.SetParLimits(6, 0.0, h07->GetMaximum());
+                f_full.SetNpx(2000);
+                h07->Fit(&f_full, "Q0");
+
+                const double ped = std::max(0.0, f_full.GetParameter(6));
+                //  Both fitted Gaussians + their areas (1-cc bins → area =
+                //  amp·σ·√2π).  PROMPT = the LARGER-area peak; AFTERPULSE =
+                //  the smaller.  Afterpulse probability = smaller area /
+                //  larger area (≤ 1 by construction — the fit may label
+                //  either gaus as the bigger one).
+                const double a_g1 = std::abs(f_full.GetParameter(0)) *
+                                    std::abs(f_full.GetParameter(2)) * kSqrt2Pi;
+                const double a_g2 = std::abs(f_full.GetParameter(3)) *
+                                    std::abs(f_full.GetParameter(5)) * kSqrt2Pi;
+                const bool g1_bigger = (a_g1 >= a_g2);
+                const double amp_p = std::abs(
+                    f_full.GetParameter(g1_bigger ? 0 : 3));
+                const double mu_p = f_full.GetParameter(g1_bigger ? 1 : 4);
+                const double sig_p = std::abs(
+                    f_full.GetParameter(g1_bigger ? 2 : 5));
+                const double amp_a = std::abs(
+                    f_full.GetParameter(g1_bigger ? 3 : 0));
+                const double mu_a = f_full.GetParameter(g1_bigger ? 4 : 1);
+                const double sig_a = std::abs(
+                    f_full.GetParameter(g1_bigger ? 5 : 2));
+
+                const double n_prompt = std::max(a_g1, a_g2); // prompt area
+                //  CAVEAT (multi-RDO runs): the denominator is the salvaged
+                //  anchor-pulse count from a SINGLE (anchor_device, anchor_fifo)
+                //  FIFO, while n_prompt sums channel hits across ALL RDOs.  On
+                //  an integrated run (rdo-192..199, each with its own FIFO-32
+                //  testpulse) this makes coinc_frac read > 100 %.  It is only
+                //  correct on a single-RDO run, OR once the anchor is matched
+                //  PER RDO (each RDO's channels referenced to that RDO's own
+                //  FIFO-32 pulse train).  Per-RDO anchor = real follow-up; see
+                //  include/writers/DISCUSSION.md.
+                const double coinc_frac =
+                    (total_anchor_hits > 0)
+                        ? n_prompt / static_cast<double>(total_anchor_hits)
+                        : 0.0;
+
+                //  Afterpulse probability from the 100 ns per-channel VETO
+                //  applied above: a hit within 100 ns of the previous kept
+                //  hit was dropped from every plot (n_ap_vetoed) — the
+                //  afterpulse population.  Probability = vetoed / kept.
+                const double n_after = static_cast<double>(n_ap_vetoed);
+                const double after_frac =
+                    (n_ap_primary > 0)
+                        ? n_after / static_cast<double>(n_ap_primary)
+                        : 0.0;
+
+                const bool clean_peak =
+                    (sig_p > 0.3 && sig_p < 14.0 && ped > 0.0 &&
+                     amp_p > 5.0 * std::sqrt(ped));
+                const bool clean_after = (clean_peak && n_ap_vetoed > 0);
+
+                if (clean_peak)
+                    mist::logger::info(TString::Format(
+                                           "(pulser_calib_writer) coincidence: prompt #mu=%.2f ns "
+                                           "#sigma=%.2f ns, %.3f%% of %ld pulses; afterpulse "
+                                           "(100 ns veto): %ld vetoed / %ld kept = %.3f%% prob; "
+                                           "DCR pedestal=%.1f/bin",
+                                           (anchor_delay_used + mu_p) * CC_TO_NS, sig_p * CC_TO_NS,
+                                           100.0 * coinc_frac, total_anchor_hits,
+                                           n_ap_vetoed, n_ap_primary, 100.0 * after_frac, ped)
+                                           .Data());
+                else
+                    mist::logger::info(
+                        "(pulser_calib_writer) coincidence: no clean prompt "
+                        "peak in the channel-summed #Deltat (per-channel delay "
+                        "spread)");
+
+                //  Persist the scalars next to the histogram.
+                TParameter<double> p_cf("coincidence_fraction", coinc_frac);
+                TParameter<double> p_mu("coincidence_peak_ns",
+                                        (anchor_delay_used + mu_p) * CC_TO_NS);
+                TParameter<double> p_sg("coincidence_sigma_ns",
+                                        sig_p * CC_TO_NS);
+                TParameter<double> p_af("afterpulse_probability", after_frac);
+                TParameter<double> p_am("afterpulse_peak_ns",
+                                        (anchor_delay_used + mu_a) * CC_TO_NS);
+                diag_dir->WriteObject(&p_cf, p_cf.GetName());
+                diag_dir->WriteObject(&p_mu, p_mu.GetName());
+                diag_dir->WriteObject(&p_sg, p_sg.GetName());
+                diag_dir->WriteObject(&p_af, p_af.GetName());
+                diag_dir->WriteObject(&p_am, p_am.GetName());
+
+                h07->SetTitle(
+                    clean_peak
+                        ? TString::Format(
+                              "calibration anchor #Deltat (device %d, FIFO %d) "
+                              "  prompt @ %.1f ns (#sigma %.1f ns) %.2f%% · "
+                              "afterpulse @ %.1f ns %.2f%%;"
+                              "#Deltat (cc)  = c_{ch} #minus c_{anchor} "
+                              "#minus delay;hits",
+                              cfg.anchor_device, cfg.anchor_fifo,
+                              (anchor_delay_used + mu_p) * CC_TO_NS,
+                              sig_p * CC_TO_NS, 100.0 * coinc_frac,
+                              (anchor_delay_used + mu_a) * CC_TO_NS,
+                              100.0 * after_frac)
+                        : TString::Format(
+                              "calibration anchor #Deltat (device %d, FIFO %d) "
+                              "  no clean coincidence peak;"
+                              "#Deltat (cc)  = c_{ch} #minus c_{anchor} "
+                              "#minus delay;hits",
+                              cfg.anchor_device, cfg.anchor_fifo));
+
+                //  Individual components (each Gaussian on the DCR pedestal,
+                //  plus the bare pedestal) so the parts are visible on log-Y.
+                TF1 g_prompt("g_prompt", "gaus(0)+pol0(3)", xlo, xhi);
+                g_prompt.SetParameters(amp_p, mu_p, sig_p, ped);
+                g_prompt.SetNpx(2000);
+                TF1 g_after("g_after", "gaus(0)+pol0(3)", xlo, xhi);
+                g_after.SetParameters(amp_a, mu_a, sig_a, ped);
+                g_after.SetNpx(2000);
+                TF1 g_ped("g_ped", "pol0", xlo, xhi);
+                g_ped.SetParameter(0, ped);
+
+                const auto pdf_1d = util::qa::pdf_path(
+                    pulser_run_dir, "calibration", 7, "anchor_dt_1d");
+                TCanvas c_1d("c_anchor_dt_1d", "anchor dt 1d", 1000, 1000);
+                c_1d.SetLogy();
+                gStyle->SetOptStat(0);
+                gStyle->SetOptFit(0);
+                h07->SetStats(0); // no stat/fit box on the fit plot
+                h07->SetLineColor(kAzure + 1);
+                h07->SetMinimum(0.5);
+                h07->Draw("HIST");
+                f_full.SetLineColor(kRed + 1);
+                f_full.SetLineWidth(2);
+                f_full.Draw("SAME");
+                g_prompt.SetLineColor(kGreen + 2);
+                g_prompt.SetLineStyle(2);
+                g_prompt.Draw("SAME");
+                g_after.SetLineColor(kMagenta + 1);
+                g_after.SetLineStyle(2);
+                g_after.Draw("SAME");
+                g_ped.SetLineColor(kGray + 2);
+                g_ped.SetLineStyle(3);
+                g_ped.Draw("SAME");
+                TLegend leg(0.55, 0.68, 0.88, 0.88);
+                leg.SetBorderSize(0);
+                leg.SetFillStyle(0);
+                leg.AddEntry(&f_full, "full: pol0 + 2 gaus", "l");
+                leg.AddEntry(&g_prompt,
+                             TString::Format("prompt (gaus 1): %.2f%% of pulses",
+                                             100.0 * coinc_frac),
+                             "l");
+                //  Afterpulse PROBABILITY = 100 ns per-channel veto count
+                //  (vetoed / kept); the afterpulse hits are removed from every
+                //  plot, so this is a number, not a curve.
+                leg.AddEntry(&g_after,
+                             TString::Format(
+                                 "afterpulse (100 ns veto): P = %.2f%%",
+                                 100.0 * after_frac),
+                             "l");
+                leg.AddEntry(&g_ped, "DCR pedestal (pol0)", "l");
+                leg.Draw();
+                c_1d.SaveAs(pdf_1d.string().c_str());
+                util::qa::crop_pdf_inplace(pdf_1d);
+            }
+
+            //  Coincidence hitmap (08) — laser spot: per-pixel count of hits
+            //  in the shifted coincidence window.  COLZ readout map.
+            if (h_coinc_map && h_coinc_map->GetEntries() > 0)
+            {
+                diag_dir->WriteObject(h_coinc_map.get(),
+                                      h_coinc_map->GetName());
+                const auto pdf_map = util::qa::pdf_path(
+                    pulser_run_dir, "calibration", 8, "coincidence_map");
+                TCanvas c_map("c_coinc_map", "coincidence map", 1000, 1000);
+                c_map.SetRightMargin(0.15);
+                h_coinc_map->SetStats(0);
+                h_coinc_map->Draw("COLZ");
+                c_map.SaveAs(pdf_map.string().c_str());
+                util::qa::crop_pdf_inplace(pdf_map);
+            }
         }
     }
 

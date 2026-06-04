@@ -33,6 +33,7 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import cross_run_trends
+from . import qa_pipeline
 from . import rundb
 from . import thumbs
 
@@ -165,6 +166,12 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     # Pulser-calib-side anchor-Δt vs spill (single canvas per run) →
     # Calibration.  Match BEFORE the lightdata-side anchor_dt rule.
     (_re_topics.compile(r"^anchor_dt_vs_spill(\..*)?$"),         "calibration"),
+    # Pulser-calib anchor cadence (consecutive-Δt Gaussian) → Calibration.
+    (_re_topics.compile(r"^anchor_consecutive_dt(\..*)?$"),      "calibration"),
+    # Pulser-calib 1D channel−anchor Δt (coincidence distribution) → Calibration.
+    (_re_topics.compile(r"^anchor_dt_1d(\..*)?$"),               "calibration"),
+    # Pulser-calib coincidence hitmap (laser spot) → Calibration.
+    (_re_topics.compile(r"^coincidence_map(\..*)?$"),            "calibration"),
     # Lightdata per-trigger anchor-Δt PDFs → Triggers.
     (_re_topics.compile(r"^anchor_dt_.+(\..*)?$"),               "triggers"),
     # Per-trigger time-difference w/ Cherenkov → Triggers.
@@ -174,6 +181,11 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     # Ring finder QA from the Hough stage → Triggers.
     (_re_topics.compile(r"^.*ring_finder.*"),                    "triggers"),
     (_re_topics.compile(r"^.*hough.*"),                          "triggers"),
+    # Timing-sensor DCR — a per-channel dark-count measurement, so it
+    # belongs with the other DCR plots on Noise.  Match BEFORE the generic
+    # ``^timing.*`` alignment rule (which would otherwise steal it to
+    # Calibration purely because the name starts with "timing").
+    (_re_topics.compile(r"^timing_dcr.*"),                       "noise"),
     # Timing — chip-0/chip-1 alignment, ref-Δ.
     (_re_topics.compile(r"^timing.*"),                           "calibration"),
     (_re_topics.compile(r"^.*fine_calib.*"),                     "calibration"),
@@ -340,22 +352,26 @@ class QaView(QtWidgets.QWidget):
         self._monitor_btn.toggled.connect(self._on_monitor_toggled)
         top_row.addWidget(self._monitor_btn)
 
-        # ── Clear QA button — dev escape hatch ──────────────────────
-        # Stronger than Refresh: drops the process-wide PDF-thumbnail
-        # cache (``_PdfTile._THUMB_CACHE``) AND invalidates every
-        # step page's dedupe state.  Use when the QA rendering code
-        # itself changes (so on-disk artefacts are still valid but the
-        # in-process cache holds stale renders), or when "I don't know
-        # why this looks wrong, just rebuild everything from scratch".
+        # ── Clear QA button — purge the selected run's QA artefacts ──
+        # Deletes the regenerable QA outputs ON DISK for the current
+        # run (delegating to ``qa_pipeline.clean_run_dir`` — the same
+        # allowlist-protected purge as ``qa_pipeline --clean``: the
+        # ``qa/`` render tree, the writer output roots, and stray
+        # run-root ``h_*.pdf``).  Raw DAQ device dirs and calibration
+        # files are never matched; the ``.qa_persistent`` pin guards raw
+        # data only, so pinned runs clear like any other.  After the
+        # purge it drops the in-process render caches and rebuilds, so
+        # the view reflects the now-empty QA.
         self._clear_btn = QtWidgets.QPushButton(" 🗑  Clear QA ")
         f = self._clear_btn.font(); f.setPointSize(f.pointSize() + 2)
         self._clear_btn.setFont(f)
         self._clear_btn.setToolTip(
-            "Drop all cached QA renders (PDF thumbnails + per-page "
-            "dedupe state) and force a clean rebuild of the active "
-            "sub-tab.  Use when the QA rendering code itself has "
-            "changed during development, or as a last-resort 'rebuild "
-            "from scratch'."
+            "Delete the selected run's regenerable QA artefacts on disk "
+            "(the qa/ render tree + lightdata/recodata/recotrack output "
+            "roots + stray h_*.pdf — same set as `qa_pipeline --clean`), "
+            "then rebuild the view.  Raw device dirs and calibration "
+            "files are left untouched.  Works on pinned runs too — the "
+            "pin protects raw data, not regenerable QA."
         )
         self._clear_btn.clicked.connect(self._on_clear_qa)
         top_row.addWidget(self._clear_btn)
@@ -501,29 +517,88 @@ class QaView(QtWidgets.QWidget):
         self._refresh_current_page()
 
     def _on_clear_qa(self) -> None:
-        """Wipe every QA-side cache and force a clean rebuild.
+        """Delete the selected run's regenerable QA artefacts, then rebuild.
 
-        Stronger than ``_on_refresh``: in addition to re-scanning the
-        run directory and invalidating the active step page, this also
+        Two layers:
 
-          - drops the process-wide PDF-thumbnail cache shared by every
-            ``_PdfThumbCard`` instance.  The cache keys on (path,
-            mtime), so on-disk artefacts that *haven't* changed are
-            otherwise served from RAM forever — wrong after a dev edit
-            to the rendering code itself.
-          - invalidates *every* step page, not just the visible one,
-            so switching tabs after a Clear forces those to rebuild too.
+          - ON DISK — delegate to ``qa_pipeline.clean_run_dir``, the
+            same allowlist-protected purge as ``qa_pipeline --clean``:
+            the ``qa/`` render tree, the writer output roots
+            (``lightdata``/``recodata``/``recotrackdata.root``), and
+            stray run-root ``h_*.pdf``.  Raw DAQ device dirs and
+            calibration files are NEVER matched, so a mis-fire can't
+            destroy a run's inputs.  The ``.qa_persistent`` pin guards
+            raw data only and does NOT exempt a run — its QA is still
+            regenerable, so pinned and unpinned runs clear alike.
+          - IN PROCESS — the on-disk artefacts just vanished, so drop
+            the process-wide PDF-thumbnail cache (keyed on path+mtime,
+            else stale renders are served from RAM forever) and
+            invalidate *every* step page before ``_on_refresh`` walks
+            the now-empty tree.
+
+        Guarded by a Yes/No confirm (the project's destructive-action
+        convention); no-ops with an info dialog if no run is selected.
         """
+        if not self._current_run_id or self._data_dir is None:
+            QtWidgets.QMessageBox.information(
+                self, "Clear QA", "Select a run first.",
+            )
+            return
+        run_dir = self._data_dir / self._current_run_id
+        if not run_dir.is_dir():
+            QtWidgets.QMessageBox.information(
+                self, "Clear QA",
+                f"Run directory not found:\n{run_dir}",
+            )
+            return
+        # No pin exemption: ``.qa_persistent`` guards a run's RAW DAQ data
+        # against retention pruning — it says nothing about the QA
+        # artefacts, which are regenerable by re-running the pipeline.
+        # Clearing QA on a pinned baseline is therefore safe (the raw
+        # inputs the clean would need to rebuild are exactly what the pin
+        # protects), so Clear QA treats pinned and unpinned runs alike.
+        confirm = QtWidgets.QMessageBox.question(
+            self, "Clear QA",
+            f"Delete the regenerable QA artefacts for "
+            f"{self._current_run_id}?\n\n"
+            "Removes the qa/ render tree, lightdata.root, recodata.root, "
+            "recotrackdata.root and stray h_*.pdf.\n\n"
+            "Raw DAQ device dirs and calibration files are left "
+            "untouched — everything removed is regenerable by re-running "
+            "the QA pipeline.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if confirm != QtWidgets.QMessageBox.Yes:
+            return
+        # On-disk purge — mirror ``qa_pipeline --clean`` exactly.  The
+        # log callback collects per-entry messages; only the count is
+        # surfaced (failures are folded into the log lines by the helper
+        # and would leave the entry on disk, reflected in the rebuild).
+        msgs: list[str] = []
+        try:
+            removed = qa_pipeline.clean_run_dir(run_dir, msgs.append)
+        except Exception as exc:  # noqa: BLE001
+            QtWidgets.QMessageBox.warning(
+                self, "Clear QA",
+                f"Could not clear QA artefacts:\n{exc}",
+            )
+            return
+        # In-process caches — drop the shared thumbnail cache and every
+        # topic page's dedupe state (the FullPlots page proxies the
+        # invalidation through to each nested stage page) so the rebuild
+        # walks the now-empty tree instead of serving stale renders.
         try:
             _PdfTile._THUMB_CACHE.clear()
         except (NameError, AttributeError):  # pragma: no cover
             pass
-        # Invalidate every topic page (the FullPlots page proxies the
-        # invalidation through to each of its nested stage pages).
         for page in self._topic_pages.values():
             if hasattr(page, "invalidate_cache"):
                 page.invalidate_cache()
         self._on_refresh()
+        QtWidgets.QMessageBox.information(
+            self, "Clear QA",
+            f"Cleared {removed} QA entry(ies) for {self._current_run_id}.",
+        )
 
     def _on_refresh(self) -> None:
         """Re-scan Data/ + force the active page to rebuild from disk."""
@@ -3084,10 +3159,16 @@ class _GeneralQaPage(QtWidgets.QWidget):
             "afterpulse_per_channel.pdf",   # per-channel afterpulse % + averages
             "afterpulse_hitmap.pdf",
         )),
+        ("Calibration", (
+            "anchor_dt_vs_spill.pdf",       # channel hit vs nearest anchor pulse
+            "anchor_dt_1d.pdf",             # channel-anchor Δt 1D (coincidence dist.)
+            "coincidence_map.pdf",          # laser spot: per-pixel coincidence map
+            "anchor_consecutive_dt.pdf",    # anchor cadence: Gaussian period + rate
+        )),
         ("Timing", (
             "timing_alignment.pdf",
-            "anchor_dt_vs_spill.pdf",
             "timing_hit_map.pdf",           # chip-0 vs chip-1 coincidence occupancy
+            "timing_dcr_per_channel.pdf",   # per-channel timing-sensor DCR (kHz) + per-chip avgs
         )),
         ("Cherenkov", (
             "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring

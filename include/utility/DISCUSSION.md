@@ -45,7 +45,7 @@ layout the QA dashboard scans.  See top-level `DISCUSSION.md`
 
 32-bit packed `(device, fifo, chip_logical, channel_logical, tdc,
 validity_bit)` plus accessors that decode each component.  Stored as
-the calibration map key (`AlcorFinedata::calibration_parameters`)
+the calibration map key (`AlcorFinedata::calibration_table_`)
 and emitted into `fine_calib.toml` as the `key` field.  The legacy
 `calib_index()` accessor (without `device`) is kept deprecated for
 old-file detection only — see `[[deprecated]]` attribute on the
@@ -53,36 +53,39 @@ declaration.
 
 ### `AlcorFinedata::get_phase()` — hot-path representation
 
-**Decision (2026-05-30, CLEAN_OFF C0.2).**  Implementation queued in
-cluster C4.
+**Shipped 2026-06-02 as a code-clarity cleanup (lever a) — NOT a perf win.**
+The two parallel maps (`calibration_parameters` + `channel_calibration_method`)
+are now **fused into one** `calibration_table_`
+(`unordered_map<uint32_t, CalibrationEntry>`, where
+`CalibrationEntry = {array<float,3> params, CalibrationMethod method}`), so
+`get_phase()` does a single `find()` instead of two.  Behaviour-preserving;
+on-disk TOML schema unchanged.
 
-`get_phase()` runs once per hit (~100 M / 5-spill run) and today does
-**two** `std::unordered_map::find()` lookups — one on
-`calibration_parameters`, one on `channel_calibration_method` —
-contributing ~19 s of a 5-spill `--QA`-with-calibration run (two
-lookups × ~95 ns × ~100 M hits; measured 2026-05-29 on 20251119-010426).
-The frozen-table fast path already removes the per-hit `shared_mutex`,
-so the hash lookup itself is the floor.  Three levers were weighed
-(BACKLOG P 1.71):
+**⚠️ The "~10–19 s" perf premise was FALSE — measured, don't re-chase.**  The
+BACKLOG-P-1.71 estimate (two `find()`s × ~95 ns × ~100 M hits ≈ 19 s) was a
+**code-inspection hypothesis**, never a direct `get_phase` measurement.  A
+controlled before/after A/B (5-spill `--QA` on 20251119-010426, same continuous
+machine load, 2026-06-02) showed **no wall-clock difference**:
 
-- **(a)** merge the two maps into one
-  `unordered_map<uint32_t, struct{array<float,3>, CalibrationMethod}>`
-  — one lookup not two.  ~10 s.
-- **(b)** replace with `std::vector<CalibEntry>` indexed by
-  `GlobalIndex::raw()` — dense key range → single array deref
-  (~10 ns vs ~95 ns).  ~15 s.
-- **(c)** bake calibration into `AlcorFinedataStruct` at decode time —
-  eliminates the lookup.  ~18 s.  Couples decode to calibration
-  (+12 B/hit) and complicates the freeze contract.
+| | runs (s) | mean |
+| --- | --- | --- |
+| PRE (two maps) | 115.7, 111.7 | ~113.7 |
+| POST (fused)   | 118.8, 115.0, 120.0 | ~117.9 |
 
-**Chosen: lever (b).**  Best speedup-to-risk — ~15 s of the ~19 s with
-no per-hit memory cost and no decode/calibration coupling.  (a) is the
-fallback if a future detector's `GlobalIndex::raw()` range turns out
-sparse enough to waste vector memory (not today); (c) stays on the
-table only if a later profile shows the array deref's cache misses
-dominate.  On-disk TOML schema is unchanged — this is an in-memory
-representation swap; `read_calib_from_file` / `write_calib_to_file`
-keep their format.
+Ranges overlap; if anything POST is marginally slower (noise).  So the per-hit
+calibration lookup is **not** a wall-clock bottleneck on the `--QA` path — either
+the lookup was never the cost, or this path runs `calibration_method=none` so
+both `find()`s short-circuit on an empty table.  Either way:
+
+- **Levers (b)** (vector — and note `raw()` is sparse with bit-31 set, so (b)
+  would need re-keying to `tdc_ordinal()`, not "indexed by `raw()`" as the old
+  plan said) **and (c)** (bake into the struct) are **not worth pursuing** — if
+  fusing two lookups into one moved nothing, neither will.
+- To find the *real* hot points, **profile/instrument** (CPU/mem/IO) rather than
+  reason from code; the calibration lookup is off the suspect list.
+
+Kept (a) because the fused record is simpler than two parallel maps and cannot
+be slower — but it carries **no** performance claim.
 
 ## Open / deferred items
 

@@ -375,6 +375,23 @@ struct CalibConfigStruct
     int anchor_chip = 0;
     /// @brief Anchor channel — even-odd channel index within the chip (0..31).
     int anchor_eo_channel = 0;
+    /// @brief Anchor reference FIFO — the pulsed reference signal (e.g. the
+    /// KC705 testpulse) is read out by ALCOR on a dedicated FIFO with
+    /// `tdc/fine/pixel/column` all sentinel (-1), so it has NO valid channel
+    /// ordinal and is dropped by the normal tdc/fine/channel path.  When
+    /// `anchor_fifo >= 0`, hits matching `(anchor_device, anchor_fifo)` are
+    /// salvaged by (device, fifo) and kept as the anchor reference (coarse
+    /// only).  Default -1 disables the salvage (legacy channel-anchor mode).
+    int anchor_fifo = -1;
+    /// @brief Anchor coincidence delay (cc) — mimics the trigger setup's
+    /// hardware delay.  Subtracted from the channel−anchor Δt so the
+    /// coincidence peak (which sits at the laser/cable delay, often far from
+    /// 0) shifts into the fixed ±250 cc Δt histogram window.  @c 0 (default)
+    /// = AUTO-PICKER: centre on the MEASURED average peak, but only when it
+    /// was picked up correctly (enough lit pixels — a real coincidence spot);
+    /// below that floor no shift is applied.  Any nonzero value PINS the
+    /// delay literally (reproducible, trigger-style).
+    double anchor_delay_cc = 0.0;
 
     /// @brief Minimum cumulative hits (across all spills) on a single
     /// GlobalIndex before its `(a, b)` fit is published.  GlobalIndex's
