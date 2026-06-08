@@ -1397,7 +1397,7 @@ class RunManagerView(QtWidgets.QWidget):
             )
             return
         self._log.appendPlainText(
-            f"[inspect] qa_tbrowser launched on "
+            f"── [{time.strftime('%H:%M:%S')}] [inspect] qa_tbrowser launched on "
             f"{len(root_files)} file(s) from {run_dir.name}"
         )
 
@@ -1436,7 +1436,7 @@ class RunManagerView(QtWidgets.QWidget):
             return
         window._launch_qa_pipeline_manual(run_id)
         self._log.appendPlainText(
-            f"[qa_pipeline] launched on {run_id}"
+            f"── [{time.strftime('%H:%M:%S')}] [qa_pipeline] launched on {run_id}"
         )
 
     def _maybe_update_progress(self, line: str) -> None:

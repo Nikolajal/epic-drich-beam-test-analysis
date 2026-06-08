@@ -489,7 +489,7 @@ def _run_stage(
         )
 
     argv = _build_stage_argv(stage, opts, repo_root)
-    log(f"[{name}] running: {' '.join(argv)}")
+    log(f"[{time.strftime('%H:%M:%S')}] [{name}] running: {' '.join(argv)}")
 
     if opts.dry_run:
         return StageResult(name=name, state="ok", reason="dry-run")
