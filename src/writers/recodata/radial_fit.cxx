@@ -234,11 +234,14 @@ void fit_radial_distribution(TH1F *h,
                                      ? n_gamma * static_cast<double>(n_rings)
                                      : n_gamma;
 
-    //  Data-driven cross-check of N_γ: sideband subtraction on the HIST
-    //  itself (fit-independent).  Peak window = μ ± 3σ; the two flanking
-    //  μ±3σ → μ±6σ bands (same total width as the peak window) estimate
-    //  the background under the peak, so
-    //      N_γ = (peak counts − sideband counts) / N_rings.
+    //  Data-driven cross-check of N_γ: sideband subtraction on the
+    //  (already per-ring) HIST itself.  Peak window = μ ± 3σ; the two
+    //  flanking μ±3σ → μ±6σ bands (same total width as the peak window)
+    //  estimate the background under the peak, so per ring
+    //      N_γ = peak counts − sideband counts
+    //  The hist is already scaled to per-ring, so there is NO further
+    //  /N_rings.  μ, σ come from the fit, so this checks the subtraction,
+    //  not the peak finding.
     double n_gamma_sb = 0.0;
     {
         const double mu = ring_fit.GetParameter(1);
@@ -252,9 +255,12 @@ void fit_radial_distribution(TH1F *h,
                 ax->FindBin(mu - 6.0 * sig), ax->FindBin(mu + 6.0 * sig));
             const double sideband_counts = outer_counts - peak_counts; // the wings
             const double signal = peak_counts - sideband_counts;
-            n_gamma_sb = (n_rings > 0)
-                             ? signal / static_cast<double>(n_rings)
-                             : signal;
+            //  `h` was already scaled to per-ring above (1/N_rings), so
+            //  `peak_counts`/`sideband_counts`/`signal` are ALL per-ring.
+            //  Dividing by N_rings here as well double-counted the
+            //  normalisation and drove the sideband estimator to ~0; it
+            //  must be left per-ring to match the fit-based n_gamma.
+            n_gamma_sb = signal;
         }
     }
 
