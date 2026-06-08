@@ -45,7 +45,11 @@
 #include <mist/logger/progress_bar.h>
 #include <mist/logger/multi_progress_bar.h>
 #else
-namespace mist::logger { class ProgressBar; class SubtaskProgressBar; }
+namespace mist::logger
+{
+class ProgressBar;
+class SubtaskProgressBar;
+} // namespace mist::logger
 #endif
 
 /// @defgroup FramerConfig Framer Configuration Constants
