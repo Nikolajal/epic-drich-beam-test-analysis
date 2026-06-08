@@ -131,14 +131,17 @@ void run_streaming_hough_trigger(
         //  intended "at least one hit per ring" semantic.
         const int min_hits_per_ring = std::max(
             1, static_cast<int>(min_active * cfg.min_hits_slack));
+        //  MIST v1.0.0 (D-02): find_rings takes a single FindRingsOptions
+        //  struct instead of positional args.  Named fields below mirror the
+        //  former positional order.
         auto found_rings = ring_finder.find_rings(
             generic_hits,
-            /*threshold_fraction*/ cfg.threshold_fraction,
-            /*min_hits*/ min_hits_per_ring,
-            /*min_active*/ min_active,
-            /*max_rings*/ 2,
-            /*collection_radius*/ cfg.collection_radius,
-            /*aggregation_window_cells*/ cfg.aggregation_window_cells);
+            {.threshold_fraction = cfg.threshold_fraction,
+             .min_hits = min_hits_per_ring,
+             .min_active = min_active,
+             .max_rings = 2,
+             .collection_radius = cfg.collection_radius,
+             .aggregation_window_cells = cfg.aggregation_window_cells});
 
         //  C3.4: post-find_rings sanity filter + near-duplicate dedup.
         //

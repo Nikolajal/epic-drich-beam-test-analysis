@@ -43,7 +43,10 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # --------------------------------------------------
 # C++ Standard
 # --------------------------------------------------
-set(CMAKE_CXX_STANDARD 17)
+# C++20 is required by MIST v1.0.0 (std::floating_point / std::numbers /
+# std::format).  ROOT 6.40's rootcling parses C++20 even though ROOT itself
+# may report a C++17 build standard.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Windows: auto-export symbols for shared library
@@ -90,10 +93,10 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    # Pinned to an immutable SHA for a reproducible v2.0.0 build — this is the
-    # commit the release was built and tested against.  Bump deliberately when
-    # adopting newer MIST; do not float back to a branch name for releases.
-    GIT_TAG        96c6f5a779ca9456abadf754b0be9b31ed312f71
+    # Pinned to the first stable MIST release.  mist cut v1.0.0 with a one-time
+    # clean-root reset, so pre-release SHAs no longer exist on the remote — pin
+    # to the tag (immutable) and bump deliberately when adopting newer MIST.
+    GIT_TAG        v1.0.0
 )
 FetchContent_MakeAvailable(mist)
 
@@ -137,6 +140,10 @@ ROOT_GENERATE_DICTIONARY(
     ${DICT_HEADERS}
     LINKDEF ${CMAKE_CURRENT_SOURCE_DIR}/dict/alcor_linkdef.h
     OPTIONS
+        # MIST v1.0.0 headers are C++20-only.  ROOT picks up CMAKE_CXX_STANDARD
+        # (set to 20 above) and passes -DR__DUMMY_CXX_STANDARD_20 to rootcling;
+        # do NOT add an explicit -std flag here — rootcling's getopt parses it
+        # as its own -s option and aborts ("-s may not occur within a group").
         -I${CMAKE_CURRENT_SOURCE_DIR}/include
         -I${mist_SOURCE_DIR}/include
         -I${tomlplusplus_SOURCE_DIR}/include
@@ -376,7 +383,7 @@ if(BTANA_BUILD_TESTS)
     function(btana_add_test name)
         add_executable(test_${name} test/tester_${name}.cxx)
         target_link_libraries(test_${name} PRIVATE beam_test_analysis)
-        target_compile_features(test_${name} PRIVATE cxx_std_17)
+        target_compile_features(test_${name} PRIVATE cxx_std_20)
         add_test(NAME test_${name} COMMAND test_${name})
     endfunction()
 

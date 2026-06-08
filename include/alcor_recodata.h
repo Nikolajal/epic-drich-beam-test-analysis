@@ -185,17 +185,25 @@ public:
     /// `AlcorFinedata::get_hit_x_rnd`.
     inline float get_hit_x_rnd(int i) const
     {
+#ifndef __ROOTCLING__
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return recodata[i].hit_x + pixel_jitter(rng.engine());
+#else
+        return recodata[i].hit_x; // dictionary stub; never executed (mist::Rnd is C++20)
+#endif
     }
 
     /// @brief Pixel-randomised y-coordinate (uniform ±1.5 mm jitter within the pixel cell).
     inline float get_hit_y_rnd(int i) const
     {
+#ifndef __ROOTCLING__
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return recodata[i].hit_y + pixel_jitter(rng.engine());
+#else
+        return recodata[i].hit_y; // dictionary stub; never executed (mist::Rnd is C++20)
+#endif
     }
 
     /// @brief Radial distance from the origin using randomised coordinates.

@@ -37,8 +37,20 @@
 #include "alcor_spilldata.h"
 #include "alcor_data_streamer.h"
 #include "utility/config_reader.h"
+// MIST v1.0.0 logger headers are C++20-only and cannot be parsed by ROOT
+// 6.40's (C++17) rootcling.  This header is fed to the dictionary, but only
+// uses mist::logger types through pointers/references — forward declarations
+// satisfy rootcling; the real compiler gets the full headers.
+#ifndef __ROOTCLING__
 #include <mist/logger/progress_bar.h>
 #include <mist/logger/multi_progress_bar.h>
+#else
+namespace mist::logger
+{
+class ProgressBar;
+class SubtaskProgressBar;
+} // namespace mist::logger
+#endif
 
 /// @defgroup FramerConfig Framer Configuration Constants
 /// @{
