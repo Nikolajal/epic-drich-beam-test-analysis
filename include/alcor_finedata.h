@@ -20,7 +20,14 @@
  * holding the mutex — @c std::shared_mutex is not reentrant.
  */
 
+// MIST v1.0.0 is C++20-only.  ROOT 6.40's rootcling (built against a C++17
+// ROOT) cannot parse <mist/rnd.h>, and this header is fed to the ROOT
+// dictionary.  mist::Rnd is used only inside inline method bodies (never as a
+// data member), so it is invisible to the I/O streamers — hide it from the
+// dictionary parser and stub the bodies under __ROOTCLING__.
+#ifndef __ROOTCLING__
 #include <mist/rnd.h>
+#endif
 #include <sstream>
 #include <cmath>
 #include <iostream>
@@ -384,17 +391,25 @@ public:
      */
     float get_hit_x_rnd() const
     {
+#ifndef __ROOTCLING__
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return internal_data.hit_x + pixel_jitter(rng.engine());
+#else
+        return internal_data.hit_x; // dictionary stub; never executed
+#endif
     }
 
     /** @brief Returns the pixel-randomised y-coordinate, uniform within ±1.5 mm of the Hit position. */
     float get_hit_y_rnd() const
     {
+#ifndef __ROOTCLING__
         thread_local mist::Rnd rng;
         static thread_local std::uniform_real_distribution<float> pixel_jitter(-1.5f, 1.5f);
         return internal_data.hit_y + pixel_jitter(rng.engine());
+#else
+        return internal_data.hit_y; // dictionary stub; never executed
+#endif
     }
 
     /** @brief Returns the radial distance from the origin using a freshly randomised position. */

@@ -17,7 +17,12 @@
 
 #include "TH2.h"
 
+// MIST v1.0.0's logger is C++20-only; this header reaches the ROOT dictionary
+// via triggers.h.  The logger is used only inside an inline method body, so it
+// is hidden from the C++17 rootcling parse and the call is guarded below.
+#ifndef __ROOTCLING__
 #include <mist/logger/logger.h>
+#endif
 
 #include "triggers/config.h"
 #include "triggers/events.h"
@@ -68,10 +73,12 @@ struct TriggerRegistry
             if (triggers[i].first == trigger_value)
                 return i;
 
+#ifndef __ROOTCLING__
         mist::logger::warning(
             "(TriggerRegistry::index_of) unknown trigger value " +
             std::to_string(static_cast<int>(trigger_value)) +
             " — falling back to UNKNOWN");
+#endif
 
         // Scan the registry for _TRIGGER_UNKNOWN_ rather than using
         // default_trigger_index(), which returns a position in all_default_triggers[]
