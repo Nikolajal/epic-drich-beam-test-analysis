@@ -136,11 +136,11 @@ void run_streaming_hough_trigger(
         //  former positional order.
         auto found_rings = ring_finder.find_rings(
             generic_hits,
-            {.threshold_fraction       = cfg.threshold_fraction,
-             .min_hits                 = min_hits_per_ring,
-             .min_active               = min_active,
-             .max_rings                = 2,
-             .collection_radius        = cfg.collection_radius,
+            {.threshold_fraction = cfg.threshold_fraction,
+             .min_hits = min_hits_per_ring,
+             .min_active = min_active,
+             .max_rings = 2,
+             .collection_radius = cfg.collection_radius,
              .aggregation_window_cells = cfg.aggregation_window_cells});
 
         //  C3.4: post-find_rings sanity filter + near-duplicate dedup.
