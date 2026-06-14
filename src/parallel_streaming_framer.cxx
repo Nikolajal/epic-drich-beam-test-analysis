@@ -514,15 +514,23 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             // Gather infos on the fifo
             auto current_fifo = current_data.get_fifo();
 
-            // Encode participation of lane
-            auto &current_participants_mask = spilldata.get_participants_mask_link();
-            current_participants_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
-
-            // Encode dead lane
-            if (current_data.coarse_time_clock() != 0)
+            // The hardware trigger chip (fifo 32) is not a sensor lane and does
+            // not fit the per-device 32-bit lane mask (encode_bits requires
+            // bit < 32 — it asserts in debug builds and silently drops the bit
+            // in release).  Only sensor fifos 0–31 participate in the
+            // participants / dead-lane masks.
+            if (current_fifo < 32)
             {
-                auto &current_dead_mask = spilldata.get_dead_mask_link();
-                current_dead_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
+                // Encode participation of lane
+                auto &current_participants_mask = spilldata.get_participants_mask_link();
+                current_participants_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
+
+                // Encode dead lane
+                if (current_data.coarse_time_clock() != 0)
+                {
+                    auto &current_dead_mask = spilldata.get_dead_mask_link();
+                    current_dead_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
+                }
             }
             continue;
         }
