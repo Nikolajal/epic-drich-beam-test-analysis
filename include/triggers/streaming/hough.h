@@ -33,8 +33,12 @@
  */
 
 #include <cstdint>
+#include <vector>
 
 #include "alcor_spilldata.h"
+#include "alcor_finedata.h"        // AlcorFinedataStruct
+#include "alcor_data.h"            // HitMask
+#include "triggers/events.h"       // TriggerEvent
 #include "utility/config_reader.h" // StreamingHoughConfigStruct
 
 namespace mist
@@ -220,6 +224,60 @@ void run_streaming_hough_trigger(
     mist::ring_finding::HoughTransform &ring_finder,
     int min_active,
     int &streaming_trigger_count,
+    int ispill,
+    float time_window_ns,
+    const StreamingHoughConfigStruct &cfg,
+    const StreamingHoughQA &qa);
+
+// ─────────────────────────────────────────────────────────────────────
+//  Frame-level multithreading: parallel find_rings + serial mutation drain
+//
+//  `run_streaming_hough_trigger` reads the frame's hits + triggers from
+//  the spill and writes back to it (mask bits, `_TRIGGER_HOUGH_RING_FOUND_`
+//  events) — neither is safe under the parallel per-frame pass (the spill's
+//  unordered_map and ROOT histograms are not thread-safe).
+//  `run_streaming_hough_compute` does the expensive work (candidate
+//  collection + `find_rings` + ring tagging) on a worker thread, reading
+//  only its frame's hits + the streaming triggers the score stage produced,
+//  filling the (per-thread-cloned) QA bundle, and BUFFERING the spill
+//  mutations into a @ref HoughMutations record.  The caller replays those
+//  mutations serially, in frame order, after `drain_streaming_score` (so
+//  the streaming-ring bit is already set and the Hough bits OR onto it, and
+//  the trigger order stays streaming-then-Hough).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Spill mutations a frame's Hough stage would apply, deferred for serial
+/// replay.
+struct HoughMutations
+{
+    /// Hough ring-tag bits to OR onto a cherenkov hit's mask: (hit index in
+    /// the frame's `cherenkov_hits`, bits = HitmaskHoughRingTag{First,Second}).
+    /// OR (not overwrite) so the streaming-ring bit set by the score drain
+    /// survives.
+    std::vector<std::pair<int, HitMask>> mask_writes;
+
+    /// `_TRIGGER_HOUGH_RING_FOUND_` events (one per ring), appended via
+    /// `add_trigger_to_frame` after the streaming trigger.
+    std::vector<TriggerEvent> hough_triggers;
+
+    /// Number of streaming triggers processed (the `streaming_trigger_count`
+    /// in/out increment of the serial entry point).
+    int streaming_trigger_count_inc = 0;
+};
+
+/// Pure-compute Hough stage for one frame.  Thread-safe given a per-thread
+/// @p ring_finder and a per-thread @p qa clone bundle; reads only @p
+/// cherenkov_hits (positions must already be assigned) and the score stage's
+/// @p streaming_triggers, with @p streaming_mask_indices naming the hits the
+/// score flagged (used for the `full_hitmap` QA, since the mask bits are not
+/// yet written to the hits during the parallel pass).  Returns the buffered
+/// spill mutations for serial replay.
+HoughMutations run_streaming_hough_compute(
+    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
+    const std::vector<TriggerEvent> &streaming_triggers,
+    const std::vector<int> &streaming_mask_indices,
+    mist::ring_finding::HoughTransform &ring_finder,
+    int min_active,
     int ispill,
     float time_window_ns,
     const StreamingHoughConfigStruct &cfg,
