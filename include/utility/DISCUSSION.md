@@ -51,6 +51,31 @@ and emitted into `fine_calib.toml` as the `key` field.  The legacy
 old-file detection only — see `[[deprecated]]` attribute on the
 declaration.
 
+**Raw value vs dense ordinal — do not conflate.**  `raw()` is the *identity*:
+the full 32-bit packed value (validity bit 31 set), so for real channels it
+lands in the millions and is **sparse**.  Use it only as a map key, the
+`fine_calib.toml` `key` field, or an equality token.  Anything that needs a
+*dense, contiguous* index — a histogram axis, a flat array, a per-channel or
+per-TDC bin — must go through the ordinal helpers (`tdc_ordinal()` at TDC level;
+`global_channel_raw()` for the TDC-zeroed channel-level key).  Treating `raw()`
+as a dense index silently overflows: the `h2_fine_tune` QA axis was sized for the
+*legacy compact* "global tdc index" (0..~10⁴), and under the packed-32-bit
+storage it must call `tdc_ordinal()` to recover that bin (see
+`parallel_streaming_framer.cxx`, the `h2_fine_tune->Fill` site).  **Standing
+rule: raw for identity, ordinal for indexing — never feed the raw value to an
+array or histogram axis.**
+
+The 2-bit `reserved` field ([29,30], strict-zero in v1) is the schema-version
+escape hatch: a future v2 layout — e.g. the 64-channel chip, where the
+split-in-two channel transform becomes the identity (`gidx::kUsesSplitInTwo`) —
+can flag itself there without colliding with v1 keys.  Any consumer that
+caches/persists a raw value must therefore treat it as version-tagged, not a
+bare integer.
+
+(ToT edge pairing keys on `global_channel_raw()` — TDC bits zeroed — so the
+leading (even TDC) and trailing (odd TDC) edges of one pulse share a key; that
+is why pairing groups by channel, not by the TDC-level `raw()`.)
+
 ### `AlcorFinedata::get_phase()` — hot-path representation
 
 **Shipped 2026-06-02 as a code-clarity cleanup (lever a) — NOT a perf win.**

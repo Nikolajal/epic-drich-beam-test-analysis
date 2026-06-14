@@ -3152,12 +3152,17 @@ class _GeneralQaPage(QtWidgets.QWidget):
             "frames_per_spill.pdf",
             "trigger_qa.pdf",
             "coverage_map_xy.pdf",          # cartesian coverage + readiness %
+            "tot_pairing_health.pdf",       # ToT only: per-channel leading/secondary-orphan rates (auto-dropped in LET)
         )),
         ("Sensor health", (
             "dcr_per_channel.pdf",          # per-channel DCR rate (kHz) + averages
             "dcr_hitmap.pdf",
             "afterpulse_per_channel.pdf",   # per-channel afterpulse % + averages
             "afterpulse_hitmap.pdf",
+            "tot_spectrum.pdf",             # ToT only: combined ToT spectrum + 1/2 p.e. Gaussian fit (auto-dropped in LET)
+            "tot_spectrum_1350.pdf",        # ToT only: per-sensor 1350 spectrum + fit
+            "tot_spectrum_1375.pdf",        # ToT only: per-sensor 1375 spectrum + fit
+            "tot_vs_channel.pdf",           # ToT only: ToT vs channel + per-channel mean
         )),
         ("Calibration", (
             "anchor_dt_vs_spill.pdf",       # channel hit vs nearest anchor pulse

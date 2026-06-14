@@ -11,6 +11,7 @@
 #include <mist/ring_finding/hough_transform.h>
 #include "TROOT.h"
 #include "TProfile.h"
+#include "TParameter.h"
 #include "analysis_results.h"
 #include "utility/config_dump.h"
 #include "utility/qa_publish.h"
@@ -49,7 +50,9 @@ void lightdata_writer(
     std::string fine_calibration_config_file,
     std::string framer_conf_file,
     std::string streaming_conf_file,
-    float streaming_n_sigma_threshold_override)
+    float streaming_n_sigma_threshold_override,
+    int op_mode,
+    bool leading_edge_only)
 {
     //  ROOT thread-safety: protects TROOT/TF1/Fit::Fitter global
     //  state under the framer's multithreaded stream reads (which
@@ -245,6 +248,8 @@ void lightdata_writer(
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
     framer.set_qa_config(qa_cfg); // enable afterpulse near/far Hit-mask tagging
+    framer.set_op_mode(to_alcor_op_mode(op_mode)); // LET (default) keeps legacy path; ToT pairs edges
+    framer.set_leading_edge_only(leading_edge_only); // ToT-as-LET: leading (even) TDCs only, no pairing
     framer.set_parallel_cores(requested_n_threads);
     framer.resolve_rollover_offsets();  // populates the per-stream, per-spill correction table consumed by the Rollover QA fills below
     framer.assign_bar(progress_framer); // framer drives the framer subtask automatically
@@ -358,6 +363,11 @@ void lightdata_writer(
         mist::logger::error("(lightdata_writer) Failed to create output file: " + outfile_name);
         return;
     }
+    //  Reco-provenance: stamp the ALCOR operation mode this lightdata was
+    //  reconstructed under, so downstream consumers know how `duration` and the
+    //  edge pairing were produced.  Written into the output file root directory.
+    outfile->cd();
+    TParameter<int>("alcor_op_mode", op_mode).Write();
     auto &spilldata = framer.get_spilldata_link();
     TTree *lightdata_tree = new TTree("lightdata", "Lightdata tree");
     // 30 MB auto-flush — ROOT's own default, set explicitly here so the
@@ -504,6 +514,47 @@ void lightdata_writer(
                                                     ";channel;Far-window same-channel probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
     RootHist<TProfile> h_afterpulse_per_channel("h_afterpulse_per_channel",
                                                 ";channel;Afterpulse probability (DCR-subtracted) (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
+    //  --- ToT QA (mode-gated): only filled / written / rendered for ToT-family
+    //  runs.  Declared unconditionally (cheap); wired into the QA bundle and
+    //  emitted only when `tot_qa` is true, so LET runs produce no ToT artefacts
+    //  and the dashboard's ToT overview tiles auto-drop.
+    const bool tot_qa = alcor_mode_pairs_edges(to_alcor_op_mode(op_mode));
+    //  3.125 ns bins (= 1 coarse count) on half-integer-cc edges — see h_tot_vs_channel.
+    RootHist<TH1F> h_tot_spectrum("h_tot_spectrum",
+                                  "ToT spectrum;ToT = t_{secondary} - t_{primary} [ns];hits", 65, -1.5625, 201.5625);
+    //  Y: 3.125 ns bins (= 1 coarse count) with edges on half-integer cc so each
+    //  integer-cc duration sits at a bin centre — the coarse-only (no fine-calib)
+    //  duration then doesn't smear across bin edges.  Range 0–200 ns captures the
+    //  pile-up tail.
+    RootHist<TH2F> h_tot_vs_channel("h_tot_vs_channel",
+                                    ";channel;ToT [ns];", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal, 65, -1.5625, 201.5625);
+    RootHist<TProfile> h_tot_secondary_orphan_per_channel("h_tot_secondary_orphan_per_channel",
+                                                          ";channel;secondary-orphan (missing stop) probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
+    RootHist<TProfile> h_tot_leading_orphan_per_channel("h_tot_leading_orphan_per_channel",
+                                                        ";channel;leading-orphan (missing start) probability (%);", kMaxCherenkovChannelOrdinal, 0, kMaxCherenkovChannelOrdinal);
+    //  Per-sensor ToT spectra: split by each hit's sensor via the readout config's
+    //  sensor_for() (e.g. 1350 / 1375).  Raw TH1F in a map (not RootHist) keeps the
+    //  per-sensor set cleanly; written + rendered (with per-peak fit) only for ToT.
+    std::map<std::string, std::unique_ptr<TH1F>> tot_spectrum_by_sensor;
+    std::unordered_map<int, TH1F *> tot_spectrum_by_device;
+    if (tot_qa)
+        for (const auto &rc : framer.get_readout_config().all())
+            for (const auto &dc : rc.device_chip)
+            {
+                const std::string sen = rc.sensor_for(dc.first);
+                if (sen.empty())
+                    continue;
+                auto &slot = tot_spectrum_by_sensor[sen];
+                if (!slot)
+                {
+                    slot = std::make_unique<TH1F>(
+                        ("h_tot_spectrum_" + sen).c_str(),
+                        ("ToT spectrum (" + sen + ");ToT = t_{secondary} - t_{primary} [ns];hits").c_str(),
+                        65, -1.5625, 201.5625);
+                    slot->SetDirectory(nullptr);
+                }
+                tot_spectrum_by_device[dc.first] = slot.get();
+            }
     //  Smeared 2D hitmaps — per primary Hit we deposit 100 fills at independent
     //  ±1.5 mm smeared positions when the Hit lies in the relevant window.  Density
     //  in the resulting TH2F is therefore proportional to the corresponding
@@ -1775,6 +1826,14 @@ void lightdata_writer(
                     qa_hists.h_afterpulse_near_per_channel = h_afterpulse_near_per_channel.get();
                     qa_hists.h_afterpulse_far_per_channel = h_afterpulse_far_per_channel.get();
                     qa_hists.h_afterpulse_per_channel = h_afterpulse_per_channel.get();
+                    if (tot_qa) // ToT-family run → enable the ToT QA fills
+                    {
+                        qa_hists.h_tot_spectrum = h_tot_spectrum.get();
+                        qa_hists.h_tot_vs_channel = h_tot_vs_channel.get();
+                        qa_hists.h_tot_secondary_orphan_per_channel = h_tot_secondary_orphan_per_channel.get();
+                        qa_hists.h_tot_leading_orphan_per_channel = h_tot_leading_orphan_per_channel.get();
+                        qa_hists.tot_spectrum_by_device = &tot_spectrum_by_device;
+                    }
                     qa_hists.h_afterpulse_near_hitmap = h_afterpulse_near_hitmap.get();
                     qa_hists.h_afterpulse_far_hitmap = h_afterpulse_far_hitmap.get();
                     qa_hists.h_afterpulse_hitmap = h_afterpulse_hitmap.get();
@@ -2124,6 +2183,15 @@ void lightdata_writer(
     h_afterpulse_far_hitmap->Write();
     h_afterpulse_per_channel->Write();
     h_afterpulse_hitmap->Write();
+    if (tot_qa) // ToT-family run → persist the ToT QA hists for Full-plots discovery
+    {
+        h_tot_spectrum->Write();
+        h_tot_vs_channel->Write();
+        h_tot_secondary_orphan_per_channel->Write();
+        h_tot_leading_orphan_per_channel->Write();
+        for (auto &[sen, hist] : tot_spectrum_by_sensor)
+            hist->Write();
+    }
     //  Same-channel Δt diagnostic — use it to validate that the near / far
     //  windows defined in qa_cfg actually contain the afterpulse peak and a
     //  flat DCR shelf respectively.
@@ -2303,6 +2371,163 @@ void lightdata_writer(
             //  comment block at the top of this PDF emission scope.
             util::qa::crop_pdf_inplace(path);
         };
+
+        // ToT QA (only emitted for ToT-family runs → LET produces no ToT PDFs,
+        // so the dashboard's ToT overview tiles auto-drop).
+        if (tot_qa)
+        {
+            //  ToT spectrum render: log-Y, the 1 p.e./2 p.e. threshold (spectrum
+            //  valley between the main peak and ~2.4x it) and a Gaussian fit to
+            //  EACH of the 1 p.e. and 2 p.e. peaks → centre (mu) + sigma annotated.
+            //  Used for the combined spectrum and each per-sensor spectrum.
+            //  TODO(config): promote the threshold to a run-db / conf field.
+            auto render_tot_spectrum = [&run_dir](int order, const std::string &name,
+                                                  TH1F *hs, const std::string &sensor_label)
+            {
+                if (!hs || hs->GetEntries() < 50)
+                    return;
+                const int pk = hs->GetMaximumBin();
+                const double pk_ns = hs->GetBinCenter(pk);
+                //  1 p.e. Gaussian (±12 ns window around the main peak) — a seed.
+                TF1 f1("f_tot_1pe", "gaus");
+                f1.SetRange(std::max(0.0, pk_ns - 12.0), pk_ns + 12.0);
+                hs->Fit(&f1, "RQ0");
+                double amp1 = f1.GetParameter(0), mu1 = f1.GetParameter(1), sig1 = f1.GetParameter(2);
+
+                //  2 p.e. peak: a genuine local maximum above the 1 p.e. valley
+                //  (interior of [mu1 + 1.5sigma, 4*mu1]).  The peaks are CLOSE and
+                //  the 2 p.e. sits on the 1 p.e. tail, so once a second peak is
+                //  found we fit a DOUBLE Gaussian (1 p.e. + 2 p.e.) seeded from both
+                //  — a lone Gaussian on the 2 p.e. window is dragged by the tail.
+                //  Threshold = valley (minimum) between the peaks.  No second peak
+                //  (no pile-up) -> 1 p.e.-only, no threshold line.
+                TF1 f2("f_tot_2pe", "gaus");
+                bool have2 = false;
+                double amp2 = 0, mu2 = 0, sig2 = 0, thr_ns = -1;
+                {
+                    //  Walk up from the 1 p.e. peak to the valley (last falling
+                    //  bin); the 2 p.e. peak is the maximum above it.  No magic
+                    //  offset — works for close peaks where the valley sits just
+                    //  above the 1 p.e. tail.
+                    const int pkbin = hs->GetMaximumBin();
+                    const int hi2 = std::min(hs->FindBin(4.0 * mu1), hs->GetNbinsX());
+                    int vb = pkbin;
+                    for (int b = pkbin + 1; b <= hi2; ++b)
+                    {
+                        if (hs->GetBinContent(b) <= hs->GetBinContent(b - 1))
+                            vb = b; // still falling
+                        else
+                            break; // started rising → valley reached
+                    }
+                    int pk2 = vb;
+                    double pk2v = 0;
+                    for (int b = vb; b <= hi2; ++b)
+                        if (hs->GetBinContent(b) > pk2v)
+                        {
+                            pk2v = hs->GetBinContent(b);
+                            pk2 = b;
+                        }
+                    if (pk2 > vb && pk2v >= 10) // a genuine rise above the valley
+                    {
+                        thr_ns = hs->GetBinCenter(vb);
+                        const double pk2_ns = hs->GetBinCenter(pk2);
+                        TF1 fdg("f_tot_dg", "gaus(0)+gaus(3)");
+                        fdg.SetParameters(amp1, mu1, sig1, pk2v, pk2_ns, sig1);
+                        fdg.SetRange(std::max(0.0, mu1 - 2.0 * sig1), pk2_ns + 3.0 * sig1);
+                        hs->Fit(&fdg, "RQ0");
+                        amp1 = fdg.GetParameter(0);
+                        mu1 = fdg.GetParameter(1);
+                        sig1 = fdg.GetParameter(2);
+                        amp2 = fdg.GetParameter(3);
+                        mu2 = fdg.GetParameter(4);
+                        sig2 = fdg.GetParameter(5);
+                        have2 = (sig2 > 0 && mu2 > thr_ns && mu2 > mu1);
+                    }
+                }
+                //  Component curves for drawing, from the (possibly joint) fit.
+                f1.SetParameters(amp1, mu1, sig1);
+                f1.SetRange(mu1 - 3.0 * sig1, mu1 + 3.0 * sig1);
+                if (have2)
+                {
+                    f2.SetParameters(amp2, mu2, sig2);
+                    f2.SetRange(mu2 - 3.0 * sig2, mu2 + 3.0 * sig2);
+                }
+                TCanvas c(TString::Format("c_qa_lightdata_%02d_%s", order, name.c_str()), "", 1000, 1000);
+                c.SetLogy();
+                hs->SetMinimum(0.5);
+                hs->Draw("hist");
+                f1.SetLineColor(kAzure + 2);
+                f1.SetNpx(400);
+                f1.Draw("same");
+                TLine thr(thr_ns, 0.5, thr_ns, hs->GetMaximum());
+                thr.SetLineColor(kRed + 1);
+                thr.SetLineStyle(2);
+                thr.SetLineWidth(2);
+                if (have2)
+                {
+                    f2.SetLineColor(kGreen + 2);
+                    f2.SetNpx(400);
+                    f2.Draw("same");
+                    thr.Draw();
+                }
+                //  Stats right-aligned in the top-right — the peaks sit on the left,
+                //  so the high-ToT region there is empty and won't overlap.
+                TLatex lbl;
+                lbl.SetNDC();
+                lbl.SetTextSize(0.028);
+                lbl.SetTextAlign(31); // right-aligned
+                lbl.SetTextColor(kAzure + 2);
+                lbl.DrawLatex(0.90, 0.88, TString::Format("%s   1 p.e.:  #mu = %.1f,  #sigma = %.1f ns", sensor_label.c_str(), mu1, sig1));
+                if (have2)
+                {
+                    lbl.SetTextColor(kGreen + 2);
+                    lbl.DrawLatex(0.90, 0.84, TString::Format("2 p.e.:  #mu = %.1f,  #sigma = %.1f ns", mu2, sig2));
+                    lbl.SetTextColor(kRed + 1);
+                    lbl.DrawLatex(0.90, 0.80, TString::Format("threshold = %.1f ns", thr_ns));
+                }
+                const auto path = util::qa::pdf_path(run_dir, "lightdata", order, name);
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
+            };
+            render_tot_spectrum(20, "tot_spectrum", h_tot_spectrum.get(), "all sensors");
+            {
+                int order = 23;
+                for (auto &[sen, hist] : tot_spectrum_by_sensor)
+                    render_tot_spectrum(order++, "tot_spectrum_" + sen, hist.get(), "sensor " + sen);
+            }
+            //  ToT vs channel: bespoke so we can set log-Z (occupancy spans orders
+            //  of magnitude across channels).
+            {
+                TCanvas c("c_qa_lightdata_21_tot_vs_channel", "", 1000, 1000);
+                c.SetLogz();
+                h_tot_vs_channel->Draw("colz");
+                const auto path = util::qa::pdf_path(run_dir, "lightdata", 21, "tot_vs_channel");
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
+            }
+            //  Pairing health: secondary- + leading-orphan rates per channel, overlaid.
+            auto *sec = h_tot_secondary_orphan_per_channel.get();
+            auto *led = h_tot_leading_orphan_per_channel.get();
+            if (sec && led)
+            {
+                sec->SetStats(0);
+                sec->SetLineColor(kRed + 1);
+                sec->SetMarkerColor(kRed + 1);
+                led->SetLineColor(kAzure + 2);
+                led->SetMarkerColor(kAzure + 2);
+                sec->SetTitle("ToT pairing health;channel;orphan probability (%)");
+                TCanvas c("c_qa_lightdata_22_tot_pairing_health", "", 1000, 1000);
+                sec->Draw("hist");
+                led->Draw("hist same");
+                TLegend lg(0.45, 0.80, 0.88, 0.90);
+                lg.AddEntry(sec, "secondary orphan (missing stop)", "l");
+                lg.AddEntry(led, "leading orphan (missing start)", "l");
+                lg.Draw();
+                const auto path = util::qa::pdf_path(run_dir, "lightdata", 22, "tot_pairing_health");
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
+            }
+        }
 
         // 01 Trigger coincidence matrix — which triggers fire together.
         //  Draw with "colz text" so the bin contents (the number of

@@ -388,6 +388,7 @@ if(BTANA_BUILD_TESTS)
     endfunction()
 
     btana_add_test(global_index)
+    btana_add_test(alcor_op_mode)
 
     message(STATUS "[beam_test_analysis] Tests enabled — binaries will land in ${CMAKE_BINARY_DIR}/bin")
 endif()

@@ -35,10 +35,12 @@ from .toml_form import _prettify_key
 RUNFIELD_ENUMS: dict[str, tuple[str, ...]] = {
     "polarity": ("pos", "neg"),
     "quality":  ("need QA", "good", "bad", "warning", "test", "delete"),
-    # ALCOR operating modes the operator picks between; if a value
-    # outside the enum shows up it's surfaced as a disabled extra
-    # entry so the operator still sees it.
-    "opmode":   ("0", "1", "2", "3"),
+    # ALCOR operating modes the operator picks between (PCR OpMode codes,
+    # datasheet Table 15): 0=OFF, 1=LET (leading-edge), 4=ToT, 9=ToT2,
+    # 12=SR (slew-rate).  The test-pulse / extra OFF variants are omitted
+    # here; if a value outside the enum shows up it's surfaced as a disabled
+    # extra entry so the operator still sees it.
+    "opmode":   ("0", "1", "4", "9", "12"),
 }
 
 # Per-field units shown to the right of the editor.

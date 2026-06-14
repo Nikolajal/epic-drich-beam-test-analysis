@@ -68,4 +68,6 @@ void lightdata_writer(
     std::string fine_calibration_config_file = "",
     std::string framer_conf_file = "conf/framer_conf.toml",
     std::string streaming_conf_file = "conf/streaming.toml",
-    float streaming_n_sigma_threshold_override = 0.f);
+    float streaming_n_sigma_threshold_override = 0.f,
+    int op_mode = 1,
+    bool leading_edge_only = false);

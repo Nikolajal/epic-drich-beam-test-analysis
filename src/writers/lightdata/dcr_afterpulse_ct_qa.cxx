@@ -62,6 +62,30 @@ void fill_dcr_afterpulse_ct_qa(
         for (auto &[GlobalIndex, count] : active_sensors_count)
             h.h_dcr_per_channel->Fill(GlobalIndex, count);
 
+    //  --- ToT QA (mode-gated: the hists are non-null only for ToT-family runs).
+    //  Clean (paired) hits carry a duration ≥ 0; orphans (-1) are excluded from
+    //  the spectrum but counted per-channel as the leading/secondary-orphan rate.
+    if (h.h_tot_spectrum)
+    {
+        for (const auto &s : cherenkov_hits)
+        {
+            const uint32_t ch = static_cast<uint32_t>(::GlobalIndex(s.GlobalIndex).channel_ordinal());
+            AlcorFinedata fd(s);
+            h.h_tot_secondary_orphan_per_channel->Fill(ch, fd.is_secondary_orphan() ? 100.0 : 0.0);
+            h.h_tot_leading_orphan_per_channel->Fill(ch, fd.is_leading_orphan() ? 100.0 : 0.0);
+            const float dur = fd.get_duration();
+            if (dur >= 0.f)
+            {
+                h.h_tot_spectrum->Fill(dur);
+                h.h_tot_vs_channel->Fill(ch, dur);
+                if (h.tot_spectrum_by_device)
+                    if (auto it = h.tot_spectrum_by_device->find(::GlobalIndex(s.GlobalIndex).device());
+                        it != h.tot_spectrum_by_device->end())
+                        it->second->Fill(dur);
+            }
+        }
+    }
+
     //  --- Afterpulse & cross-talk QA
     //  Pre-decode per-Hit fields for the pairwise comparisons below.
     //  ct_hits + sorted_by_time are caller-owned (hoisted out of the
