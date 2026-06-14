@@ -506,9 +506,12 @@ void lightdata_writer(
     double timing_dcr_chip0_khz = 0.0; // chip-0 average (bins 0-31)
     double timing_dcr_chip1_khz = 0.0; // chip-1 average (bins 32-63)
     //  Smeared DCR hitmap — one fill per cherenkov Hit during noise (first-frames)
-    //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Bin
-    //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
-    //  for a rate.  Density ∝ DCR rate, as in the CT / AP smeared maps.
+    //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Raw
+    //  bin contents are total Hit counts; at write time they are divided by
+    //  (n_dcr_frames × frame_length × bin_area) so the stored / drawn map is an
+    //  actual dark-count rate in kHz/mm².  n_dcr_frames counts the first-frames
+    //  (noise) frames the fill ran over — see the increment at the fill site.
+    long n_dcr_frames = 0;
     RootHist<TH2F> h_dcr_hitmap("h_dcr_hitmap",
                                 ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     //  --- Afterpulse
@@ -1997,6 +2000,9 @@ void lightdata_writer(
                 //  focused on orchestration.
                 if (fired_trigger_types.count(registry.index_of(static_cast<TriggerNumber>(TriggerFirstFrames))))
                 {
+                    //  This frame is a noise (first-frames) frame — count it so
+                    //  the DCR hitmap can be normalised to a rate at write time.
+                    ++n_dcr_frames;
                     ::btana::lightdata::DcrAfterpulseCtHists qa_hists;
                     qa_hists.h_dcr_per_channel = h_dcr_per_channel.get();
                     qa_hists.h_dcr_hitmap = h_dcr_hitmap.get();
@@ -2407,6 +2413,23 @@ void lightdata_writer(
         mist::logger::info("(lightdata_writer) timing-sensor DCR: no noise "
                            "frames / timing hits — plot empty");
     h_timing_dcr_per_channel->Write();
+    //  Normalise the smeared DCR hitmap from raw Hit counts to an actual
+    //  dark-count rate.  Observation time = n_dcr_frames × frame_length; the
+    //  per-bin count divided by (observation time × bin area) gives kHz/mm²:
+    //  count / (n_frames × frame_len_ns) → hits/ns; ×1e9 → Hz; /1e3 → kHz;
+    //  /bin_area → kHz/mm² (combined ns→kHz factor = 1e6).  Applied before
+    //  Write() so both the stored ROOT object and the drawn PDF carry the rate.
+    if (n_dcr_frames > 0 && framer_cfg.frame_length_ns() > 0.f)
+    {
+        const double bin_area_mm2 = h_dcr_hitmap->GetXaxis()->GetBinWidth(1) *
+                                    h_dcr_hitmap->GetYaxis()->GetBinWidth(1);
+        const double scale =
+            1.e6 / (static_cast<double>(n_dcr_frames) *
+                    static_cast<double>(framer_cfg.frame_length_ns()) *
+                    bin_area_mm2);
+        h_dcr_hitmap->Scale(scale);
+        h_dcr_hitmap->SetZTitle("DCR [kHz/mm^{2}]");
+    }
     h_dcr_hitmap->Write();
     h_afterpulse_near_per_channel->Write();
     h_afterpulse_near_hitmap->Write();
@@ -2595,6 +2618,24 @@ void lightdata_writer(
             //  alternating landscape / portrait cards.
             TCanvas c(TString::Format("c_qa_lightdata_%02d_%s", order, name.c_str()),
                       "", 1000, 1000);
+            //  "colz" draws a z-colour palette axis (with its rotated title)
+            //  on the right edge.  Default margins clip the palette title, but
+            //  fixing that with a wide right margin would steal width from the
+            //  frame and squash the equal-aspect x-y map (the square-plot rule).
+            //  Instead keep modest margins — matching the timing-hitmap colz
+            //  recipe so the frame stays ~square and the PDF tiles uniformly on
+            //  the dashboard — and pull the z-axis title in close to the palette
+            //  with a small title offset so it fits without widening the margin.
+            //  Bumped x/y title offsets keep both axis titles off their ticks.
+            if (TString(draw_opt).Contains("colz", TString::kIgnoreCase))
+            {
+                c.SetLeftMargin(0.12);
+                c.SetRightMargin(0.16);
+                c.SetBottomMargin(0.13);
+                h->GetXaxis()->SetTitleOffset(1.0);
+                h->GetYaxis()->SetTitleOffset(1.3);
+                h->GetZaxis()->SetTitleOffset(0.9);
+            }
             h->Draw(draw_opt);
             const auto path = util::qa::pdf_path(run_dir, "lightdata", order, name);
             c.SaveAs(path.string().c_str());
