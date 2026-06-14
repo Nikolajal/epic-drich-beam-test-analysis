@@ -26,6 +26,7 @@ int main(int argc, char **argv)
     int max_spill = 1000;
     bool force_rebuild = false;
     bool qa_mode = false;
+    bool skip_stream_qa = false;
     int n_requested_threads = -1;
     //  Config-file paths are resolved AFTER CLI parsing: if the user
     //  did not pass an explicit --xxx-conf, the path falls through to
@@ -84,6 +85,18 @@ int main(int argc, char **argv)
                    "Takes priority over --run-database; 0 disables this override "
                    "path (legacy behaviour).");
     app.add_flag("--force-rebuild", force_rebuild);
+    //  Fast cross-check path: bypass the entire post-framer per-frame QA
+    //  pass (streaming score + Hough + timing/trigger/DCR QA + finalization)
+    //  and write only the raw-hits lightdata tree.  Frames are kept
+    //  regardless of trigger content and hit positions are left unassigned.
+    //  Combine with --force-rebuild to overwrite an existing full lightdata
+    //  file (the up-to-date check returns early otherwise).
+    app.add_flag("--skip-stream-qa", skip_stream_qa,
+                 "Bypass the post-framer per-frame QA pass and write only the "
+                 "raw-hits lightdata tree (fast cross-check).  No streaming / "
+                 "Hough / timing / DCR / trigger QA is produced; hit positions "
+                 "are unassigned.  Pair with --force-rebuild to rebuild an "
+                 "existing file.");
     //  Fast-feedback QA mode.  Looks for tuned overrides under conf/QA/
     //  (currently: conf/QA/streaming.toml with raised Hough thresholds,
     //  which biases N_γ upward but keeps σ_photon ~invariant; see the
@@ -189,7 +202,7 @@ int main(int argc, char **argv)
                 auto start = std::chrono::high_resolution_clock::now();
                 mist::logger::info(TString::Format("(lightdata_writer) Starting writing lightdata for run '%s'", current_run_name.c_str()).Data());
                 const float per_run_override = resolve_override_for_run(current_run_name);
-                lightdata_writer(data_repository, current_run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override);
+                lightdata_writer(data_repository, current_run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, skip_stream_qa);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
                 mist::logger::info(TString::Format("(lightdata_writer) Total time taken: %f seconds", elapsed.count()).Data());
@@ -202,7 +215,7 @@ int main(int argc, char **argv)
         {
             auto start = std::chrono::high_resolution_clock::now();
             const float per_run_override = resolve_override_for_run(run_name);
-            lightdata_writer(data_repository, run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override);
+            lightdata_writer(data_repository, run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, skip_stream_qa);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
             mist::logger::info(TString::Format("(lightdata_writer) Total time taken: %f seconds", elapsed.count()).Data());

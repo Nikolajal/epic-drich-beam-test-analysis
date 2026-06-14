@@ -28,43 +28,34 @@
 #include "alcor_data.h"      // HitmaskStreamingRingTrigger, HitmaskHoughRingTagFirst/Second
 #include "triggers/events.h" // TriggerEvent, _TRIGGER_STREAMING_RING_FOUND_, _TRIGGER_HOUGH_RING_FOUND_
 
-void run_streaming_hough_trigger(
-    AlcorSpilldata &spilldata,
-    uint32_t frame_id,
+HoughMutations run_streaming_hough_compute(
+    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
+    const std::vector<TriggerEvent> &streaming_triggers,
+    const std::vector<int> &streaming_mask_indices,
     mist::ring_finding::HoughTransform &ring_finder,
     int min_active,
-    int &streaming_trigger_count,
     int ispill,
     float time_window_ns,
     const StreamingHoughConfigStruct &cfg,
     const StreamingHoughQA &qa)
 {
-    auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
+    (void)ispill; // reserved (was the frames_examples gate; no live use)
+    HoughMutations mutations;
 
-    //  SNAPSHOT the trigger list before we iterate — the body re-enters
-    //  add_trigger_to_frame() (HitmaskHoughRingTagFirst / *Second emissions
-    //  below) which push_back's into the SAME vector that
-    //  get_frame_trigger_hits(frame_id) returns by reference.  A range-for
-    //  over the live reference caches __begin/__end at loop entry; a
-    //  reallocation inside the body invalidates them and the loop walks
-    //  freed memory.  Triggered whenever the frame already carries a HW
-    //  trigger AND the score stage fired a streaming-ring trigger.
-    //
-    //  Fix: copy out the streaming-ring-found triggers once, drive the
-    //  loop from the snapshot.  The snapshot is small (typically 1–2
-    //  entries) and the copy cost is irrelevant compared to find_rings().
-    const std::vector<TriggerEvent> triggers_in_frame_snapshot(
-        spilldata.get_frame_trigger_hits(frame_id).begin(),
-        spilldata.get_frame_trigger_hits(frame_id).end());
+    //  Which hits the score stage flagged with `HitmaskStreamingRingTrigger`.
+    //  In the parallel pass those bits are not yet written to the hits (the
+    //  score drain runs later, serially), so the `full_hitmap` QA reads this
+    //  precomputed set instead of `has_mask_bit`.
+    std::vector<char> is_streaming_masked(cherenkov_hits.size(), 0);
+    for (int idx : streaming_mask_indices)
+        if (idx >= 0 && idx < static_cast<int>(cherenkov_hits.size()))
+            is_streaming_masked[idx] = 1;
 
-    //  Loop on all triggers; process the streaming-ring-found ones.
-    for (auto current_trigger : triggers_in_frame_snapshot)
+    //  One pass per streaming-ring trigger the score stage produced.
+    for (const auto &current_trigger : streaming_triggers)
     {
-        if (current_trigger.index != _TRIGGER_STREAMING_RING_FOUND_)
-            continue;
-
         auto index = -1;
-        streaming_trigger_count++;
+        mutations.streaming_trigger_count_inc++;
 
         std::vector<AlcorFinedata> ring_candidates;
         std::vector<int> ring_candidates_index;
@@ -76,7 +67,7 @@ void run_streaming_hough_trigger(
             if (current_hit.is_afterpulse())
                 continue;
 
-            if (current_hit.has_mask_bit(HitmaskStreamingRingTrigger) && qa.full_hitmap)
+            if (is_streaming_masked[index] && qa.full_hitmap)
                 qa.full_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
 
             //  Time pre-cut around the streaming trigger's fine_time.  Width
@@ -269,9 +260,17 @@ void run_streaming_hough_trigger(
                 hough_triggered_second.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
             }
 
-            //  Propagate the mask bits set by alcor_find_rings_hough back
-            //  onto the underlying cherenkov_hits struct.
-            cherenkov_hits[ring_candidates_index[index]].HitMask = current_hit.get_mask();
+            //  Buffer the ring-tag bit for the serial drain to OR onto the
+            //  underlying cherenkov hit (OR, not overwrite, so the
+            //  streaming-ring bit set by the score drain survives).  A hit is
+            //  assigned to at most one ring (find_rings removes assigned hits
+            //  between passes), so at most one tag per hit.
+            if (is_first)
+                mutations.mask_writes.push_back(
+                    {ring_candidates_index[index], HitmaskHoughRingTagFirst});
+            else if (is_second)
+                mutations.mask_writes.push_back(
+                    {ring_candidates_index[index], HitmaskHoughRingTagSecond});
         }
 
         //  Emit Hough trigger events per ring.  Centre/radius
@@ -317,8 +316,7 @@ void run_streaming_hough_trigger(
             //  find_rings should never return a ring with an empty
             //  hit_indices, but a 0-divide here would publish NaN
             //  into the trigger record.
-            spilldata.add_trigger_to_frame(
-                frame_id,
+            mutations.hough_triggers.push_back(
                 {static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[0] / hough_trigger_hits[0])});
@@ -370,8 +368,7 @@ void run_streaming_hough_trigger(
         }
         if (found_rings.size() > 1 && hough_trigger_hits[1] > 0)
         {
-            spilldata.add_trigger_to_frame(
-                frame_id,
+            mutations.hough_triggers.push_back(
                 {static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[1] / hough_trigger_hits[1])});
@@ -389,4 +386,47 @@ void run_streaming_hough_trigger(
             fill_arc_dist(found_rings[1], qa.ring_hit_arc_dist_second);
         }
     }
+    return mutations;
+}
+
+void run_streaming_hough_trigger(
+    AlcorSpilldata &spilldata,
+    uint32_t frame_id,
+    mist::ring_finding::HoughTransform &ring_finder,
+    int min_active,
+    int &streaming_trigger_count,
+    int ispill,
+    float time_window_ns,
+    const StreamingHoughConfigStruct &cfg,
+    const StreamingHoughQA &qa)
+{
+    //  Serial entry point = compute then immediate, in-place drain, so
+    //  behaviour is identical to the pre-split implementation.  Gather the
+    //  inputs the pure pass needs from the spill, run it (filling the QA
+    //  bundle directly), then apply the buffered mutations.
+    auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
+
+    std::vector<TriggerEvent> streaming_triggers;
+    for (const auto &trg : spilldata.get_frame_trigger_hits(frame_id))
+        if (trg.index == _TRIGGER_STREAMING_RING_FOUND_)
+            streaming_triggers.push_back(trg);
+
+    std::vector<int> streaming_mask_indices;
+    for (int i = 0; i < static_cast<int>(cherenkov_hits.size()); ++i)
+        if (AlcorFinedata(cherenkov_hits[i]).has_mask_bit(HitmaskStreamingRingTrigger))
+            streaming_mask_indices.push_back(i);
+
+    const HoughMutations mutations = run_streaming_hough_compute(
+        cherenkov_hits, streaming_triggers, streaming_mask_indices,
+        ring_finder, min_active, ispill, time_window_ns, cfg, qa);
+
+    streaming_trigger_count += mutations.streaming_trigger_count_inc;
+    for (const auto &[idx, bit] : mutations.mask_writes)
+    {
+        AlcorFinedata hit(cherenkov_hits[idx]);
+        hit.add_mask_bit(bit);
+        cherenkov_hits[idx].HitMask = hit.get_mask();
+    }
+    for (const auto &trg : mutations.hough_triggers)
+        spilldata.add_trigger_to_frame(frame_id, trg);
 }
