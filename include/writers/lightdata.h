@@ -56,6 +56,18 @@
  *        `--run-database <path>` is supplied; analyser-tuned per-run
  *        threshold per `include/triggers/streaming/DISCUSSION.md §1.5.2`.
  */
+/**
+ * @param skip_stream_qa  Fast cross-check path.  When @c true the entire
+ *        post-framer per-frame QA pass is bypassed — no streaming score,
+ *        no Hough ring-finding, no timing / trigger / DCR / afterpulse /
+ *        cross-talk QA, and no QA-finalization tail.  Only the framer
+ *        runs and the lightdata TTree is written.  Frames are kept
+ *        regardless of trigger content (no `do_not_write_frame`), so the
+ *        output carries raw hits whose `hit_x` / `hit_y` are left
+ *        unassigned (`Mapping::assign_position` runs inside the skipped
+ *        loop) — consumers must map positions themselves.  Default
+ *        @c false = full pipeline.
+ */
 void lightdata_writer(
     const std::string &data_repository,
     const std::string &run_name,
@@ -70,4 +82,5 @@ void lightdata_writer(
     std::string streaming_conf_file = "conf/streaming.toml",
     float streaming_n_sigma_threshold_override = 0.f,
     int op_mode = 1,
-    bool leading_edge_only = false);
+    bool leading_edge_only = false,
+    bool skip_stream_qa = false);

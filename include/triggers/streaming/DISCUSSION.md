@@ -1275,6 +1275,107 @@ beam-test data the actual hot spot is observable (it may not be
 where the cost model suggests), so we'd parallelise the right
 code, not the predicted-right code.
 
+### 2.7.1  Lightdata-side frame-level MT  *(shipped)*
+
+The recodata MT above parallelises *recodata's* per-frame ring refit.
+The **lightdata** writer has its own dominant serial cost: the
+post-framer per-frame loop (`lightdata_writer.cxx`) that runs the
+streaming **score** scan on every frame plus **Hough** `find_rings` on
+fired frames.  Audit (this run, 1 spill, firing on): ~88 s serial, of
+which the score scan and Hough are the bulk; with both off, the rest of
+the body is far cheaper.  This pass is now parallelised with the same
+compute-then-serial-drain shape, plus a per-thread Hough state and QA
+clone/merge.
+
+**Pure-compute / serial-drain split.**
+
+- *Score* (`score.{h,cxx}`): `compute_streaming_score_pure` does the
+  sliding-window scan and returns a `StreamingScoreResult` (the n_σ
+  fills, the hit indices to mask, the streaming triggers to emit, and
+  the boundary carry-over).  `drain_streaming_score` replays those side
+  effects serially.  `run_streaming_trigger_weighted` is now just
+  compute-then-drain, so the serial path is bit-identical.
+- *Hough* (`hough.{h,cxx}`): `run_streaming_hough_compute` does
+  candidate collection + `find_rings` + ring tagging, fills the
+  (per-thread) QA bundle, and **buffers** the spill mutations
+  (`HoughMutations`: mask write-backs + `_TRIGGER_HOUGH_RING_FOUND_`
+  events).  The drain applies them serially.
+
+**Per-spill structure.**  Each spill is processed noise-segment →
+`build_streaming_weights_for_spill()` → data-segment.  The weight build
+lands at the *same accumulated-state point* as the old inline build (at
+the first data frame, after every noise frame's full body has run), so
+the bundle is identical.  Within each segment: a serial position
+pre-pass, then **PASS A** (parallel: score + Hough per frame), then the
+serial per-frame body that drains the precomputed results and runs the
+remaining QA.
+
+**Per-thread state isolation.**
+
+- `HoughTransform` — each worker copies the master (LUT shared by value,
+  accumulator per-thread); mist documents the LUT as concurrent-read
+  safe and the accumulator as per-thread.
+- QA histograms — per-thread `Clone()` + `Reset()`, `Add()`-merged into
+  the canonical bundle under a mutex at the end of the pass.
+  Deterministic hists (ring X/Y/R, peak-votes, arc-dist, nrings) merge
+  bit-exactly; the pixel-jittered hitmaps are statistically identical
+  (already non-reproducible via `mist::Rnd`'s `random_device` seed).
+- `AlcorSpilldata` — its `unordered_map` accessors use `operator[]`
+  (not concurrency-safe even for existing keys), so **all** spill access
+  stays serial: hit-vector pointers are pre-fetched serially before
+  PASS A, and every mutation (mask bits, trigger emission, the
+  tree-write selection) happens in the serial drain.
+
+**Carry-over.**  The score's frame→frame carry-over is reconstructed
+per frame from the previous frame's trailing window
+(`reconstruct_streaming_carry_over`) so frames are independent.  This is
+exact except in the degenerate case where a frame's hits all fall within
+the first `time_window_ns` (then a carry-in hit could itself survive to
+the boundary) — negligible in practice.
+
+**Drain ordering (a correctness subtlety).**  Hough mask bits are
+**OR-ed** onto the hit (not overwritten) in the serial drain, *after*
+`drain_streaming_score` has set the streaming-ring bit, so both survive;
+and the Hough trigger is appended *after* the streaming trigger, keeping
+the streaming-then-Hough order the per-trigger QA sees.
+
+**Result.**  Verified against a pristine pre-change baseline (full-file
+histogram walk, firing-on): every physics-meaningful output — trigger
+matrix, nrings, ring centre/radius, peak-votes, arc-dist, DCR profile,
+score n_σ, the published scalars, and the lightdata tree contents (hits /
+triggers / masks) — is bit-identical at `--threads 1` *and* `--threads 4`.
+
+Two histogram families legitimately differ:
+- the pixel-jittered `_rnd` hitmaps, non-reproducible by construction
+  (`mist::Rnd` seeds from `std::random_device`) — they differ run-to-run
+  even for the unmodified writer; and
+- one QA histogram, `h_trigger_time_diff_w_cherenkov_HOUGH_RING_FOUND`,
+  where ~16 of ~364 k Δt fills land in an adjacent bin.  This is
+  floating-point reassociation, not a logic change: at `-O3` with clang's
+  default `-ffp-contract=on`, lifting the score/Hough accumulations into
+  separate functions lets the compiler contract `CC_TO_NS·get_time()` +
+  accumulate into FMAs differently — a ~1-ulp shift that cascades through
+  the `running_score > peak_score` compare → streaming median time →
+  candidate window → Hough `fine_time`.  Invisible in the coarse n_σ hist
+  (maxbindiff exactly 0); only the 1.28 ns-bin Δt hist resolves it.  Not
+  removable without changing the original's output too (it contracts as
+  well), so it is an accepted refactor consequence.
+
+(`h_afterpulse_dt` also differs at `--threads > 1`, but it is filled
+entirely by the already-multithreaded framer, unrelated to this change —
+the original is equally non-reproducible there above one thread.)
+
+**Speedup** (1 spill, this over-firing run): firing-off 1.6×, firing-on
+1.70×.  The ceiling is Amdahl — the serial per-frame QA body (heavy here
+because the run over-fires) and the framer are not parallelised; a tuned
+n_σ threshold (fewer fired frames) shifts more of the run into the
+parallel score/Hough and raises the ratio.
+
+**Interim fast path.**  `--skip-stream-qa` bypasses the whole per-frame
+QA pass (and the QA-finalization tail), writing only the raw-hits
+lightdata tree (frames selected by framer triggers; hit positions
+unassigned).  Useful for fast cross-checks.
+
 ---
 
 ## 3.  Cross-cutting
