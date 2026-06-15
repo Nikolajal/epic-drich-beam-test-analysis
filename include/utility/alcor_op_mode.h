@@ -29,32 +29,32 @@
 /** @brief Pixel operation mode; values equal the PCR @c OpMode codes (Table 15). */
 enum class AlcorOpMode : int
 {
-    Off0        = 0b0000, ///< 0  — control logic OFF, FE disabled
-    LET         = 0b0001, ///< 1  — Leading-Edge, standard (legacy default)
-    LET_TP_TDC  = 0b0010, ///< 2  — LET, test-pulse to control logic
-    LET_TP_FE   = 0b0011, ///< 3  — LET, test-pulse to front-end
-    ToT         = 0b0100, ///< 4  — Time-over-Threshold, standard
-    ToT_TP_TDC  = 0b0101, ///< 5  — ToT, test-pulse to control logic
-    ToT_TP_FE   = 0b0110, ///< 6  — ToT, test-pulse to front-end
-    Off7        = 0b0111, ///< 7  — control logic OFF, FE enabled
-    Off8        = 0b1000, ///< 8  — control logic OFF, FE enabled
-    ToT2        = 0b1001, ///< 9  — ToT2, standard
+    Off0 = 0b0000,        ///< 0  — control logic OFF, FE disabled
+    LET = 0b0001,         ///< 1  — Leading-Edge, standard (legacy default)
+    LET_TP_TDC = 0b0010,  ///< 2  — LET, test-pulse to control logic
+    LET_TP_FE = 0b0011,   ///< 3  — LET, test-pulse to front-end
+    ToT = 0b0100,         ///< 4  — Time-over-Threshold, standard
+    ToT_TP_TDC = 0b0101,  ///< 5  — ToT, test-pulse to control logic
+    ToT_TP_FE = 0b0110,   ///< 6  — ToT, test-pulse to front-end
+    Off7 = 0b0111,        ///< 7  — control logic OFF, FE enabled
+    Off8 = 0b1000,        ///< 8  — control logic OFF, FE enabled
+    ToT2 = 0b1001,        ///< 9  — ToT2, standard
     ToT2_TP_TDC = 0b1010, ///< 10 — ToT2, test-pulse to control logic
-    ToT2_TP_FE  = 0b1011, ///< 11 — ToT2, test-pulse to front-end
-    SR          = 0b1100, ///< 12 — Slew-Rate, standard
-    SR_TP_TDC   = 0b1101, ///< 13 — SR, test-pulse to control logic
-    SR_TP_FE    = 0b1110, ///< 14 — SR, test-pulse to front-end
-    Off15       = 0b1111, ///< 15 — control logic OFF, FE disabled
+    ToT2_TP_FE = 0b1011,  ///< 11 — ToT2, test-pulse to front-end
+    SR = 0b1100,          ///< 12 — Slew-Rate, standard
+    SR_TP_TDC = 0b1101,   ///< 13 — SR, test-pulse to control logic
+    SR_TP_FE = 0b1110,    ///< 14 — SR, test-pulse to front-end
+    Off15 = 0b1111,       ///< 15 — control logic OFF, FE disabled
 };
 
 /** @brief Coarse mode family — the analysis interpretation axis (TP/OFF folded in). */
 enum class AlcorOpModeFamily
 {
-    Off, ///< Front-end / control logic off.
-    LET, ///< Leading-edge timestamping.
-    ToT, ///< Time-over-threshold (lead/trail edge pairing).
+    Off,  ///< Front-end / control logic off.
+    LET,  ///< Leading-edge timestamping.
+    ToT,  ///< Time-over-threshold (lead/trail edge pairing).
     ToT2, ///< Second ToT variant (not yet interpreted).
-    SR   ///< Slew-rate (duration on the rising edge).
+    SR    ///< Slew-rate (duration on the rising edge).
 };
 
 /** @brief Map a raw run-database @c op_mode integer to the typed enum. */
@@ -66,25 +66,26 @@ constexpr AlcorOpMode to_alcor_op_mode(int code)
 /** @brief Reduce a mode to its interpretation family (TP/OFF variants folded in). */
 constexpr AlcorOpModeFamily alcor_op_mode_family(AlcorOpMode m)
 {
-    switch (m) {
-        case AlcorOpMode::LET:
-        case AlcorOpMode::LET_TP_TDC:
-        case AlcorOpMode::LET_TP_FE:
-            return AlcorOpModeFamily::LET;
-        case AlcorOpMode::ToT:
-        case AlcorOpMode::ToT_TP_TDC:
-        case AlcorOpMode::ToT_TP_FE:
-            return AlcorOpModeFamily::ToT;
-        case AlcorOpMode::ToT2:
-        case AlcorOpMode::ToT2_TP_TDC:
-        case AlcorOpMode::ToT2_TP_FE:
-            return AlcorOpModeFamily::ToT2;
-        case AlcorOpMode::SR:
-        case AlcorOpMode::SR_TP_TDC:
-        case AlcorOpMode::SR_TP_FE:
-            return AlcorOpModeFamily::SR;
-        default:
-            return AlcorOpModeFamily::Off;
+    switch (m)
+    {
+    case AlcorOpMode::LET:
+    case AlcorOpMode::LET_TP_TDC:
+    case AlcorOpMode::LET_TP_FE:
+        return AlcorOpModeFamily::LET;
+    case AlcorOpMode::ToT:
+    case AlcorOpMode::ToT_TP_TDC:
+    case AlcorOpMode::ToT_TP_FE:
+        return AlcorOpModeFamily::ToT;
+    case AlcorOpMode::ToT2:
+    case AlcorOpMode::ToT2_TP_TDC:
+    case AlcorOpMode::ToT2_TP_FE:
+        return AlcorOpModeFamily::ToT2;
+    case AlcorOpMode::SR:
+    case AlcorOpMode::SR_TP_TDC:
+    case AlcorOpMode::SR_TP_FE:
+        return AlcorOpModeFamily::SR;
+    default:
+        return AlcorOpModeFamily::Off;
     }
 }
 
