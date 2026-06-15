@@ -1,0 +1,27 @@
+# trigger_conf.toml — 2026 PS sub-campaign (runs on/after 2026-06-10, current).
+#
+# Selected automatically for run ids dated on/after the SPS→PS boundary (and
+# for any dateless "2026.*" tag) via util::campaign_of → "2026-PS" →
+# util::conf_path (conf/sets/2026-PS/).  The hardware trigger luca_and_finger
+# is provided by the kc705 device 200 this campaign (device-mode: the hardware
+# tags the word as a trigger) — UNLIKE 2026-SPS, which routed it through
+# rdo-192.
+#
+# Each [[trigger]] entry defines one trigger source. The parser stops reading
+# at the first "##" comment line.
+
+[[trigger]]
+name   = "luca_and_finger"   # human-readable label used in output trees and logs
+index  = 0                   # trigger index (0-based); referenced in hit bitmasks
+device = 200                 # ALCOR device ID (kc705-200) providing the trigger
+delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+
+##
+# Everything below this line is ignored by the parser.
+#
+# Schema reference (see DISCUSSION.md → D-05):
+#   DEVICE-MODE  — hardware tags the word as a trigger; one per `device`.
+#                  Required: name, index, device, delay.
+#   CHANNEL-MODE — a data channel forced into the trigger path; one per
+#                  (device, fifo, column, pixel).  Required: name, index,
+#                  device, delay, fifo, AND column+pixel (or eo_channel 0-31).

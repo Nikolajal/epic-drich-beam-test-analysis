@@ -130,6 +130,41 @@ class TestHappyPath:
 
 
 # ---------------------------------------------------------------------------
+# Per-run database pass-down (op_mode / streaming threshold auto-resolution).
+# ---------------------------------------------------------------------------
+
+class TestRunDatabasePassdown:
+    """lightdata is passed --run-database <year>.database.toml (the run id's
+    campaign year) when that file exists, so the writer auto-resolves op_mode
+    + streaming threshold per run; other stages and the absent-file case are
+    left clean."""
+
+    def _spec(self, name: str) -> dict:
+        return next(s for s in qa_pipeline._STAGE_SPECS if s["name"] == name)
+
+    def test_lightdata_gets_run_database_when_present(self, opts, tmp_path):
+        run_lists = tmp_path / "run-lists"
+        run_lists.mkdir()
+        db = run_lists / "2026.database.toml"  # opts.run_id == 20260101-...
+        db.write_text("")
+        argv = qa_pipeline._build_stage_argv(self._spec("lightdata"), opts, tmp_path)
+        assert "--run-database" in argv
+        assert str(db) == argv[argv.index("--run-database") + 1]
+
+    def test_absent_database_is_skipped(self, opts, tmp_path):
+        # no run-lists/ → writer falls back to its defaults (LET, no override)
+        argv = qa_pipeline._build_stage_argv(self._spec("lightdata"), opts, tmp_path)
+        assert "--run-database" not in argv
+
+    def test_recodata_never_gets_run_database(self, opts, tmp_path):
+        run_lists = tmp_path / "run-lists"
+        run_lists.mkdir()
+        (run_lists / "2026.database.toml").write_text("")
+        argv = qa_pipeline._build_stage_argv(self._spec("recodata"), opts, tmp_path)
+        assert "--run-database" not in argv
+
+
+# ---------------------------------------------------------------------------
 # Skip-stage behaviour.
 # ---------------------------------------------------------------------------
 

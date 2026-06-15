@@ -26,6 +26,7 @@ int main(int argc, char **argv)
     int max_spill = 1000;
     bool force_rebuild = false;
     bool qa_mode = false;
+    bool skip_stream_qa = false;
     int n_requested_threads = -1;
     //  Config-file paths are resolved AFTER CLI parsing: if the user
     //  did not pass an explicit --xxx-conf, the path falls through to
@@ -57,6 +58,12 @@ int main(int argc, char **argv)
     //  editing the rundb file.  Takes priority over --run-database
     //  when both are supplied.
     float n_sigma_threshold_cli = 0.f;
+    //  ALCOR operation mode override (PCR Table 15 code: LET=1, ToT=4, …).
+    //  -1 = unset → resolved from the run database, else defaults to LET (1).
+    int op_mode_cli = -1;
+    //  "ToT-as-LET": process only leading (even) TDC edges of a ToT run, no
+    //  pairing / no duration.  No-op in LET.
+    bool leading_only_cli = false;
 
     app.add_option("data_repository", data_repository)->required();
     app.add_option("run_name", run_name)->required();
@@ -83,7 +90,27 @@ int main(int argc, char **argv)
                    "Direct override for `[streaming_trigger].n_sigma_threshold`.  "
                    "Takes priority over --run-database; 0 disables this override "
                    "path (legacy behaviour).");
+    app.add_option("--op-mode", op_mode_cli,
+                   "ALCOR operation mode (PCR Table 15 code: LET=1, ToT=4, ToT2=9, "
+                   "SR=12).  Takes priority over the run database; -1 (default) "
+                   "resolves from --run-database, falling back to LET (1).");
+    app.add_flag("--leading-only", leading_only_cli,
+                 "ToT-as-LET: reconstruct a ToT run using only the leading (even) "
+                 "TDC edges — drops trailing edges, no pairing, no duration.  "
+                 "No-op in LET mode.");
     app.add_flag("--force-rebuild", force_rebuild);
+    //  Fast cross-check path: bypass the entire post-framer per-frame QA
+    //  pass (streaming score + RANSAC + timing/trigger/DCR QA + finalization)
+    //  and write only the raw-hits lightdata tree.  Frames are kept
+    //  regardless of trigger content and hit positions are left unassigned.
+    //  Combine with --force-rebuild to overwrite an existing full lightdata
+    //  file (the up-to-date check returns early otherwise).
+    app.add_flag("--skip-stream-qa", skip_stream_qa,
+                 "Bypass the post-framer per-frame QA pass and write only the "
+                 "raw-hits lightdata tree (fast cross-check).  No streaming / "
+                 "RANSAC / timing / DCR / trigger QA is produced; hit positions "
+                 "are unassigned.  Pair with --force-rebuild to rebuild an "
+                 "existing file.");
     //  Fast-feedback QA mode.  Looks for tuned overrides under conf/QA/
     //  (currently: conf/QA/streaming.toml with raised RANSAC thresholds,
     //  which biases N_γ upward but keeps σ_photon ~invariant; see the
@@ -163,7 +190,11 @@ int main(int argc, char **argv)
         //  The lookup against the run database happens once here; per-run
         //  values inside a runlist are handled by re-doing the lookup
         //  inside the runlist loop below.
-        if (!qa_mode && !run_database_file.empty())
+        //  Load the run database whenever supplied.  The streaming-n_σ override
+        //  still self-skips in QA mode (see resolve_override_for_run); op_mode
+        //  resolution, however, must work in QA mode too, so the load is no
+        //  longer gated on !qa_mode.
+        if (!run_database_file.empty())
             RunInfo::read_database(run_database_file);
 
         auto resolve_override_for_run =
@@ -177,6 +208,18 @@ int main(int argc, char **argv)
                 return 0.f;
             auto info = RunInfo::get_run_info(rid);
             return info ? info->streaming_n_sigma_threshold : 0.f;
+        };
+
+        //  Resolve op_mode per run: CLI override > run-database value > LET (1).
+        auto resolve_op_mode_for_run =
+            [&](const std::string &rid) -> int
+        {
+            if (op_mode_cli >= 0)
+                return op_mode_cli;
+            if (!run_database_file.empty())
+                if (auto info = RunInfo::get_run_info(rid))
+                    return info->op_mode;
+            return 1; // default: LET
         };
 
         bool is_runlist = run_name.size() >= 5 && run_name.substr(run_name.size() - 5) == ".toml";
@@ -203,7 +246,7 @@ int main(int argc, char **argv)
                 auto start = std::chrono::high_resolution_clock::now();
                 mist::logger::info(TString::Format("(lightdata_writer) Starting writing lightdata for run '%s'", current_run_name.c_str()).Data());
                 const float per_run_override = resolve_override_for_run(current_run_name);
-                lightdata_writer(data_repository, current_run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override);
+                lightdata_writer(data_repository, current_run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, resolve_op_mode_for_run(current_run_name), leading_only_cli, skip_stream_qa);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
                 mist::logger::info(TString::Format("(lightdata_writer) Total time taken: %f seconds", elapsed.count()).Data());
@@ -216,7 +259,7 @@ int main(int argc, char **argv)
         {
             auto start = std::chrono::high_resolution_clock::now();
             const float per_run_override = resolve_override_for_run(run_name);
-            lightdata_writer(data_repository, run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override);
+            lightdata_writer(data_repository, run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, resolve_op_mode_for_run(run_name), leading_only_cli, skip_stream_qa);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
             mist::logger::info(TString::Format("(lightdata_writer) Total time taken: %f seconds", elapsed.count()).Data());

@@ -609,7 +609,10 @@ bool AlcorFinedata::is_cross_talk() const { return has_mask_bit(HitmaskCrossTalk
 bool AlcorFinedata::is_afterpulse() const { return has_mask_bit(HitmaskAfterpulse); }
 bool AlcorFinedata::is_afterpulse_near() const { return has_mask_bit(HitmaskAfterpulseNear); }
 bool AlcorFinedata::is_afterpulse_far() const { return has_mask_bit(HitmaskAfterpulseFar); }
-bool AlcorFinedata::is_part_lane() const { return has_mask_bit(_HITMASK_part_lane); }
+bool AlcorFinedata::is_part_lane() const { return has_mask_bit(HitmaskPartLane); }
 bool AlcorFinedata::is_dead_lane() const { return has_mask_bit(HitmaskDeadLane); }
+bool AlcorFinedata::is_secondary_orphan() const { return has_mask_bit(HitmaskSecondaryOrphan); }
+bool AlcorFinedata::is_leading_orphan() const { return has_mask_bit(HitmaskLeadingOrphan); }
+bool AlcorFinedata::is_tot_saturated() const { return has_mask_bit(HitmaskTotSaturated); }
 
 void AlcorFinedata::set_streaming_ring_trigger_mask() { add_mask_bit(HitmaskStreamingRingTrigger); }

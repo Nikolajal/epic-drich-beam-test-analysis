@@ -378,6 +378,12 @@ public:
     /// @brief True if Hit @p i is flagged as an afterpulse (delegates to @ref AlcorFinedata).
     inline bool is_afterpulse(int i) { return get_finedata(i).is_afterpulse(); }
 
+    /// @brief True if ToT Hit @p i is a secondary orphan — primary present, stop/2nd-threshold missing (delegates).
+    inline bool is_secondary_orphan(int i) { return get_finedata(i).is_secondary_orphan(); }
+
+    /// @brief True if ToT Hit @p i is a leading orphan — secondary present, primary missing (delegates).
+    inline bool is_leading_orphan(int i) { return get_finedata(i).is_leading_orphan(); }
+
     /// @brief True if Hit @p i is flagged as optical cross-talk (delegates to @ref AlcorFinedata).
     inline bool is_cross_talk(int i) { return get_finedata(i).is_cross_talk(); }
 

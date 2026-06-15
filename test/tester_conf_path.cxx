@@ -33,11 +33,16 @@ int main()
 {
     namespace fs = std::filesystem;
 
-    // 1) campaign_of: the run-id year, or empty for non-dated names.
+    // 1) campaign_of: the run-id year (or the 2026 SPS/PS sub-campaign),
+    //    or empty for non-dated names.
     std::puts("[tester_conf_path] campaign_of");
     check_eq(util::campaign_of("20251111-164951"), "2025", "2025 run id");
-    check_eq(util::campaign_of("20260614-132826"), "2026", "2026 run id");
-    check_eq(util::campaign_of("2026.runlists.toml"), "2026", "runlist filename");
+    //  2026 splits on the 2026-06-10 SPS→PS boundary.
+    check_eq(util::campaign_of("20260604-232500"), "2026-SPS", "2026 pre-boundary → SPS");
+    check_eq(util::campaign_of("20260609-235959"), "2026-SPS", "2026 day before boundary → SPS");
+    check_eq(util::campaign_of("20260610-000000"), "2026-PS", "2026 boundary day → PS (inclusive)");
+    check_eq(util::campaign_of("20260614-132826"), "2026-PS", "2026 post-boundary → PS");
+    check_eq(util::campaign_of("2026.runlists.toml"), "2026-PS", "dateless 2026 tag → PS (current)");
     check_eq(util::campaign_of("mixed.runlists.toml"), "", "mixed → empty");
     check_eq(util::campaign_of("abc"), "", "too short / non-numeric → empty");
     check_eq(util::campaign_of(""), "", "empty → empty");
@@ -52,9 +57,9 @@ int main()
     fs::create_directories(tmp / "conf" / "sets" / "2025");
     auto touch = [](const fs::path &p)
     { std::FILE *f = std::fopen(p.string().c_str(), "w"); if (f) std::fclose(f); };
-    touch(tmp / "conf" / "trigger_conf.toml");           // base default
-    touch(tmp / "conf" / "streaming.toml");              // base default
-    touch(tmp / "conf" / "QA" / "streaming.toml");       // mode overlay
+    touch(tmp / "conf" / "trigger_conf.toml");                   // base default
+    touch(tmp / "conf" / "streaming.toml");                      // base default
+    touch(tmp / "conf" / "QA" / "streaming.toml");               // mode overlay
     touch(tmp / "conf" / "sets" / "2025" / "trigger_conf.toml"); // 2025 bundle
     fs::current_path(tmp);
 

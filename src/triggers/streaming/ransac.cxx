@@ -45,43 +45,46 @@ static bool is_ring_seed_trigger(int index)
            || index == static_cast<int>(_TRIGGER_STREAMING_RING_FOUND_);
 }
 
-void run_streaming_ransac_trigger(
-    AlcorSpilldata &spilldata,
-    uint32_t frame_id,
-    int &streaming_trigger_count,
+RansacMutations run_streaming_ransac_compute(
+    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
+    const std::vector<TriggerEvent> &seed_triggers,
+    const std::vector<int> &streaming_mask_indices,
     int ispill,
     float time_window_ns,
     const StreamingRansacConfigStruct &cfg,
     const StreamingRansacQA &qa,
     const std::unordered_map<int, float> &channel_score_weights)
 {
-    auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
+    (void)ispill; // reserved (was the frames_examples gate; no live use)
+    RansacMutations mutations;
 
-    //  Frame container — used to propagate the finder's per-ring (cx,cy,R) to
-    //  recodata (see the tagging step below).  best_ring_votes keeps, per slot,
-    //  the strongest ring seen across all seed triggers in this frame.
-    auto &frame_ld = spilldata.get_frame_link()[frame_id];
+    //  best_ring_votes keeps, per slot, the strongest ring seen across all
+    //  seed triggers in this frame — mirrors the serial `frame_ld` ring
+    //  geometry write, but buffered into `mutations` for the serial drain.
     std::array<int, 2> best_ring_votes = {0, 0};
 
-    //  SNAPSHOT the trigger list before we iterate — the body re-enters
-    //  add_trigger_to_frame() (HitmaskRansacRingTagFirst / *Second emissions
-    //  below) which push_back's into the SAME vector that
-    //  get_frame_trigger_hits(frame_id) returns by reference.  A range-for
-    //  over the live reference caches __begin/__end at loop entry; a
-    //  reallocation inside the body invalidates them and the loop walks
-    //  freed memory.  Triggered whenever the frame already carries a HW
-    //  trigger AND the score stage fired a streaming-ring trigger.
-    //
-    //  Fix: copy out the streaming-ring-found triggers once, drive the
-    //  loop from the snapshot.  The snapshot is small (typically 1–2
-    //  entries) and the copy cost is irrelevant compared to find_rings().
-    const std::vector<TriggerEvent> triggers_in_frame_snapshot(
-        spilldata.get_frame_trigger_hits(frame_id).begin(),
-        spilldata.get_frame_trigger_hits(frame_id).end());
+    //  Which hits the score stage flagged with `HitmaskStreamingRingTrigger`.
+    //  In the parallel pass those bits are not yet written to the hits (the
+    //  score drain runs later, serially), so the `full_hitmap` QA reads this
+    //  precomputed set instead of `has_mask_bit`.
+    std::vector<char> is_streaming_masked(cherenkov_hits.size(), 0);
+    for (int idx : streaming_mask_indices)
+        if (idx >= 0 && idx < static_cast<int>(cherenkov_hits.size()))
+            is_streaming_masked[idx] = 1;
+
+    //  Local cross-seed dedup overlay.  The serial path persists ring-tag
+    //  bits onto `cherenkov_hits` after each seed pass (the write-back at the
+    //  bottom of the loop) and the next seed reads them back to skip
+    //  already-claimed hits.  In the pure pass we never touch the input
+    //  hits, so accumulate the ring tags into this per-hit raw-mask overlay
+    //  instead; it is OR'd onto each freshly-built AlcorFinedata's mask so
+    //  `has_mask_bit` behaves exactly as it did serially.  Stored as the raw
+    //  uint32 mask (a set of `1u << HitmaskRansacRingTag*` bits).
+    std::vector<uint32_t> ring_tag_overlay(cherenkov_hits.size(), 0u);
 
     //  Loop on all triggers; process every ring-seeding trigger (hardware
     //  triggers + the streaming self-trigger — see is_ring_seed_trigger).
-    for (auto current_trigger : triggers_in_frame_snapshot)
+    for (auto current_trigger : seed_triggers)
     {
         if (!is_ring_seed_trigger(current_trigger.index))
             continue;
@@ -90,7 +93,7 @@ void run_streaming_ransac_trigger(
         //  streaming_trigger_count tracks the streaming self-trigger only
         //  (its historical meaning); hardware-seeded passes don't bump it.
         if (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_)
-            streaming_trigger_count++;
+            mutations.streaming_trigger_count_inc++;
 
         std::vector<AlcorFinedata> ring_candidates;
         std::vector<int> ring_candidates_index;
@@ -99,17 +102,22 @@ void run_streaming_ransac_trigger(
         {
             index++;
             AlcorFinedata current_hit(current_cherenkov_hit_struct);
+            //  Overlay the ring tags claimed by earlier seeds in this frame
+            //  (serial path persisted these on the struct; we keep them in a
+            //  local overlay so the pure pass mutates nothing shared).
+            if (ring_tag_overlay[index])
+                current_hit.set_mask(current_hit.get_mask() | ring_tag_overlay[index]);
             if (current_hit.is_afterpulse())
                 continue;
 
-            if (current_hit.has_mask_bit(HitmaskStreamingRingTrigger) && qa.full_hitmap)
+            if (is_streaming_masked[index] && qa.full_hitmap)
                 qa.full_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
 
             //  Cross-seed dedup: a hit already assigned to a ring by an
-            //  earlier seed trigger in THIS frame (tag bits persist on the
-            //  underlying struct via the write-back below) is not
-            //  reconsidered — so a ring isn't re-found and re-emitted when a
-            //  hardware trigger and a streaming fire coincide in one frame.
+            //  earlier seed trigger in THIS frame (tag bits tracked in the
+            //  overlay above) is not reconsidered — so a ring isn't re-found
+            //  and re-emitted when a hardware trigger and a streaming fire
+            //  coincide in one frame.
             if (current_hit.has_mask_bit(HitmaskRansacRingTagFirst) ||
                 current_hit.has_mask_bit(HitmaskRansacRingTagSecond))
                 continue;
@@ -322,15 +330,17 @@ void run_streaming_ransac_trigger(
                 best_ring_votes[ring_idx] = rr.peak_votes;
                 if (ring_idx == 0)
                 {
-                    frame_ld.ring1_cx = rr.cx;
-                    frame_ld.ring1_cy = rr.cy;
-                    frame_ld.ring1_radius = rr.radius;
+                    mutations.has_ring1 = true;
+                    mutations.r1_cx = rr.cx;
+                    mutations.r1_cy = rr.cy;
+                    mutations.r1_r = rr.radius;
                 }
                 else
                 {
-                    frame_ld.ring2_cx = rr.cx;
-                    frame_ld.ring2_cy = rr.cy;
-                    frame_ld.ring2_radius = rr.radius;
+                    mutations.has_ring2 = true;
+                    mutations.r2_cx = rr.cx;
+                    mutations.r2_cy = rr.cy;
+                    mutations.r2_r = rr.radius;
                 }
             }
         }
@@ -378,9 +388,24 @@ void run_streaming_ransac_trigger(
                 hough_triggered_second.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
             }
 
-            //  Propagate the mask bits set by alcor_find_rings_ransac back
-            //  onto the underlying cherenkov_hits struct.
-            cherenkov_hits[ring_candidates_index[index]].HitMask = current_hit.get_mask();
+            //  Buffer the ring-tag bit for the serial drain to OR onto the
+            //  underlying cherenkov hit (OR, not overwrite, so the
+            //  streaming-ring bit set by the score drain survives), and record
+            //  it in the local overlay so a later seed's cross-seed dedup sees
+            //  this hit as already claimed.  A hit is assigned to at most one
+            //  ring per seed pass (the dedup skips already-tagged hits), so at
+            //  most one tag is added here per hit.
+            const int hit_idx = ring_candidates_index[index];
+            if (is_first)
+            {
+                mutations.mask_writes.push_back({hit_idx, HitmaskRansacRingTagFirst});
+                ring_tag_overlay[hit_idx] |= (1u << HitmaskRansacRingTagFirst);
+            }
+            else if (is_second)
+            {
+                mutations.mask_writes.push_back({hit_idx, HitmaskRansacRingTagSecond});
+                ring_tag_overlay[hit_idx] |= (1u << HitmaskRansacRingTagSecond);
+            }
         }
 
         //  Emit RANSAC trigger events per ring.  Centre/radius
@@ -426,8 +451,7 @@ void run_streaming_ransac_trigger(
             //  find_rings should never return a ring with an empty
             //  hit_indices, but a 0-divide here would publish NaN
             //  into the trigger record.
-            spilldata.add_trigger_to_frame(
-                frame_id,
+            mutations.ransac_triggers.push_back(
                 {static_cast<uint8_t>(_TRIGGER_RANSAC_RING_FOUND_),
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[0] / hough_trigger_hits[0])});
@@ -479,8 +503,7 @@ void run_streaming_ransac_trigger(
         }
         if (found_rings.size() > 1 && hough_trigger_hits[1] > 0)
         {
-            spilldata.add_trigger_to_frame(
-                frame_id,
+            mutations.ransac_triggers.push_back(
                 {static_cast<uint8_t>(_TRIGGER_RANSAC_RING_FOUND_),
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[1] / hough_trigger_hits[1])});
@@ -498,4 +521,66 @@ void run_streaming_ransac_trigger(
             fill_arc_dist(found_rings[1], qa.ring_hit_arc_dist_second);
         }
     }
+    return mutations;
+}
+
+void run_streaming_ransac_trigger(
+    AlcorSpilldata &spilldata,
+    uint32_t frame_id,
+    int &streaming_trigger_count,
+    int ispill,
+    float time_window_ns,
+    const StreamingRansacConfigStruct &cfg,
+    const StreamingRansacQA &qa,
+    const std::unordered_map<int, float> &channel_score_weights)
+{
+    //  Serial entry point = compute then immediate, in-place drain, so
+    //  behaviour is identical to the pre-split implementation.  Gather the
+    //  inputs the pure pass needs from the spill, run it (filling the QA
+    //  bundle directly), then apply the buffered mutations.
+    auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
+
+    //  SNAPSHOT the seed-trigger list before iterating — the drain below
+    //  re-enters add_trigger_to_frame (the RANSAC ring triggers), which
+    //  push_back's into the same vector get_frame_trigger_hits returns by
+    //  reference; driving the pure pass from a copy keeps it stable.
+    const std::vector<TriggerEvent> seed_triggers(
+        spilldata.get_frame_trigger_hits(frame_id).begin(),
+        spilldata.get_frame_trigger_hits(frame_id).end());
+
+    //  Hits the score stage flagged with the streaming-ring bit — the serial
+    //  path reads `has_mask_bit(HitmaskStreamingRingTrigger)` directly off the
+    //  struct (already drained at this point); reconstruct the index set so
+    //  the compute's `full_hitmap` QA fires on exactly the same hits.
+    std::vector<int> streaming_mask_indices;
+    for (int i = 0; i < static_cast<int>(cherenkov_hits.size()); ++i)
+        if (AlcorFinedata(cherenkov_hits[i]).has_mask_bit(HitmaskStreamingRingTrigger))
+            streaming_mask_indices.push_back(i);
+
+    const RansacMutations mutations = run_streaming_ransac_compute(
+        cherenkov_hits, seed_triggers, streaming_mask_indices, ispill,
+        time_window_ns, cfg, qa, channel_score_weights);
+
+    streaming_trigger_count += mutations.streaming_trigger_count_inc;
+    for (const auto &[hit_idx, bit] : mutations.mask_writes)
+    {
+        AlcorFinedata tagged(cherenkov_hits[hit_idx]);
+        tagged.add_mask_bit(bit);
+        cherenkov_hits[hit_idx].HitMask = tagged.get_mask();
+    }
+    auto &frame_ld = spilldata.get_frame_link()[frame_id];
+    if (mutations.has_ring1)
+    {
+        frame_ld.ring1_cx = mutations.r1_cx;
+        frame_ld.ring1_cy = mutations.r1_cy;
+        frame_ld.ring1_radius = mutations.r1_r;
+    }
+    if (mutations.has_ring2)
+    {
+        frame_ld.ring2_cx = mutations.r2_cx;
+        frame_ld.ring2_cy = mutations.r2_cy;
+        frame_ld.ring2_radius = mutations.r2_r;
+    }
+    for (const auto &trg : mutations.ransac_triggers)
+        spilldata.add_trigger_to_frame(frame_id, trg);
 }

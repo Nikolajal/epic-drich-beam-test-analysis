@@ -1275,6 +1275,63 @@ beam-test data the actual hot spot is observable (it may not be
 where the cost model suggests), so we'd parallelise the right
 code, not the predicted-right code.
 
+### 2.7.1  lightdata post-framer MT (frames-within-spill, on the RANSAC pass)
+
+**Status:** SHIPPED.  The same compute/serial-drain pattern as §2.7,
+applied to the *lightdata* post-framer per-frame pass (the streaming
+score scan + RANSAC ring-finding — the dominant serial cost once the
+framer's own pool has drained).  Originally shipped for the Hough-era
+pipeline, **reverted in-place by the RANSAC rewrite** (which
+re-serialised the per-frame loop), then re-applied on top of RANSAC.
+
+**Structure — a compute kernel that mutates nothing, replayed serially:**
+
+- `score.cxx` — `run_streaming_trigger_weighted` split into
+  `compute_streaming_score_pure` (pure: buffers triggers / mask-indices
+  / n_σ fills / carry-out, touches no spilldata or histogram) +
+  `drain_streaming_score` (serial replay) + `reconstruct_streaming_carry_over`.
+- `ransac.cxx` — `run_streaming_ransac_trigger` split into
+  `run_streaming_ransac_compute` (pure; fills a per-thread QA clone;
+  records mask writes / ring geometry / triggers into a `RansacMutations`
+  record, using a local ring-tag overlay so intra-frame cross-seed dedup
+  still sees earlier seeds' tags without mutating the shared hits) +
+  a serial drain.  The serial entry points are preserved as thin
+  compute-then-drain wrappers, so the single-thread path is unchanged.
+- `lightdata_writer.cxx` — the per-spill **segment driver**
+  (noise → weight-build → data), a `std::async` work-stealing kernel
+  pass (`compute_frame_kernels`) writing per-frame slots in
+  `score_results` / `ransac_results` (no contention), per-thread
+  `RansacQAClones` (`Clone()`+`Reset()`+`SetDirectory(nullptr)`, `Add`-merged
+  under a mutex), and a `process_frame_body` serial drain in frame order.
+
+**Carry-over.**  The score's sliding window crosses frame boundaries.
+The serial path threads the exact window out of frame N into N+1; the
+parallel path can't (frames run out of order), so each frame
+**reconstructs** its carry-in from its predecessor's trailing hits
+(`reconstruct_streaming_carry_over`).  The two boundary sets can differ
+by a hit at the window edge — a sub-bin effect on the score QA, below
+the FMA-reassociation floor the refactor already introduces; observably
+identical on validation data.
+
+**RANSAC is grid-free** (a free function with no accumulator), so the
+*only* per-thread state is the QA clone — simpler than §2.7's per-thread
+`HoughTransform`.
+
+**Determinism / bit-identity.**  `find_rings_ransac` is self-seeded
+(fixed `std::mt19937(0x9e3779b9)` per call), so per-frame ring geometry,
+ring tags, triggers, masks and counts are **bit-identical across thread
+counts** — verified threads=1 vs threads=4.  Only the pixel-jittered
+`*_hitmap` QA (via `get_hit_x_rnd` / `mist::Rnd`) differs statistically,
+exactly the §2.7 clone-merge tolerance.  CAVEAT: the *framer's own* tree
+output is non-reproducible run-to-run (pre-existing; see BACKLOG) —
+that is upstream of and orthogonal to this MT.
+
+**`--skip-stream-qa`** bypasses this whole pass (framer + raw tree only)
+for fast cross-checks; two guard sites (segment driver + finalization tail).
+
+**Gain.**  ~1.76× firing-on (single device, 138 s → 78 s); capped by the
+serial drain (Amdahl) and streaming over-firing inflating the drain body.
+
 ---
 
 ## 3.  Cross-cutting

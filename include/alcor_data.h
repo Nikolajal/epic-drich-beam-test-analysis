@@ -96,17 +96,32 @@ enum AlcorHitStruct
  */
 enum HitMask : unsigned int
 {
-    HitmaskStreamingRingTrigger = 1,
-    HitmaskRingTagFirst = 2,
-    HitmaskRingTagSecond = 3,
-    HitmaskRansacRingTagFirst = 11,
-    HitmaskRansacRingTagSecond = 12,
-    HitmaskAfterpulseNear = 26, ///< Same-channel Hit with Δt inside the QA near window (afterpulse signal region).
-    HitmaskAfterpulseFar = 27,  ///< Same-channel Hit with Δt inside the QA far  window (DCR sideband region).
-    HitmaskCrossTalk = 28,
-    HitmaskAfterpulse = 29, ///< Same-channel Hit with Δt below the framer's `afterpulse_deadtime` (used to gate downstream CT/recodata logic).
-    _HITMASK_part_lane = 30,
-    HitmaskDeadLane = 31
+    // Bits are grouped one byte per concern (offsets 0/8/16/24), each group with
+    // headroom.  All set/read goes through these names, never literal positions,
+    // so the layout can be regrouped freely (HitMask only lives in regenerated
+    // lightdata/recodata).
+
+    // ── byte 0 [0–7] · reconstruction / ring tagging ──
+    HitmaskStreamingRingTrigger = 0, ///< streaming self-trigger fired on this Hit's frame.
+    HitmaskRingTagFirst = 1,         ///< Hit assigned to streaming ring 1.
+    HitmaskRingTagSecond = 2,        ///< Hit assigned to streaming ring 2.
+    HitmaskRansacRingTagFirst = 3,   ///< Hit assigned to RANSAC ring 1.
+    HitmaskRansacRingTagSecond = 4,  ///< Hit assigned to RANSAC ring 2.
+
+    // ── byte 1 [8–15] · ToT / SR edge pairing ──
+    HitmaskSecondaryOrphan = 8, ///< ToT/SR: primary (leading) edge present but the secondary edge is missing — ToT stop / SR 2nd-threshold crossing; duration unset, arrival time valid.
+    HitmaskLeadingOrphan = 9,   ///< ToT/SR: secondary edge present but the primary (leading) edge is missing; duration unset, arrival time falls back to the secondary edge.
+    HitmaskTotSaturated = 10,   ///< ToT: an edge carried the fine==0 ToT-maximum sentinel.
+
+    // ── byte 2 [16–23] · afterpulse / cross-talk ──
+    HitmaskAfterpulse = 16,     ///< Same-channel Hit with Δt below the framer's `afterpulse_deadtime` (gates downstream CT/recodata logic).
+    HitmaskAfterpulseNear = 17, ///< Same-channel Hit with Δt inside the QA near window (afterpulse signal region).
+    HitmaskAfterpulseFar = 18,  ///< Same-channel Hit with Δt inside the QA far window (DCR sideband region).
+    HitmaskCrossTalk = 19,      ///< Optical cross-talk Hit.
+
+    // ── byte 3 [24–31] · lane / detector health ──
+    HitmaskPartLane = 24, ///< Hit originates from a partially active lane.
+    HitmaskDeadLane = 25  ///< Hit originates from a dead lane (and, on start-of-spill, carries channel availability).
 };
 
 /**

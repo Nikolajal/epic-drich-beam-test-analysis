@@ -106,6 +106,18 @@ struct AlcorFinedataStruct
     /** @brief Y-axis position from Mapping. */
     float hit_y;
 
+    /**
+     * @brief Mode-dependent hit duration [ns]; negative = not set (LET mode or an
+     *        unpaired edge).
+     *
+     * ToT mode: time-over-threshold, @c t_trail − t_lead from the {0,1}/{2,3} TDC
+     * pair. SR mode: the slew-rate duration measured on the rising edge (different
+     * physics, same field). The leading-edge time (rollover/coarse/fine) stays the
+     * canonical hit time, so all existing timing machinery is untouched — this is
+     * purely additive information set by the framer pairing stage.
+     */
+    float duration = -1.f;
+
     /// @}
 
     /// @name Indexing & Masking
@@ -131,12 +143,14 @@ struct AlcorFinedataStruct
                         float hit_x_,
                         float hit_y_,
                         uint32_t global_index_,
-                        uint32_t hit_mask_)
+                        uint32_t hit_mask_,
+                        float duration_ = -1.f)
         : rollover(rollover_),
           coarse(coarse_),
           fine(fine_),
           hit_x(hit_x_),
           hit_y(hit_y_),
+          duration(duration_),
           GlobalIndex(global_index_),
           HitMask(hit_mask_)
     {
@@ -324,6 +338,12 @@ public:
 
     /// @brief Returns the calibrated Hit time in nanoseconds.
     float get_time_ns() const;
+
+    /// @brief Mode-dependent hit duration [ns] (ToT / SR); negative if not set.
+    float get_duration() const { return internal_data.duration; }
+
+    /// @brief Sets the mode-dependent hit duration [ns] (framer pairing stage).
+    void set_duration(float duration_ns) { internal_data.duration = duration_ns; }
 
     /// @}
 
@@ -527,6 +547,33 @@ public:
 
     /// @brief Checks whether the Hit originates from a dead lane.
     bool is_dead_lane() const;
+
+    /**
+     * @brief Secondary-edge orphan: the primary (leading) edge is present but the
+     *        secondary edge is missing — the ToT stop edge / SR 2nd-threshold
+     *        crossing.
+     *
+     * Arrival time and position are valid (they come from the leading edge); only
+     * @ref get_duration is unset (-1) — there is no ToT/SR width for this hit. Set
+     * by the framer pairing stage; always false in LET mode.
+     */
+    bool is_secondary_orphan() const;
+
+    /**
+     * @brief Leading-edge orphan: the secondary edge is present but the primary
+     *        (leading) edge is missing.
+     *
+     * Arrival time falls back to the secondary edge (the true start is lost) and
+     * @ref get_duration is unset (-1). Set by the framer pairing stage; always
+     * false in LET mode.
+     */
+    bool is_leading_orphan() const;
+
+    /**
+     * @brief True if a ToT edge carried the @c fine==0 ToT-maximum sentinel
+     *        (the TAC saturated — the real ToT exceeded full scale).
+     */
+    bool is_tot_saturated() const;
 
     /// @}
 
