@@ -29,7 +29,7 @@
 #                            you only want the top-quality rings.
 #
 # Stage 1 is left at production defaults — the QA bias comes from the
-# stage 2 (Hough) thresholds below.
+# stage 2 (RANSAC) thresholds below.
 
 # QA-mode operating point (2026-05-29 audit): n_sigma_threshold raised
 # to a sentinel value (1e9) so the streaming trigger NEVER fires.  The
@@ -37,7 +37,7 @@
 # blue) still accumulate inside run_streaming_trigger_weighted on every
 # scoring window — the threshold check only gates the *firing* path
 # downstream of the score.  Net effect: the QA writer is ~6× faster
-# (streaming/Hough cascade contributes ~0 s instead of ~290 s), AND the
+# (streaming/RANSAC cascade contributes ~0 s instead of ~290 s), AND the
 # analyser still gets the bkg-vs-sig score distribution on the QA
 # dashboard (emitted as ``qa/lightdata/05_streaming_score.pdf``).
 # Analyser workflow: inspect the score plot, decide a production
@@ -51,12 +51,12 @@ min_noise_hits      =   10.0
 # `inbeam_pretrigger_offset_ns` before each hardware trigger, `inbeam_sample_width_ns` wide.
 inbeam_pretrigger_offset_ns = 40.0
 inbeam_sample_width_ns      = 600.0
-default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a non-Hough hardware trigger
+default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a non-RANSAC hardware trigger
 
-[streaming_hough]
+[streaming_ransac]
 
 # ────────────────────────────────────────────────────────────────
-# Coarse Hough accumulator.
+# Coarse RANSAC accumulator.
 #
 # Both production (conf/defaults/streaming.toml) and QA now run the
 # WIDE-ARC recipe: a coarse grid (r_step = cell_size = 3.0 mm,
@@ -67,7 +67,7 @@ default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a 
 # bounded — a 1.5 mm grid over a ±250 mm centre range would be ~8×
 # larger and slower.
 #
-# Trade-off: centres are located to one 3-mm cell from the Hough seed,
+# Trade-off: centres are located to one 3-mm cell from the RANSAC seed,
 # but the fit_circle re-fit refines them to sub-mm precision, so the
 # resolution loss is on the seed, not the final ring measurement.
 # ────────────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ min_hits_slack           =   0.75
 # at ceil(5.8) = 6 hits.  QA: 0.008 — floors at ceil(13.2) = 14 hits.
 # Doubles the entry gate; preserves statistics on the bright-ring
 # population while cutting the long-tail fake rings.
-# IGNORED under the RANSAC finder (vestigial Hough gates):
+# IGNORED under the RANSAC finder (vestigial RANSAC gates):
 hough_n_sigma_dcr        =   0.0     # IGNORED (RANSAC)
 min_ring_votes_floor     =   5       # IGNORED (RANSAC)
 hough_threshold_fraction =   0.008   # IGNORED (RANSAC)
@@ -126,14 +126,14 @@ ransac_min_inliers       = 8
 #  pre-Q2-2026 production behaviour.
 aggregation_window_cells =   1
 # fit_circle_init_{x,y,r} removed 2026-05-30 (C3.5) — recodata seeds the
-# refit from the Hough peak.  Tolerated for one release with a warning.
+# refit from the RANSAC peak.  Tolerated for one release with a warning.
 
 # ────────────────────────────────────────────────────────────────
 # Recodata ring-reconstruction knobs (formerly conf/QA/recodata.toml).
 # The only QA-specific override here is skip_loo_residuals — everything
 # else (hardware_ring_dt_*, min_hits_per_ring, delta_r_for_coverage_mm)
 # QA-matched production, so it inherits the defaults from
-# conf/defaults/streaming.toml's [streaming_hough] table.
+# conf/defaults/streaming.toml's [streaming_ransac] table.
 #
 # When true, the per-hit leave-one-out residual loop in
 # compute_ring_fit_pure is skipped — the biggest single speedup lever

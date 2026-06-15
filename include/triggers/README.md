@@ -7,7 +7,7 @@ The trigger subsystem has two largely-orthogonal halves:
    the schema types, the TOML reader, and the runtime registry used
    for histogram bin labelling.
 2. **Streaming software trigger pipeline** — a two-stage pre-filter
-   for ring events (DCR-weighted score → Hough ring finder) that
+   for ring events (DCR-weighted score → RANSAC ring finder) that
    gates the lightdata writer's output.  Self-contained in
    [`streaming/`](streaming/).
 
@@ -31,7 +31,7 @@ deliberately.
 
 | Folder | Purpose |
 |---|---|
-| [`streaming/`](streaming/) | Two-stage software trigger pipeline (score + Hough).  Has its own README and DISCUSSION; lives self-contained because it's the most software-complex part of the subsystem. |
+| [`streaming/`](streaming/) | Two-stage software trigger pipeline (score + RANSAC).  Has its own README and DISCUSSION; lives self-contained because it's the most software-complex part of the subsystem. |
 
 Future trigger algorithms with comparable complexity should follow the
 same pattern: a sibling subfolder with its own README + DISCUSSION,

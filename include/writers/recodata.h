@@ -50,13 +50,13 @@ void recodata_writer(
     std::string trigger_conf = "conf/trigger_conf.toml",
     std::string framer_conf = "conf/framer_conf.toml",
     /**
-     * Streaming-pipeline conf.  The `[streaming_hough]` table now also
+     * Streaming-pipeline conf.  The `[streaming_ransac]` table now also
      * carries the recodata ring-reconstruction knobs (hardware ring
      * time window, min_hits_per_ring, delta_r, skip_loo_residuals),
      * which `recodata_writer` reads directly via `recodata_conf_reader`.
-     * The streaming *trigger* + Hough stages themselves run upstream in
+     * The streaming *trigger* + RANSAC stages themselves run upstream in
      * `lightdata_writer`; this file is also forwarded into the
      * `force_upstream` cascade so `recodata_writer --force-upstream --QA`
-     * propagates the QA Hough thresholds through to the lightdata stage.
+     * propagates the QA RANSAC thresholds through to the lightdata stage.
      */
     std::string streaming_conf = "conf/streaming.toml");

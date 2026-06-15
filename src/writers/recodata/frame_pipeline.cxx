@@ -113,15 +113,15 @@ FrameResult process_frame_pure(AlcorLightdata &lightdata,
 
     //  Ring reconstruction.
     //
-    //  PRIMARY path — refine the rings the streaming-Hough already isolated
-    //  (hits tagged HitmaskHoughRingTagFirst / *Second).  The Hough now seeds
+    //  PRIMARY path — refine the rings the streaming-RANSAC already isolated
+    //  (hits tagged HitmaskRansacRingTagFirst / *Second).  The RANSAC now seeds
     //  on hardware triggers as well as the streaming self-trigger (see
-    //  run_streaming_hough_trigger), so tagged hits are present on every
+    //  run_streaming_ransac_trigger), so tagged hits are present on every
     //  hardware- or streaming-triggered physics frame, in QA and production
     //  alike — and fitting the tagged arc captures far-off-centre rings the
     //  all-in-time-hits fit would average into a central blob.
     //
-    //  FALLBACK — a frame the Hough never seeded (no tagged hits): the legacy
+    //  FALLBACK — a frame the RANSAC never seeded (no tagged hits): the legacy
     //  single-circle fit to every in-time hit around the hardware trigger's
     //  reference time.
     {
@@ -135,8 +135,8 @@ FrameResult process_frame_pure(AlcorLightdata &lightdata,
         for (const auto &chrk : lightdata.get_cherenkov_hits_link())
         {
             AlcorFinedata fh(chrk);
-            if (fh.has_mask_bit(HitmaskHoughRingTagFirst) ||
-                fh.has_mask_bit(HitmaskHoughRingTagSecond))
+            if (fh.has_mask_bit(HitmaskRansacRingTagFirst) ||
+                fh.has_mask_bit(HitmaskRansacRingTagSecond))
             {
                 have_tagged = true;
                 break;
@@ -152,9 +152,9 @@ FrameResult process_frame_pure(AlcorLightdata &lightdata,
         if (have_tagged)
         {
             res.first = compute_ring_fit_tagged(
-                HitmaskHoughRingTagFirst, lightdata, do_loo, ctx.ring_ctx);
+                HitmaskRansacRingTagFirst, lightdata, do_loo, ctx.ring_ctx);
             res.second = compute_ring_fit_tagged(
-                HitmaskHoughRingTagSecond, lightdata, do_loo, ctx.ring_ctx);
+                HitmaskRansacRingTagSecond, lightdata, do_loo, ctx.ring_ctx);
             //  Genuine second ring iff the finder tagged second-ring hits —
             //  drives the dual/solo split downstream.
             res.frame_has_second_ring = res.second.n_hits > 0;

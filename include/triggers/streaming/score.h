@@ -4,7 +4,7 @@
  * @file triggers/streaming/score.h
  * @brief Stage 1 of the streaming-trigger pipeline — DCR-weighted score.
  *
- * Time-cluster pre-filter for the Hough ring-finding stage downstream:
+ * Time-cluster pre-filter for the RANSAC ring-finding stage downstream:
  * scans a frame's Cherenkov hits with a sliding time window, computes a
  * DCR-weighted score `S = Σ_hits 1/m_c`, and emits a
  * `_TRIGGER_STREAMING_RING_FOUND_` event when the standardised score
@@ -77,7 +77,7 @@ struct StreamingTriggerWeights
 
     /// Expected background hits per window under H_0: $E_{\mathrm{dark}} =
     /// \sum_c m_c$ over the modelled bundle (DCR + in-beam baseline folded
-    /// into each `m_c`).  The DCR-adaptive noise floor the Hough stage uses:
+    /// into each `m_c`).  The DCR-adaptive noise floor the RANSAC stage uses:
     /// a candidate must exceed it by `hough_n_sigma_dcr·√E_dark` (Poisson
     /// significance, mirroring the score's `n_σ`).  0 when no model is built.
     float expected_dark_hits_per_window = 0.f;
@@ -231,7 +231,7 @@ using StreamingInBeamRates = std::unordered_map<int, float>;
  *                                    @c TriggerFirstFrames (synthetic
  *                                    first-frames marker),
  *                                    @c TriggerStartOfSpill (boundary
- *                                    marker), and the streaming/Hough
+ *                                    marker), and the streaming/RANSAC
  *                                    derived triggers (self-reference
  *                                    if invoked after the score loop).
  * @return Per-channel in-beam µ in hits-per-frame units.  Empty if no

@@ -41,7 +41,7 @@
  *                                 keys fall back to compile-time macro defaults.
  * @param streaming_conf_file      Path to the software-trigger-pipeline TOML
  *                                 configuration (sections `[streaming_trigger]`
- *                                 and `[streaming_hough]`).  See
+ *                                 and `[streaming_ransac]`).  See
  *                                 `include/triggers/streaming/DISCUSSION.md`
  *                                 and `conf/streaming.toml`.
  */

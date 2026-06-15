@@ -66,7 +66,7 @@ class _FilePresentation:
 
 
 FILE_PRESENTATION: tuple[_FilePresentation, ...] = (
-    _FilePresentation("streaming.toml",        "Streaming Trigger & Hough"),
+    _FilePresentation("streaming.toml",        "Streaming Trigger & RANSAC"),
     _FilePresentation("framer_conf.toml",      "Streaming Framer"),
     _FilePresentation("readout_config.toml",   "Readout"),
     _FilePresentation("trigger_conf.toml",     "Triggers"),
@@ -118,13 +118,13 @@ TABLE_LAYOUTS: dict[str, dict[tuple, TableLayout]] = {
 
 
 # Section-title overrides — when the auto-prettifier doesn't capture
-# proper-noun capitalisation ("Hough" the surname, "Cherenkov", …).
+# proper-noun capitalisation ("RANSAC" the surname, "Cherenkov", …).
 # Anything *not* in this map is auto-prettified.  Keys are tuples
 # matching the leaf path (use ``()`` for top-level sections).
 SECTION_TITLES: dict[str, dict[tuple, str]] = {
     "streaming.toml": {
         ("streaming_trigger",): "Streaming Trigger",
-        ("streaming_hough",):   "Streaming Hough",
+        ("streaming_ransac",):   "Streaming RANSAC",
     },
     "mapping_conf.toml": {
         ("coverage",): "Coverage Map",
@@ -186,26 +186,26 @@ PARAM_DESCRIPTIONS: dict[str, dict[tuple, str]] = {
         ("streaming_trigger", "time_window_ns"):     "Sliding-window width used by the streaming score.",
         ("streaming_trigger", "n_sigma_threshold"):  "Fire threshold for the streaming score, in σ above noise mean.",
         ("streaming_trigger", "min_noise_hits"):     "Min noise-sample hits required for a channel to enter the weight bundle.",
-        ("streaming_hough", "r_min"):                "Lower bound of the Hough radius scan.",
-        ("streaming_hough", "r_max"):                "Upper bound of the Hough radius scan.",
-        ("streaming_hough", "r_step"):               "Hough radius granularity (halved for sub-cell aggregation).",
-        ("streaming_hough", "cell_size"):            "XY accumulator cell size (halved like r_step).",
-        ("streaming_hough", "centre_padding_mm"):    "Padding around the centre search window; −1.0 falls back to r_max.",
-        ("streaming_hough", "threshold_fraction"):   "Relative floor: minimum vote fraction of the currently-leading peak.",
-        ("streaming_hough", "min_hits_slack"):       "Ring-acceptance slack on the absolute vote count.",
-        ("streaming_hough", "hough_threshold_fraction"): "Hough entry gate, as a fraction of active channels.",
-        ("streaming_hough", "collection_radius"):    "Ring band width for hit assignment.",
-        ("streaming_hough", "centre_xy_half_range_mm"): "Half-range of the centre search box.",
-        ("streaming_hough", "aggregation_window_cells"): "Sub-cell aggregation window (1 = single-cell, 2 = aggregated).",
+        ("streaming_ransac", "r_min"):                "Lower bound of the RANSAC radius scan.",
+        ("streaming_ransac", "r_max"):                "Upper bound of the RANSAC radius scan.",
+        ("streaming_ransac", "r_step"):               "RANSAC radius granularity (halved for sub-cell aggregation).",
+        ("streaming_ransac", "cell_size"):            "XY accumulator cell size (halved like r_step).",
+        ("streaming_ransac", "centre_padding_mm"):    "Padding around the centre search window; −1.0 falls back to r_max.",
+        ("streaming_ransac", "threshold_fraction"):   "Relative floor: minimum vote fraction of the currently-leading peak.",
+        ("streaming_ransac", "min_hits_slack"):       "Ring-acceptance slack on the absolute vote count.",
+        ("streaming_ransac", "hough_threshold_fraction"): "RANSAC entry gate, as a fraction of active channels.",
+        ("streaming_ransac", "collection_radius"):    "Ring band width for hit assignment.",
+        ("streaming_ransac", "centre_xy_half_range_mm"): "Half-range of the centre search box.",
+        ("streaming_ransac", "aggregation_window_cells"): "Sub-cell aggregation window (1 = single-cell, 2 = aggregated).",
         #  Recodata ring-reconstruction knobs (formerly conf/recodata.toml).
-        ("streaming_hough", "hardware_ring_dt_min_ns"): "Lower edge of the hardware-trigger coincidence window for ring-hit selection.",
-        ("streaming_hough", "hardware_ring_dt_max_ns"): "Upper edge of the hardware-trigger coincidence window for ring-hit selection.",
-        ("streaming_hough", "min_hits_per_ring"):    "Minimum hits required for a ring to enter per-ring statistics.",
-        ("streaming_hough", "delta_r_for_coverage_mm"): "Ring bandwidth — a channel counts as on-ring when |r_ch − R| < this.",
-        ("streaming_hough", "skip_loo_residuals"):   "QA fast path: skip the per-hit leave-one-out residual loop (no σ_photon).",
+        ("streaming_ransac", "hardware_ring_dt_min_ns"): "Lower edge of the hardware-trigger coincidence window for ring-hit selection.",
+        ("streaming_ransac", "hardware_ring_dt_max_ns"): "Upper edge of the hardware-trigger coincidence window for ring-hit selection.",
+        ("streaming_ransac", "min_hits_per_ring"):    "Minimum hits required for a ring to enter per-ring statistics.",
+        ("streaming_ransac", "delta_r_for_coverage_mm"): "Ring bandwidth — a channel counts as on-ring when |r_ch − R| < this.",
+        ("streaming_ransac", "skip_loo_residuals"):   "QA fast path: skip the per-hit leave-one-out residual loop (no σ_photon).",
         #  fit_circle_init_{x,y,r} keys removed 2026-05-30 (CLEAN_OFF C3.5).
         #  No C++ reader consumes them anymore; the recodata refit seeds
-        #  from the Hough peak directly.  Configs that still carry the
+        #  from the RANSAC peak directly.  Configs that still carry the
         #  keys log a one-shot deprecation warning per key (tolerance
         #  ends v2.1).  Dashboard editing UI doesn't need to expose them.
     },
@@ -241,20 +241,20 @@ PARAM_UNITS: dict[str, dict[tuple, str]] = {
     "streaming.toml": {
         ("streaming_trigger", "n_sigma_threshold"):  "σ",
         ("streaming_trigger", "min_noise_hits"):     "hits",
-        ("streaming_hough", "r_min"):                "mm",
-        ("streaming_hough", "r_max"):                "mm",
-        ("streaming_hough", "r_step"):               "mm",
-        ("streaming_hough", "cell_size"):            "mm",
-        ("streaming_hough", "collection_radius"):    "mm",
-        ("streaming_hough", "threshold_fraction"):   "",   # fraction → a.u. is misleading; blank suffix
-        ("streaming_hough", "hough_threshold_fraction"): "",
-        ("streaming_hough", "min_hits_slack"):       "hits",
-        ("streaming_hough", "aggregation_window_cells"): "cells",
+        ("streaming_ransac", "r_min"):                "mm",
+        ("streaming_ransac", "r_max"):                "mm",
+        ("streaming_ransac", "r_step"):               "mm",
+        ("streaming_ransac", "cell_size"):            "mm",
+        ("streaming_ransac", "collection_radius"):    "mm",
+        ("streaming_ransac", "threshold_fraction"):   "",   # fraction → a.u. is misleading; blank suffix
+        ("streaming_ransac", "hough_threshold_fraction"): "",
+        ("streaming_ransac", "min_hits_slack"):       "hits",
+        ("streaming_ransac", "aggregation_window_cells"): "cells",
         #  Recodata ring-reconstruction knobs (formerly conf/recodata.toml).
-        ("streaming_hough", "min_hits_per_ring"):    "hits",
-        ("streaming_hough", "hardware_ring_dt_min_ns"): "ns",
-        ("streaming_hough", "hardware_ring_dt_max_ns"): "ns",
-        ("streaming_hough", "delta_r_for_coverage_mm"): "mm",
+        ("streaming_ransac", "min_hits_per_ring"):    "hits",
+        ("streaming_ransac", "hardware_ring_dt_min_ns"): "ns",
+        ("streaming_ransac", "hardware_ring_dt_max_ns"): "ns",
+        ("streaming_ransac", "delta_r_for_coverage_mm"): "mm",
         #  fit_circle_init_{x,y,r} removed 2026-05-30 (CLEAN_OFF C3.5).
     },
     "mapping_conf.toml": {

@@ -99,8 +99,8 @@ enum HitMask : unsigned int
     HitmaskStreamingRingTrigger = 1,
     HitmaskRingTagFirst = 2,
     HitmaskRingTagSecond = 3,
-    HitmaskHoughRingTagFirst = 11,
-    HitmaskHoughRingTagSecond = 12,
+    HitmaskRansacRingTagFirst = 11,
+    HitmaskRansacRingTagSecond = 12,
     HitmaskAfterpulseNear = 26, ///< Same-channel Hit with Δt inside the QA near window (afterpulse signal region).
     HitmaskAfterpulseFar = 27,  ///< Same-channel Hit with Δt inside the QA far  window (DCR sideband region).
     HitmaskCrossTalk = 28,

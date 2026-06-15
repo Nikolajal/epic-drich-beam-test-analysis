@@ -379,7 +379,7 @@ bool run_streaming_trigger_weighted(
     //  Scratch buffers reused across frames: one allocation lifecycle instead
     //  of a fresh vector per frame.  `clear()` retains capacity, so after the
     //  first few frames these allocate ~nothing.  This path is serial on the
-    //  main thread (see the streaming/Hough serial note); `thread_local` keeps
+    //  main thread (see the streaming/RANSAC serial note); `thread_local` keeps
     //  it correct if that ever changes.  Clarity change, NOT a measured speedup
     //  — see triggers/streaming/DISCUSSION.md §1.7 for the A/B that found no win.
     static thread_local std::vector<AlcorFinedata> cherenkov_finedata_hits;

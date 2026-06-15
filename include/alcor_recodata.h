@@ -18,7 +18,7 @@
  *
  * This file defines the @ref AlcorRecodata management class.  It provides the full
  * pipeline from calibrated Hit storage through coordinate transforms, mask manipulation,
- * trigger handling, ROOT tree I/O, and ring-finding algorithms (DBSCAN and Hough transform).
+ * trigger handling, ROOT tree I/O, and ring-finding algorithms (DBSCAN and RANSAC transform).
  *
  * ### Data model
  * Hits are stored directly as @ref AlcorFinedataStruct PODs — the same type used by
@@ -394,7 +394,7 @@ public:
 
     /**
      * @brief Clear all hits and triggers, resetting the container to an empty state.
-     * Does not reset the Hough LUT or accumulator configuration.
+     * Does not reset the RANSAC LUT or accumulator configuration.
      */
     void clear();
 

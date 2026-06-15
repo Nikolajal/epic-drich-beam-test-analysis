@@ -1,9 +1,9 @@
 /**
- * @file triggers/streaming/hough.cxx
- * @brief Implementation of the streaming-trigger Hough ring-finder stage.
+ * @file triggers/streaming/ransac.cxx
+ * @brief Implementation of the streaming-trigger RANSAC ring-finder stage.
  *
  * Algorithm parameters (`threshold_fraction`, `min_hits_slack`,
- * `collection_radius`) come from `StreamingHoughConfigStruct`.  The
+ * `collection_radius`) come from `StreamingRansacConfigStruct`.  The
  * detector-physics constants `max_rings = 2` (two radiators) and the
  * inherited `time_window_ns` (shared with the score stage) are not
  * knobs by design.
@@ -12,7 +12,7 @@
  * for the algorithm, parameter physics, and open items.
  */
 
-#include "triggers/streaming/hough.h"
+#include "triggers/streaming/ransac.h"
 
 #include <algorithm> // std::max, std::sort, std::remove_if (C3.1 + C3.4)
 #include <array>
@@ -26,17 +26,17 @@
 #include <mist/ring_finding/ransac_ring_finder.h> // find_rings_ransac
 
 #include "alcor_finedata.h"
-#include "alcor_data.h"      // HitmaskStreamingRingTrigger, HitmaskHoughRingTagFirst/Second
-#include "triggers/events.h" // TriggerEvent, _TRIGGER_STREAMING_RING_FOUND_, _TRIGGER_HOUGH_RING_FOUND_
+#include "alcor_data.h"      // HitmaskStreamingRingTrigger, HitmaskRansacRingTagFirst/Second
+#include "triggers/events.h" // TriggerEvent, _TRIGGER_STREAMING_RING_FOUND_, _TRIGGER_RANSAC_RING_FOUND_
 
-//  A trigger that should SEED a Hough ring search.  The Hough is no longer
+//  A trigger that should SEED a RANSAC ring search.  The RANSAC is no longer
 //  gated solely on the streaming self-trigger — it also runs on every real
 //  hardware trigger so a hardware-triggered physics event always gets a ring
-//  pass (and downstream recodata always has Hough-tagged hits to refine).
+//  pass (and downstream recodata always has RANSAC-tagged hits to refine).
 //  Seeds: config-defined hardware triggers (index < 100, e.g. luca_and_finger)
 //  + the built-in TIMING + the streaming self-trigger.  Excluded: synthetic
-//  markers (FirstFrames / StartOfSpill / UNKNOWN), the Hough's own output
-//  (HOUGH_RING_FOUND — no recursion), and the legacy TRACKING / RING_FOUND
+//  markers (FirstFrames / StartOfSpill / UNKNOWN), the RANSAC's own output
+//  (RANSAC_RING_FOUND — no recursion), and the legacy TRACKING / RING_FOUND
 //  triggers (separate-DAQ / 2024-legacy, not Cherenkov event markers).
 static bool is_ring_seed_trigger(int index)
 {
@@ -45,14 +45,14 @@ static bool is_ring_seed_trigger(int index)
            || index == static_cast<int>(_TRIGGER_STREAMING_RING_FOUND_);
 }
 
-void run_streaming_hough_trigger(
+void run_streaming_ransac_trigger(
     AlcorSpilldata &spilldata,
     uint32_t frame_id,
     int &streaming_trigger_count,
     int ispill,
     float time_window_ns,
-    const StreamingHoughConfigStruct &cfg,
-    const StreamingHoughQA &qa,
+    const StreamingRansacConfigStruct &cfg,
+    const StreamingRansacQA &qa,
     const std::unordered_map<int, float> &channel_score_weights)
 {
     auto &cherenkov_hits = spilldata.get_frame_cherenkov_hits(frame_id);
@@ -64,7 +64,7 @@ void run_streaming_hough_trigger(
     std::array<int, 2> best_ring_votes = {0, 0};
 
     //  SNAPSHOT the trigger list before we iterate — the body re-enters
-    //  add_trigger_to_frame() (HitmaskHoughRingTagFirst / *Second emissions
+    //  add_trigger_to_frame() (HitmaskRansacRingTagFirst / *Second emissions
     //  below) which push_back's into the SAME vector that
     //  get_frame_trigger_hits(frame_id) returns by reference.  A range-for
     //  over the live reference caches __begin/__end at loop entry; a
@@ -110,8 +110,8 @@ void run_streaming_hough_trigger(
             //  underlying struct via the write-back below) is not
             //  reconsidered — so a ring isn't re-found and re-emitted when a
             //  hardware trigger and a streaming fire coincide in one frame.
-            if (current_hit.has_mask_bit(HitmaskHoughRingTagFirst) ||
-                current_hit.has_mask_bit(HitmaskHoughRingTagSecond))
+            if (current_hit.has_mask_bit(HitmaskRansacRingTagFirst) ||
+                current_hit.has_mask_bit(HitmaskRansacRingTagSecond))
                 continue;
 
             //  Time pre-cut around the seeding trigger's fine_time.  Width
@@ -132,14 +132,14 @@ void run_streaming_hough_trigger(
         if (ring_candidates.empty())
             continue;
 
-        //  Hough ring finder.  `max_rings = 2` is hardcoded (two-radiator
+        //  RANSAC ring finder.  `max_rings = 2` is hardcoded (two-radiator
         //  detector — no physically realisable configuration produces
         //  more concentric rings in a single event).  Everything else
         //  (threshold_fraction, min_hits_slack, collection_radius) is
         //  config-driven via `cfg`.
         //
         //  Inline ALCOR → generic-Hit adapter (formerly
-        //  `AlcorFinedata::alcor_find_rings_hough`, kept inline here so
+        //  `AlcorFinedata::alcor_find_rings_ransac`, kept inline here so
         //  AlcorFinedata stays a pure per-hit value type).
         //  generic_to_alcor[i] maps generic_hits[i] back to its ring_candidates
         //  index for the mask write-back below.
@@ -196,7 +196,7 @@ void run_streaming_hough_trigger(
             }
         }
 
-        //  Grid-free RANSAC ring finder (replaced the Hough accumulator).
+        //  Grid-free RANSAC ring finder (replaced the RANSAC accumulator).
         //  Candidates are scored by their 1/m_c-weighted inlier EXCESS over the
         //  expected uniform background, divided by the visible on-sensor arc
         //  length (a completeness / linear-density correction) and gated on
@@ -298,8 +298,8 @@ void run_streaming_hough_trigger(
         //  Write the per-ring mask bits back onto ring_candidates so the
         //  downstream loop can read them.  Ring index → mask bit lookup:
         constexpr std::array<HitMask, 2> ring_masks = {
-            HitmaskHoughRingTagFirst,
-            HitmaskHoughRingTagSecond};
+            HitmaskRansacRingTagFirst,
+            HitmaskRansacRingTagSecond};
         for (int ring_idx = 0;
              ring_idx < static_cast<int>(found_rings.size()) &&
              ring_idx < static_cast<int>(ring_masks.size());
@@ -347,8 +347,8 @@ void run_streaming_hough_trigger(
         for (const auto &current_hit : ring_candidates)
         {
             index++;
-            const bool is_first = current_hit.has_mask_bit(HitmaskHoughRingTagFirst);
-            const bool is_second = current_hit.has_mask_bit(HitmaskHoughRingTagSecond);
+            const bool is_first = current_hit.has_mask_bit(HitmaskRansacRingTagFirst);
+            const bool is_second = current_hit.has_mask_bit(HitmaskRansacRingTagSecond);
 
             if ((is_first || is_second) && qa.ring_finder_hitmap)
                 qa.ring_finder_hitmap->Fill(current_hit.get_hit_x_rnd(), current_hit.get_hit_y_rnd());
@@ -378,22 +378,22 @@ void run_streaming_hough_trigger(
                 hough_triggered_second.push_back({current_hit.get_hit_x(), current_hit.get_hit_y()});
             }
 
-            //  Propagate the mask bits set by alcor_find_rings_hough back
+            //  Propagate the mask bits set by alcor_find_rings_ransac back
             //  onto the underlying cherenkov_hits struct.
             cherenkov_hits[ring_candidates_index[index]].HitMask = current_hit.get_mask();
         }
 
-        //  Emit Hough trigger events per ring.  Centre/radius
+        //  Emit RANSAC trigger events per ring.  Centre/radius
         //  refinement happens in `recodata_writer` on the mask-tagged
         //  hit collection — full leave-one-out plus dual/solo splits
         //  plus CB+pol3 radial fit.  All fit-derived observables live
         //  in `recodata.root`'s `Rings/` subfolder.  The
-        //  `fit_circle_init_{x,y,r}` knobs in `[streaming_hough]` were
-        //  removed in C3.5 — recodata seeds the refit from the Hough
+        //  `fit_circle_init_{x,y,r}` knobs in `[streaming_ransac]` were
+        //  removed in C3.5 — recodata seeds the refit from the RANSAC
         //  peak directly.  Configs that still carry the keys log a
         //  one-shot deprecation warning per key (tolerance ends v2.1).
 
-        //  |active| at each Hough pass — full pool for ring 1, pool
+        //  |active| at each RANSAC pass — full pool for ring 1, pool
         //  minus ring-1 assignment for ring 2.  Used by the new
         //  peak_votes-vs-|active| 2D QA, which carries both
         //  Filter-1 (min_hits) and Filter-2 (threshold_fraction) lines
@@ -428,18 +428,18 @@ void run_streaming_hough_trigger(
             //  into the trigger record.
             spilldata.add_trigger_to_frame(
                 frame_id,
-                {static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
+                {static_cast<uint8_t>(_TRIGGER_RANSAC_RING_FOUND_),
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[0] / hough_trigger_hits[0])});
 
-            //  Hough peak (pre-fit) — RingResult is sorted descending by
+            //  RANSAC peak (pre-fit) — RingResult is sorted descending by
             //  peak_votes so found_rings[0] is the strongest candidate.
-            if (qa.ring_X_first_hough)
-                qa.ring_X_first_hough->Fill(found_rings[0].cx);
-            if (qa.ring_Y_first_hough)
-                qa.ring_Y_first_hough->Fill(found_rings[0].cy);
-            if (qa.ring_R_first_hough)
-                qa.ring_R_first_hough->Fill(found_rings[0].radius);
+            if (qa.ring_X_first_ransac)
+                qa.ring_X_first_ransac->Fill(found_rings[0].cx);
+            if (qa.ring_Y_first_ransac)
+                qa.ring_Y_first_ransac->Fill(found_rings[0].cy);
+            if (qa.ring_R_first_ransac)
+                qa.ring_R_first_ransac->Fill(found_rings[0].radius);
 
             //  Filter 1+2 + 3 calibration QA.
             if (qa.ring_peak_votes_vs_active_first)
@@ -447,16 +447,16 @@ void run_streaming_hough_trigger(
                     active_at_pass_1, found_rings[0].peak_votes);
             fill_arc_dist(found_rings[0], qa.ring_hit_arc_dist_first);
 
-            //  Dual-ring sample — same Hough-seed QA as above but
+            //  Dual-ring sample — same RANSAC-seed QA as above but
             //  only when a second ring is also present.
             if (found_rings.size() > 1)
             {
-                if (qa.ring_X_first_hough_dual)
-                    qa.ring_X_first_hough_dual->Fill(found_rings[0].cx);
-                if (qa.ring_Y_first_hough_dual)
-                    qa.ring_Y_first_hough_dual->Fill(found_rings[0].cy);
-                if (qa.ring_R_first_hough_dual)
-                    qa.ring_R_first_hough_dual->Fill(found_rings[0].radius);
+                if (qa.ring_X_first_ransac_dual)
+                    qa.ring_X_first_ransac_dual->Fill(found_rings[0].cx);
+                if (qa.ring_Y_first_ransac_dual)
+                    qa.ring_Y_first_ransac_dual->Fill(found_rings[0].cy);
+                if (qa.ring_R_first_ransac_dual)
+                    qa.ring_R_first_ransac_dual->Fill(found_rings[0].radius);
                 if (qa.ring_peak_votes_vs_active_first_dual)
                     qa.ring_peak_votes_vs_active_first_dual->Fill(
                         active_at_pass_1, found_rings[0].peak_votes);
@@ -465,12 +465,12 @@ void run_streaming_hough_trigger(
             //  Solo-ring sample — complement of (dual).
             if (found_rings.size() == 1)
             {
-                if (qa.ring_X_first_hough_solo)
-                    qa.ring_X_first_hough_solo->Fill(found_rings[0].cx);
-                if (qa.ring_Y_first_hough_solo)
-                    qa.ring_Y_first_hough_solo->Fill(found_rings[0].cy);
-                if (qa.ring_R_first_hough_solo)
-                    qa.ring_R_first_hough_solo->Fill(found_rings[0].radius);
+                if (qa.ring_X_first_ransac_solo)
+                    qa.ring_X_first_ransac_solo->Fill(found_rings[0].cx);
+                if (qa.ring_Y_first_ransac_solo)
+                    qa.ring_Y_first_ransac_solo->Fill(found_rings[0].cy);
+                if (qa.ring_R_first_ransac_solo)
+                    qa.ring_R_first_ransac_solo->Fill(found_rings[0].radius);
                 if (qa.ring_peak_votes_vs_active_first_solo)
                     qa.ring_peak_votes_vs_active_first_solo->Fill(
                         active_at_pass_1, found_rings[0].peak_votes);
@@ -481,16 +481,16 @@ void run_streaming_hough_trigger(
         {
             spilldata.add_trigger_to_frame(
                 frame_id,
-                {static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_),
+                {static_cast<uint8_t>(_TRIGGER_RANSAC_RING_FOUND_),
                  static_cast<uint16_t>(found_rings.size()),
                  static_cast<float>(hough_trigger_time[1] / hough_trigger_hits[1])});
 
-            if (qa.ring_X_second_hough)
-                qa.ring_X_second_hough->Fill(found_rings[1].cx);
-            if (qa.ring_Y_second_hough)
-                qa.ring_Y_second_hough->Fill(found_rings[1].cy);
-            if (qa.ring_R_second_hough)
-                qa.ring_R_second_hough->Fill(found_rings[1].radius);
+            if (qa.ring_X_second_ransac)
+                qa.ring_X_second_ransac->Fill(found_rings[1].cx);
+            if (qa.ring_Y_second_ransac)
+                qa.ring_Y_second_ransac->Fill(found_rings[1].cy);
+            if (qa.ring_R_second_ransac)
+                qa.ring_R_second_ransac->Fill(found_rings[1].radius);
 
             if (qa.ring_peak_votes_vs_active_second)
                 qa.ring_peak_votes_vs_active_second->Fill(

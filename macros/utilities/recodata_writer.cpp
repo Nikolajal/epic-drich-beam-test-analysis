@@ -54,7 +54,7 @@ int main(int argc, char **argv)
     auto *p_framer = app.add_option("--framer-conf", framer_config_file);
     //  Recodata never reads this file directly, but it's forwarded into
     //  the lightdata cascade when --force-upstream is set so that --QA
-    //  Hough thresholds propagate through the pipeline in one command.
+    //  RANSAC thresholds propagate through the pipeline in one command.
     auto *p_streaming = app.add_option("--streaming-conf", streaming_config_file);
     //  Uniform force-flag contract across all writers (see
     //  include/writers/*.h docstrings):
@@ -64,7 +64,7 @@ int main(int argc, char **argv)
     app.add_flag("--force-rebuild", force_rebuild);
     app.add_flag("--force-upstream", force_upstream);
     //  Fast-feedback QA mode.  Reads tuned conf/QA/*.toml overrides
-    //  when present (e.g. raised Hough thresholds → biases N_γ up
+    //  when present (e.g. raised RANSAC thresholds → biases N_γ up
     //  but keeps σ_photon ~invariant).  See conf/QA/streaming.toml.
     app.add_flag("--QA", qa_mode);
 

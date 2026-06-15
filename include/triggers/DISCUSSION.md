@@ -18,7 +18,7 @@ The trigger subsystem has two largely-orthogonal concerns:
 1. **Hardware-trigger source schema** (this document, § 1).  How TOML
    `[[trigger]]` entries map to physical channels and registry slots.
 2. **Software trigger pipeline** for ring events.  Two-stage pre-filter
-   (DCR-weighted score + Hough ring finder) that gates the lightdata
+   (DCR-weighted score + RANSAC ring finder) that gates the lightdata
    writer's output.  Lives in its own subfolder so it can be documented
    and evolved without entangling the schema material.  See
    [`include/triggers/streaming/DISCUSSION.md`](streaming/DISCUSSION.md)
@@ -171,14 +171,14 @@ occupy ~10 of the 100 slots.
 
 ## 4. `time_window_ns` shared between streaming stages
 
-The Hough stage's hit pre-selection inherits its time window from
+The RANSAC stage's hit pre-selection inherits its time window from
 the score stage's config (`time_window_ns`).  There is no separate
 `time_cut_ns` knob — by design, the two stages share the timing
 context of the streaming trigger event they're built around.  See
 [`streaming/DISCUSSION.md`](streaming/DISCUSSION.md) for the
 rationale.  Flagged here because the **coupling is implicit** at
 the call site: a future tuner who edits the score's
-`time_window_ns` silently changes the Hough's behaviour.  Worth a
+`time_window_ns` silently changes the RANSAC's behaviour.  Worth a
 single in-code comment at the score-stage knob site (TODO).
 
 *Implements: D-05 (landed) — two-mode config schema.  Streaming pipeline

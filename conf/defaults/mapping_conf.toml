@@ -105,7 +105,7 @@
 # detector geometry — the coverage map is a pure function of the
 # channel-to-position map that Mapping builds from the tables above.
 # Read by `recodata_conf_reader` (which pulls the ring-reconstruction
-# knobs from streaming.toml's [streaming_hough] table) and consumed by
+# knobs from streaming.toml's [streaming_ransac] table) and consumed by
 # recodata_writer.  All keys optional; missing keys take the defaults in
 # RecodataConfigStruct.
 #
@@ -120,7 +120,7 @@
 # overlaps it — a pure geometric quantity.  `radial_efficiency` collapses
 # it to a 1D eff(R) by averaging over phi to correct the radial(R) hist.
 # Radial range for the eff(R) / radial(R) / N_gamma machinery.  This tracks
-# the FITTED ring radii (physical Cherenkov arcs), NOT the wide coarse Hough
+# the FITTED ring radii (physical Cherenkov arcs), NOT the wide coarse RANSAC
 # scan range (r_max can be 10000 mm but real fitted arcs are ≲ a few hundred
 # mm, capped by the centre grid reach).  600 mm gives generous headroom; raise
 # it only if fitted radii actually approach it.  Legacy near-origin: [25, 125].
@@ -137,7 +137,7 @@ channel_half_width_mm =  1.5
 
 # Nominal ring centre [mm] — the beam-axis projection on the detector
 # plane.  Used for the COVERAGE map and the eff(R) curve; per-event
-# (R, phi) and per-ring f_coverage use the per-event Hough centre re-fit
+# (R, phi) and per-ring f_coverage use the per-event RANSAC centre re-fit
 # by recodata.  In WIDE-ARC mode (r_max_auto = true) the radial hists are
 # coverage-corrected per-ring at the fitted centre, so eff(R) is written as
 # a DIAGNOSTIC only (no divide) and this nominal centre no longer affects

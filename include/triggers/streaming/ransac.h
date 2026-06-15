@@ -1,8 +1,8 @@
 #pragma once
 
 /**
- * @file triggers/streaming/hough.h
- * @brief Stage 2 of the streaming-trigger pipeline — Hough ring finder.
+ * @file triggers/streaming/ransac.h
+ * @brief Stage 2 of the streaming-trigger pipeline — RANSAC ring finder.
  *
  * For every frame where the score stage (stage 1, `score.h`) fired a
  * `_TRIGGER_STREAMING_RING_FOUND_` event, this stage:
@@ -10,13 +10,13 @@
  *   1. Selects Cherenkov hits within `±time_window_ns` of the streaming
  *      trigger's `fine_time` (window inherited from the score stage's
  *      configuration — there is no separate `time_cut_ns` knob).
- *   2. Votes the surviving xy points into a Hough accumulator
+ *   2. Votes the surviving xy points into a RANSAC accumulator
  *      (`mist::ring_finding::HoughTransform`).
  *   3. Extracts up to **2 rings** (hardcoded — the detector has two
  *      Cherenkov radiators, no physical configuration produces more).
- *   4. Tags ring-member hits with `HitmaskHoughRingTagFirst` /
- *      `HitmaskHoughRingTagSecond` for downstream consumption.
- *   5. Emits one `_TRIGGER_HOUGH_RING_FOUND_` event per ring into the
+ *   4. Tags ring-member hits with `HitmaskRansacRingTagFirst` /
+ *      `HitmaskRansacRingTagSecond` for downstream consumption.
+ *   5. Emits one `_TRIGGER_RANSAC_RING_FOUND_` event per ring into the
  *      frame's trigger collection (mean time of tagged hits).
  *
  * Centre/radius refinement is **not** done here.  `recodata_writer`
@@ -27,8 +27,8 @@
  * ambiguity of two simultaneous fit pipelines.
  *
  * Configuration lives in [`conf/streaming.toml`](../../../conf/streaming.toml)
- * under `[streaming_hough]` and is consumed via
- * `StreamingHoughConfigStruct`.  Design notes and open items are in
+ * under `[streaming_ransac]` and is consumed via
+ * `StreamingRansacConfigStruct`.  Design notes and open items are in
  * [`DISCUSSION.md`](DISCUSSION.md).
  */
 
@@ -36,7 +36,7 @@
 #include <unordered_map>
 
 #include "alcor_spilldata.h"
-#include "utility/config_reader.h" // StreamingHoughConfigStruct
+#include "utility/config_reader.h" // StreamingRansacConfigStruct
 
 namespace mist
 {
@@ -49,13 +49,13 @@ class TH1F;
 class TH2F;
 
 /**
- * @brief Bundle of QA histogram pointers consumed by the Hough stage.
+ * @brief Bundle of QA histogram pointers consumed by the RANSAC stage.
  *
  * All fields are raw pointers — the writer owns the histograms (via
  * `RootHist<T>`) and passes `.get()` here.  Any field left as `nullptr`
  * disables its corresponding fill.
  */
-struct StreamingHoughQA
+struct StreamingRansacQA
 {
     /// Hitmap of Cherenkov hits flagged with `HitmaskStreamingRingTrigger`
     /// (i.e. hits that contributed to the score stage's cluster).
@@ -72,27 +72,27 @@ struct StreamingHoughQA
     /// Hitmap of Cherenkov hits tagged as belonging to either ring.
     TH2F *ring_finder_hitmap = nullptr;
 
-    /// Hitmap of hits tagged with `HitmaskHoughRingTagFirst`.
+    /// Hitmap of hits tagged with `HitmaskRansacRingTagFirst`.
     TH2F *first_hitmap = nullptr;
 
-    /// Hitmap of hits tagged with `HitmaskHoughRingTagSecond`.
+    /// Hitmap of hits tagged with `HitmaskRansacRingTagSecond`.
     TH2F *second_hitmap = nullptr;
 
-    /// **Hough peak** outputs for the first ring — taken straight from
+    /// **RANSAC peak** outputs for the first ring — taken straight from
     /// `RingResult::{cx, cy, radius}`, no refinement applied at this
     /// stage.  `recodata_writer` re-fits the mask-tagged hits and
     /// publishes the refined values under `recodata.root`'s `Rings/`
     /// subdirectory; an earlier in-trigger `fit_circle` step was
     /// removed (the lightdata-side fit was QA-only and architecturally
     /// duplicated the recodata fit).
-    TH1F *ring_X_first_hough = nullptr;
-    TH1F *ring_Y_first_hough = nullptr;
-    TH1F *ring_R_first_hough = nullptr;
+    TH1F *ring_X_first_ransac = nullptr;
+    TH1F *ring_Y_first_ransac = nullptr;
+    TH1F *ring_R_first_ransac = nullptr;
 
-    /// Hough peak outputs for the second ring — same role as above.
-    TH1F *ring_X_second_hough = nullptr;
-    TH1F *ring_Y_second_hough = nullptr;
-    TH1F *ring_R_second_hough = nullptr;
+    /// RANSAC peak outputs for the second ring — same role as above.
+    TH1F *ring_X_second_ransac = nullptr;
+    TH1F *ring_Y_second_ransac = nullptr;
+    TH1F *ring_R_second_ransac = nullptr;
 
     /// **Filter 1 + 2 calibration QA** — `peak_votes` (y) vs `|active|`
     /// (x), one per ring slot.  Two threshold lines map onto the same
@@ -135,9 +135,9 @@ struct StreamingHoughQA
     TH1F *ring_X_first_dual = nullptr;
     TH1F *ring_Y_first_dual = nullptr;
     TH1F *ring_R_first_dual = nullptr;
-    TH1F *ring_X_first_hough_dual = nullptr;
-    TH1F *ring_Y_first_hough_dual = nullptr;
-    TH1F *ring_R_first_hough_dual = nullptr;
+    TH1F *ring_X_first_ransac_dual = nullptr;
+    TH1F *ring_Y_first_ransac_dual = nullptr;
+    TH1F *ring_R_first_ransac_dual = nullptr;
     TH2F *ring_peak_votes_vs_active_first_dual = nullptr;
     TH1F *ring_hit_arc_dist_first_dual = nullptr;
 
@@ -157,16 +157,16 @@ struct StreamingHoughQA
     TH1F *ring_X_first_solo = nullptr;
     TH1F *ring_Y_first_solo = nullptr;
     TH1F *ring_R_first_solo = nullptr;
-    TH1F *ring_X_first_hough_solo = nullptr;
-    TH1F *ring_Y_first_hough_solo = nullptr;
-    TH1F *ring_R_first_hough_solo = nullptr;
+    TH1F *ring_X_first_ransac_solo = nullptr;
+    TH1F *ring_Y_first_ransac_solo = nullptr;
+    TH1F *ring_R_first_ransac_solo = nullptr;
     TH2F *ring_peak_votes_vs_active_first_solo = nullptr;
     TH1F *ring_hit_arc_dist_first_solo = nullptr;
 };
 
 /**
  * @brief Run the RANSAC ring-finder on every ring-seeding trigger present
- *        in a frame, emitting one `_TRIGGER_HOUGH_RING_FOUND_` event
+ *        in a frame, emitting one `_TRIGGER_RANSAC_RING_FOUND_` event
  *        per ring directly into the frame's trigger collection.
  *
  * Iterates over the frame's triggers, processes every ring-seeding trigger
@@ -175,7 +175,7 @@ struct StreamingHoughQA
  *   - builds a ring-candidate list via a `±time_window_ns` time pre-cut
  *     (skipping hits already tagged by an earlier seed in this frame),
  *   - runs `mist::ring_finding::find_rings_ransac` on the candidates,
- *   - tags the contributing hits with `HitmaskHoughRingTagFirst / Second`,
+ *   - tags the contributing hits with `HitmaskRansacRingTagFirst / Second`,
  *   - emits the ring trigger event via `spilldata.add_trigger_to_frame`.
  *
  * Centre/radius refinement (Taubin `circle_fit`) and N_γ happen downstream
@@ -194,18 +194,18 @@ struct StreamingHoughQA
  *                                fills `frames_examples` when `ispill == 0`.
  * @param time_window_ns          Time pre-cut width — inherited from the
  *                                streaming-score `time_window_ns`.
- * @param cfg                     Streaming-Hough config struct.  Supplies the
+ * @param cfg                     Streaming-RANSAC config struct.  Supplies the
  *                                RANSAC knobs (`ransac_iterations`,
  *                                `ransac_min_significance`, `ransac_min_inliers`,
  *                                `collection_radius`, `r_min`, `r_max`).
  * @param qa                      QA histogram bundle (any field may be `nullptr`).
  */
-void run_streaming_hough_trigger(
+void run_streaming_ransac_trigger(
     AlcorSpilldata &spilldata,
     uint32_t frame_id,
     int &streaming_trigger_count,
     int ispill,
     float time_window_ns,
-    const StreamingHoughConfigStruct &cfg,
-    const StreamingHoughQA &qa,
+    const StreamingRansacConfigStruct &cfg,
+    const StreamingRansacQA &qa,
     const std::unordered_map<int, float> &channel_score_weights);

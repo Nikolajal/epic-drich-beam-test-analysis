@@ -39,7 +39,7 @@ struct AlcorLightdataStruct
      * per-ring fit from it instead of re-finding the geometry from scratch (a
      * free re-fit on a sparse short arc is high-variance and can collapse the
      * far centre back toward the origin).  `radius == 0` ⇒ no ring tagged in
-     * this slot (the unset sentinel).  Populated in `run_streaming_hough_trigger`.
+     * this slot (the unset sentinel).  Populated in `run_streaming_ransac_trigger`.
      */
     float ring1_cx = 0.f;
     float ring1_cy = 0.f;

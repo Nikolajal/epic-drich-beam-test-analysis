@@ -253,9 +253,9 @@ RingFitResult compute_ring_fit_timewindow(float t_ref_ns,
     //  Time-window selection: every non-afterpulse cherenkov hit whose
     //  (t_hit − t_ref) falls in [dt_min_ns, dt_max_ns] of the hardware-
     //  trigger reference time.  Used by recodata to reconstruct rings on
-    //  hardware-trigger frames where the streaming/Hough self-trigger
+    //  hardware-trigger frames where the streaming/RANSAC self-trigger
     //  (which tags ring hits) is disabled (e.g. QA mode).  Shares the fit
-    //  core with the Hough-tagged path.
+    //  core with the RANSAC-tagged path.
     std::vector<AlcorFinedata> ring_fdata;
     std::vector<std::array<float, 2>> ring_hits;
     std::vector<std::array<float, 2>> ring_hits_smeared;
@@ -283,8 +283,8 @@ RingFitResult compute_ring_fit_tagged(HitMask ring_tag,
                                       bool do_loo,
                                       const RingComputeContext &ctx)
 {
-    //  Hit selection: every non-afterpulse cherenkov hit the streaming-Hough
-    //  stage tagged with `ring_tag`.  The Hough already isolated the ring
+    //  Hit selection: every non-afterpulse cherenkov hit the streaming-RANSAC
+    //  stage tagged with `ring_tag`.  The RANSAC already isolated the ring
     //  members (voting + collection_radius), so this fits the actual arc
     //  rather than the whole in-time hit cloud.  Shares the fit core with the
     //  time-window path.
@@ -312,7 +312,7 @@ RingFitResult compute_ring_fit_tagged(HitMask ring_tag,
     //  slot maps to ring1/ring2 in the per-frame struct (radius 0 ⇒ no seed,
     //  e.g. an old lightdata.root without the fields → legacy seedless fit).
     const auto &ld = lightdata.get_lightdata_link();
-    const bool first = (ring_tag == HitmaskHoughRingTagFirst);
+    const bool first = (ring_tag == HitmaskRansacRingTagFirst);
     const float seed_cx = first ? ld.ring1_cx : ld.ring2_cx;
     const float seed_cy = first ? ld.ring1_cy : ld.ring2_cy;
     const float seed_R = first ? ld.ring1_radius : ld.ring2_radius;

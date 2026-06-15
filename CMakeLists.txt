@@ -166,7 +166,7 @@ set(SRC_FILES
     src/parallel_streaming_framer.cxx
     src/triggers/config.cxx
     src/triggers/streaming/score.cxx
-    src/triggers/streaming/hough.cxx
+    src/triggers/streaming/ransac.cxx
     src/lightdata_writer.cxx
     src/writers/lightdata/dcr_afterpulse_ct_qa.cxx
     src/writers/lightdata/finalize_streaming_qa.cxx

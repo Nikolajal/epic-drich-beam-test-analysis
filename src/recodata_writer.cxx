@@ -100,7 +100,7 @@ void recodata_writer(
         // Forward the conf paths that recodata's CLI saw (resolved by
         // util::conf_path under --QA in main()).  trigger_conf, framer_conf,
         // and streaming_conf cascade — they affect lightdata's framing
-        // + streaming-Hough trigger and need to follow the same QA-mode
+        // + streaming-RANSAC trigger and need to follow the same QA-mode
         // resolution as the rest of the pipeline.  Other lightdata-only
         // paths (readout, fine-calib) stay at lightdata's own defaults
         // because recodata's CLI doesn't expose them and there is no QA
@@ -343,7 +343,7 @@ void recodata_writer(
     //
     //  Pipeline:
     //    init   : coverage map from `index_to_hit_xy` (geometry-only).
-    //    frame  : for each frame with a Hough ring trigger, run
+    //    frame  : for each frame with a RANSAC ring trigger, run
     //             `fit_circle` on the lightdata-tagged hits to recover
     //             per-event (cx, cy, R), then fill N_hits / N_photons /
     //             f_coverage / radial(R).  No `TriggerEvent` schema
@@ -355,11 +355,11 @@ void recodata_writer(
     //  V1 scope: no φ-gap split, no sensor-model split, no time-window
     //  variants.  All deferred to a finer-analysis follow-up.
     auto recodata_cfg = recodata_conf_reader(streaming_conf, mapping_conf);
-    //  Reuse the lightdata-side streaming/Hough QA knob for the centre
+    //  Reuse the lightdata-side streaming/RANSAC QA knob for the centre
     //  (c_x, c_y) QA half-range so both writers stay in lock-step.  We
-    //  only read the one field we need; the rest of streaming_hough_cfg
+    //  only read the one field we need; the rest of streaming_ransac_cfg
     //  is consumed upstream by lightdata_writer on the cascade path.
-    auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf);
+    auto streaming_ransac_cfg = streaming_ransac_conf_reader(streaming_conf);
 
     //  Captured-once state for the per-frame, per-ring compute
     //  helpers (`compute_ring_fit_timewindow`, `fill_ring_hists`).
@@ -377,7 +377,7 @@ void recodata_writer(
     //  During the spill loop we
     //  accumulate two pieces of information per spill:
     //
-    //    * `n_physics_per_spill[i]` — number of HOUGH_RING_FOUND
+    //    * `n_physics_per_spill[i]` — number of RANSAC_RING_FOUND
     //      triggers in spill i.  Sets the spill's weight in the
     //      coverage map: `weight_i = n_physics_i / Σ n_physics`.
     //    * `active_channels_per_spill[i]` — set of channel keys with
@@ -475,7 +475,7 @@ void recodata_writer(
     //    * (cx, cy) per ring — beam centre + drift over the run.
     //
     //  Same R binning as h_radial_* so the two can be overlaid in
-    //  TBrowser.  cx/cy half-range comes from streaming_hough_cfg
+    //  TBrowser.  cx/cy half-range comes from streaming_ransac_cfg
     //  (`centre_xy_half_range_mm`), shared with the lightdata writer.
     RootHist<TH1F> h_R_first("h_R_first", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_R_second("h_R_second", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
@@ -499,11 +499,11 @@ void recodata_writer(
                                        kNHitsBins, kNHitsXLo, kNHitsXHi,
                                        radial_n_bins, radial_lo_mm, radial_hi_mm);
 
-    //  cx / cy half-range: read from streaming_hough_cfg so the
+    //  cx / cy half-range: read from streaming_ransac_cfg so the
     //  lightdata- and recodata-side centre-XY hists keep the same axis.
     //  Bin width 1 mm = generous for visual ring-centre clusters; the
     //  bin count tracks the half-range to keep the resolution constant.
-    const float kCentreXyHalfRangeMm = streaming_hough_cfg.centre_xy_half_range_mm;
+    const float kCentreXyHalfRangeMm = streaming_ransac_cfg.centre_xy_half_range_mm;
     const int kCentreXyBins = static_cast<int>(std::round(2.f * kCentreXyHalfRangeMm));
     RootHist<TH2F> h_centre_xy_first("h_centre_xy_first", ";c_{x} (mm);c_{y} (mm)",
                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
@@ -522,7 +522,7 @@ void recodata_writer(
         396, -99, 99, 396, -99, 99);
 
     //  Companion map: ONLY the hits the ring finder tagged as ring members
-    //  (HitmaskHoughRingTag First/Second), i.e. the subset of the in-time
+    //  (HitmaskRansacRingTag First/Second), i.e. the subset of the in-time
     //  occupancy above that was actually assigned to a reconstructed ring.
     //  Same geometry so the two can be compared directly (full occupancy vs
     //  ring-tagged).
@@ -563,7 +563,7 @@ void recodata_writer(
 
     //  Dual/solo splits for the first ring's vs_n observables.  Same
     //  semantics as the lightdata-side `_dual` / `_solo` splits already
-    //  in StreamingHoughQA: filled per the (frame_has_second_ring)
+    //  in StreamingRansacQA: filled per the (frame_has_second_ring)
     //  predicate computed once per frame.  Lets the operator A/B the
     //  first-ring quality between events where a second ring fired
     //  (dual = clean two-radiator events) and where it didn't (solo =
@@ -824,7 +824,7 @@ void recodata_writer(
 
             //  Radiator QA — drain the precomputed RingFitResults.  Now
             //  gated on a successful reconstruction (hardware-trigger
-            //  time-window fit) rather than the Hough self-trigger.
+            //  time-window fit) rather than the RANSAC self-trigger.
             if (res.first.fit_ok || res.second.fit_ok)
             {
                 RingFillHists first_hists;
@@ -1020,7 +1020,7 @@ void recodata_writer(
     //
     //  Centre-convention reminder: the coverage map and eff(R) use the
     //  FIXED nominal centre from `[recodata].nominal_centre_{x,y}_mm`;
-    //  the radial hists' R values come from PER-EVENT Hough/fit
+    //  the radial hists' R values come from PER-EVENT RANSAC/fit
     //  centres.  Discrepancy < 1 % at observed centre wander.
     //
     //  Headline N_γ / single-photon σ for the cross-run AnalysisResults
@@ -1031,7 +1031,7 @@ void recodata_writer(
     bool pub_have_ring = false;
     {
         // Subfolder name: "Rings/" — contents are per-ring observables
-        // from the Hough output, not per-radiator-material splits.  The
+        // from the RANSAC output, not per-radiator-material splits.  The
         // ring↔radiator mapping (when wired in via `RadiatorInfoStruct`)
         // is a follow-up to V1; "Deferred items".
 
@@ -1095,7 +1095,7 @@ void recodata_writer(
         else
         {
             mist::logger::warning(
-                "(recodata_writer) no HOUGH_RING_FOUND triggers in this "
+                "(recodata_writer) no RANSAC_RING_FOUND triggers in this "
                 "run — coverage map falls back to geometric upper bound.");
         }
 
@@ -1511,7 +1511,7 @@ void recodata_writer(
         //  Conf-file paths + verbatim TOML bodies for every conf the
         //  writer reads (mapping — now also carries the [coverage]
         //  geometry, trigger, framer) plus the streaming conf (which
-        //  carries the [streaming_hough] ring-reco knobs and is also
+        //  carries the [streaming_ransac] ring-reco knobs and is also
         //  forwarded to the lightdata cascade on --force-upstream so the
         //  cascade is reproducible from this file alone).
         dump.add_conf_file("mapping_conf", mapping_conf)

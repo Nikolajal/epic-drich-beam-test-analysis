@@ -178,7 +178,7 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     (_re_topics.compile(r"^.*time_diff.*"),                      "triggers"),
     # Trigger coincidence matrix → Triggers.
     (_re_topics.compile(r"^trigger_matrix(\..*)?$"),             "triggers"),
-    # Ring finder QA from the Hough stage → Triggers.
+    # Ring finder QA from the RANSAC stage → Triggers.
     (_re_topics.compile(r"^.*ring_finder.*"),                    "triggers"),
     (_re_topics.compile(r"^.*hough.*"),                          "triggers"),
     # Timing-sensor DCR — a per-channel dark-count measurement, so it

@@ -8,7 +8,7 @@
  *   ctest --test-dir build --output-on-failure
  *
  * Coverage:
- *   1. `streaming_hough_conf_reader` derives r_max = pad + sensor + margin
+ *   1. `streaming_ransac_conf_reader` derives r_max = pad + sensor + margin
  *      when r_max_auto=true, and auto-couples centre_xy_half_range_mm to the
  *      padding when that key is unset.
  *   2. r_max_auto is refused (left off, explicit r_max kept) when
@@ -16,7 +16,7 @@
  *   3. Legacy mode (no r_max_auto) leaves r_max explicit and does NOT touch
  *      centre_xy_half_range_mm.
  *   4. `recodata_conf_reader` reads arc_span_min_rad and sets
- *      radial_eff_per_ring_centre to mirror the [streaming_hough] r_max_auto.
+ *      radial_eff_per_ring_centre to mirror the [streaming_ransac] r_max_auto.
  *
  * Harness: the minimal CHECK macro shared with the other testers.
  */
@@ -72,7 +72,7 @@ static std::string write_tmp(const std::string &name, const std::string &body)
 void test_auto_couples_r_max_and_axis()
 {
     const std::string path = write_tmp("auto_streaming.toml",
-                                       "[streaming_hough]\n"
+                                       "[streaming_ransac]\n"
                                        "r_min = 35.0\n"
                                        "r_max = 105.0\n"
                                        "r_step = 3.0\n"
@@ -81,7 +81,7 @@ void test_auto_couples_r_max_and_axis()
                                        "r_max_auto = true\n"
                                        "sensor_half_extent_mm = 99.0\n"
                                        "r_margin_mm = 10.0\n");
-    const auto cfg = streaming_hough_conf_reader(path);
+    const auto cfg = streaming_ransac_conf_reader(path);
     CHECK(cfg.r_max_auto);
     CHECK_NEAR(cfg.r_max, 250.0 + 99.0 + 10.0, 1e-4); // = 359
     CHECK_NEAR(cfg.centre_padding_mm, 250.0, 1e-4);
@@ -94,11 +94,11 @@ void test_auto_couples_r_max_and_axis()
 void test_auto_refused_for_negative_pad()
 {
     const std::string path = write_tmp("badpad_streaming.toml",
-                                       "[streaming_hough]\n"
+                                       "[streaming_ransac]\n"
                                        "r_max = 105.0\n"
                                        "centre_padding_mm = -1.0\n"
                                        "r_max_auto = true\n");
-    const auto cfg = streaming_hough_conf_reader(path);
+    const auto cfg = streaming_ransac_conf_reader(path);
     CHECK(!cfg.r_max_auto);             // guard turned it off
     CHECK_NEAR(cfg.r_max, 105.0, 1e-4); // explicit value preserved
     std::remove(path.c_str());
@@ -108,11 +108,11 @@ void test_auto_refused_for_negative_pad()
 void test_legacy_untouched()
 {
     const std::string path = write_tmp("legacy_streaming.toml",
-                                       "[streaming_hough]\n"
+                                       "[streaming_ransac]\n"
                                        "r_max = 105.0\n"
                                        "centre_padding_mm = 10.0\n"
                                        "centre_xy_half_range_mm = 25.0\n");
-    const auto cfg = streaming_hough_conf_reader(path);
+    const auto cfg = streaming_ransac_conf_reader(path);
     CHECK(!cfg.r_max_auto);
     CHECK_NEAR(cfg.r_max, 105.0, 1e-4);
     CHECK_NEAR(cfg.centre_xy_half_range_mm, 25.0, 1e-4);
@@ -123,13 +123,13 @@ void test_legacy_untouched()
 void test_recodata_mirrors_wide_arc()
 {
     const std::string s_wide = write_tmp("reco_wide_streaming.toml",
-                                         "[streaming_hough]\n"
+                                         "[streaming_ransac]\n"
                                          "centre_padding_mm = 250.0\n"
                                          "r_max_auto = true\n"
                                          "arc_span_min_rad = 0.7\n"
                                          "min_hits_per_ring = 5\n");
     const std::string s_legacy = write_tmp("reco_legacy_streaming.toml",
-                                           "[streaming_hough]\n"
+                                           "[streaming_ransac]\n"
                                            "r_max = 105.0\n"
                                            "min_hits_per_ring = 5\n");
     const std::string m = write_tmp("reco_mapping.toml",
@@ -154,7 +154,7 @@ void test_recodata_mirrors_wide_arc()
 void test_explicit_coarse_scan()
 {
     const std::string s = write_tmp("coarse_streaming.toml",
-                                    "[streaming_hough]\n"
+                                    "[streaming_ransac]\n"
                                     "r_min = 10.0\n"
                                     "r_max = 10000.0\n"
                                     "r_max_auto = false\n"
@@ -166,7 +166,7 @@ void test_explicit_coarse_scan()
                                     "[coverage]\n"
                                     "r_min_coverage_mm = 25.0\n"
                                     "r_max_coverage_mm = 600.0\n");
-    const auto sh = streaming_hough_conf_reader(s);
+    const auto sh = streaming_ransac_conf_reader(s);
     CHECK(!sh.r_max_auto);
     CHECK_NEAR(sh.r_max, 10000.0, 1e-3);          // explicit, NOT derived
     CHECK_NEAR(sh.centre_padding_mm, 1000.0, 1e-4);

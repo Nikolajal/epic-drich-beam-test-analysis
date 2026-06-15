@@ -4,7 +4,7 @@
  *        RANSAC ring-finder scan WITHOUT re-running the (slow) lightdata stage.
  *
  * Reads the Cherenkov hits already in a `lightdata.root`, rebuilds the per-frame
- * ring-candidate set exactly as `run_streaming_hough_trigger` does (non-
+ * ring-candidate set exactly as `run_streaming_ransac_trigger` does (non-
  * afterpulse hits within `--time-window` of a ring-seeding trigger), and re-runs
  * `mist::ring_finding::find_rings_ransac` with CLI-tunable scan parameters.  It
  * reports the ring yield (fraction of frames with ≥1 and with 2 rings) and the
@@ -47,7 +47,7 @@
 
 namespace
 {
-    //  Same predicate as run_streaming_hough_trigger's is_ring_seed_trigger:
+    //  Same predicate as run_streaming_ransac_trigger's is_ring_seed_trigger:
     //  config hardware [0,99], built-in TIMING, and the streaming self-trigger.
     bool is_ring_seed_trigger(int index)
     {

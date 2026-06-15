@@ -85,7 +85,7 @@ int main(int argc, char **argv)
                    "path (legacy behaviour).");
     app.add_flag("--force-rebuild", force_rebuild);
     //  Fast-feedback QA mode.  Looks for tuned overrides under conf/QA/
-    //  (currently: conf/QA/streaming.toml with raised Hough thresholds,
+    //  (currently: conf/QA/streaming.toml with raised RANSAC thresholds,
     //  which biases N_γ upward but keeps σ_photon ~invariant; see the
     //  header of conf/QA/streaming.toml for the bias direction).
     app.add_flag("--QA", qa_mode);

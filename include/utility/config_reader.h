@@ -616,7 +616,7 @@ CalibConfigStruct calib_conf_reader(std::string config_file = "conf/calib/calibr
  * @brief Tuning knobs for the DCR-weighted streaming-trigger score stage
  *
  * The score stage is the first half of the two-stage software trigger
- * pipeline — a per-frame online pre-filter that gates the Hough
+ * pipeline — a per-frame online pre-filter that gates the RANSAC
  * ring-finder downstream.  See
  * [`include/triggers/streaming/DISCUSSION.md`](../triggers/streaming/DISCUSSION.md)
  * for the algorithm and § 1.5 for the threshold-tuning workflow.
@@ -630,11 +630,11 @@ struct StreamingTriggerConfigStruct
     /// @brief Sliding-window width [ns].  Hits within this Δt window
     /// form a cluster.
     ///
-    /// @warning This knob is **inherited** by the Hough stage as its
+    /// @warning This knob is **inherited** by the RANSAC stage as its
     /// hit pre-selection window — there is no separate
-    /// `time_cut_ns` knob on the Hough side, by design (see
+    /// `time_cut_ns` knob on the RANSAC side, by design (see
     /// @c include/triggers/streaming/DISCUSSION.md § 2.2).  Retuning
-    /// `time_window_ns` here silently changes the Hough's hit pool;
+    /// `time_window_ns` here silently changes the RANSAC's hit pool;
     /// expect both stages' QA to move when you change this value.
     float time_window_ns = 5.f;
 
@@ -681,7 +681,7 @@ struct StreamingTriggerConfigStruct
     int max_hits_per_window = 0;
 
     /// @brief Fallback coincidence window [ns] for selecting hits around a
-    ///        non-Hough (hardware) trigger when the streaming/Hough
+    ///        non-RANSAC (hardware) trigger when the streaming/RANSAC
     ///        self-trigger isn't tagging ring members.  Operators may
     ///        widen/narrow it to match the Cherenkov light arrival spread.
     ///        Default 50 ns.
@@ -701,18 +701,18 @@ StreamingTriggerConfigStruct
 streaming_trigger_conf_reader(std::string config_file = "conf/streaming.toml");
 
 // =========================================================================
-//  Streaming-Hough configuration
+//  Streaming-RANSAC configuration
 // =========================================================================
 
 /**
- * @brief Tuning knobs for the streaming-trigger Hough ring-finder stage.
+ * @brief Tuning knobs for the streaming-trigger RANSAC ring-finder stage.
  *
  * Stage 2 of the software trigger pipeline.  Runs on every frame where
  * the score stage fired (`_TRIGGER_STREAMING_RING_FOUND_` present),
- * extracts up to `max_rings` ring candidates via Hough voting, then
+ * extracts up to `max_rings` ring candidates via RANSAC voting, then
  * refines each ring's centre with a least-squares `fit_circle`.
  *
- * The TOML loader accepts a `[streaming_hough]` section in
+ * The TOML loader accepts a `[streaming_ransac]` section in
  * [`conf/streaming.toml`](../../conf/streaming.toml).  Missing keys fall
  * back to the defaults below.
  *
@@ -720,9 +720,9 @@ streaming_trigger_conf_reader(std::string config_file = "conf/streaming.toml");
  * for the algorithm, parameter physics, and roadmap.
  *
  */
-struct StreamingHoughConfigStruct
+struct StreamingRansacConfigStruct
 {
-    // ── Hough accumulator geometry ──────────────────────────────────
+    // ── RANSAC accumulator geometry ──────────────────────────────────
     /// @brief Minimum ring radius scanned [mm].
     float r_min = 20.f;
     /// @brief Maximum ring radius scanned [mm].
@@ -734,10 +734,10 @@ struct StreamingHoughConfigStruct
 
     // ── Per-frame ring-finder parameters ────────────────────────────
     //
-    // **`time_cut_ns` is NOT a knob here.**  The Hough's time pre-cut
+    // **`time_cut_ns` is NOT a knob here.**  The RANSAC's time pre-cut
     // around the streaming-trigger's `fine_time` is inherited from
     // `StreamingTriggerConfigStruct::time_window_ns` — there's no
-    // physical reason for the Hough hit-selection window to differ
+    // physical reason for the RANSAC hit-selection window to differ
     // from the score-stage clustering window.
     //
     // **`max_rings` is NOT a knob either.**  Hardcoded to 2 in the
@@ -753,14 +753,14 @@ struct StreamingHoughConfigStruct
     float min_hits_slack = 0.75f;
 
     /// @brief `min_active = ceil(this × N_active_cherenkov)`.  Both the
-    /// "Hough may run at all" gate and the baseline for `min_hits_slack`.
+    /// "RANSAC may run at all" gate and the baseline for `min_hits_slack`.
     /// FALLBACK only: used when no DCR noise model is available (or
     /// `hough_n_sigma_dcr <= 0`).  Prefer the DCR-adaptive floor below — this
-    /// fixed fraction is blind to the dark rate (see DISCUSSION § "Hough
+    /// fixed fraction is blind to the dark rate (see DISCUSSION § "RANSAC
     /// threshold — make it DCR-dependent").
     float hough_threshold_fraction = 0.0035f;
 
-    /// @brief DCR-adaptive Hough floor: when `> 0`, `min_active` is derived
+    /// @brief DCR-adaptive RANSAC floor: when `> 0`, `min_active` is derived
     /// from the streaming noise model instead of `hough_threshold_fraction`:
     ///
     ///     min_active = max(min_ring_votes_floor,
@@ -783,7 +783,7 @@ struct StreamingHoughConfigStruct
     /// physical ring width) so uniform DCR contributes only a thin baseline.
     float collection_radius = 2.f;
 
-    // ── RANSAC ring finder (replaced the Hough accumulator) ─────────────
+    // ── RANSAC ring finder (replaced the RANSAC accumulator) ─────────────
     /// @brief RANSAC samples per ring.  More iterations → higher chance of
     /// hitting a 3-hit subset on the real arc; cheap (closed-form per sample).
     int ransac_iterations = 600;
@@ -799,7 +799,7 @@ struct StreamingHoughConfigStruct
 
     /// @brief Half-range [mm] of the X/Y axis on the per-ring centre QA
     /// histograms (the hists span @c [-this, +this]).  Not consumed by
-    /// the Hough algorithm itself — purely a QA-axis knob.  Set wider
+    /// the RANSAC algorithm itself — purely a QA-axis knob.  Set wider
     /// than the expected centre spread; the bin width is automatically
     /// snapped to @c cell_size so n_bins × cell_size covers it exactly.
     float centre_xy_half_range_mm = 25.f;
@@ -852,7 +852,7 @@ struct StreamingHoughConfigStruct
     /// **Wide-arc coupled set** — when running this mode, also set a *coarse*
     /// grid (`cell_size = r_step = 3.0`, `aggregation_window_cells = 1`):
     /// precision comes from the downstream floating-centre `fit_circle`
-    /// refinement, so the Hough only has to localise the peak.  The coarse
+    /// refinement, so the RANSAC only has to localise the peak.  The coarse
     /// grid keeps the (main-thread-serial) accumulator bounded — a 1.5 mm
     /// grid over a ±250 mm centre range would balloon the LUT ~8× and the
     /// per-frame cost with it.
@@ -872,24 +872,24 @@ struct StreamingHoughConfigStruct
 
     //  C3.5 — removed `fit_circle_init_{x,y,r}` fields and TOML knobs.
     //  No live consumer existed: the centre/radius
-    //  refinement is done by `recodata_writer` from the Hough peak,
+    //  refinement is done by `recodata_writer` from the RANSAC peak,
     //  not from a config-supplied seed.  TOMLs that still carry the
     //  keys are tolerated (warning + ignored) by
-    //  `streaming_hough_conf_reader` for one release; remove the
+    //  `streaming_ransac_conf_reader` for one release; remove the
     //  warning in v2.1.
 };
 
 /**
- * @brief Parse the @c [streaming_hough] table from a TOML configuration file.
+ * @brief Parse the @c [streaming_ransac] table from a TOML configuration file.
  *
- * Missing keys fall back to the defaults in @ref StreamingHoughConfigStruct.
+ * Missing keys fall back to the defaults in @ref StreamingRansacConfigStruct.
  *
  * @param config_file Path to the TOML configuration file
  *                    (defaults to @c "conf/streaming.toml").
- * @return Populated @ref StreamingHoughConfigStruct.
+ * @return Populated @ref StreamingRansacConfigStruct.
  */
-StreamingHoughConfigStruct
-streaming_hough_conf_reader(std::string config_file = "conf/streaming.toml");
+StreamingRansacConfigStruct
+streaming_ransac_conf_reader(std::string config_file = "conf/streaming.toml");
 
 // =========================================================================
 //  Recodata live-QA pipeline configuration (`[recodata]` block)
@@ -908,10 +908,10 @@ streaming_hough_conf_reader(std::string config_file = "conf/streaming.toml");
  * at writer init with a **fixed nominal centre** (the beam-axis
  * projection on the detector plane, typically `(0, 0)`).  Per-hit
  * `(R, φ)` and per-ring `f_coverage` use the **per-event fit-refined
- * Hough centre** (re-computed by recodata via `fit_circle` on the
+ * RANSAC centre** (re-computed by recodata via `fit_circle` on the
  * mask-tagged hits — no `TriggerEvent` schema bump).  The `eff(R)`
  * discrepancy from this mismatch is < 1 % at the ~10–25 mm centre
- * wander observed in `ring_X/Y_first_hough`
+ * wander observed in `ring_X/Y_first_ransac`
  *
  * φ-gap (in_gap / ex_gap) and sensor-model (k1350 / k1375) splits
  * from the offline `photon_number_new.cpp` macro are **not** in V1.
@@ -952,13 +952,13 @@ struct RecodataConfigStruct
     /// @brief Bandwidth [mm] used by `azimuthal_coverage_fraction`:
     /// a channel counts as "on the arc" if `||r_ch - R|| < delta_r`.
     /// Should match the upstream `collection_radius` from
-    /// `[streaming_hough]` so the coverage estimate is consistent
+    /// `[streaming_ransac]` so the coverage estimate is consistent
     /// with the hit-assignment cut.
     float delta_r_for_coverage_mm = 3.f;
 
     /// @brief Minimum hits per ring for the re-fit to be attempted.
     /// Below this we skip the ring (and emit no N_photons / radial
-    /// fill).  Matches the upstream `min_hits` floor in the Hough
+    /// fill).  Matches the upstream `min_hits` floor in the RANSAC
     /// stage so the two are consistent.
     int min_hits_per_ring = 5;
 
@@ -969,7 +969,7 @@ struct RecodataConfigStruct
     /// below this, recodata falls back to a fixed-centre fit (centroid +
     /// median radius) and flags the ring lower-quality rather than trusting
     /// the runaway free-centre solution.  Default 0.5 rad (~29°).  Read from
-    /// the `[streaming_hough]` table next to the other ring-reco knobs.
+    /// the `[streaming_ransac]` table next to the other ring-reco knobs.
     float arc_span_min_rad = 0.5f;
 
     /// @brief Wide-arc mode: correct the radial(R) distribution per-ring at
@@ -983,8 +983,8 @@ struct RecodataConfigStruct
     /// circle fit to a closed-form (Kasa) algebraic seed + azimuthal-span
     /// guard so far-off-centre arcs reconstruct robustly.
     ///
-    /// `recodata_conf_reader` defaults this to the `[streaming_hough].r_max_auto`
-    /// flag (so the single wide-arc switch drives both the Hough bounds and the
+    /// `recodata_conf_reader` defaults this to the `[streaming_ransac].r_max_auto`
+    /// flag (so the single wide-arc switch drives both the RANSAC bounds and the
     /// recodata correction), but it can also be set EXPLICITLY via a
     /// `radial_eff_per_ring_centre` key — needed by the wide coarse-scan config,
     /// which uses an explicit `r_max` (auto off) yet still wants arc-mode
@@ -994,7 +994,7 @@ struct RecodataConfigStruct
 
     /// @brief Coincidence window (ns, relative to a hardware trigger's
     /// reference time) used to select cherenkov hits for the ring fit when
-    /// the Hough self-trigger isn't tagging them (QA mode).  A hit is kept
+    /// the RANSAC self-trigger isn't tagging them (QA mode).  A hit is kept
     /// when `dt_min ≤ (t_hit − t_ref) ≤ dt_max` — asymmetric, since the
     /// Cherenkov light sits in a specific window after the trigger.  See
     /// `compute_ring_fit_timewindow`.  Defaults −30 … +30 ns.
@@ -1034,7 +1034,7 @@ struct RecodataConfigStruct
     /// feedback).
     ///
     /// Default `false` keeps production behaviour intact; set to
-    /// `true` in `conf/QA/streaming.toml`'s `[streaming_hough]` table
+    /// `true` in `conf/QA/streaming.toml`'s `[streaming_ransac]` table
     /// to enable for `--QA` mode.
     bool skip_loo_residuals = false;
 };
@@ -1049,8 +1049,8 @@ struct RecodataConfigStruct
  *  - The 5 ring-reconstruction knobs (`hardware_ring_dt_min_ns`,
  *    `hardware_ring_dt_max_ns`, `min_hits_per_ring`,
  *    `delta_r_for_coverage_mm`, `skip_loo_residuals`) are read from the
- *    @c [streaming_hough] table of @p streaming_file — they sit next to
- *    the Hough geometry they must stay consistent with.
+ *    @c [streaming_ransac] table of @p streaming_file — they sit next to
+ *    the RANSAC geometry they must stay consistent with.
  *
  *  - The 8 coverage-map geometry keys (`n_phi_bins_coverage`,
  *    `n_r_bins_coverage`, `r_min_coverage_mm`, `r_max_coverage_mm`,
@@ -1062,9 +1062,9 @@ struct RecodataConfigStruct
  * Missing keys (or a missing table) fall back to the defaults in
  * @ref RecodataConfigStruct.  Each file is parsed in its own try/catch
  * and loaded values are echoed via `mist::logger::info` — same
- * "did my edit take effect?" diagnostic as @ref streaming_hough_conf_reader.
+ * "did my edit take effect?" diagnostic as @ref streaming_ransac_conf_reader.
  *
- * @param streaming_file Path to the streaming TOML (`[streaming_hough]`).
+ * @param streaming_file Path to the streaming TOML (`[streaming_ransac]`).
  * @param mapping_file   Path to the mapping TOML (`[coverage]`).
  * @return Populated @ref RecodataConfigStruct.
  */
