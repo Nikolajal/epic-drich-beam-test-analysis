@@ -37,11 +37,11 @@
 # gate re-runs on that commit and goes green; the merge then unlocks.
 #
 # ── clang-format version pin ────────────────────────────────────────
-# Ubuntu noble's apt clang-format-18 produces output identical to
-# clang-format-22 (Homebrew) for this codebase under our `.clang-format`
-# config — verified during the 2026-05-27 project-wide format pass.
-# If a future bump drifts, pin via the LLVM apt repo and re-run the
-# full format pass locally before pushing.
+# Pinned to clang-format 22.1.5 via the PyPI wheel (`pipx install`) so CI
+# matches the maintainer's local Homebrew v22 exactly.  Ubuntu noble's apt
+# clang-format-18 drifts from v22 (e.g. `struct winsize w{};`), so the apt
+# default is NOT safe.  Bump this pin in lockstep with the local toolchain;
+# patch releases (22.1.x) are formatting-stable, so 22.1.5 matches local 22.1.6.
 
 name: clang-format
 
@@ -80,8 +80,7 @@ jobs:
 
       - name: Install clang-format
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-format
+          pipx install "clang-format==22.1.5"
           clang-format --version
 
       - name: Apply clang-format
@@ -182,8 +181,7 @@ jobs:
 
       - name: Install clang-format
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-format
+          pipx install "clang-format==22.1.5"
           clang-format --version
 
       - name: Verify formatting (read-only, fail on diff)
