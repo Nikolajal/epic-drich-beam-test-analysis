@@ -115,6 +115,12 @@ trigger_conf_reader(const std::string &config_file)
 
     // Track claimed slots in [0, 99] to enforce index uniqueness across both modes.
     bool used_indices[100] = {};
+    // Which trigger NAME claimed each slot.  Lets the SAME logical trigger declare
+    // more than one source device under one index (e.g. luca_and_finger routed
+    // through the rdo in 2025 and the kc705 in 2026) without the second device
+    // being bumped to a different index — the lookup is per-device, so sharing an
+    // index across devices is well-defined.
+    std::string index_owner[100];
 
     auto earliest_free = [&]() -> int
     {
@@ -129,10 +135,14 @@ trigger_conf_reader(const std::string &config_file)
     {
         const bool out_of_range = raw_index > 99;
         const bool duplicate = !out_of_range && used_indices[raw_index];
+        // A duplicate index claimed by the SAME trigger name is intentional —
+        // one logical trigger declared on several source devices.  Reuse it.
+        const bool same_trigger = duplicate && index_owner[raw_index] == name;
 
-        if (!out_of_range && !duplicate)
+        if (!out_of_range && (!duplicate || same_trigger))
         {
             used_indices[raw_index] = true;
+            index_owner[raw_index] = name;
             return static_cast<int>(raw_index);
         }
 
@@ -151,6 +161,7 @@ trigger_conf_reader(const std::string &config_file)
                               " (valid range: 0–99, unique) — reassigned to " +
                               std::to_string(free_slot));
         used_indices[free_slot] = true;
+        index_owner[free_slot] = name;
         return free_slot;
     };
 
