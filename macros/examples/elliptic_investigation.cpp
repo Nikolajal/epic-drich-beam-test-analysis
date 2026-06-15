@@ -9,7 +9,7 @@
  * is the SECOND physical ring (different radiator / different optical
  * path) but its true shape is an ELLIPSE, not a circle — because of
  * radiator non-uniformity, off-axis beam incidence, or focusing
- * optics asymmetries.  MIST's circular Hough fits a circle to it
+ * optics asymmetries.  MIST's circular RANSAC fits a circle to it
  * (the only shape MIST knows about) and the circle parameters are
  * effectively a "best-circle approximation" of the underlying
  * ellipse.
@@ -62,7 +62,7 @@
 #include "utility/root_io.h"
 #include "utility/root_hist.h"
 #include "utility/circle_fit.h"
-#include "alcor_data.h"     // HitmaskHoughRingTag*, encode_bit
+#include "alcor_data.h"     // HitmaskRansacRingTag*, encode_bit
 #include "alcor_recodata.h" // AlcorRecodata
 #include "alcor_finedata.h" // AlcorFinedata::has_mask_bit
 
@@ -288,8 +288,8 @@ void elliptic_investigation(std::string data_repository, std::string run_name)
     long n_dual_frames = 0;
     long n_layer1_ok = 0;
     long n_layer2_ok = 0;
-    const uint32_t mask_first = encode_bit(HitmaskHoughRingTagFirst);
-    const uint32_t mask_second = encode_bit(HitmaskHoughRingTagSecond);
+    const uint32_t mask_first = encode_bit(HitmaskRansacRingTagFirst);
+    const uint32_t mask_second = encode_bit(HitmaskRansacRingTagSecond);
     constexpr int kMinHitsCircle = 5;
     constexpr int kMinHitsEllipse = 8; // 5 params + small safety margin
 

@@ -18,7 +18,7 @@ legacy call sites only.
 | [`global_index.h`](global_index.h) | Strongly-typed packed `GlobalIndex` value type — `(device, FIFO, chip, channel, TDC)` with validity bit, dual TDC-level / channel-level views, and named factories from legacy integer ids | yes |
 | [`toml_utils.h`](toml_utils.h) | Cutoff-aware TOML loader for the config readers | yes |
 | [`conf_path.h`](conf_path.h) | Path resolution for the writers' mode flags (`--QA`, `--calib`) | yes |
-| [`config_reader.h`](config_reader.h) | Public API for every TOML-backed configuration struct (`RunInfo`, `ReadoutConfigList`, `CalibConfigStruct`, `StreamingTriggerConfigStruct`, `StreamingHoughConfigStruct`, `RecoDataConfigStruct`, …).  Heavy parsing lives in [`src/config_reader.cxx`](../../src/config_reader.cxx). | header decl + .cxx impl |
+| [`config_reader.h`](config_reader.h) | Public API for every TOML-backed configuration struct (`RunInfo`, `ReadoutConfigList`, `CalibConfigStruct`, `StreamingTriggerConfigStruct`, `StreamingRansacConfigStruct`, `RecoDataConfigStruct`, …).  Heavy parsing lives in [`src/config_reader.cxx`](../../src/config_reader.cxx). | header decl + .cxx impl |
 | [`circle_fit.h`](circle_fit.h) | Least-squares circle fit minimising radial residuals.  Used by `recodata_writer`'s ring refinement.  Open audit items tracked in [`include/writers/DISCUSSION.md`](../writers/DISCUSSION.md). | yes |
 | [`ring_model.h`](ring_model.h) | Analytical Cherenkov-ring signal model and histogram-based ring fitter | yes |
 | [`radiator_efficiency.h`](radiator_efficiency.h) | Geometric coverage map + radial efficiency helpers for the dRICH radiator analysis | yes |

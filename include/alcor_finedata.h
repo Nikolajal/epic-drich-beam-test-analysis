@@ -925,15 +925,15 @@ public:
     // -------------------------------------------------------------------------
     // Ring-finding algorithms — removed.
     //
-    // The former static `alcor_find_rings_hough` adapter lived here as a thin
+    // The former static `alcor_find_rings_ransac` adapter lived here as a thin
     // wrapper around `mist::ring_finding::HoughTransform::find_rings` that
     // converted ALCOR hits to generic hits and wrote ring-tag mask bits back.
-    // Its only consumer was the streaming-Hough trigger stage, so the logic
-    // now lives inline in `src/triggers/streaming/hough.cxx`.  AlcorFinedata
+    // Its only consumer was the streaming-RANSAC trigger stage, so the logic
+    // now lives inline in `src/triggers/streaming/ransac.cxx`.  AlcorFinedata
     // is back to being a pure per-hit value type with no algorithm
     // dependencies on MIST's ring-finding subsystem.
     //
-    // See `include/triggers/streaming/DISCUSSION.md` § 2 for the Hough
+    // See `include/triggers/streaming/DISCUSSION.md` § 2 for the RANSAC
     // stage's current home and design.
     // -------------------------------------------------------------------------
 

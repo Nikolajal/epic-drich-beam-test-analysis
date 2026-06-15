@@ -38,10 +38,10 @@ per-frame Cherenkov hits
         ▼  stage 2 — ring finder
     ┌────────────────────────────────────────────────┐
     │ Time pre-cut around streaming-trigger fine_time│
-    │ Hough on the surviving xy points (≤ N rings)   │
-    │ Tag ring-member hits with HitmaskHoughRingTag* │
+    │ RANSAC on the surviving xy points (≤ N rings)   │
+    │ Tag ring-member hits with HitmaskRansacRingTag* │
     └────────────────────────────────────────────────┘
-        │  TriggerEvent(_TRIGGER_HOUGH_RING_FOUND_)  ×  N
+        │  TriggerEvent(_TRIGGER_RANSAC_RING_FOUND_)  ×  N
         ▼
     keep frame in lightdata.root
 ```
@@ -319,10 +319,10 @@ threshold-setting loop and decouple it from writer wall-time:
 
 1. **`conf/QA/streaming.toml` now disables firing** (`n_sigma_threshold
    = 1e9`).  The QA-mode writer (`--QA`) accumulates the noise+data
-   score histograms in full but pays **0 s of Hough-cascade CPU**:
-   audit showed streaming+Hough was 290 s of a 358 s baseline; with
+   score histograms in full but pays **0 s of RANSAC-cascade CPU**:
+   audit showed streaming+RANSAC was 290 s of a 358 s baseline; with
    `--QA` the writer drops to ~55 s on 5 spills.  Operator gets the
-   full score distribution to read off without waiting for Hough work
+   full score distribution to read off without waiting for RANSAC work
    that's going to be thrown away anyway.
 
 2. **`qa/lightdata/05_streaming_score.pdf`** — emitted by the
@@ -337,7 +337,7 @@ fresh runs):
 ```
   ┌──────────────────────────────────────────────────────────────┐
   │  --QA writer run                                              │
-  │    streaming threshold = 1e9 → 0 fires, 0 Hough               │
+  │    streaming threshold = 1e9 → 0 fires, 0 RANSAC               │
   │    score hists fill normally on every window                  │
   │    writer ~55 s on 5 spills (vs ~358 s w/ default threshold) │
   └────────────────────────────┬─────────────────────────────────┘
@@ -355,7 +355,7 @@ fresh runs):
        no/marginal sig                      clear sig
        run lives with                       set production
        threshold = ∞                        n_sigma_threshold
-       (skip Hough cascade)                 (database hook — see § 1.5.2)
+       (skip RANSAC cascade)                 (database hook — see § 1.5.2)
               │                                │
               ▼                                ▼
        QA-only outputs              production writer w/ tuned n_σ
@@ -417,7 +417,7 @@ Four improvements are explicitly **out of scope** for v1:
   collecting a ring sample, building the signal histogram,
   re-triggering.  Multi-pass calibration; revisit when v1 statistics
   warrant it.
-- **Upper-bound multiplicity cut** *(flagged 2026-Q2 from Hough
+- **Upper-bound multiplicity cut** *(flagged 2026-Q2 from RANSAC
   calibration QA)*.  The score stage today gates only the lower bound
   (`n_σ ≥ n_sigma_threshold`).  Events with very high hit counts in
   the time window — observed at `|active| ≈ 80–100` in
@@ -425,7 +425,7 @@ Four improvements are explicitly **out of scope** for v1:
   `|active| ≈ 15–25` — also pass the lower-bound gate but are
   **structurally not Cherenkov rings**: they're multi-particle
   pile-up, electronics bursts, common-mode noise, shower events, or
-  cascading afterpulses.  The Hough then dutifully finds *some* peak
+  cascading afterpulses.  The RANSAC then dutifully finds *some* peak
   in the noise, producing a "ring" that's downstream of a non-ring
   event.  Proposed knob: `n_sigma_max_threshold` (or a count-based
   `max_hits_per_window`) that rejects clusters above a multiplicity
@@ -443,7 +443,7 @@ sliding-`window` deque, and `peak_times`.  They are now **`static
 thread_local` + `clear()` at entry** — one allocation lifecycle reused
 across frames (`clear()` keeps capacity, so after the first few frames
 these allocate ~nothing).  The score path is serial on the main thread
-(see the streaming/Hough serial note in the parent DISCUSSION); the
+(see the streaming/RANSAC serial note in the parent DISCUSSION); the
 `thread_local` keeps it correct if that ever changes.  The `median_of`
 lambdas also take `const std::vector<float>&` instead of by-value.
 
@@ -470,15 +470,15 @@ lesson as the `get_phase` fusion (see `include/utility/DISCUSSION.md`).
 
 ---
 
-## 2.  Hough stage  (`triggers/streaming/hough.{h,cxx}`)
+## 2.  RANSAC stage  (`triggers/streaming/hough.{h,cxx}`)
 
 > **Status:** ✅ **shipped.**  Phases 2-4 of the consolidation plan
 > completed: the algorithm was extracted out of `src/lightdata_writer.cxx`
-> into [`src/triggers/streaming/hough.cxx`](../../../src/triggers/streaming/hough.cxx)
-> (declared in [`include/triggers/streaming/hough.h`](hough.h)), and
+> into [`src/triggers/streaming/ransac.cxx`](../../../src/triggers/streaming/ransac.cxx)
+> (declared in [`include/triggers/streaming/ransac.h`](hough.h)), and
 > every magic value moved into
-> [`conf/streaming.toml → [streaming_hough]`](../../../conf/streaming.toml).
-> Entry point: `run_streaming_hough_trigger(...)`, called per-frame from
+> [`conf/streaming.toml → [streaming_ransac]`](../../../conf/streaming.toml).
+> Entry point: `run_streaming_ransac_trigger(...)`, called per-frame from
 > the writer's main loop.
 
 ### 2.1  Pipeline
@@ -492,15 +492,15 @@ streaming-trigger event with fine_time = t★
         ▼  time pre-cut
    keep cherenkov hits with |t_hit − t★| < time_cut_ns
         │
-        ▼  Hough ring finder
+        ▼  RANSAC ring finder
    ring_finder.find_rings(generic_hits, ...)
         │  (uses one shared HoughTransform built once at writer init)
         │
         ▼  per ring (up to max_rings)
-   mask hits with HitmaskHoughRingTagFirst / Second
+   mask hits with HitmaskRansacRingTagFirst / Second
         │
         ▼
-   emit TriggerEvent(_TRIGGER_HOUGH_RING_FOUND_)
+   emit TriggerEvent(_TRIGGER_RANSAC_RING_FOUND_)
         │
         ▼  (recodata_writer, downstream)
    re-fit mask-tagged hits → refined centre + radius
@@ -510,21 +510,21 @@ streaming-trigger event with fine_time = t★
 
 | Where | Current value | What it controls | Tunable? |
 |---|---|---|---|
-| `HoughTransform` ctor | `r_min = 35 mm`, `r_max = 105 mm` | Radius scan range | ✅ `[streaming_hough].r_min/r_max` |
-| `HoughTransform` ctor | `r_step = 1.5 mm` | Radius granularity in the accumulator | ✅ `[streaming_hough].r_step` |
-| `HoughTransform` ctor | `cell_size = 1.5 mm` | Accumulator XY cell size — **sets the discrete centre resolution** (see §2.3) | ✅ `[streaming_hough].cell_size` |
+| `HoughTransform` ctor | `r_min = 35 mm`, `r_max = 105 mm` | Radius scan range | ✅ `[streaming_ransac].r_min/r_max` |
+| `HoughTransform` ctor | `r_step = 1.5 mm` | Radius granularity in the accumulator | ✅ `[streaming_ransac].r_step` |
+| `HoughTransform` ctor | `cell_size = 1.5 mm` | Accumulator XY cell size — **sets the discrete centre resolution** (see §2.3) | ✅ `[streaming_ransac].cell_size` |
 | Time pre-cut          | inherited from streaming-score window | Hits selected around `fine_time` (`|t_hit − t_streaming| < time_window_ns`) | ❌ inherited from `[streaming_trigger].time_window_ns` |
-| `find_rings` | `threshold_fraction = 0.33` | Min fraction of active hits in peak cell | ✅ `[streaming_hough].threshold_fraction` |
-| `find_rings` | `min_hits = min_active × 0.75` | Absolute min vote count (slack on min_active) | ✅ `[streaming_hough].min_hits_slack` |
-| `find_rings` | `min_active = ceil(0.0035 · N_active)` | Minimum surviving hits for Hough to run | ✅ `[streaming_hough].hough_threshold_fraction` |
+| `find_rings` | `threshold_fraction = 0.33` | Min fraction of active hits in peak cell | ✅ `[streaming_ransac].threshold_fraction` |
+| `find_rings` | `min_hits = min_active × 0.75` | Absolute min vote count (slack on min_active) | ✅ `[streaming_ransac].min_hits_slack` |
+| `find_rings` | `min_active = ceil(0.0035 · N_active)` | Minimum surviving hits for RANSAC to run | ✅ `[streaming_ransac].hough_threshold_fraction` |
 | `find_rings` | `max_rings = 2` | Hard cap on rings returned per frame | ❌ hardcoded (physical: two radiators ⇒ max two concentric rings) |
-| `find_rings` | `collection_radius = 2 mm` | Width of ring band for hit association | ✅ `[streaming_hough].collection_radius` |
-| ~~`fit_circle_init_{x,y,r}`~~ | — | **REMOVED 2026-05-30** (commit 87e8af2, CLEAN_OFF C3.5).  No live consumer — recodata seeds the per-ring refit from the Hough peak `(cx, cy, radius)` directly. | Reader emits one-shot deprecation warning per key still in config; tolerance to be removed in a later release. |
+| `find_rings` | `collection_radius = 2 mm` | Width of ring band for hit association | ✅ `[streaming_ransac].collection_radius` |
+| ~~`fit_circle_init_{x,y,r}`~~ | — | **REMOVED 2026-05-30** (commit 87e8af2, CLEAN_OFF C3.5).  No live consumer — recodata seeds the per-ring refit from the RANSAC peak `(cx, cy, radius)` directly. | Reader emits one-shot deprecation warning per key still in config; tolerance to be removed in a later release. |
 
 **Non-tunable rationale:**
 
 - `time_cut_ns` is **inherited from `[streaming_trigger].time_window_ns`**.
-  There is no physical reason for the Hough hit-selection window to
+  There is no physical reason for the RANSAC hit-selection window to
   differ from the score-stage clustering window — allowing them to drift
   only creates a configuration with two ways to misalign.
 - `max_rings = 2` is a **detector-geometry constraint**: the dRICH
@@ -535,7 +535,7 @@ streaming-trigger event with fine_time = t★
 
 ### 2.3  Sub-cell centre refinement  *(was D-03)*
 
-The Hough accumulator's peak cell is **discrete**: the recovered centre
+The RANSAC accumulator's peak cell is **discrete**: the recovered centre
 is quantised to `cell_size = 3 mm` regardless of how well the underlying
 hits constrain it.  For a single Cherenkov ring this is good enough; for
 two close rings, or when the true centre falls near a cell boundary, the
@@ -549,7 +549,7 @@ position.
 > The active TOML recipe:
 > `r_step = cell_size = 1.5 mm`, `aggregation_window_cells = 2`.
 
-**2026-Q2 measurement (writer-side QA `Hough rings/`):**  with
+**2026-Q2 measurement (writer-side QA `RANSAC rings/`):**  with
 `cell_size = 3 mm` the per-event ring-1 `peak_votes` averages 8.9
 (see `peak_votes_vs_active_first`).  After halving `cell_size` to
 1.5 mm *without* changing the peak finder, ring-1 mean `peak_votes`
@@ -605,20 +605,20 @@ which produced a measurable run-time increase.  Replaced with a
 Total peak-finding cost: O(n_cells × 8) — back to ~8× legacy
 (matching the voting step) instead of ~64×.  Results are
 bit-for-bit identical to the naive scan: all three MIST unit tests
-(`test_hough`, `test_rnd`, `test_logger`) pass unchanged.
+(`test_ransac`, `test_rnd`, `test_logger`) pass unchanged.
 
 `sat_` is a `mutable std::vector<int>` member pre-allocated in
 `build_lut`; no heap allocation occurs during `find_peak`.
 
 Thresholds keep their meaning: `peak_votes` is "vote count over a
 3³ mm³ physical volume" regardless of W.  No re-tuning of
-`[streaming_hough]` knobs beyond checking that `peak_votes_vs_active_*`
+`[streaming_ransac]` knobs beyond checking that `peak_votes_vs_active_*`
 shows the expected lift over the pre-aggregation baseline.
 
 Knob plumbing: `aggregation_window_cells` in MIST (default 1 = legacy
 single-cell; 2 = active recipe).  Surfaced to the writer via
-`[streaming_hough].aggregation_window_cells` in `conf/streaming.toml`
-and `StreamingHoughConfigStruct::aggregation_window_cells` in
+`[streaming_ransac].aggregation_window_cells` in `conf/streaming.toml`
+and `StreamingRansacConfigStruct::aggregation_window_cells` in
 `include/utility/config_reader.h`.
 
 **Part D — tight LUT padding (`centre_padding_mm`)** *(shipped 2026-05-26)*:
@@ -633,7 +633,7 @@ Added an optional `centre_padding_mm` parameter to MIST's `build_lut`
 (default `-1.f` → legacy `r_max` for backwards compatibility).  When
 set positive, replaces `r_max` as the X/Y pad.  At the standard
 `r_max = 105 mm` → `pad = 25 mm` recipe (well bracketing the
-observed `ring_X/Y_first_hough` half-spread of ~10–15 mm), the
+observed `ring_X/Y_first_ransac` half-spread of ~10–15 mm), the
 accumulator extent shrinks by:
 
 ```
@@ -646,23 +646,23 @@ Voting cost scales ~linearly in `n_cells × n_R` and the SAT build
 scales ~linearly in `n_cells × n_R`, so wall-clock drops in step.
 
 Tuning recipe lives in `conf/streaming.toml` next to the knob:
-inspect `ring_X/Y_first_hough` half-spread, pick ~1.5–2× that, then
+inspect `ring_X/Y_first_ransac` half-spread, pick ~1.5–2× that, then
 verify no QA-hist edge clustering.  Picking too small clips real
 rings; the QA hists make this immediately visible.
 
-Knob plumbing: `centre_padding_mm` in MIST → `StreamingHoughConfigStruct`
-→ `[streaming_hough].centre_padding_mm` in `conf/streaming.toml`.
-The writer's `streaming_hough_conf_reader` echoes the loaded value
+Knob plumbing: `centre_padding_mm` in MIST → `StreamingRansacConfigStruct`
+→ `[streaming_ransac].centre_padding_mm` in `conf/streaming.toml`.
+The writer's `streaming_ransac_conf_reader` echoes the loaded value
 with a `lut padding:` log line so the active setting is visible at
 run start.
 
 #### 2.3.2  Other refinement strategies *(deferred)*
 
-The Hough transform was never expected to yield sub-cell centres — that's
+The RANSAC transform was never expected to yield sub-cell centres — that's
 not what an accumulator is for.  Beyond 2.3.1, a two-stage approach is the
 natural direction:
 
-1. **Hough as a candidate finder** (current) — fast, robust, gives an
+1. **RANSAC as a candidate finder** (current) — fast, robust, gives an
    approximate centre and a hit-association list.
 2. **Sub-cell refinement** on the hits assigned to the candidate ring.
    Options, in increasing order of complexity:
@@ -684,13 +684,13 @@ natural direction:
   the beam-test resolution is limited by other factors — timing, optics
   — this is parking-lot work.)
 - If yes, pick a refinement strategy and benchmark against the
-  Hough-only centre on synthetic and beam-test data.
+  RANSAC-only centre on synthetic and beam-test data.
 - Coordinate with the `fit_circle` audit in §2.4 since the refinement
   step likely calls into the circle fit.
 
 ### 2.4  `fit_circle` role and audit  *(retired here — moved to consumer)*
 
-The Hough trigger stage no longer calls `fit_circle`.  Centre/radius
+The RANSAC trigger stage no longer calls `fit_circle`.  Centre/radius
 refinement happens in `recodata_writer` on the mask-tagged hits — see
 [`include/writers/DISCUSSION.md`](../../writers/DISCUSSION.md) for the
 remaining audit items (initial-value validation, `fix_XY` granularity,
@@ -700,32 +700,32 @@ follow the consumer.  The util header itself
 
 ### 2.5  Open items (gated on extraction + config)
 
-Items that become small focused changes once the Hough stage is its
+Items that become small focused changes once the RANSAC stage is its
 own translation unit with config-driven knobs (Phase 5 of the
 consolidation plan):
 
-- ✅ **Time-cut width alignment** — closed by design.  The Hough's time
+- ✅ **Time-cut width alignment** — closed by design.  The RANSAC's time
   pre-cut is **inherited** from `[streaming_trigger].time_window_ns`
   (no separate knob).  See § 2.2.
 - ✅ **`max_rings` policy** — closed by design.  Hardcoded to 2 because
   the detector has two Cherenkov radiators and no physically realisable
   single-event configuration can produce more than two concentric rings.
   See § 2.2.
-- **`fit_circle` init from Hough peak.**  *Migrated.* The relevant
-  fit now lives in `recodata_writer`; the init-from-Hough-peak idea
+- **`fit_circle` init from RANSAC peak.**  *Migrated.* The relevant
+  fit now lives in `recodata_writer`; the init-from-RANSAC-peak idea
   applies there.  See
   [`include/writers/DISCUSSION.md`](../../writers/DISCUSSION.md).
-  The legacy `[streaming_hough].fit_circle_init_{x,y,r}` knobs were
+  The legacy `[streaming_ransac].fit_circle_init_{x,y,r}` knobs were
   REMOVED 2026-05-30 (commit 87e8af2, CLEAN_OFF C3.5); existing
   configs that still carry them log a one-shot deprecation warning
   per key and are otherwise ignored.
-- **Hough threshold formula review.**  `hough_threshold = ceil(0.004 ×
+- **RANSAC threshold formula review.**  `hough_threshold = ceil(0.004 ×
   N_active_cherenkov)` (now `hough_threshold_fraction`) was tuned for
-  the era when the streaming trigger didn't gate Hough entry.  Now that
+  the era when the streaming trigger didn't gate RANSAC entry.  Now that
   stage 1 is selective, stage 2's threshold can be re-derived (or made
   a flat tunable knob).  **Operational observation (2026-Q2):** with
-  the current settings the Hough is picking up random coincidences as
-  rings — the `Hough rings/` subfolder in the writer output shows
+  the current settings the RANSAC is picking up random coincidences as
+  rings — the `RANSAC rings/` subfolder in the writer output shows
   centres and radii that already wander far outside the geometry, so
   the long tails in `Fit rings/` are downstream of a bad seed rather
   than a misbehaving fit.  Three knobs interact here and should be
@@ -737,9 +737,9 @@ consolidation plan):
   the surviving hit count is already low after the time pre-cut).
 - **QA refresh.**  Plot `n_σ_streaming` vs `n_rings_found` to expose the
   correlation between the two stages; per-ring radius histograms with
-  overlay for the two ring slots; Δt between Hough-trigger time and
+  overlay for the two ring slots; Δt between RANSAC-trigger time and
   streaming-trigger time.
-- **Merge near-duplicate rings, then clamp.**  The Hough extraction is
+- **Merge near-duplicate rings, then clamp.**  The RANSAC extraction is
   not duplicate-aware: a single physical ring with hits on both sides
   of the `collection_radius` can occasionally surface as two
   near-coincident accumulator peaks (same `(x_c, y_c)` to within a
@@ -749,7 +749,7 @@ consolidation plan):
   lost.  Proposal: bump the internal `max_rings` to 3 or 4, then run a
   post-pass that merges rings whose centres are within `~2·cell_size`
   AND whose radii are within `~2·r_step`, then clamp the result back
-  to 2.  The merge thresholds become two more `[streaming_hough]` knobs
+  to 2.  The merge thresholds become two more `[streaming_ransac]` knobs
   (`merge_dxy_mm`, `merge_dr_mm`).
 - **Is "ring 2" an elliptic deformation of ring 1?**  MIST's spatial-
   only ring finder will happily place two circles on a single elliptic
@@ -776,7 +776,7 @@ consolidation plan):
 
   **CONFIRMED REQUIREMENT (user, next campaign):** the *next dataset will
   contain elliptical rings.*  This is no longer a hypothesis to test but an
-  upcoming requirement — both the Hough finder (circles only) and the
+  upcoming requirement — both the RANSAC finder (circles only) and the
   recodata ring fit (currently a circle + Gaussian-radial fit) will need a
   genuine **ellipse model** `(cx, cy, a, b, θ)`.  The investigation macro
   below is the starting point for that work.
@@ -844,7 +844,7 @@ consolidation plan):
      duplicates to a single hit (earliest, or longest-pulse) before
      `generic_hits` is built.  Eliminates the inflation upstream of
      MIST.  Side benefit: tightens DCR rate estimates too.  Knob:
-     `[streaming_hough].dedup_same_channel = true/false`.
+     `[streaming_ransac].dedup_same_channel = true/false`.
   2. **MIST-side time window in `collect_ring_hits`**.  Extend the
      spatial cut to `(|dist − R| < collection_radius) AND
      (|hit.time − ring.mean_time| < δt)` with `δt` configurable.
@@ -855,7 +855,7 @@ consolidation plan):
      Quick hack — track which `(channel, ring_idx)` pairs have
      already been tagged and skip subsequent duplicates.  Cheapest
      mitigation; doesn't touch MIST or the framer.  Knob:
-     `[streaming_hough].tag_first_per_channel = true/false`.
+     `[streaming_ransac].tag_first_per_channel = true/false`.
 
   Suggested order: prototype option 3 first to measure the
   inflation magnitude (entries with-vs-without dedup); if the effect
@@ -875,23 +875,23 @@ consolidation plan):
   (>5 %) does option 1 (writer-side dedup config knob) get built; if
   small, close as wontfix with the prototype shipped as-is.
 
-- **Per-ring (X, Y, R) sanity cuts.**  Both `Hough rings/` and
+- **Per-ring (X, Y, R) sanity cuts.**  Both `RANSAC rings/` and
   `Fit rings/` subfolders show long tails to unphysical values on
   background events.  The 2026-Q2 split into seed/refined hists
-  (writer output) confirmed that the bad tails enter at the *Hough*
+  (writer output) confirmed that the bad tails enter at the *RANSAC*
   stage — the fit then dutifully refines around a nonsense seed.
-  Three independent guards apply:  (i) reject rings whose Hough peak
+  Three independent guards apply:  (i) reject rings whose RANSAC peak
   votes / `min_hits` ratio is below a configurable floor (stage 2
   quality — this is the **primary** lever given the diagnosis above);
   (ii) reject fits whose `(x_c, y_c)` falls outside an acceptance box
   around the active geometry, and whose `R` falls outside `[r_min,
   r_max]`; (iii) reject fits returning a NaN sentinel (currently
   silently filling the QA hists with NaN — `fit_circle` already
-  returns one on failure).  All three want `[streaming_hough]` knobs;
+  returns one on failure).  All three want `[streaming_ransac]` knobs;
   the QA hists should also gain pre-cut / post-cut variants so the
   rejection power is auditable.
 
-### 2.6  Live-QA pipeline (recodata-side, downstream of Hough)
+### 2.6  Live-QA pipeline (recodata-side, downstream of RANSAC)
 
 **Status:**  V1 **shipped**.  Foundation helper module
 (`utility/radiator_efficiency`), `[recodata]` config block (struct +
@@ -900,9 +900,9 @@ map at init, per-frame ring fit + fills, `eff(R)` division
 at finalize) all in place.  Output ROOT file gains a `Rings/`
 subfolder with the 10 hists listed under "V1 scope" below.
 
-**Ring reconstruction is no longer Hough-gated.**  The streaming/Hough
+**Ring reconstruction is no longer RANSAC-gated.**  The streaming/RANSAC
 self-trigger is disabled in QA mode, so the frame never carries
-`_TRIGGER_HOUGH_RING_FOUND_` and there are no Hough-tagged hits to refit.
+`_TRIGGER_RANSAC_RING_FOUND_` and there are no RANSAC-tagged hits to refit.
 Instead, recodata reconstructs the ring from every **non-afterpulse
 Cherenkov hit within an asymmetric ±Δt window around the *hardware*
 trigger's reference time** — see `compute_ring_fit_timewindow` (in
@@ -912,11 +912,11 @@ trigger's reference time** — see `compute_ring_fit_timewindow` (in
 hardware trigger in the frame (synthetic + derived ring markers skipped;
 see `frame_pipeline.cxx`).  The histogram fill gate is
 `res.first.fit_ok || res.second.fit_ok` (fill only on a successful fit).
-With no Hough there is no first/second ring separation, so the
+With no RANSAC there is no first/second ring separation, so the
 time-window fit is the single reconstructed ring (second stays empty).
-The old Hough-mask helpers `compute_ring_fit` + `refit_and_fill_ring`
+The old RANSAC-mask helpers `compute_ring_fit` + `refit_and_fill_ring`
 have been removed; only `compute_ring_fit_timewindow` + `fill_ring_hists`
-remain in `ring_compute.{h,cxx}`.  The historical Hough-tagged-hits fit
+remain in `ring_compute.{h,cxx}`.  The historical RANSAC-tagged-hits fit
 (`fit_circle` + `is_ring_tagged`) was retired with the QA-mode time-window
 reconstruction and is no longer kept as a standalone macro.
 
@@ -936,7 +936,7 @@ becomes a thin plotter, or goes away).
 
 | Writer | Job |
 |---|---|
-| `lightdata_writer` | Pre-scan: framing, trigger finding (streaming + Hough), per-hit mask-tagging.  Already done. |
+| `lightdata_writer` | Pre-scan: framing, trigger finding (streaming + RANSAC), per-hit mask-tagging.  Already done. |
 | `recodata_writer` | Physics analysis: time-window cuts, radial distributions, efficiency, photon counting.  Currently a thin passthrough; this work makes it the analysis stage. |
 
 The macro's API usage (`recodata->get_hit_phi(ihit, centre)`,
@@ -945,12 +945,12 @@ maps 1:1 to recodata's existing interface — porting the macro's body
 into recodata is a more direct fit than into lightdata.
 
 **Architectural decision: no `TriggerEvent` schema bump.**  The
-attractive-looking option of extending the Hough trigger payload to
+attractive-looking option of extending the RANSAC trigger payload to
 carry `(cx, cy, R, peak_votes)` per ring would have touched every
 trigger consumer in the codebase and bumped the ROOT TBranch schema
 on `lightdata`.  Avoided.  (Historically, lightdata mask-tagged hits
-with `HitmaskHoughRingTagFirst / Second` and recodata re-ran `fit_circle`
-per Hough-tagged ring at consumption time.  With the Hough self-trigger
+with `HitmaskRansacRingTagFirst / Second` and recodata re-ran `fit_circle`
+per RANSAC-tagged ring at consumption time.  With the RANSAC self-trigger
 disabled in QA mode that path is dormant — recodata now fits the ring
 from non-afterpulse Cherenkov hits in a ±Δt window around the hardware
 trigger instead; see the status block above.)  Either way the per-event
@@ -966,7 +966,7 @@ well below the budget.
   convention exactly, so existing analyses remain comparable.
 - **Per-hit `(R, φ)`** uses the *per-event fit-refined centre* from
   the `fit_circle` re-run above.  Per-event radial coordinate is
-  correct even when the Hough centre wanders by ~10–25 mm RMS;
+  correct even when the RANSAC centre wanders by ~10–25 mm RMS;
   `eff(R)` discrepancy is <1 % at typical ring radii (35–105 mm)
   and judged acceptable for V1.
 
@@ -985,7 +985,7 @@ recipe exactly:
   _TRIGGER_STREAMING_RING_FOUND_, TriggerStartOfSpill,
   _TRIGGER_UNKNOWN_).  In practice this counts beam-defining
   triggers (luca_and_finger, broad_scintillator, TIMING, TRACKING)
-  + downstream-physics triggers (RING_FOUND, HOUGH_RING_FOUND).
+  + downstream-physics triggers (RING_FOUND, RANSAC_RING_FOUND).
   Replaces the earlier macro-aligned `STREAMING_RING_FOUND` choice
   because the streaming trigger is itself an internal /
   pre-selection sampler and shouldn't drive the physics-event
@@ -1141,8 +1141,8 @@ parsing).
 
 - Ring fills are gated on `res.first.fit_ok || res.second.fit_ok` — a
   successful ring fit, not a trigger count.  (The original V1 design
-  gated on `accepted_triggers.count(_TRIGGER_HOUGH_RING_FOUND_)`, but the
-  Hough self-trigger is disabled in QA mode; the ring is now fit from
+  gated on `accepted_triggers.count(_TRIGGER_RANSAC_RING_FOUND_)`, but the
+  RANSAC self-trigger is disabled in QA mode; the ring is now fit from
   non-afterpulse Cherenkov hits in a ±Δt window around the hardware
   trigger reference time — see § 2.6.)
 - Edge rejection in recodata_writer was previously a hidden units
@@ -1187,7 +1187,7 @@ parsing).
 Parser: `recodata_conf_reader` in `src/config_reader.cxx` echoes
 loaded values at startup (grep-able fixed-format `mist::logger::info`
 lines) — same "did my edit take effect?" diagnostic as
-`streaming_hough_conf_reader`.
+`streaming_ransac_conf_reader`.
 
 **Deferred items (post-V1):**
 
@@ -1275,107 +1275,6 @@ beam-test data the actual hot spot is observable (it may not be
 where the cost model suggests), so we'd parallelise the right
 code, not the predicted-right code.
 
-### 2.7.1  Lightdata-side frame-level MT  *(shipped)*
-
-The recodata MT above parallelises *recodata's* per-frame ring refit.
-The **lightdata** writer has its own dominant serial cost: the
-post-framer per-frame loop (`lightdata_writer.cxx`) that runs the
-streaming **score** scan on every frame plus **Hough** `find_rings` on
-fired frames.  Audit (this run, 1 spill, firing on): ~88 s serial, of
-which the score scan and Hough are the bulk; with both off, the rest of
-the body is far cheaper.  This pass is now parallelised with the same
-compute-then-serial-drain shape, plus a per-thread Hough state and QA
-clone/merge.
-
-**Pure-compute / serial-drain split.**
-
-- *Score* (`score.{h,cxx}`): `compute_streaming_score_pure` does the
-  sliding-window scan and returns a `StreamingScoreResult` (the n_σ
-  fills, the hit indices to mask, the streaming triggers to emit, and
-  the boundary carry-over).  `drain_streaming_score` replays those side
-  effects serially.  `run_streaming_trigger_weighted` is now just
-  compute-then-drain, so the serial path is bit-identical.
-- *Hough* (`hough.{h,cxx}`): `run_streaming_hough_compute` does
-  candidate collection + `find_rings` + ring tagging, fills the
-  (per-thread) QA bundle, and **buffers** the spill mutations
-  (`HoughMutations`: mask write-backs + `_TRIGGER_HOUGH_RING_FOUND_`
-  events).  The drain applies them serially.
-
-**Per-spill structure.**  Each spill is processed noise-segment →
-`build_streaming_weights_for_spill()` → data-segment.  The weight build
-lands at the *same accumulated-state point* as the old inline build (at
-the first data frame, after every noise frame's full body has run), so
-the bundle is identical.  Within each segment: a serial position
-pre-pass, then **PASS A** (parallel: score + Hough per frame), then the
-serial per-frame body that drains the precomputed results and runs the
-remaining QA.
-
-**Per-thread state isolation.**
-
-- `HoughTransform` — each worker copies the master (LUT shared by value,
-  accumulator per-thread); mist documents the LUT as concurrent-read
-  safe and the accumulator as per-thread.
-- QA histograms — per-thread `Clone()` + `Reset()`, `Add()`-merged into
-  the canonical bundle under a mutex at the end of the pass.
-  Deterministic hists (ring X/Y/R, peak-votes, arc-dist, nrings) merge
-  bit-exactly; the pixel-jittered hitmaps are statistically identical
-  (already non-reproducible via `mist::Rnd`'s `random_device` seed).
-- `AlcorSpilldata` — its `unordered_map` accessors use `operator[]`
-  (not concurrency-safe even for existing keys), so **all** spill access
-  stays serial: hit-vector pointers are pre-fetched serially before
-  PASS A, and every mutation (mask bits, trigger emission, the
-  tree-write selection) happens in the serial drain.
-
-**Carry-over.**  The score's frame→frame carry-over is reconstructed
-per frame from the previous frame's trailing window
-(`reconstruct_streaming_carry_over`) so frames are independent.  This is
-exact except in the degenerate case where a frame's hits all fall within
-the first `time_window_ns` (then a carry-in hit could itself survive to
-the boundary) — negligible in practice.
-
-**Drain ordering (a correctness subtlety).**  Hough mask bits are
-**OR-ed** onto the hit (not overwritten) in the serial drain, *after*
-`drain_streaming_score` has set the streaming-ring bit, so both survive;
-and the Hough trigger is appended *after* the streaming trigger, keeping
-the streaming-then-Hough order the per-trigger QA sees.
-
-**Result.**  Verified against a pristine pre-change baseline (full-file
-histogram walk, firing-on): every physics-meaningful output — trigger
-matrix, nrings, ring centre/radius, peak-votes, arc-dist, DCR profile,
-score n_σ, the published scalars, and the lightdata tree contents (hits /
-triggers / masks) — is bit-identical at `--threads 1` *and* `--threads 4`.
-
-Two histogram families legitimately differ:
-- the pixel-jittered `_rnd` hitmaps, non-reproducible by construction
-  (`mist::Rnd` seeds from `std::random_device`) — they differ run-to-run
-  even for the unmodified writer; and
-- one QA histogram, `h_trigger_time_diff_w_cherenkov_HOUGH_RING_FOUND`,
-  where ~16 of ~364 k Δt fills land in an adjacent bin.  This is
-  floating-point reassociation, not a logic change: at `-O3` with clang's
-  default `-ffp-contract=on`, lifting the score/Hough accumulations into
-  separate functions lets the compiler contract `CC_TO_NS·get_time()` +
-  accumulate into FMAs differently — a ~1-ulp shift that cascades through
-  the `running_score > peak_score` compare → streaming median time →
-  candidate window → Hough `fine_time`.  Invisible in the coarse n_σ hist
-  (maxbindiff exactly 0); only the 1.28 ns-bin Δt hist resolves it.  Not
-  removable without changing the original's output too (it contracts as
-  well), so it is an accepted refactor consequence.
-
-(`h_afterpulse_dt` also differs at `--threads > 1`, but it is filled
-entirely by the already-multithreaded framer, unrelated to this change —
-the original is equally non-reproducible there above one thread.)
-
-**Speedup** (1 spill, this over-firing run): firing-off 1.6×, firing-on
-1.70×.  The ceiling is Amdahl — the serial per-frame QA body (heavy here
-because the run over-fires) and the framer are not parallelised; a tuned
-n_σ threshold (fewer fired frames) shifts more of the run into the
-parallel score/Hough and raises the ratio.
-
-**Interim fast path.**  `--skip-stream-qa` bypasses the whole per-frame
-QA pass (and the QA-finalization tail), writing only the raw-hits
-lightdata tree (frames selected by framer triggers; hit positions
-unassigned).  Useful for fast cross-checks.
-
 ---
 
 ## 3.  Cross-cutting
@@ -1392,11 +1291,11 @@ needs:
 - separate threshold tuning and separate QA histograms per detector;
 - a coincidence-trigger mode if multi-detector events are interesting.
 
-Tracked separately from this design; revisit once the Hough stage lands
+Tracked separately from this design; revisit once the RANSAC stage lands
 (Phases 2-4) and the Cherenkov pipeline is stable.
 
 
-*Implemented*: § 1 score stage (D-12, v1 landed); § 2.1–§ 2.4 Hough
+*Implemented*: § 1 score stage (D-12, v1 landed); § 2.1–§ 2.4 RANSAC
 stage extraction (Phases 1–4); § 2.3.1 sub-cell aggregation + SAT
 peak finder + tight LUT padding (MIST patches shipped); § 2.6 V1
 live-QA pipeline — `utility/radiator_efficiency` helper, `[recodata]`
@@ -1407,7 +1306,7 @@ config block, `recodata_writer` wiring (coverage map / N_photons /
 optimisation); § 2.6 finer-analysis follow-ups (φ-gap / sensor /
 time-window splits, per-event eff(R), in-writer N_γ fit); § 2.5
 open items (time-aware ring assignment task #33, fit_circle init
-from Hough peak, threshold formula review, merge pass for
+from RANSAC peak, threshold formula review, merge pass for
 duplicate rings).*
 
 ---
@@ -1417,16 +1316,16 @@ duplicate rings).*
 A Q&A pass against the BACKLOG resolved the following open points.
 Treat them as committed unless a follow-up Q reverses them.
 
-### Hough — merge near-duplicate rings (before clamp to `max_rings=2`)
+### RANSAC — merge near-duplicate rings (before clamp to `max_rings=2`)
 
 **Criterion:** two found rings collapse to one iff `|Δc_x|`, `|Δc_y|`,
 and `|ΔR|` are all within one accumulator cell on the respective axis
-(i.e. they would have voted into the same Hough bin had the LUT
+(i.e. they would have voted into the same RANSAC bin had the LUT
 discretisation been one cell coarser).  Cheaper than per-hit overlap
-fraction and aligns naturally with the Hough cell size already in
+fraction and aligns naturally with the RANSAC cell size already in
 config — no new tolerance knob.
 
-### Hough — per-ring (X, Y, R) sanity cuts
+### RANSAC — per-ring (X, Y, R) sanity cuts
 
 Three independent guards, applied **after** find_rings returns and
 **before** the clamp / mask write-back:
@@ -1436,12 +1335,12 @@ Three independent guards, applied **after** find_rings returns and
 2. **Geometry box** — ring centre `(c_x, c_y)` must fall inside the
    *physical detector envelope* (sensor-plane bounding box from
    `mapping`) plus a configurable margin.  Rings centred off-detector
-   are spurious — either Hough peak collisions or noise locks.
+   are spurious — either RANSAC peak collisions or noise locks.
 3. **Quality-ratio floor** — `peak_votes / N_active` must clear a
    minimum; rings that "win" their cell with almost no support are
-   noise.  Threshold lives in `streaming_hough_cfg`.
+   noise.  Threshold lives in `streaming_ransac_cfg`.
 
-### Hough — is "ring 2" an elliptic deformation of ring 1?
+### RANSAC — is "ring 2" an elliptic deformation of ring 1?
 
 `macros/examples/elliptic_investigation.cpp` V1 is ready as-is — the
 task is to **run + measure**, not extend code first.  Expected outcome
@@ -1459,12 +1358,65 @@ run both on a representative noise-dominated dataset, compare
 stability across runs, pick whichever has lower run-to-run variance
 on the gated trigger rate.
 
+### RANSAC threshold — make it DCR-dependent (replace fixed `hough_threshold_fraction`)
+
+**Decided (design, deferred impl):** the stage-2 RANSAC acceptance floor
+should scale with the **dark count rate**, not with channel occupancy.
+
+Today `hough_min_active = ceil(hough_threshold_fraction × N_active_cherenkov)`
+([lightdata_writer.cxx]) — a fixed fraction of the *channel count*, blind to
+DCR.  This is the lone fixed-fraction holdout: stage 1 already gates on
+`n_σ = (S − E[S])/σ_S` over the first-frames noise model, so stage 2 is
+inconsistent.  In a noisy run (e.g. 20260614-132826, σ_S ≈ 3161) the fixed
+fraction sits *below* the random-coincidence floor → a flood of solo "rings"
+from DCR coincidences.  Empirically a constant bump can't win: raising the
+floor enough to kill the DCR junk also halves the real (dual) ring yield,
+while the solo population stays noise-dominated — the classic symptom of a
+threshold that must be data-adaptive.
+
+The machinery already exists (`score.h`): per-channel `m_c` (expected DCR
+hits/window from the first-frames sample), `E[S] = Σ m_c·w_c`,
+`σ_S = √Σ 1/m_c`.  The expected dark hits per window is `Σ_c m_c` — one extra
+sum over the same bundle.  Sketch:
+
+```
+E_dark      = Σ_c m_c                         # expected DCR hits in the window
+min_active  = max(abs_floor, E_dark + k·√E_dark)   # Poisson n_σ over the dark floor
+```
+
+i.e. a real ring must exceed the DCR expectation by `k` sigma (mirrors stage 1's
+`n_σ`).  Validate across regimes (streaming-noisy σ_S≳5000 vs dense) and confirm
+the dual-ring yield is preserved while the solo-junk collapses.
+
+**Status update (v2.2.0 — Hough→RANSAC migration).**  Stage 2 is now the
+grid-free RANSAC finder, and it ALREADY carries a significance gate
+(`ransac_min_significance`): a candidate's weighted inlier EXCESS over the
+expected background must exceed `min_significance·√(expected)`.  That is the
+"n_σ over a background floor" idea this task asked for — but the background is
+currently estimated as a UNIFORM areal density over the sensor fiducial
+(`ρ·L·2·band`, see `ransac_ring_finder.h`), NOT the per-channel DCR model
+`E_dark = Σ_c m_c`.  So the data-adaptive floor is *half-built*: the gate shape
+is right, the background estimate is uniform rather than DCR-weighted.
+
+To finish it: `score.{h,cxx}` already computes and publishes
+`expected_dark_hits_per_window = Σ_c m_c` (added during the migration, **currently
+unused**) — plumb it (and/or the per-channel `1/m_c` weights, already passed to
+the finder) into the RANSAC background term so the significance gate is taken
+over the true per-window dark expectation instead of a flat density.  No new
+`hough_*` knob: the live gate is `ransac_min_significance`.
+
+The old Hough-era stopgap knobs (`hough_threshold_fraction`,
+`min_ring_votes_floor`) are now IGNORED (vestigial, flagged in
+`conf/*/streaming.toml`).  Current acceptance is `ransac_min_significance` +
+`min_inliers` + the recodata `arc_span_min_rad = 0.3` (relaxed from 0.8 so the
+~36° far arcs survive — 0.8 was rejecting exactly the arcs we want).
+
 ### Time-aware hit handling (task #33)
 
 **Decided:** per-trigger Δt cut applied **at the writer** (lightdata)
-plus deduplication inside the Hough stage.  Rationale: the writer
-cut gives the Hough a cleaner sample (fewer DCR hits voting into
-cells); the Hough dedup catches the residual within-window doubles
+plus deduplication inside the RANSAC stage.  Rationale: the writer
+cut gives the RANSAC a cleaner sample (fewer DCR hits voting into
+cells); the RANSAC dedup catches the residual within-window doubles
 that the cut still admits.  Single-cut variants (cut only, dedup
 only) explicitly rejected — neither alone covers both failure modes.
 

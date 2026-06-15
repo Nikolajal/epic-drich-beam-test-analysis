@@ -65,16 +65,43 @@ storage it must call `tdc_ordinal()` to recover that bin (see
 rule: raw for identity, ordinal for indexing — never feed the raw value to an
 array or histogram axis.**
 
-The 2-bit `reserved` field ([29,30], strict-zero in v1) is the schema-version
-escape hatch: a future v2 layout — e.g. the 64-channel chip, where the
-split-in-two channel transform becomes the identity (`gidx::kUsesSplitInTwo`) —
-can flag itself there without colliding with v1 keys.  Any consumer that
-caches/persists a raw value must therefore treat it as version-tagged, not a
-bare integer.
-
 (ToT edge pairing keys on `global_channel_raw()` — TDC bits zeroed — so the
 leading (even TDC) and trailing (odd TDC) edges of one pulse share a key; that
 is why pairing groups by channel, not by the TDC-level `raw()`.)
+
+#### Planned: reserved bits `[29,30]` → 2-bit `readout_mode` enum (deferred)
+
+The two reserved bits are currently strict-zero and notionally a
+"schema-version" field.  Decision: **repurpose them as a 2-bit ALCOR
+`readout_mode` enum** instead.  Rationale:
+
+- A 2-bit version field is a poor version field (only 4 values, no room
+  to grow); real layout versioning, if ever needed, belongs at the
+  file / TTree-header level where there is room.
+- ALCOR operates a channel in one of four readout modes —
+  **`LET` (leading-edge time), `ToT` (time-over-threshold), `ToT2`
+  (second ToT), `SR` (slew rate)** — which is *exactly* a 2-bit enum and
+  determines how the `coarse`/`fine` payload must be interpreted.  Mode is
+  per-channel/per-device constant within a run (e.g. timing chip always
+  `LET`, data chips `ToT`), so it is categorical address-level metadata,
+  not a per-hit measurement — packing it does **not** break key semantics
+  (a channel's hits all carry the same mode bits; equality / per-channel
+  maps / `global_channel` stay consistent).  It makes each word
+  **self-describing** about its payload meaning without a side lookup.
+
+Encoding: **`LET = 0`** (so every existing persisted index / `fine_calib.toml`
+`key` — which has these bits zero — reads as `LET` by definition); `ToT`,
+`ToT2`, `SR` take `1..3` (final 1–3 ordering to match the ALCOR mode
+register so the decoder can copy it directly).
+
+Touch-list when implemented: `kReservedBits`→`kModeBits` + `kModeShift`/
+`kModeMask` + `mode()` accessor + a `ReadoutMode` enum; constructors gain a
+mode arg; drop the `reserved_bits_are_zero()` invariant + its test, add
+mode round-trip tests; `global_channel` **keeps** the mode bits (only TDC
+zeroed); the decoder sets mode from the readout config.  This is a
+**Schema / MAJOR** change (the packed layout is persisted as the
+calibration key).  Captured; implementation deferred until the firmware
+mode-tagging is wired up.
 
 ### `AlcorFinedata::get_phase()` — hot-path representation
 

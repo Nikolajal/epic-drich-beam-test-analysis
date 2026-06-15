@@ -26,7 +26,6 @@ int main(int argc, char **argv)
     int max_spill = 1000;
     bool force_rebuild = false;
     bool qa_mode = false;
-    bool skip_stream_qa = false;
     int n_requested_threads = -1;
     //  Config-file paths are resolved AFTER CLI parsing: if the user
     //  did not pass an explicit --xxx-conf, the path falls through to
@@ -99,20 +98,8 @@ int main(int argc, char **argv)
                  "TDC edges — drops trailing edges, no pairing, no duration.  "
                  "No-op in LET mode.");
     app.add_flag("--force-rebuild", force_rebuild);
-    //  Fast cross-check path: bypass the entire post-framer per-frame QA
-    //  pass (streaming score + Hough + timing/trigger/DCR QA + finalization)
-    //  and write only the raw-hits lightdata tree.  Frames are kept
-    //  regardless of trigger content and hit positions are left unassigned.
-    //  Combine with --force-rebuild to overwrite an existing full lightdata
-    //  file (the up-to-date check returns early otherwise).
-    app.add_flag("--skip-stream-qa", skip_stream_qa,
-                 "Bypass the post-framer per-frame QA pass and write only the "
-                 "raw-hits lightdata tree (fast cross-check).  No streaming / "
-                 "Hough / timing / DCR / trigger QA is produced; hit positions "
-                 "are unassigned.  Pair with --force-rebuild to rebuild an "
-                 "existing file.");
     //  Fast-feedback QA mode.  Looks for tuned overrides under conf/QA/
-    //  (currently: conf/QA/streaming.toml with raised Hough thresholds,
+    //  (currently: conf/QA/streaming.toml with raised RANSAC thresholds,
     //  which biases N_γ upward but keeps σ_photon ~invariant; see the
     //  header of conf/QA/streaming.toml for the bias direction).
     app.add_flag("--QA", qa_mode);
@@ -126,16 +113,23 @@ int main(int argc, char **argv)
         //  honours --QA by redirecting to `conf/QA/<basename>` when
         //  the override exists.
         const std::string mode = qa_mode ? std::string{"QA"} : std::string{};
+        //  Per-campaign config set: detector config that drifts across
+        //  test-beam campaigns (trigger device/FIFO, timing-coincidence chips)
+        //  lives under conf/sets/<campaign>/ and overrides the shared conf/
+        //  default (which tracks the current campaign).  The campaign tag is
+        //  the run-id year (also works for a YYYY.*.toml runlist name); empty
+        //  for a non-dated / "mixed" name → shared conf/ only.
+        const std::string campaign = util::campaign_of(run_name);
         if (p_trigger->count() == 0)
-            trigger_config_file = util::conf_path("trigger_conf.toml", mode);
+            trigger_config_file = util::conf_path("trigger_conf.toml", mode, campaign);
         if (p_readout->count() == 0)
-            readout_config_file = util::conf_path("readout_config.toml", mode);
+            readout_config_file = util::conf_path("readout_config.toml", mode, campaign);
         if (p_mapping->count() == 0)
-            mapping_config_file = util::conf_path("mapping_conf.toml", mode);
+            mapping_config_file = util::conf_path("mapping_conf.toml", mode, campaign);
         if (p_framer->count() == 0)
-            framer_config_file = util::conf_path("framer_conf.toml", mode);
+            framer_config_file = util::conf_path("framer_conf.toml", mode, campaign);
         if (p_streaming->count() == 0)
-            streaming_config_file = util::conf_path("streaming.toml", mode);
+            streaming_config_file = util::conf_path("streaming.toml", mode, campaign);
         //  Auto-detect a run-local fine_calibration.toml only when
         //  the operator didn't pass --fine-calib-conf explicitly.
         //  We CANNOT default this above because data_repository and
@@ -156,6 +150,13 @@ int main(int argc, char **argv)
                                    "(lightdata_writer) --QA mode: streaming-conf=%s  framer-conf=%s",
                                    streaming_config_file.c_str(), framer_config_file.c_str())
                                    .Data());
+        //  Show the campaign-resolved detector configs (the per-campaign
+        //  bundle under conf/sets/<campaign>/ wins over the shared conf/).
+        mist::logger::info(TString::Format(
+                               "(lightdata_writer) campaign=%s | trigger-conf=%s | readout-conf=%s",
+                               campaign.empty() ? "(default)" : campaign.c_str(),
+                               trigger_config_file.c_str(), readout_config_file.c_str())
+                               .Data());
 
         //  Resolve the per-run streaming-n_σ override.  Resolution order:
         //    1. --n-sigma-threshold X  (CLI direct, highest priority)
@@ -232,7 +233,7 @@ int main(int argc, char **argv)
                 auto start = std::chrono::high_resolution_clock::now();
                 mist::logger::info(TString::Format("(lightdata_writer) Starting writing lightdata for run '%s'", current_run_name.c_str()).Data());
                 const float per_run_override = resolve_override_for_run(current_run_name);
-                lightdata_writer(data_repository, current_run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, resolve_op_mode_for_run(current_run_name), leading_only_cli, skip_stream_qa);
+                lightdata_writer(data_repository, current_run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, resolve_op_mode_for_run(current_run_name), leading_only_cli);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
                 mist::logger::info(TString::Format("(lightdata_writer) Total time taken: %f seconds", elapsed.count()).Data());
@@ -245,7 +246,7 @@ int main(int argc, char **argv)
         {
             auto start = std::chrono::high_resolution_clock::now();
             const float per_run_override = resolve_override_for_run(run_name);
-            lightdata_writer(data_repository, run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, resolve_op_mode_for_run(run_name), leading_only_cli, skip_stream_qa);
+            lightdata_writer(data_repository, run_name, max_spill, force_rebuild, n_requested_threads, trigger_config_file, readout_config_file, mapping_config_file, fine_calibration_config_file, framer_config_file, streaming_config_file, per_run_override, resolve_op_mode_for_run(run_name), leading_only_cli);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
             mist::logger::info(TString::Format("(lightdata_writer) Total time taken: %f seconds", elapsed.count()).Data());

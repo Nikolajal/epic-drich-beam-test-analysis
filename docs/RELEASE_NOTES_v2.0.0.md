@@ -15,7 +15,7 @@ backward-incompatible ways since `v1.0.0`.
 ## Breaking changes
 
 - **Trigger model.** A new streaming software trigger (DCR-weighted score →
-  Hough ring finder) replaces the v1 trigger handling; trigger events and the
+  RANSAC ring finder) replaces the v1 trigger handling; trigger events and the
   hit-mask tagging scheme changed.
 - **Writer pipeline.** The monolithic lightdata/recodata writers were split
   into composable translation units under `src/writers/`. The
@@ -35,7 +35,7 @@ backward-incompatible ways since `v1.0.0`.
 
 - **QA Quicklook dashboard** — a new ~30k-line PySide6 / matplotlib operator
   app (`qa_quicklook/`) for live data-taking.
-- **Streaming software trigger** — a two-stage DCR-weighted + Hough trigger
+- **Streaming software trigger** — a two-stage DCR-weighted + RANSAC trigger
   with per-hit score sampling and data-driven cut recommendation.
 - **Fitted Cherenkov physics in QA mode** — recodata reconstructs rings on
   hardware-trigger frames via a time window, producing photon yield (`N_γ`)
@@ -71,8 +71,8 @@ A single-window operator console, launched with `python -m qa_quicklook.app`:
 - **Stage 1 — DCR-weighted score.** A per-hit score over a sliding time window,
   weighted by each channel's dark-count rate, fires the first-level trigger on
   a hit excess.
-- **Stage 2 — Hough ring finder.** Runs on triggered frames, votes Cherenkov
-  hits into a Hough accumulator, extracts up to two rings, and tags
+- **Stage 2 — RANSAC ring finder.** Runs on triggered frames, votes Cherenkov
+  hits into a RANSAC accumulator, extracts up to two rings, and tags
   ring-member hits. Centre/radius refinement was moved out of this stage into
   the recodata re-fit.
 - **Cut tuning.** Three score samples — first-frames DCR (noise), data-taking,
@@ -90,7 +90,7 @@ A single-window operator console, launched with `python -m qa_quicklook.app`:
   in-function lambdas, with a parallel per-frame compute pass and a serial
   histogram drain.
 - **Hardware-trigger ring reconstruction.** Because QA mode disables the
-  streaming/Hough self-trigger (which tagged ring hits), recodata now
+  streaming/RANSAC self-trigger (which tagged ring hits), recodata now
   reconstructs rings from non-afterpulse Cherenkov hits within an asymmetric
   ±Δt window around the hardware-trigger reference time
   (`compute_ring_fit_timewindow`, knobs `hardware_ring_dt_min_ns` /

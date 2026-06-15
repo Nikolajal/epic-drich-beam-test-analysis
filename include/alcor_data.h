@@ -105,8 +105,8 @@ enum HitMask : unsigned int
     HitmaskStreamingRingTrigger = 0, ///< streaming self-trigger fired on this Hit's frame.
     HitmaskRingTagFirst = 1,         ///< Hit assigned to streaming ring 1.
     HitmaskRingTagSecond = 2,        ///< Hit assigned to streaming ring 2.
-    HitmaskHoughRingTagFirst = 3,    ///< Hit assigned to Hough ring 1.
-    HitmaskHoughRingTagSecond = 4,   ///< Hit assigned to Hough ring 2.
+    HitmaskRansacRingTagFirst = 3,   ///< Hit assigned to RANSAC ring 1.
+    HitmaskRansacRingTagSecond = 4,  ///< Hit assigned to RANSAC ring 2.
 
     // ── byte 1 [8–15] · ToT / SR edge pairing ──
     HitmaskSecondaryOrphan = 8, ///< ToT/SR: primary (leading) edge present but the secondary edge is missing — ToT stop / SR 2nd-threshold crossing; duration unset, arrival time valid.

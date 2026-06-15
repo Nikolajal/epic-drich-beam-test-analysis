@@ -335,11 +335,16 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         auto current_chip = current_data.get_chip();
         auto current_readout_tag_list = readout_config.find_by_device_and_chip(current_device, current_chip);
 
-        // Stop streamer reading if not tagged for readout.
-        // Chip 8 (fifo 32-35) is the hardware trigger chip — always continue for it.
-        // TODO: outsource this to trigger_conf (per-trigger fifo) so it isn't hardcoded.
-        constexpr int trigger_chip = 32 / 4; // = 8
-        if (current_readout_tag_list.size() == 0 && current_chip != trigger_chip)
+        // Stop streamer reading if not tagged for readout — EXCEPT for the
+        // hardware-trigger FIFO, which must always pass through to the trigger
+        // path below.  The data FIFOs are [0,31] (8 chips × 4 FIFOs); the
+        // trigger word lives on a FIFO OUTSIDE that range.  Its exact number has
+        // drifted across datasets (99 in older data, 32 in the latest), so we
+        // detect the trigger FIFO by range rather than a hardcoded chip — any
+        // out-of-band FIFO (>31) is treated as a trigger FIFO.
+        // TODO: outsource the trigger-FIFO definition to trigger_conf.
+        const bool is_trigger_fifo = current_data.get_fifo() > 31;
+        if (current_readout_tag_list.size() == 0 && !is_trigger_fifo)
             break;
 
         // Refactoring time to relate to frame reference.
@@ -558,10 +563,10 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             // Gather infos on the fifo
             auto current_fifo = current_data.get_fifo();
 
-            // The hardware trigger chip (fifo 32) is not a sensor lane and does
-            // not fit the per-device 32-bit lane mask (encode_bits requires
-            // bit < 32 — it asserts in debug builds and silently drops the bit
-            // in release).  Only sensor fifos 0–31 participate in the
+            // The hardware trigger chip (fifo > 31) is not a sensor lane and
+            // does not fit the per-device 32-bit lane mask: encode_bits asserts
+            // bit < 32 in debug builds and silently drops the bit (1u << 32 UB)
+            // in release.  Only sensor fifos 0–31 participate in the
             // participants / dead-lane masks.
             if (current_fifo < 32)
             {

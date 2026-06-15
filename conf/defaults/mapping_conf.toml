@@ -105,7 +105,7 @@
 # detector geometry — the coverage map is a pure function of the
 # channel-to-position map that Mapping builds from the tables above.
 # Read by `recodata_conf_reader` (which pulls the ring-reconstruction
-# knobs from streaming.toml's [streaming_hough] table) and consumed by
+# knobs from streaming.toml's [streaming_ransac] table) and consumed by
 # recodata_writer.  All keys optional; missing keys take the defaults in
 # RecodataConfigStruct.
 #
@@ -119,10 +119,15 @@
 # (phi, R) bin holds the number of channels whose pixel footprint
 # overlaps it — a pure geometric quantity.  `radial_efficiency` collapses
 # it to a 1D eff(R) by averaging over phi to correct the radial(R) hist.
+# Radial range for the eff(R) / radial(R) / N_gamma machinery.  This tracks
+# the FITTED ring radii (physical Cherenkov arcs), NOT the wide coarse RANSAC
+# scan range (r_max can be 10000 mm but real fitted arcs are ≲ a few hundred
+# mm, capped by the centre grid reach).  600 mm gives generous headroom; raise
+# it only if fitted radii actually approach it.  Legacy near-origin: [25, 125].
 n_phi_bins_coverage =   360    # azimuthal bins over [-pi, pi]  (1 deg/bin)
-n_r_bins_coverage   =    80    # radial bins
+n_r_bins_coverage   =   460    # radial bins (~1.25 mm/bin over [25, 600])
 r_min_coverage_mm   =   25.0   # mm
-r_max_coverage_mm   =  125.0   # mm
+r_max_coverage_mm   =  600.0   # mm — brackets physical fitted arc radii
 
 # Channel pixel half-side [mm].  3 mm pitch → 1.5.  Used by both the
 # coverage map rasterisation and `azimuthal_coverage_fraction`'s
@@ -131,10 +136,13 @@ r_max_coverage_mm   =  125.0   # mm
 channel_half_width_mm =  1.5
 
 # Nominal ring centre [mm] — the beam-axis projection on the detector
-# plane.  Only used for the COVERAGE map and the eff(R) curve; per-event
-# (R, phi) and per-ring f_coverage use the per-event Hough centre re-fit
-# by recodata.  Kept at (0, 0); the <1% eff(R) discrepancy from per-event
-# centre wander is justified in
+# plane.  Used for the COVERAGE map and the eff(R) curve; per-event
+# (R, phi) and per-ring f_coverage use the per-event RANSAC centre re-fit
+# by recodata.  In WIDE-ARC mode (r_max_auto = true) the radial hists are
+# coverage-corrected per-ring at the fitted centre, so eff(R) is written as
+# a DIAGNOSTIC only (no divide) and this nominal centre no longer affects
+# the photon count.  In the legacy near-origin recipe it is kept at (0, 0);
+# the <1% eff(R) discrepancy from per-event centre wander is justified in
 # include/triggers/streaming/DISCUSSION.md § 2.6.
 nominal_centre_x_mm =    0.0
 nominal_centre_y_mm =    0.0

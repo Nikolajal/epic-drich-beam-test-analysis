@@ -4,7 +4,7 @@
  * @file triggers/streaming/score.h
  * @brief Stage 1 of the streaming-trigger pipeline — DCR-weighted score.
  *
- * Time-cluster pre-filter for the Hough ring-finding stage downstream:
+ * Time-cluster pre-filter for the RANSAC ring-finding stage downstream:
  * scans a frame's Cherenkov hits with a sliding time window, computes a
  * DCR-weighted score `S = Σ_hits 1/m_c`, and emits a
  * `_TRIGGER_STREAMING_RING_FOUND_` event when the standardised score
@@ -23,12 +23,9 @@
  */
 
 #include <set>
-#include <tuple>
 #include <unordered_map>
 #include <vector>
 #include "alcor_spilldata.h"
-#include "alcor_finedata.h"  // AlcorFinedataStruct
-#include "triggers/events.h" // TriggerEvent
 
 class TH1F;
 class TProfile;
@@ -77,6 +74,13 @@ struct StreamingTriggerWeights
     /// Equal to $\mathbb{E}[S]$ by construction; exposed separately as a
     /// diagnostic for logging.
     int n_channels_modelled = 0;
+
+    /// Expected background hits per window under H_0: $E_{\mathrm{dark}} =
+    /// \sum_c m_c$ over the modelled bundle (DCR + in-beam baseline folded
+    /// into each `m_c`).  The DCR-adaptive noise floor the RANSAC stage uses:
+    /// a candidate must exceed it by `hough_n_sigma_dcr·√E_dark` (Poisson
+    /// significance, mirroring the score's `n_σ`).  0 when no model is built.
+    float expected_dark_hits_per_window = 0.f;
 
     /// **C7.6 — multiplicity upper-bound cut.**  When `> 0`, any
     /// streaming cluster whose peak hit count exceeds this value is
@@ -227,7 +231,7 @@ using StreamingInBeamRates = std::unordered_map<int, float>;
  *                                    @c TriggerFirstFrames (synthetic
  *                                    first-frames marker),
  *                                    @c TriggerStartOfSpill (boundary
- *                                    marker), and the streaming/Hough
+ *                                    marker), and the streaming/RANSAC
  *                                    derived triggers (self-reference
  *                                    if invoked after the score loop).
  * @return Per-channel in-beam µ in hits-per-frame units.  Empty if no
@@ -320,83 +324,6 @@ bool run_streaming_trigger_weighted(
     const float n_sigma_threshold,
     std::vector<std::tuple<int, float, float>> &carry_over_hits, // (idx, time_ns, weight)
     TH1F *h_score_for_qa,
-    float frame_length_ns);
-
-// ─────────────────────────────────────────────────────────────────────
-//  Frame-level multithreading: pure compute / serial drain split
-//
-//  `run_streaming_trigger_weighted` above both computes the per-frame
-//  score AND mutates shared state (fills a ROOT hist, writes hit-mask
-//  bits, emits a trigger into the spill).  The split below lets the
-//  expensive scan run on a worker thread while every side effect is
-//  deferred to a serial drain in frame order:
-//
-//    compute_streaming_score_pure → StreamingScoreResult   (thread-safe;
-//        reads only the frame's hits + the read-only weight bundle)
-//    drain_streaming_score(result, spill, frame_id, hist)  (serial;
-//        replays the hist fills, mask writes, and trigger emissions)
-//
-//  `run_streaming_trigger_weighted` is itself implemented as
-//  compute-then-drain, so the serial path is bit-identical.  See
-//  `include/triggers/streaming/DISCUSSION.md` § 2.7 (lightdata side).
-// ─────────────────────────────────────────────────────────────────────
-
-/// All side effects of one frame's score scan, recorded for serial replay.
-struct StreamingScoreResult
-{
-    /// Standardised n_σ value at every modelled-hit insertion, in scan
-    /// order — the drain fills these into the noise / data QA hist.
-    std::vector<float> n_sigma_fills;
-
-    /// Indices into the frame's `cherenkov_hits` of every hit that crossed
-    /// the threshold — the drain sets `HitmaskStreamingRingTrigger` on each.
-    std::vector<int> streaming_mask_indices;
-
-    /// `_TRIGGER_STREAMING_RING_FOUND_` events emitted by end-of-cluster —
-    /// the drain appends each via `add_trigger_to_frame`.
-    std::vector<TriggerEvent> streaming_triggers;
-
-    /// Window contents at the frame boundary, time-shifted by
-    /// `-frame_length_ns` — seeds the next frame's running score.  Used by
-    /// the serial in/out chain; the MT path reconstructs this independently
-    /// per frame via @ref reconstruct_streaming_carry_over.
-    std::vector<std::tuple<int, float, float>> carry_out; // (idx, time_ns, weight)
-
-    bool fired = false; ///< true if any cluster crossed the threshold.
-};
-
-/// Pure per-frame score scan — no histogram fills, no mask writes, no
-/// trigger emission.  Thread-safe: reads only @p cherenkov_hits and the
-/// read-only @p weights bundle, writing solely into the returned result.
-StreamingScoreResult compute_streaming_score_pure(
-    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
-    const float time_window_ns,
-    const StreamingTriggerWeights &weights,
-    const float n_sigma_threshold,
-    const std::vector<std::tuple<int, float, float>> &carry_in,
-    float frame_length_ns);
-
-/// Serial replay of a @ref StreamingScoreResult: fills @p h_score_for_qa
-/// with the recorded n_σ values, sets `HitmaskStreamingRingTrigger` on the
-/// flagged hits, and emits the streaming triggers into @p current_spill.
-void drain_streaming_score(const StreamingScoreResult &result,
-                           AlcorSpilldata &current_spill,
-                           int frame_id,
-                           TH1F *h_score_for_qa);
-
-/// Reconstruct the carry-over a frame would hand to its successor, from
-/// that frame's hits alone (its trailing `time_window_ns` window of
-/// modelled, non-afterpulse hits, time-shifted by `-frame_length_ns`).
-/// Used by the MT path so each frame's carry-in is computable without the
-/// serial frame→frame chain.  Equivalent to the predecessor's
-/// `StreamingScoreResult::carry_out` except in the degenerate case where a
-/// frame's hits all fall within the first `time_window_ns` (then a
-/// carry-in hit could itself survive to the boundary) — negligible in
-/// practice.  See DISCUSSION.md § 2.7.
-std::vector<std::tuple<int, float, float>> reconstruct_streaming_carry_over(
-    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
-    const float time_window_ns,
-    const StreamingTriggerWeights &weights,
     float frame_length_ns);
 
 /**

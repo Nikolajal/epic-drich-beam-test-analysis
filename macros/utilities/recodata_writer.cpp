@@ -49,12 +49,12 @@ int main(int argc, char **argv)
                    "[ACCEPTED, IGNORED] reserved for future per-stage "
                    "thread plumbing — the qa_pipeline.py orchestrator "
                    "passes this uniformly to all stages.");
-    app.add_option("--Mapping-conf", mapping_conf);
+    auto *p_mapping = app.add_option("--Mapping-conf", mapping_conf);
     auto *p_trigger = app.add_option("--trigger-conf", trigger_config_file);
     auto *p_framer = app.add_option("--framer-conf", framer_config_file);
     //  Recodata never reads this file directly, but it's forwarded into
     //  the lightdata cascade when --force-upstream is set so that --QA
-    //  Hough thresholds propagate through the pipeline in one command.
+    //  RANSAC thresholds propagate through the pipeline in one command.
     auto *p_streaming = app.add_option("--streaming-conf", streaming_config_file);
     //  Uniform force-flag contract across all writers (see
     //  include/writers/*.h docstrings):
@@ -64,7 +64,7 @@ int main(int argc, char **argv)
     app.add_flag("--force-rebuild", force_rebuild);
     app.add_flag("--force-upstream", force_upstream);
     //  Fast-feedback QA mode.  Reads tuned conf/QA/*.toml overrides
-    //  when present (e.g. raised Hough thresholds → biases N_γ up
+    //  when present (e.g. raised RANSAC thresholds → biases N_γ up
     //  but keeps σ_photon ~invariant).  See conf/QA/streaming.toml.
     app.add_flag("--QA", qa_mode);
 
@@ -76,12 +76,18 @@ int main(int argc, char **argv)
         //  which redirects to conf/<mode>/<basename> when the override
         //  exists.  Subdir-string form (the bool form is `[[deprecated]]`).
         const std::string mode = qa_mode ? std::string{"QA"} : std::string{};
+        //  Per-campaign config set (conf/sets/<campaign>/) selected from the
+        //  run-id year — keeps recodata's mapping geometry + trigger config in
+        //  step with the lightdata stage.  See util::conf_path / campaign_of.
+        const std::string campaign = util::campaign_of(run_name);
         if (p_trigger->count() == 0)
-            trigger_config_file = util::conf_path("trigger_conf.toml", mode);
+            trigger_config_file = util::conf_path("trigger_conf.toml", mode, campaign);
         if (p_framer->count() == 0)
-            framer_config_file = util::conf_path("framer_conf.toml", mode);
+            framer_config_file = util::conf_path("framer_conf.toml", mode, campaign);
         if (p_streaming->count() == 0)
-            streaming_config_file = util::conf_path("streaming.toml", mode);
+            streaming_config_file = util::conf_path("streaming.toml", mode, campaign);
+        if (p_mapping->count() == 0)
+            mapping_conf = util::conf_path("mapping_conf.toml", mode, campaign);
         if (qa_mode)
             mist::logger::info(TString::Format(
                                    "(recodata_writer) --QA mode: trigger-conf=%s  framer-conf=%s  "

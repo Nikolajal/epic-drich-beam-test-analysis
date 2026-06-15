@@ -110,6 +110,13 @@ struct FrameResult
     bool frame_is_physics = false; ///< increments n_physics_per_spill
     bool frame_has_second_ring = false;
 
+    //  In-trigger-window Cherenkov occupancy (smeared x,y) for
+    //  h_trigger_cherenkov_hitmap.  Populated from EVERY non-afterpulse
+    //  cherenkov hit inside the hardware-trigger time window, INDEPENDENT of
+    //  whether a ring was found — the map is a trigger-time occupancy, not a
+    //  ring-hit map (decoupled from the ring finder; see process_frame_pure).
+    std::vector<std::array<float, 2>> occupancy_xy;
+
     RingFitResult first;
     RingFitResult second;
 };

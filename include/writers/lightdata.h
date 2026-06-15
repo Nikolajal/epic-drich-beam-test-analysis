@@ -41,7 +41,7 @@
  *                                 keys fall back to compile-time macro defaults.
  * @param streaming_conf_file      Path to the software-trigger-pipeline TOML
  *                                 configuration (sections `[streaming_trigger]`
- *                                 and `[streaming_hough]`).  See
+ *                                 and `[streaming_ransac]`).  See
  *                                 `include/triggers/streaming/DISCUSSION.md`
  *                                 and `conf/streaming.toml`.
  */
@@ -57,16 +57,14 @@
  *        threshold per `include/triggers/streaming/DISCUSSION.md §1.5.2`.
  */
 /**
- * @param skip_stream_qa  Fast cross-check path.  When @c true the entire
- *        post-framer per-frame QA pass is bypassed — no streaming score,
- *        no Hough ring-finding, no timing / trigger / DCR / afterpulse /
- *        cross-talk QA, and no QA-finalization tail.  Only the framer
- *        runs and the lightdata TTree is written.  Frames are kept
- *        regardless of trigger content (no `do_not_write_frame`), so the
- *        output carries raw hits whose `hit_x` / `hit_y` are left
- *        unassigned (`Mapping::assign_position` runs inside the skipped
- *        loop) — consumers must map positions themselves.  Default
- *        @c false = full pipeline.
+ * @param op_mode  ALCOR operation mode (PCR Table 15 code: LET=1, ToT=4,
+ *        ToT2=9, SR=12).  Selects how the framer interprets TDC edges:
+ *        LET keeps each leading edge as one hit; ToT/ToT2/SR pair even/odd
+ *        edges into one hit carrying a `duration` (ToT width / slew).  Gates
+ *        the per-run ToT QA emission.  Default 1 = LET (prior behaviour).
+ * @param leading_edge_only  ToT-as-LET cross-check: reconstruct a ToT-family
+ *        run using only leading (even) TDC edges — no pairing, no duration.
+ *        No-op in LET mode.  Default false.
  */
 void lightdata_writer(
     const std::string &data_repository,
@@ -82,5 +80,4 @@ void lightdata_writer(
     std::string streaming_conf_file = "conf/streaming.toml",
     float streaming_n_sigma_threshold_override = 0.f,
     int op_mode = 1,
-    bool leading_edge_only = false,
-    bool skip_stream_qa = false);
+    bool leading_edge_only = false);
