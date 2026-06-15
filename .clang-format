@@ -12,3 +12,9 @@ IndentAccessModifiers: false
 ReflowComments: false
 SortIncludes: Never
 IncludeBlocks: Preserve
+# Pin enum/assignment alignment explicitly: the LLVM-base default for this
+# drifted between clang-format 22.1.5 (CI, newest PyPI wheel) and 22.1.6 (local
+# Homebrew), causing the format gate to flip-flop on aligned-= enum blocks
+# (e.g. AlcorOpMode).  `None` makes both versions agree; there is no 22.1.6
+# wheel so CI cannot simply match local.
+AlignConsecutiveAssignments: None
