@@ -71,7 +71,23 @@ inline std::string campaign_of(const std::string &run_id)
     for (int i = 0; i < 4; ++i)
         if (!std::isdigit(static_cast<unsigned char>(run_id[i])))
             return {};
-    return run_id.substr(0, 4);
+    const std::string year = run_id.substr(0, 4);
+    //  2026 sub-campaign split: the beam test moved from the SPS to the PS on
+    //  2026-06-10.  Runs dated before that boundary are the SPS campaign
+    //  ("2026-SPS"); runs on/after it — and any dateless 2026 tag (e.g. a
+    //  "2026.*" runlist name for the ongoing campaign) — are PS ("2026-PS").
+    //  Earlier years keep the bare 4-digit tag (conf/sets/<year>/).
+    if (year == "2026")
+    {
+        bool dated = run_id.size() >= 8;
+        for (int i = 4; dated && i < 8; ++i)
+            if (!std::isdigit(static_cast<unsigned char>(run_id[i])))
+                dated = false;
+        if (dated && run_id.compare(0, 8, "20260610") < 0)
+            return "2026-SPS";
+        return "2026-PS";
+    }
+    return year;
 }
 
 /**

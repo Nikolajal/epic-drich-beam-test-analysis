@@ -1,0 +1,25 @@
+# trigger_conf.toml — 2026 SPS sub-campaign (runs before 2026-06-10).
+#
+# Selected automatically for run ids dated before the SPS→PS boundary via
+# util::campaign_of → "2026-SPS" → util::conf_path (conf/sets/2026-SPS/).
+# The hardware trigger luca_and_finger is provided by the rdo-192 device this
+# campaign (device-mode: the readout tags the word as a trigger).
+#
+# Each [[trigger]] entry defines one trigger source. The parser stops reading
+# at the first "##" comment line.
+
+[[trigger]]
+name   = "luca_and_finger"   # human-readable label used in output trees and logs
+index  = 0                   # trigger index (0-based); referenced in hit bitmasks
+device = 192                 # ALCOR device ID (rdo-192) providing the trigger
+delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+
+##
+# Everything below this line is ignored by the parser.
+#
+# Schema reference (see DISCUSSION.md → D-05):
+#   DEVICE-MODE  — hardware tags the word as a trigger; one per `device`.
+#                  Required: name, index, device, delay.
+#   CHANNEL-MODE — a data channel forced into the trigger path; one per
+#                  (device, fifo, column, pixel).  Required: name, index,
+#                  device, delay, fifo, AND column+pixel (or eo_channel 0-31).

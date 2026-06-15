@@ -29,5 +29,39 @@ notes = "[test] 2026 bootstrap entry — calibration + pulser QA only (no beam)"
 notes = "[test] 2026 bootstrap entry — calibration + lightdata, no beam"
 beam_energy = 35
 
+# First ALCOR ToT (time-over-threshold) run, and the first real beam run in
+# this database (the two entries above are beam-off bootstraps).  op_mode = 4
+# makes lightdata_writer pair even/odd TDC edges into one hit carrying a
+# duration (vs LET's leading-edge-only) and emit the ToT QA; auto-applied per
+# run via the pipeline's --run-database pass-down (no per-run CLI).  The
+# beam_status / beam_energy / polarity set here forward-inherit to the runs
+# below.
+# NOTE: op_mode forward-inherits too, so the next non-ToT run
+# (20260604-234824) resets it to 1 (LET).
+[runs."20260604-232500"]
+beam_status = "on"
+beam_energy = 180
+polarity = "positive"
+op_mode = 4
+notes = "first ToT-mode run (ALCOR ToT, op_mode = 4); SPS, 180 GeV positive beam"
+
+# SPS beam continues in LET — reset op_mode from the ToT run above.
+[runs."20260604-234824"]
+op_mode = 1
+notes = "LET resumes after the ToT run; SPS, 180 GeV positive beam"
+
+# 2026-PS campaign (runs on/after 2026-06-10): luca_and_finger routes through
+# kc705-200 (not rdo-192) — see conf/sets/2026-PS/.  Beam metadata inherited
+# (on / 180 GeV / positive, LET); confirm real per-run values via the Run Book
+# import (scripts/import_runbook.py).
+[runs."20260614-132826"]
+notes = "2026-PS; 180 GeV positive beam (inherited — confirm via Run Book)"
+
+[runs."20260614-185201"]
+notes = "2026-PS; 180 GeV positive beam (inherited — confirm via Run Book)"
+
+[runs."20260614-205752"]
+notes = "2026-PS; 180 GeV positive beam (inherited — confirm via Run Book)"
+
 [schema]
 extra_fields = ["altai"]
