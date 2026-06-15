@@ -115,22 +115,22 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
     ctx.h_streaming_trigger_ring_finder_second_hitmap->Write();
 
     //  Per-ring centre + radius distributions, split into three
-    //  subfolders so the upstream → downstream chain (Hough seed →
+    //  subfolders so the upstream → downstream chain (RANSAC seed →
     //  fit_circle refine) is visually grouped in TBrowser.  Order
-    //  matters: the Hough seed is what the fit climbs from, so any
+    //  matters: the RANSAC seed is what the fit climbs from, so any
     //  bad tails in `Fit rings/` should first be checked against the
-    //  same hist in `Hough rings/` — if the seed is already wrong,
+    //  same hist in `RANSAC rings/` — if the seed is already wrong,
     //  the fit was given a bad starting point (relevant open items
     //  in DISCUSSION.md § 2.5).
     {
-        TDirectory *hough_rings_dir = streaming_trigger_dir->mkdir("Hough rings");
+        TDirectory *hough_rings_dir = streaming_trigger_dir->mkdir("RANSAC rings");
         hough_rings_dir->cd();
-        ctx.h_ring_X_first_hough->Write();
-        ctx.h_ring_Y_first_hough->Write();
-        ctx.h_ring_R_first_hough->Write();
-        ctx.h_ring_X_second_hough->Write();
-        ctx.h_ring_Y_second_hough->Write();
-        ctx.h_ring_R_second_hough->Write();
+        ctx.h_ring_X_first_ransac->Write();
+        ctx.h_ring_Y_first_ransac->Write();
+        ctx.h_ring_R_first_ransac->Write();
+        ctx.h_ring_X_second_ransac->Write();
+        ctx.h_ring_Y_second_ransac->Write();
+        ctx.h_ring_R_second_ransac->Write();
         //  Knob-calibration QA (see § 2.5 in the streaming DISCUSSION).
         ctx.h_ring_peak_votes_vs_active_first->Write();
         ctx.h_ring_peak_votes_vs_active_second->Write();
@@ -141,16 +141,16 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
         //   moved entirely to recodata.  See recodata.root's `Rings/`
         //   subfolder for all fit-derived QA.)
 
-        //  Dual-ring mirror — same hists as `Hough rings/` above but
+        //  Dual-ring mirror — same hists as `RANSAC rings/` above but
         //  for the first ring, gated on a second ring also being
         //  present in the same frame.  Lets you compare ring-1
         //  properties in the full sample vs the cleaner 2-ring subset.
-        TDirectory *hough_rings_dual_dir = streaming_trigger_dir->mkdir("Hough rings (dual)");
+        TDirectory *hough_rings_dual_dir = streaming_trigger_dir->mkdir("RANSAC rings (dual)");
         hough_rings_dual_dir->cd();
         ctx.h_ring_finder_first_hitmap_dual->Write();
-        ctx.h_ring_X_first_hough_dual->Write();
-        ctx.h_ring_Y_first_hough_dual->Write();
-        ctx.h_ring_R_first_hough_dual->Write();
+        ctx.h_ring_X_first_ransac_dual->Write();
+        ctx.h_ring_Y_first_ransac_dual->Write();
+        ctx.h_ring_R_first_ransac_dual->Write();
         ctx.h_ring_peak_votes_vs_active_first_dual->Write();
         ctx.h_ring_hit_arc_dist_first_dual->Write();
 
@@ -160,12 +160,12 @@ void finalize_streaming_qa(const StreamingTriggerFinalizeContext &ctx)
         //  partition the full first-ring sample, so any systematic
         //  difference between (solo) and (dual) flags single-ring
         //  contamination that the dual requirement filters out.
-        TDirectory *hough_rings_solo_dir = streaming_trigger_dir->mkdir("Hough rings (solo)");
+        TDirectory *hough_rings_solo_dir = streaming_trigger_dir->mkdir("RANSAC rings (solo)");
         hough_rings_solo_dir->cd();
         ctx.h_ring_finder_first_hitmap_solo->Write();
-        ctx.h_ring_X_first_hough_solo->Write();
-        ctx.h_ring_Y_first_hough_solo->Write();
-        ctx.h_ring_R_first_hough_solo->Write();
+        ctx.h_ring_X_first_ransac_solo->Write();
+        ctx.h_ring_Y_first_ransac_solo->Write();
+        ctx.h_ring_R_first_ransac_solo->Write();
         ctx.h_ring_peak_votes_vs_active_first_solo->Write();
         ctx.h_ring_hit_arc_dist_first_solo->Write();
 

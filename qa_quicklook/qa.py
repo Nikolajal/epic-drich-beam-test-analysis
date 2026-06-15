@@ -178,7 +178,7 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     (_re_topics.compile(r"^.*time_diff.*"),                      "triggers"),
     # Trigger coincidence matrix → Triggers.
     (_re_topics.compile(r"^trigger_matrix(\..*)?$"),             "triggers"),
-    # Ring finder QA from the Hough stage → Triggers.
+    # Ring finder QA from the RANSAC stage → Triggers.
     (_re_topics.compile(r"^.*ring_finder.*"),                    "triggers"),
     (_re_topics.compile(r"^.*hough.*"),                          "triggers"),
     # Timing-sensor DCR — a per-channel dark-count measurement, so it
@@ -3152,12 +3152,17 @@ class _GeneralQaPage(QtWidgets.QWidget):
             "frames_per_spill.pdf",
             "trigger_qa.pdf",
             "coverage_map_xy.pdf",          # cartesian coverage + readiness %
+            "tot_pairing_health.pdf",       # ToT only: per-channel leading/secondary-orphan rates (auto-dropped in LET)
         )),
         ("Sensor health", (
             "dcr_per_channel.pdf",          # per-channel DCR rate (kHz) + averages
             "dcr_hitmap.pdf",
             "afterpulse_per_channel.pdf",   # per-channel afterpulse % + averages
             "afterpulse_hitmap.pdf",
+            "tot_spectrum.pdf",             # ToT only: combined ToT spectrum + 1/2 p.e. Gaussian fit (auto-dropped in LET)
+            "tot_spectrum_1350.pdf",        # ToT only: per-sensor 1350 spectrum + fit
+            "tot_spectrum_1375.pdf",        # ToT only: per-sensor 1375 spectrum + fit
+            "tot_vs_channel.pdf",           # ToT only: ToT vs channel + per-channel mean
         )),
         ("Calibration", (
             "anchor_dt_vs_spill.pdf",       # channel hit vs nearest anchor pulse
@@ -3172,6 +3177,7 @@ class _GeneralQaPage(QtWidgets.QWidget):
         )),
         ("Cherenkov", (
             "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring
+            "ring_tagged_hitmap.pdf",         # subset the ring finder tagged as ring members
             "ring_centre_xy.pdf",
             "N_gamma_per_ring_summary.pdf",   # N_photons per ring
             "sigma_photon_summary.pdf",       # single-photon σ per ring

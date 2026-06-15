@@ -162,6 +162,72 @@ the top of the layout block in `anchor_dt_canvas.cxx`
 
 Open design points captured 2026-05-29 (BACKLOG Q&A pass).
 
+### ToT mode (op_mode 4) — edge pairing, `duration`, sentinels
+
+ALCOR `op_mode` follows the PCR OpMode codes (datasheet Table 15): LET=1
+(leading-edge, the legacy default all pre-ToT code assumes), **ToT=4**, ToT2=9,
+SR=12, plus test-pulse / OFF variants. The 32-bit word format and the fine-phase
+calibration are **mode-independent** — only the *interpretation* of the decoded
+coarse/fine timestamps changes. `op_mode` reaches the writers via the run-db
+(`RunInfoStruct::op_mode`) with a `--op-mode` CLI override, is typed through
+`AlcorOpMode` (`include/utility/alcor_op_mode.h`, values = PCR codes), and is
+stamped into each lightdata output as a `TParameter<int>` `alcor_op_mode` for
+provenance. ToT QA / interpretation is gated on it; LET runs are unaffected.
+
+**Pairing (the only new framer logic, `ParallelStreamingFramer::process`).** In a
+ToT-family run the four TDCs pair strictly **{0,1}** and **{2,3}**; within a pair
+the **even** TDC (0/2) is the **leading** edge and the **odd** (1/3) the
+**trailing**. One photon = one (lead, trail) couple → **one** reconstructed
+`AlcorFinedataStruct` emitted at the **leading-edge time** (so all existing
+timing / ring-finding / afterpulse machinery is untouched — the hit time keeps
+LET semantics) carrying a new, generic **`duration`** field (ns; `-1` = not set).
+`duration = t_secondary − t_primary`. **SR and ToT2 use the identical pairing**
+(`alcor_mode_pairs_edges` covers ToT/ToT2/SR) and the same `duration`; only the
+interpretation differs — SR reads it as a slew-rate (rise between two thresholds),
+ToT/ToT2 as time-over-threshold. Output hit
+count ≈ half the raw words (2 edges → 1 hit), so downstream counts are *not*
+doubled.
+
+**Pairing must be time-sorted, not stream-order (validated).** ALCOR does not
+preserve event time-order in the stream (datasheet §2 — internal buffers,
+"unsorted data"). Pairing in arrival order mislabels ~23% of photons as
+missing-stop; the framer therefore **buffers each stream's edges per
+(channel, group), sorts by global time, then runs the open-even/close-odd state
+machine** (~1.7–2.2% orphans, matching the offline study). A **max-pair window**
+(`kTotMaxPairWindowCc`, ~1024 cc — a magic number, TODO promote to framer-conf)
+rejects a lead whose trailing was lost from pairing with an unrelated trailing
+~one rollover later (those produced ~102 µs bogus durations). Genuine
+**cross-frame** pairs (lead in frame N, trailing in N+1) are fine: emit in the
+leading edge's frame with `duration` from the continuous global times. A
+channel's two TDC-pairs are merged in time order before the afterpulse Δt tag so
+it stays chronological.
+
+**Orphan / sentinel policy — complete accounting.** Every edge becomes exactly
+one tagged hit: a paired (lead, trail) → one hit at the leading time; a lead with
+no valid trailing → `HitmaskSecondaryOrphan` (primary present, stop/2nd-threshold
+missing; arrival time valid, `duration = -1`); a trailing with no open lead →
+`HitmaskLeadingOrphan` (secondary present, primary missing; time falls back to the
+secondary edge, `duration = -1`). `fine == 0` (the datasheet ToT-maximum sentinel)
+→ `HitmaskTotSaturated`. The leading/secondary split generalises to SR (primary /
+2nd-threshold crossings). Accessors: `is_secondary_orphan()`, `is_leading_orphan()`,
+`is_tot_saturated()` (+ `AlcorRecodata` per-hit delegations). See the `HitMask`
+enum (`alcor_data.h`) — byte-grouped: ring [0–7], ToT/SR [8–15], afterpulse/CT
+[16–23], lane health [24–31].
+
+**Afterpulse is inherited, not duplicated.** The reconstructed (leading) hits feed
+the existing same-channel Δt afterpulse tag unchanged (`HitmaskAfterpulse` /
+`…Near` / `…Far`). ToT adds `duration` as a *second* discriminant: the low-ToT
+re-trigger population (96.6% follow a main pulse within a few ns of its falling
+edge). **Pile-up caveat for ToT-as-charge:** afterpulses that arrive while the
+pulse is still over threshold merge into one hit with inflated duration (a 2nd
+peak at ~2× ToT, "fake two photons") — invisible to the Δt tag. So the `duration`
+high tail mixes genuine multi-pe and pile-up; it is **not** a per-hit charge/N_pe
+estimator, and any correction is statistical.
+
+**ToT-as-LET** (`--leading-only`): process only leading (even) TDC edges through
+the legacy LET path (drop trailing, no pairing, no `duration`) — runs the full LET
+analysis on a ToT run and cross-checks the pairing (arrival times match).
+
 ### pulser_calib — design batch
 
 - **`±0.5 cc satellites in published `b`** — disambiguate
@@ -243,7 +309,7 @@ Sub-roadmap on pickup:
    "consecutive hits within afterpulse-Δt window" / "total hits";
    currently the afterpulse logic flags hits but doesn't publish
    the rate.
-4. **QA restructure / re-evaluate needs** — the Hough-refactor QA
+4. **QA restructure / re-evaluate needs** — the RANSAC-refactor QA
    landed per-ring histograms (`triggers/streaming/DISCUSSION.md` §
    2.6 changes).  Audit which lightdata-side QA hists are now
    redundant with the streaming-side ones; consolidate.

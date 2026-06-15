@@ -30,10 +30,29 @@ struct AlcorLightdataStruct
     std::vector<AlcorFinedataStruct> cherenkov_hits;
 
     /**
+     * @brief Per-frame streaming-RANSAC ring geometry (first / second radiator).
+     *
+     * The streaming ring finder runs a completeness-corrected, sensor-fiducial
+     * RANSAC + Taubin fit on the frame's Cherenkov hits — a robust estimate of
+     * the (centre, radius) even for short far-off-centre arcs.  These scalars
+     * carry that estimate downstream so `recodata_writer` can **seed** its
+     * per-ring fit from it instead of re-finding the geometry from scratch (a
+     * free re-fit on a sparse short arc is high-variance and can collapse the
+     * far centre back toward the origin).  `radius == 0` ⇒ no ring tagged in
+     * this slot (the unset sentinel).  Populated in `run_streaming_ransac_trigger`.
+     */
+    float ring1_cx = 0.f;
+    float ring1_cy = 0.f;
+    float ring1_radius = 0.f;
+    float ring2_cx = 0.f;
+    float ring2_cy = 0.f;
+    float ring2_radius = 0.f;
+
+    /**
      * @brief Clear all vectors and release memory.
      *
      * Empties all Hit vectors and calls @c shrink_to_fit() on each to return
-     * heap storage to the allocator.
+     * heap storage to the allocator.  Also resets the per-frame ring scalars.
      */
     void clear();
 };

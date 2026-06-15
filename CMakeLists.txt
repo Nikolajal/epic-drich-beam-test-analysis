@@ -93,10 +93,11 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    # Pinned to the first stable MIST release.  mist cut v1.0.0 with a one-time
-    # clean-root reset, so pre-release SHAs no longer exist on the remote — pin
-    # to the tag (immutable) and bump deliberately when adopting newer MIST.
-    GIT_TAG        v1.0.0
+    # Pinned to an immutable MIST release tag; bump deliberately when adopting
+    # newer MIST.  v1.2.0 ("grid-free ring finding") adds ring_finding/
+    # ransac_ring_finder.h, which the streaming RANSAC stage requires — earlier
+    # tags (v1.0.0 / v1.1.0) lack it, so the build does not compile against them.
+    GIT_TAG        v1.2.0
 )
 FetchContent_MakeAvailable(mist)
 
@@ -166,7 +167,7 @@ set(SRC_FILES
     src/parallel_streaming_framer.cxx
     src/triggers/config.cxx
     src/triggers/streaming/score.cxx
-    src/triggers/streaming/hough.cxx
+    src/triggers/streaming/ransac.cxx
     src/lightdata_writer.cxx
     src/writers/lightdata/dcr_afterpulse_ct_qa.cxx
     src/writers/lightdata/finalize_streaming_qa.cxx
@@ -269,6 +270,9 @@ add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
 add_executable(pulser_calib_writer   macros/utilities/pulser_calib_writer.cpp)
 add_executable(btana-dump            macros/utilities/btana_dump.cpp)
+# Standalone RANSAC ring-finder tuning harness (reads lightdata.root, re-runs
+# the scan with CLI params — see macros/utilities/ransac_tune.cpp).  Dev tool.
+add_executable(ransac_tune           macros/utilities/ransac_tune.cpp)
 # Stand-alone TBrowser launcher used by the QA dashboard's Inspect
 # button.  See macros/utilities/qa_tbrowser.cpp for the rationale.
 add_executable(qa_tbrowser           macros/utilities/qa_tbrowser.cpp)
@@ -281,6 +285,7 @@ target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
 target_link_libraries(pulser_calib_writer   PRIVATE beam_test_analysis)
 target_link_libraries(btana-dump            PRIVATE beam_test_analysis)
+target_link_libraries(ransac_tune           PRIVATE beam_test_analysis)
 # qa_tbrowser + qa_tcanvas only need ROOT (no project lib) since
 # they're pure TApplication glue.  Link against the umbrella ROOT
 # library target FindROOT already exports for the writers.
@@ -388,6 +393,10 @@ if(BTANA_BUILD_TESTS)
     endfunction()
 
     btana_add_test(global_index)
+    btana_add_test(alcor_op_mode)
+    btana_add_test(ring_arc)
+    btana_add_test(config_autocouple)
+    btana_add_test(conf_path)
 
     message(STATUS "[beam_test_analysis] Tests enabled — binaries will land in ${CMAKE_BINARY_DIR}/bin")
 endif()

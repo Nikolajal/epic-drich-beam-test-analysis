@@ -883,28 +883,28 @@ streaming_trigger_conf_reader(std::string config_file)
     return cfg;
 }
 
-// --- streaming_hough_conf_reader ----------------------------------------
+// --- streaming_ransac_conf_reader ----------------------------------------
 
-StreamingHoughConfigStruct
-streaming_hough_conf_reader(std::string config_file)
+StreamingRansacConfigStruct
+streaming_ransac_conf_reader(std::string config_file)
 {
-    StreamingHoughConfigStruct cfg;
+    StreamingRansacConfigStruct cfg;
     try
     {
         auto tbl = toml_parse_with_cutoff(config_file);
-        auto *sh_table = tbl["streaming_hough"].as_table();
+        auto *sh_table = tbl["streaming_ransac"].as_table();
         if (!sh_table)
         {
-            // No [streaming_hough] section — silent (defaults match the
+            // No [streaming_ransac] section — silent (defaults match the
             // hardcoded values still in lightdata_writer.cxx).
             return cfg;
         }
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) Reading streaming-Hough config: %s",
+                               "(streaming_ransac_conf_reader) Reading streaming-RANSAC config: %s",
                                config_file.c_str())
                                .Data());
 
-        // Hough accumulator geometry
+        // RANSAC accumulator geometry
         if (auto v = (*sh_table)["r_min"].value<double>())
             cfg.r_min = static_cast<float>(*v);
         if (auto v = (*sh_table)["r_max"].value<double>())
@@ -922,12 +922,12 @@ streaming_hough_conf_reader(std::string config_file)
         // (the value is silently ignored).
         if ((*sh_table)["time_cut_ns"])
             mist::logger::warning(
-                "(streaming_hough_conf_reader) `time_cut_ns` is no longer a "
-                "knob — the Hough time pre-cut is inherited from "
+                "(streaming_ransac_conf_reader) `time_cut_ns` is no longer a "
+                "knob — the RANSAC time pre-cut is inherited from "
                 "`streaming_trigger.time_window_ns`.  Ignoring.");
         if ((*sh_table)["max_rings"])
             mist::logger::warning(
-                "(streaming_hough_conf_reader) `max_rings` is no longer a "
+                "(streaming_ransac_conf_reader) `max_rings` is no longer a "
                 "knob — hardcoded to 2 (one ring per radiator).  Ignoring.");
 
         if (auto v = (*sh_table)["threshold_fraction"].value<double>())
@@ -936,8 +936,18 @@ streaming_hough_conf_reader(std::string config_file)
             cfg.min_hits_slack = static_cast<float>(*v);
         if (auto v = (*sh_table)["hough_threshold_fraction"].value<double>())
             cfg.hough_threshold_fraction = static_cast<float>(*v);
+        if (auto v = (*sh_table)["hough_n_sigma_dcr"].value<double>())
+            cfg.hough_n_sigma_dcr = static_cast<float>(*v);
+        if (auto v = (*sh_table)["min_ring_votes_floor"].value<int64_t>())
+            cfg.min_ring_votes_floor = static_cast<int>(*v);
         if (auto v = (*sh_table)["collection_radius"].value<double>())
             cfg.collection_radius = static_cast<float>(*v);
+        if (auto v = (*sh_table)["ransac_iterations"].value<int64_t>())
+            cfg.ransac_iterations = static_cast<int>(*v);
+        if (auto v = (*sh_table)["ransac_min_significance"].value<double>())
+            cfg.ransac_min_significance = static_cast<float>(*v);
+        if (auto v = (*sh_table)["ransac_min_inliers"].value<int64_t>())
+            cfg.ransac_min_inliers = static_cast<int>(*v);
         if (auto v = (*sh_table)["centre_xy_half_range_mm"].value<double>())
             cfg.centre_xy_half_range_mm = static_cast<float>(*v);
         if (auto v = (*sh_table)["aggregation_window_cells"].value<int64_t>())
@@ -945,8 +955,48 @@ streaming_hough_conf_reader(std::string config_file)
         if (auto v = (*sh_table)["centre_padding_mm"].value<double>())
             cfg.centre_padding_mm = static_cast<float>(*v);
 
+        //  Wide-arc mode: auto-couple the radius range to the centre range
+        //  (far-off-centre / arc reconstruction).  Capture whether the QA
+        //  centre axis was pinned in TOML *before* we may widen it below.
+        const bool centre_xy_half_range_set =
+            static_cast<bool>((*sh_table)["centre_xy_half_range_mm"]);
+        if (auto v = (*sh_table)["r_max_auto"].value<bool>())
+            cfg.r_max_auto = *v;
+        if (auto v = (*sh_table)["sensor_half_extent_mm"].value<double>())
+            cfg.sensor_half_extent_mm = static_cast<float>(*v);
+        if (auto v = (*sh_table)["r_margin_mm"].value<double>())
+            cfg.r_margin_mm = static_cast<float>(*v);
+
+        if (cfg.r_max_auto)
+        {
+            if (cfg.centre_padding_mm < 0.f)
+            {
+                mist::logger::warning(
+                    "(streaming_ransac_conf_reader) r_max_auto requires "
+                    "centre_padding_mm >= 0 (the -1 sentinel defines the pad AS "
+                    "r_max, mutually exclusive with deriving r_max from the "
+                    "pad).  Leaving auto OFF; using the explicit r_max.");
+                cfg.r_max_auto = false;
+            }
+            else
+            {
+                cfg.r_max = cfg.centre_padding_mm + cfg.sensor_half_extent_mm +
+                            cfg.r_margin_mm;
+            }
+        }
+
+        //  Single-knob promise: when the per-ring centre QA axis isn't
+        //  explicitly pinned, widen it to bracket the centre search range
+        //  (centre_padding_mm) so far-off centres don't pile into overflow.
+        //  Applies whenever a finite pad is given (not just r_max_auto), so
+        //  the explicit-r_max coarse-scan config gets a matching QA axis too.
+        //  Bin width snaps to cell_size downstream, so n_bins scales
+        //  automatically.
+        if (!centre_xy_half_range_set && cfg.centre_padding_mm >= 0.f)
+            cfg.centre_xy_half_range_mm = cfg.centre_padding_mm;
+
         //  C3.5 — `fit_circle_init_{x,y,r}` are deprecated.  recodata_writer
-        //  seeds the per-ring refit from the Hough peak (cx, cy, radius);
+        //  seeds the per-ring refit from the RANSAC peak (cx, cy, radius);
         //  no consumer ever read the config-supplied values.  Tolerated
         //  for one release so existing TOMLs continue to load — log one
         //  warning per key encountered.  Remove the warning (and this
@@ -958,8 +1008,8 @@ streaming_hough_conf_reader(std::string config_file)
             if ((*sh_table)[key])
             {
                 mist::logger::warning(TString::Format(
-                                          "(streaming_hough_conf_reader) `%s` is deprecated and "
-                                          "IGNORED (recodata seeds the fit from the Hough peak). "
+                                          "(streaming_ransac_conf_reader) `%s` is deprecated and "
+                                          "IGNORED (recodata seeds the fit from the RANSAC peak). "
                                           "Remove the key from your config to silence this warning.",
                                           key)
                                           .Data());
@@ -969,55 +1019,62 @@ streaming_hough_conf_reader(std::string config_file)
         // Sanity warnings
         if (cfg.r_min < 0.f || cfg.r_max <= cfg.r_min)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) invalid radius range — "
+                "(streaming_ransac_conf_reader) invalid radius range — "
                 "r_min must be ≥ 0 and r_max must exceed r_min.");
         if (cfg.r_step <= 0.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) r_step must be > 0.");
+                "(streaming_ransac_conf_reader) r_step must be > 0.");
         if (cfg.cell_size <= 0.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) cell_size must be > 0.");
+                "(streaming_ransac_conf_reader) cell_size must be > 0.");
         if (cfg.threshold_fraction <= 0.f || cfg.threshold_fraction > 1.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) threshold_fraction should be in (0, 1].");
+                "(streaming_ransac_conf_reader) threshold_fraction should be in (0, 1].");
         if (cfg.min_hits_slack <= 0.f || cfg.min_hits_slack > 1.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) min_hits_slack should be in (0, 1].");
+                "(streaming_ransac_conf_reader) min_hits_slack should be in (0, 1].");
         if (cfg.hough_threshold_fraction <= 0.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) hough_threshold_fraction must be > 0.");
+                "(streaming_ransac_conf_reader) hough_threshold_fraction must be > 0.");
         if (cfg.collection_radius <= 0.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) collection_radius must be > 0.");
+                "(streaming_ransac_conf_reader) collection_radius must be > 0.");
         if (cfg.centre_xy_half_range_mm <= 0.f)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) centre_xy_half_range_mm must be > 0.");
+                "(streaming_ransac_conf_reader) centre_xy_half_range_mm must be > 0.");
         if (cfg.aggregation_window_cells < 1)
             mist::logger::warning(
-                "(streaming_hough_conf_reader) aggregation_window_cells must be ≥ 1.");
+                "(streaming_ransac_conf_reader) aggregation_window_cells must be ≥ 1.");
 
         //  Echo the loaded values back — saves a class of "did my TOML
         //  edit actually take effect?" confusion at the start of a run.
         //  One line per logical group, fixed format so it's grep-able.
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) geom: r_min=%.2f r_max=%.2f r_step=%.2f cell_size=%.2f",
+                               "(streaming_ransac_conf_reader) geom: r_min=%.2f r_max=%.2f r_step=%.2f cell_size=%.2f",
                                cfg.r_min, cfg.r_max, cfg.r_step, cfg.cell_size)
                                .Data());
+        if (cfg.r_max_auto)
+            mist::logger::info(TString::Format(
+                                   "(streaming_ransac_conf_reader) r_max AUTO-COUPLED (wide-arc): "
+                                   "r_max=%.1f = pad %.1f + sensor %.1f + margin %.1f",
+                                   cfg.r_max, cfg.centre_padding_mm,
+                                   cfg.sensor_half_extent_mm, cfg.r_margin_mm)
+                                   .Data());
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) thresholds: threshold_fraction=%.3f min_hits_slack=%.3f "
+                               "(streaming_ransac_conf_reader) thresholds: threshold_fraction=%.3f min_hits_slack=%.3f "
                                "hough_threshold_fraction=%.4f collection_radius=%.2f",
                                cfg.threshold_fraction, cfg.min_hits_slack,
                                cfg.hough_threshold_fraction, cfg.collection_radius)
                                .Data());
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) peak finder: aggregation_window_cells=%d %s",
+                               "(streaming_ransac_conf_reader) peak finder: aggregation_window_cells=%d %s",
                                cfg.aggregation_window_cells,
                                cfg.aggregation_window_cells > 1
                                    ? "(SLIDING-WINDOW AGGREGATION ACTIVE)"
                                    : "(legacy single-cell)")
                                .Data());
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) lut padding: centre_padding_mm=%.2f %s",
+                               "(streaming_ransac_conf_reader) lut padding: centre_padding_mm=%.2f %s",
                                cfg.centre_padding_mm,
                                cfg.centre_padding_mm < 0.f
                                    ? "(default = r_max, full coverage)"
@@ -1026,21 +1083,21 @@ streaming_hough_conf_reader(std::string config_file)
         //  C3.5 — fit_circle_init_{x,y,r} echo dropped along with the
         //  fields themselves; centre_xy_half_range_mm now stands alone.
         mist::logger::info(TString::Format(
-                               "(streaming_hough_conf_reader) centre_xy_half_range_mm=%.2f",
+                               "(streaming_ransac_conf_reader) centre_xy_half_range_mm=%.2f",
                                cfg.centre_xy_half_range_mm)
                                .Data());
     }
     catch (const toml::parse_error &err)
     {
         mist::logger::warning(TString::Format(
-                                  "(streaming_hough_conf_reader) TOML parse error in '%s': %s — using defaults.",
+                                  "(streaming_ransac_conf_reader) TOML parse error in '%s': %s — using defaults.",
                                   config_file.c_str(), std::string(err.description()).c_str())
                                   .Data());
     }
     catch (const std::exception &err)
     {
         mist::logger::warning(TString::Format(
-                                  "(streaming_hough_conf_reader) Error reading '%s': %s — using defaults.",
+                                  "(streaming_ransac_conf_reader) Error reading '%s': %s — using defaults.",
                                   config_file.c_str(), err.what())
                                   .Data());
     }
@@ -1051,41 +1108,90 @@ streaming_hough_conf_reader(std::string config_file)
 //
 // Populates RecodataConfigStruct from TWO files (the former standalone
 // recodata.toml was dismembered):
-//   * `[streaming_hough]` in `streaming_file`  → the 5 ring-reco knobs,
-//     so they sit next to the Hough geometry they must agree with.
+//   * `[streaming_ransac]` in `streaming_file`  → the 5 ring-reco knobs,
+//     so they sit next to the RANSAC geometry they must agree with.
 //   * `[coverage]`        in `mapping_file`    → the 8 coverage-map
 //     geometry keys, same domain as the rest of mapping_conf.toml.
 // All fields are optional; missing keys (or a missing table) keep the
 // defaults from RecodataConfigStruct.  Each file is parsed in its own
 // try/catch so a parse failure in one doesn't lose the other's values —
-// same non-fatal pattern as streaming_hough_conf_reader.
+// same non-fatal pattern as streaming_ransac_conf_reader.
 
 RecodataConfigStruct
 recodata_conf_reader(std::string streaming_file, std::string mapping_file)
 {
     RecodataConfigStruct cfg;
 
+    //  Effective RANSAC r_max (honouring the wide-arc auto-coupling) — peeked
+    //  from the [streaming_ransac] table below and used in part (b) to warn if
+    //  the radial histogram range would clip large arcs.  -1 = unknown.  Only
+    //  meaningful as a clip bound when r_max is AUTO-derived (then it ≈ the
+    //  reachable R); with an explicit huge coarse-scan r_max the radial range
+    //  is decoupled, so the warning is suppressed.
+    float hough_r_max_effective = -1.f;
+    bool hough_r_max_auto_derived = false;
+
     //  (a) Ring-reconstruction knobs from streaming.toml's
-    //      `[streaming_hough]` table.
+    //      `[streaming_ransac]` table.
     try
     {
         //  C2.3: route through ``toml_parse_with_cutoff`` so a ``##``
         //  sentinel below the live config is honoured (matches every
-        //  other reader — see ``streaming_hough_conf_reader`` and
+        //  other reader — see ``streaming_ransac_conf_reader`` and
         //  ``Mapping::load_calib``).
         toml::table tbl = toml_parse_with_cutoff(streaming_file);
         mist::logger::info(TString::Format(
                                "(recodata_conf_reader) Reading ring-reco knobs from "
-                               "[streaming_hough] in: %s",
+                               "[streaming_ransac] in: %s",
                                streaming_file.c_str())
                                .Data());
 
-        if (auto *h_table = tbl["streaming_hough"].as_table())
+        if (auto *h_table = tbl["streaming_ransac"].as_table())
         {
             if (auto v = (*h_table)["delta_r_for_coverage_mm"].value<double>())
                 cfg.delta_r_for_coverage_mm = static_cast<float>(*v);
             if (auto v = (*h_table)["min_hits_per_ring"].value<int64_t>())
                 cfg.min_hits_per_ring = static_cast<int>(*v);
+            if (auto v = (*h_table)["arc_span_min_rad"].value<double>())
+                cfg.arc_span_min_rad = static_cast<float>(*v);
+
+            //  Mirror the wide-arc r_max derivation from
+            //  streaming_ransac_conf_reader (single source of truth there;
+            //  this is a read-only peek for the radial-clip warning below).
+            float h_r_max = 120.f;
+            if (auto v = (*h_table)["r_max"].value<double>())
+                h_r_max = static_cast<float>(*v);
+            bool h_r_max_auto = false;
+            if (auto v = (*h_table)["r_max_auto"].value<bool>())
+                h_r_max_auto = *v;
+            float pad = -1.f;
+            if (auto v = (*h_table)["centre_padding_mm"].value<double>())
+                pad = static_cast<float>(*v);
+            //  Mirror streaming_ransac_conf_reader's mutual-exclusion guard:
+            //  auto is only honoured when centre_padding_mm >= 0.
+            const bool wide_arc = h_r_max_auto && pad >= 0.f;
+            if (wide_arc)
+            {
+                float sensor = 99.f, margin = 10.f;
+                if (auto v = (*h_table)["sensor_half_extent_mm"].value<double>())
+                    sensor = static_cast<float>(*v);
+                if (auto v = (*h_table)["r_margin_mm"].value<double>())
+                    margin = static_cast<float>(*v);
+                h_r_max = pad + sensor + margin;
+            }
+            hough_r_max_effective = h_r_max;
+            hough_r_max_auto_derived = wide_arc;
+
+            //  Per-ring eff / arc-mode reconstruction (Kasa seed + arc-span
+            //  guard + per-ring coverage).  Defaults to the wide-arc
+            //  derivation (so existing auto-coupled configs are unchanged),
+            //  but can be set EXPLICITLY — needed by the wide coarse-scan
+            //  config, which uses an explicit r_max (r_max_auto = false) yet
+            //  still wants arc-mode reconstruction on.
+            cfg.radial_eff_per_ring_centre = wide_arc;
+            if (auto v = (*h_table)["radial_eff_per_ring_centre"].value<bool>())
+                cfg.radial_eff_per_ring_centre = *v;
+
             if (auto v = (*h_table)["hardware_ring_dt_min_ns"].value<double>())
                 cfg.hardware_ring_dt_min_ns = static_cast<float>(*v);
             if (auto v = (*h_table)["hardware_ring_dt_max_ns"].value<double>())
@@ -1096,7 +1202,7 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
         else
         {
             mist::logger::warning(
-                "(recodata_conf_reader) No `[streaming_hough]` table found — "
+                "(recodata_conf_reader) No `[streaming_ransac]` table found — "
                 "using ring-reco defaults.");
         }
     }
@@ -1152,13 +1258,21 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
                 "using coverage-geometry defaults.");
         }
 
-        // Sanity warnings — same style as streaming_hough_conf_reader.
+        // Sanity warnings — same style as streaming_ransac_conf_reader.
         if (cfg.n_phi_bins_coverage <= 0 || cfg.n_r_bins_coverage <= 0)
             mist::logger::warning(
                 "(recodata_conf_reader) coverage bin counts must be > 0.");
         if (cfg.r_max_coverage_mm <= cfg.r_min_coverage_mm)
             mist::logger::warning(
                 "(recodata_conf_reader) r_max_coverage_mm must exceed r_min_coverage_mm.");
+        if (hough_r_max_auto_derived && hough_r_max_effective > 0.f &&
+            cfg.r_max_coverage_mm < hough_r_max_effective)
+            mist::logger::warning(TString::Format(
+                                      "(recodata_conf_reader) r_max_coverage_mm=%.1f < RANSAC r_max=%.1f "
+                                      "— the radial histogram will CLIP large arcs.  Widen "
+                                      "[coverage].r_max_coverage_mm to >= the RANSAC r_max.",
+                                      cfg.r_max_coverage_mm, hough_r_max_effective)
+                                      .Data());
         if (cfg.channel_half_width_mm <= 0.f)
             mist::logger::warning(
                 "(recodata_conf_reader) channel_half_width_mm must be > 0.");
@@ -1170,7 +1284,7 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
                 "(recodata_conf_reader) min_hits_per_ring must be ≥ 1.");
 
         // Echo loaded values — same diagnostic pattern as
-        // streaming_hough_conf_reader.  Grep-friendly fixed format.
+        // streaming_ransac_conf_reader.  Grep-friendly fixed format.
         mist::logger::info(TString::Format(
                                "(recodata_conf_reader) coverage map: nphi=%d nR=%d  R=[%.2f, %.2f] mm  "
                                "channel_half_width=%.2f mm",
@@ -1181,10 +1295,10 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
         mist::logger::info(TString::Format(
                                "(recodata_conf_reader) nominal centre: (%.2f, %.2f) mm  "
                                "delta_r_for_coverage=%.2f mm  min_hits_per_ring=%d  "
-                               "min_channel_r_for_coverage=%.2f mm",
+                               "min_channel_r_for_coverage=%.2f mm  arc_span_min=%.2f rad",
                                cfg.nominal_centre_x_mm, cfg.nominal_centre_y_mm,
                                cfg.delta_r_for_coverage_mm, cfg.min_hits_per_ring,
-                               cfg.min_channel_r_for_coverage_mm)
+                               cfg.min_channel_r_for_coverage_mm, cfg.arc_span_min_rad)
                                .Data());
         if (cfg.skip_loo_residuals)
             mist::logger::info(

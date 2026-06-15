@@ -81,6 +81,13 @@ struct DcrAfterpulseCtHists
     // ── CT (Δchannel, Δt) 2D diagnostics
     TH2F *h_elec_ct_dchannel_dt = nullptr;
     TH2F *h_phys_ct_dchannel_dt = nullptr;
+
+    // ── ToT (mode-gated: non-null only for ToT-family runs; LET leaves them null)
+    TH1F *h_tot_spectrum = nullptr;                                          ///< time-over-threshold spectrum [ns], clean (paired) hits (all sensors)
+    TH2F *h_tot_vs_channel = nullptr;                                        ///< ToT [ns] vs channel ordinal
+    TProfile *h_tot_secondary_orphan_per_channel = nullptr;                  ///< % secondary-orphan (missing stop) per channel
+    TProfile *h_tot_leading_orphan_per_channel = nullptr;                    ///< % leading-orphan (missing start) per channel
+    const std::unordered_map<int, TH1F *> *tot_spectrum_by_device = nullptr; ///< device → its sensor's ToT spectrum (per-sensor split); null in LET
 };
 
 /**

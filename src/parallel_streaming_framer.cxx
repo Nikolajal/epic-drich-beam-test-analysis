@@ -297,6 +297,27 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
     // Maps trigger index → first global clock cycle after which the next firing is no longer secondary.
     std::unordered_map<uint8_t, uint64_t> trigger_secondary_map;
 
+    // ToT-mode edge pairing.  ALCOR does NOT preserve event time-order in the
+    // stream (internal buffers — datasheet §2 "unsorted data"), so pairing in
+    // arrival order mislabels ~20% of photons as missing-stop.  Instead we BUFFER
+    // this stream's edges per (channel, group) and pair AFTER the read, time
+    // sorted (matches the validated offline study, ~1-2% orphans).  Pairs are
+    // strictly {0,1}/{2,3} (even = leading, odd = trailing); one photon = one
+    // (lead, trail) couple → one reconstructed hit at the leading time carrying
+    // duration = t_trail − t_lead.  Key = (channel-level index << 1) | (tdc/2).
+    // No-op in LET (tot_pairing == false), so the legacy per-edge path is untouched.
+    struct TotEdge
+    {
+        AlcorDataStruct data;  ///< Edge snapshot.
+        uint32_t frame_index;  ///< Frame the edge falls in.
+        uint64_t frame_coarse; ///< Coarse within the frame.
+        uint64_t global;       ///< Global coarse time — sort key, duration, afterpulse Δt.
+        bool trailing;         ///< Odd TDC (trailing edge)?
+        bool tot_sat;          ///< fine == 0 ToT-maximum sentinel.
+    };
+    std::unordered_map<uint64_t, std::vector<TotEdge>> tot_edges;
+    const bool tot_pairing = alcor_mode_pairs_edges(_op_mode);
+
     // Precompute the QA far-window bounds from _qa_cfg.
     // Far window mirrors the near window's width and starts at the sideband offset.
     const int64_t qa_near_lo = _qa_cfg.afterpulse_near_lo;
@@ -314,11 +335,16 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         auto current_chip = current_data.get_chip();
         auto current_readout_tag_list = readout_config.find_by_device_and_chip(current_device, current_chip);
 
-        // Stop streamer reading if not tagged for readout.
-        // Chip 8 (fifo 32-35) is the hardware trigger chip — always continue for it.
-        // TODO: outsource this to trigger_conf (per-trigger fifo) so it isn't hardcoded.
-        constexpr int trigger_chip = 32 / 4; // = 8
-        if (current_readout_tag_list.size() == 0 && current_chip != trigger_chip)
+        // Stop streamer reading if not tagged for readout — EXCEPT for the
+        // hardware-trigger FIFO, which must always pass through to the trigger
+        // path below.  The data FIFOs are [0,31] (8 chips × 4 FIFOs); the
+        // trigger word lives on a FIFO OUTSIDE that range.  Its exact number has
+        // drifted across datasets (99 in older data, 32 in the latest), so we
+        // detect the trigger FIFO by range rather than a hardcoded chip — any
+        // out-of-band FIFO (>31) is treated as a trigger FIFO.
+        // TODO: outsource the trigger-FIFO definition to trigger_conf.
+        const bool is_trigger_fifo = current_data.get_fifo() > 31;
+        if (current_readout_tag_list.size() == 0 && !is_trigger_fifo)
             break;
 
         // Refactoring time to relate to frame reference.
@@ -365,6 +391,29 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                     ev.is_secondary = sec;
                     continue;
                 }
+            }
+
+            //  ----    ----    ----    ToT-as-LET  ----    ----    ----
+            //  Leading-edge-only: drop trailing (odd) edges; the leading (even)
+            //  edges fall through to the legacy LET path below (one hit each, no
+            //  pairing, no duration).  Lets a ToT run be reconstructed with the
+            //  full LET analysis and serves as a pairing cross-check.
+            if (_leading_edge_only && tot_pairing && (current_data.get_tdc() & 1))
+                continue;
+
+            //  ----    ----    ----    ToT edge buffering  ----    ----    ----
+            //  Buffer the edge; pairing happens after the read, time-sorted (see
+            //  the deferred-pairing block after the loop) because ALCOR stream
+            //  order is not time order.
+            if (tot_pairing && !_leading_edge_only)
+            {
+                const uint32_t channel = current_data.get_global_index();
+                const uint64_t key =
+                    (static_cast<uint64_t>(channel) << 1) | static_cast<uint64_t>(current_data.get_tdc() >> 1);
+                tot_edges[key].push_back({current_data.get_data(), hit_frame_index, hit_frame_coarse,
+                                          hit_frame_coarse_global, (current_data.get_tdc() & 1) != 0,
+                                          current_data.get_fine() == 0});
+                continue;
             }
 
             // Same-channel Δt analysis: drives both the framer's afterpulse
@@ -514,15 +563,24 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             // Gather infos on the fifo
             auto current_fifo = current_data.get_fifo();
 
-            // Encode participation of lane
-            auto &current_participants_mask = spilldata.get_participants_mask_link();
-            current_participants_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
-
-            // Encode dead lane
-            if (current_data.coarse_time_clock() != 0)
+            // The hardware trigger chip (fifo > 31) is not a sensor lane and
+            // does not belong in the per-device 32-bit lane mask: without this
+            // guard encode_bits asserts in debug builds (it guard-skips the bit
+            // harmlessly in release, but it still must not pollute the mask).
+            // Only sensor fifos 0–31 participate in the participants / dead-lane
+            // masks.
+            if (current_fifo < 32)
             {
-                auto &current_dead_mask = spilldata.get_dead_mask_link();
-                current_dead_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
+                // Encode participation of lane
+                auto &current_participants_mask = spilldata.get_participants_mask_link();
+                current_participants_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
+
+                // Encode dead lane
+                if (current_data.coarse_time_clock() != 0)
+                {
+                    auto &current_dead_mask = spilldata.get_dead_mask_link();
+                    current_dead_mask[static_cast<uint8_t>(current_device)] |= encode_bits({(uint8_t)current_fifo});
+                }
             }
             continue;
         }
@@ -530,6 +588,140 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         //  ----    ----    ----    End of spill  ----    ----    ----
         if (current_data.is_end_spill())
             break;
+    }
+
+    //  ----    ----    ----    ToT deferred pairing (time-sorted)  ----    ----
+    //  ALCOR stream order != time order, so we buffered this stream's edges and
+    //  pair them here.  Per (channel, group): sort by time, open even / close
+    //  odd → reconstructed hits.  Then per channel, merge both TDC-pairs in time
+    //  order so the inherited afterpulse Δt tag sees hits chronologically.
+    if (tot_pairing && !_leading_edge_only && !tot_edges.empty())
+    {
+        struct ReconHit
+        {
+            AlcorDataStruct data;
+            uint32_t frame_index;
+            uint64_t frame_coarse;
+            uint64_t global;
+            float duration;
+            uint32_t extra_mask;
+        };
+        std::unordered_map<uint32_t, std::vector<ReconHit>> per_channel; // channel → recon hits
+
+        //  An unpaired edge → one orphan hit, time = that edge's time, duration
+        //  unset (-1).  Leading orphan (missing primary) vs secondary orphan
+        //  (missing stop / 2nd threshold) selected by @p orphan_bit.
+        auto orphan = [](const TotEdge &edge, unsigned int orphan_bit) -> ReconHit
+        {
+            return {edge.data, edge.frame_index, edge.frame_coarse, edge.global, -1.f,
+                    (1u << orphan_bit) | (edge.tot_sat ? (1u << HitmaskTotSaturated) : 0u)};
+        };
+
+        //  Max pairing window: a trailing more than this after its lead cannot be
+        //  its real stop — physical ToT is tens of cc, but a lead whose trailing
+        //  was lost would otherwise pair with an unrelated trailing ~one rollover
+        //  later (the data shows a clean gap between physical ToT <~200 ns and
+        //  cross-rollover mis-pairs at ~rollover scale).  Over-window → the lead
+        //  is missing-stop and the far trailing is dropped as stray.
+        //  TODO(config): promote to a framer-conf key (no-magic-numbers).
+        constexpr uint64_t kTotMaxPairWindowCc = 1024; // ~3.2 µs ceiling, well above physical ToT, well below rollover
+
+        for (auto &[key, edges] : tot_edges)
+        {
+            std::sort(edges.begin(), edges.end(),
+                      [](const TotEdge &a, const TotEdge &b)
+                      { return a.global < b.global; });
+            auto &out = per_channel[static_cast<uint32_t>(key >> 1)];
+            bool open = false;
+            TotEdge lead{};
+            //  Complete accounting: every edge becomes exactly one hit — paired,
+            //  secondary-orphan (lead with no valid stop) or leading-orphan
+            //  (trailing with no start).
+            for (auto &e : edges)
+            {
+                if (!e.trailing)
+                {
+                    if (open) // previous lead never closed → secondary orphan
+                        out.push_back(orphan(lead, HitmaskSecondaryOrphan));
+                    lead = e;
+                    open = true;
+                }
+                else if (open) // trailing may close the open lead
+                {
+                    const uint64_t dur_cc = e.global - lead.global; // ≥ 0 (sorted)
+                    if (dur_cc > kTotMaxPairWindowCc)
+                    {
+                        //  Trailing too far → both edges lost their partner
+                        //  (cross-rollover mis-pair): lead → secondary orphan,
+                        //  this trailing → leading orphan.
+                        out.push_back(orphan(lead, HitmaskSecondaryOrphan));
+                        out.push_back(orphan(e, HitmaskLeadingOrphan));
+                        open = false;
+                    }
+                    else
+                    {
+                        const uint32_t mask = (lead.tot_sat || e.tot_sat) ? (1u << HitmaskTotSaturated) : 0u;
+                        out.push_back({lead.data, lead.frame_index, lead.frame_coarse, lead.global,
+                                       static_cast<float>(dur_cc * BTANA_ALCOR_CC_TO_NS), mask});
+                        open = false;
+                    }
+                }
+                else // trailing with no open lead → leading orphan
+                {
+                    out.push_back(orphan(e, HitmaskLeadingOrphan));
+                }
+            }
+            if (open) // last lead never got its trailing edge → secondary orphan
+                out.push_back(orphan(lead, HitmaskSecondaryOrphan));
+        }
+
+        for (auto &[channel, hits] : per_channel)
+        {
+            std::sort(hits.begin(), hits.end(),
+                      [](const ReconHit &a, const ReconHit &b)
+                      { return a.global < b.global; });
+            const int ch_key = static_cast<int>(channel);
+            for (auto &rh : hits)
+            {
+                AlcorDataStruct hit = rh.data;
+                hit.HitMask = 0;
+                int64_t dt = -1;
+                if (auto s = prev_hit_time_map.find(ch_key); s != prev_hit_time_map.end())
+                {
+                    dt = static_cast<int64_t>(rh.global) - static_cast<int64_t>(s->second);
+                    if (dt < static_cast<int64_t>(_afterpulse_deadtime))
+                        hit.HitMask |= (1u << HitmaskAfterpulse);
+                    if (dt >= qa_near_lo && dt <= qa_near_hi)
+                        hit.HitMask |= (1u << HitmaskAfterpulseNear);
+                    if (dt >= qa_far_lo && dt <= qa_far_hi)
+                        hit.HitMask |= (1u << HitmaskAfterpulseFar);
+                }
+                prev_hit_time_map[ch_key] = rh.global;
+                hit.HitMask |= rh.extra_mask;
+                hit.rollover = 0;
+                hit.coarse = static_cast<int>(rh.frame_coarse);
+                //  device/chip are constant within a stream; recover this channel's readout tags.
+                auto tags = readout_config.find_by_device_and_chip(static_cast<uint16_t>(hit.device),
+                                                                   static_cast<uint16_t>(hit.fifo / 4));
+                {
+                    std::unique_lock<std::mutex> map_lock(frame_mutexes_access, std::defer_lock);
+                    if (use_shared_frame_map)
+                        map_lock.lock();
+                    auto &cl = frame_map[rh.frame_index];
+                    for (auto &tag : tags)
+                    {
+                        if (tag == "timing")
+                            cl.timing_hits.emplace_back(hit).duration = rh.duration;
+                        else if (tag == "tracking")
+                            cl.tracking_hits.emplace_back(hit).duration = rh.duration;
+                        else if (tag == "cherenkov")
+                            cl.cherenkov_hits.emplace_back(hit).duration = rh.duration;
+                    }
+                }
+                if (qa && dt >= 0)
+                    qa->h_afterpulse->Fill(static_cast<double>(dt));
+            }
+        }
     }
 }
 

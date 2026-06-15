@@ -38,7 +38,7 @@ enum TriggerNumber : uint8_t
     TriggerTracking = 102,                ///< Tracking trigger
     TriggerRingFound = 103,               ///< Ring-finding trigger
     _TRIGGER_STREAMING_RING_FOUND_ = 104, ///< Streaming ring-finding trigger
-    _TRIGGER_HOUGH_RING_FOUND_ = 105,     ///< Hough-transform ring-finding trigger
+    _TRIGGER_RANSAC_RING_FOUND_ = 105,    ///< RANSAC-transform ring-finding trigger
     TriggerStartOfSpill = 200,            ///< Start-of-spill signal
     _TRIGGER_UNKNOWN_ = 255               ///< Unknown / unmapped trigger
 };
@@ -51,7 +51,7 @@ constexpr TriggerNumber all_default_triggers[] = {
     TriggerTracking,
     TriggerRingFound,
     _TRIGGER_STREAMING_RING_FOUND_,
-    _TRIGGER_HOUGH_RING_FOUND_,
+    _TRIGGER_RANSAC_RING_FOUND_,
     TriggerStartOfSpill,
     _TRIGGER_UNKNOWN_};
 
@@ -59,7 +59,7 @@ constexpr TriggerNumber all_default_triggers[] = {
 constexpr const char *default_names[] = {
     "FIRST_FRAMES", "TIMING", "TRACKING",
     "RING_FOUND", "STREAMING_RING_FOUND",
-    "HOUGH_RING_FOUND",
+    "RANSAC_RING_FOUND",
     "START_OF_SPILL", "UNKNOWN"};
 
 /// Total number of built-in default triggers.

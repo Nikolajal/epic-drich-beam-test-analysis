@@ -1,20 +1,24 @@
-# trigger_conf.2025.toml — trigger source definitions for the 2025 test-beam run
+# trigger_conf.toml — DEFAULT trigger sources (fallback for any run whose
+# campaign has no conf/sets/<campaign>/ bundle).
+#
+# Per-campaign trigger routing is pinned under conf/sets/<campaign>/trigger_conf.toml
+# and selected automatically from the run id via util::campaign_of → util::conf_path:
+#   - 2025                 → conf/sets/2025/      (luca_and_finger on rdo device 196)
+#   - 2026-SPS             → conf/sets/2026-SPS/  (luca_and_finger on rdo device 192)
+#   - 2026-PS              → conf/sets/2026-PS/   (luca_and_finger on kc705 device 200)
+#                            (the 2026 beam test split SPS→PS on 2026-06-10)
+# A run whose campaign has no bundle falls back to this file.  (The trigger word
+# also moved FIFO across campaigns, 99→32; the framer detects the trigger FIFO by
+# range, any FIFO > 31, so that drift needs no config.)
 #
 # Each [[trigger]] entry defines one trigger source. The parser stops reading at
-# the first "##" comment line, so entries below that marker are safely ignored
-# and can be used for disabled triggers, notes, or examples.
+# the first "##" comment line, so entries below that marker are safely ignored.
 
 [[trigger]]
 name   = "luca_and_finger"   # human-readable label used in output trees and logs
 index  = 0                   # trigger index (0-based); referenced in hit bitmasks
-device = 196                 # ALCOR device ID that provides the trigger signal
+device = 200                 # ALCOR device ID (kc705) — generic fallback routing
 delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
-
-[[trigger]]
-name   = "broad_scintillator"   # human-readable label used in output trees and logs
-index  = 1                      # trigger index (0-based); referenced in hit bitmasks
-device = 197                    # ALCOR device ID that provides the trigger signal
-delay  = 117                    # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
 
 ##
 # Everything below this line is ignored by the parser.

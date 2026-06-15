@@ -204,7 +204,7 @@ WRITERS: list[WriterSpec] = [
         name="lightdata",
         executable="build/bin/lightdata_writer",
         description=(
-            "Framer + streaming trigger + Hough.  Reads raw FIFOs + "
+            "Framer + streaming trigger + RANSAC.  Reads raw FIFOs + "
             "fine_calib.{txt|toml}; writes lightdata.root."
         ),
         # ``lightdata_writer`` does not accept ``--force-upstream`` on

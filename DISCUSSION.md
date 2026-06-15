@@ -247,6 +247,31 @@ in the same PR) and gives the macros a uniform entry point.  Optimisations
 (view-of-parent, mutating variants) and storage integration land in a
 follow-up if the simple version proves too costly or too limiting.
 
+#### Update — the per-frame container is already accreting per-event state (v2.2.0)
+
+The far-arc RANSAC work made the per-frame structs grow exactly the per-event
+analysis state an `Event` would own — concrete motivation that the abstraction
+has become real, not hypothetical:
+
+- **`AlcorLightdataStruct`** (the serialised per-frame record) gained the
+  finder's per-ring geometry `ring{1,2}_{cx,cy,radius}` so recodata can SEED its
+  fit from the streaming RANSAC result instead of re-finding it.  The frame
+  record now carries reconstructed-ring scalars, not just hit vectors.
+- **`FrameResult`** (the in-memory per-frame compute payload, `writers/recodata/
+  types.h`) carries `occupancy_xy` (the in-trigger-window Cherenkov occupancy,
+  decoupled from ring-finding) plus the per-ring `RingFitResult first/second`.
+
+This partially answers **Q-05.D** (construction sites): the writers DID end up
+storing per-frame ring state in the schema — so an `Event` is the natural owner
+of `ring{1,2}_*` + the tagged-hit set + `t_ref`, and `compute_ring_fit_tagged`
+/ `compute_ring_fit_timewindow` are the `Event::fit_*` primitives in disguise.
+Also note the finder is now **RANSAC** (D-11/D-12, the Hough accumulator was
+removed): the sketch's `find_ring_hough` becomes `find_rings_ransac`
+(`mist::ring_finding::find_rings_ransac` — completeness-corrected, sensor-
+fiducial).  When `Event` lands it should subsume the two `compute_ring_fit_*`
+helpers and own the `ring{1,2}_*` propagation rather than threading it through
+`AlcorLightdataStruct`.
+
 ---
 
 ### D-08 — Two-layer data/wrapper separation for ROOT-bound classes

@@ -26,7 +26,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 # Files the dashboard recognises and labels.  Anything else found in
 # the run dir is listed too, just without a friendly label.
 _KNOWN_FILES: dict[str, str] = {
-    "lightdata.root":         "Lightdata (framer + trigger + Hough)",
+    "lightdata.root":         "Lightdata (framer + trigger + RANSAC)",
     "recodata.root":          "Reconstruction (ring refinement, σ panels)",
     "recotrackdata.root":     "Track-matched data",
     "pulser_calib_qa.root":   "Pulser-calibration QA",

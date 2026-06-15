@@ -5,6 +5,12 @@ with stop-on-first-failure semantics, joblock guards against double-
 launch races, and a distinct notification on completion so the shifter
 knows the QA cascade finished.
 
+Per-run writer config is sourced automatically: the lightdata stage is
+passed ``--run-database run-lists/<YYYY>.database.toml`` (the run id's
+campaign year), so the writer reconstructs each run in the ALCOR op_mode
+(LET / ToT) and at the streaming n_sigma threshold recorded for it —
+no per-run CLI.  Absent database → writer defaults (LET, no override).
+
 Design ground rules (locked 2026-05-29 from the workflow audit):
 
     --max-spill default     4             (caps shifter wall at ~3 min)
@@ -70,6 +76,10 @@ _STAGE_SPECS = [
         "output": "lightdata.root",
         "exit_base": EXIT_LIGHTDATA_BASE,
         "supports_max_spill": True,
+        #  Only lightdata reads the per-run database (--run-database): the
+        #  writer resolves the ALCOR op_mode (LET / ToT) AND the streaming
+        #  n_sigma threshold per run from it.  recodata / recotrack don't.
+        "supports_run_database": True,
     },
     {
         "name": "recodata",
@@ -458,6 +468,17 @@ def _build_stage_argv(
         #  writer.s auto-detect on machines with very different
         #  topology.
         argv.extend(["--threads", str(opts.threads)])
+    #  Per-run writer config from the campaign-year database (default on).
+    #  lightdata_writer resolves the ALCOR op_mode (LET=1 / ToT=4 / …) and the
+    #  streaming n_sigma threshold for this run from `--run-database`, so a run
+    #  tagged `op_mode = 4` reconstructs in ToT automatically — no per-run CLI.
+    #  Convention: run id `YYYYMMDD-HHMMSS` → `run-lists/<YYYY>.database.toml`.
+    #  Skipped silently if that file is absent (→ writer defaults: LET, no
+    #  threshold override) and for stages that don't read it.
+    if stage.get("supports_run_database") and len(opts.run_id) >= 4:
+        run_db = repo_root / "run-lists" / f"{opts.run_id[:4]}.database.toml"
+        if run_db.is_file():
+            argv.extend(["--run-database", str(run_db)])
     if opts.force_rebuild:
         argv.append("--force-rebuild")
     if opts.force_upstream:

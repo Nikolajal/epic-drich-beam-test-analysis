@@ -37,6 +37,7 @@
 #include "alcor_spilldata.h"
 #include "alcor_data_streamer.h"
 #include "utility/config_reader.h"
+#include "utility/alcor_op_mode.h"
 // MIST v1.0.0 logger headers are C++20-only and cannot be parsed by ROOT
 // 6.40's (C++17) rootcling.  This header is fed to the dictionary, but only
 // uses mist::logger types through pointers/references — forward declarations
@@ -242,6 +243,29 @@ public:
      * Must be set before the first @ref next_spill call to take effect.
      */
     void set_qa_config(QaConfigStruct v) { _qa_cfg = v; }
+
+    /**
+     * @brief Set the ALCOR operation mode the run was acquired in.
+     *
+     * Decides how the framer interprets the decoded edges. LET (default) keeps
+     * the legacy per-edge path. Every two-crossing mode — ToT, ToT2 AND SR —
+     * pairs edges identically ({0,1},{2,3}; even=primary, odd=secondary) into one
+     * reconstructed hit carrying @ref AlcorFinedataStruct::duration; only the
+     * downstream interpretation of that Δt differs (ToT/ToT2 = time-over-threshold,
+     * SR = slew-rate). See @ref alcor_mode_pairs_edges.
+     */
+    void set_op_mode(AlcorOpMode m) { _op_mode = m; }
+
+    /**
+     * @brief "ToT-as-LET": process only leading (even) TDC edges, dropping the
+     *        trailing (odd) ones, and route the leading edges through the legacy
+     *        LET path (one hit per leading edge, no pairing, no @c duration).
+     *
+     * Only meaningful in a ToT-family mode (@ref alcor_mode_pairs_edges); a no-op
+     * in LET.  Use it to reconstruct a ToT run with the full LET analysis, or as
+     * a cross-check against the paired reconstruction (leading-edge times match).
+     */
+    void set_leading_edge_only(bool v) { _leading_edge_only = v; }
 
     /** @brief Returns the currently active QA configuration. */
     const QaConfigStruct &get_qa_config() const { return _qa_cfg; }
@@ -502,6 +526,12 @@ private:
 
     /** @brief Secondary-trigger detection window (clock cycles). */
     uint16_t _trigger_secondary_window;
+
+    /** @brief ALCOR operation mode the run was acquired in (drives edge pairing). */
+    AlcorOpMode _op_mode = AlcorOpMode::LET;
+
+    /** @brief "ToT-as-LET": leading (even) TDC edges only, no pairing/duration. */
+    bool _leading_edge_only = false;
 
     /// @}
 
