@@ -93,10 +93,11 @@ FetchContent_MakeAvailable(tomlplusplus)
 FetchContent_Declare(
     mist
     GIT_REPOSITORY https://github.com/Nikolajal/mist
-    # Pinned to the first stable MIST release.  mist cut v1.0.0 with a one-time
-    # clean-root reset, so pre-release SHAs no longer exist on the remote — pin
-    # to the tag (immutable) and bump deliberately when adopting newer MIST.
-    GIT_TAG        v1.0.0
+    # Pinned to an immutable MIST release tag; bump deliberately when adopting
+    # newer MIST.  v1.2.0 ("grid-free ring finding") adds ring_finding/
+    # ransac_ring_finder.h, which the streaming RANSAC stage requires — earlier
+    # tags (v1.0.0 / v1.1.0) lack it, so the build does not compile against them.
+    GIT_TAG        v1.2.0
 )
 FetchContent_MakeAvailable(mist)
 
