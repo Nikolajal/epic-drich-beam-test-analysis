@@ -22,7 +22,7 @@
 #include "TH1.h"
 #include "TH2.h"
 
-#include <mist/ring_finding/hough_transform.h>   // Hit, RingResult
+#include <mist/ring_finding/hough_transform.h>    // Hit, RingResult
 #include <mist/ring_finding/ransac_ring_finder.h> // find_rings_ransac
 
 #include "alcor_finedata.h"

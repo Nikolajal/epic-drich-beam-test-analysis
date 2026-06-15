@@ -19,8 +19,8 @@
 #include "TH1.h"
 #include "TH2.h"
 
-#include "alcor_finedata.h"  // AlcorFinedata
-#include "alcor_lightdata.h" // AlcorLightdata
+#include "alcor_finedata.h"               // AlcorFinedata
+#include "alcor_lightdata.h"              // AlcorLightdata
 #include <mist/ring_finding/circle_fit.h> // mist::ring_finding::circle_fit (Taubin)
 #include "utility/radiator_efficiency.h"
 
@@ -29,12 +29,12 @@ namespace btana::recodata
 
 namespace
 {
-    //  Minimal Point2-satisfying adapter so the hit (x, y) arrays can feed
-    //  mist::ring_finding::circle_fit (which wants `.x`/`.y` members).
-    struct FitPoint
-    {
-        double x, y;
-    };
+//  Minimal Point2-satisfying adapter so the hit (x, y) arrays can feed
+//  mist::ring_finding::circle_fit (which wants `.x`/`.y` members).
+struct FitPoint
+{
+    double x, y;
+};
 } // namespace
 
 //  Selection-agnostic fit core.  Given the collected ring hits (the

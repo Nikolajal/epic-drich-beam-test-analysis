@@ -38,7 +38,7 @@ enum TriggerNumber : uint8_t
     TriggerTracking = 102,                ///< Tracking trigger
     TriggerRingFound = 103,               ///< Ring-finding trigger
     _TRIGGER_STREAMING_RING_FOUND_ = 104, ///< Streaming ring-finding trigger
-    _TRIGGER_RANSAC_RING_FOUND_ = 105,     ///< RANSAC-transform ring-finding trigger
+    _TRIGGER_RANSAC_RING_FOUND_ = 105,    ///< RANSAC-transform ring-finding trigger
     TriggerStartOfSpill = 200,            ///< Start-of-spill signal
     _TRIGGER_UNKNOWN_ = 255               ///< Unknown / unmapped trigger
 };
