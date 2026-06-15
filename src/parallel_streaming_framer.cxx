@@ -564,10 +564,11 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
             auto current_fifo = current_data.get_fifo();
 
             // The hardware trigger chip (fifo > 31) is not a sensor lane and
-            // does not fit the per-device 32-bit lane mask: encode_bits asserts
-            // bit < 32 in debug builds and silently drops the bit (1u << 32 UB)
-            // in release.  Only sensor fifos 0–31 participate in the
-            // participants / dead-lane masks.
+            // does not belong in the per-device 32-bit lane mask: without this
+            // guard encode_bits asserts in debug builds (it guard-skips the bit
+            // harmlessly in release, but it still must not pollute the mask).
+            // Only sensor fifos 0–31 participate in the participants / dead-lane
+            // masks.
             if (current_fifo < 32)
             {
                 // Encode participation of lane
@@ -628,7 +629,8 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         for (auto &[key, edges] : tot_edges)
         {
             std::sort(edges.begin(), edges.end(),
-                      [](const TotEdge &a, const TotEdge &b) { return a.global < b.global; });
+                      [](const TotEdge &a, const TotEdge &b)
+                      { return a.global < b.global; });
             auto &out = per_channel[static_cast<uint32_t>(key >> 1)];
             bool open = false;
             TotEdge lead{};
@@ -676,7 +678,8 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
         for (auto &[channel, hits] : per_channel)
         {
             std::sort(hits.begin(), hits.end(),
-                      [](const ReconHit &a, const ReconHit &b) { return a.global < b.global; });
+                      [](const ReconHit &a, const ReconHit &b)
+                      { return a.global < b.global; });
             const int ch_key = static_cast<int>(channel);
             for (auto &rh : hits)
             {

@@ -26,7 +26,11 @@
 #include "TH1.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <future>
+#include <mutex>
 #include <numeric>
+#include <thread>
 
 // ── Timing-trigger coincidence params ─────────────────────────────────────
 // The per-chip alive-channel counts (the same-channel-offset calibration +
@@ -52,7 +56,8 @@ void lightdata_writer(
     std::string streaming_conf_file,
     float streaming_n_sigma_threshold_override,
     int op_mode,
-    bool leading_edge_only)
+    bool leading_edge_only,
+    bool skip_stream_qa)
 {
     //  ROOT thread-safety: protects TROOT/TF1/Fit::Fitter global
     //  state under the framer's multithreaded stream reads (which
@@ -247,8 +252,8 @@ void lightdata_writer(
 
     //  Create streaming framer
     ParallelStreamingFramer framer(filenames, trigger_setup_file, readout_config_file, framer_cfg);
-    framer.set_qa_config(qa_cfg); // enable afterpulse near/far Hit-mask tagging
-    framer.set_op_mode(to_alcor_op_mode(op_mode)); // LET (default) keeps legacy path; ToT pairs edges
+    framer.set_qa_config(qa_cfg);                    // enable afterpulse near/far Hit-mask tagging
+    framer.set_op_mode(to_alcor_op_mode(op_mode));   // LET (default) keeps legacy path; ToT pairs edges
     framer.set_leading_edge_only(leading_edge_only); // ToT-as-LET: leading (even) TDCs only, no pairing
     framer.set_parallel_cores(requested_n_threads);
     framer.resolve_rollover_offsets();  // populates the per-stream, per-spill correction table consumed by the Rollover QA fills below
@@ -538,8 +543,11 @@ void lightdata_writer(
     //  --- ToT QA (mode-gated): only filled / written / rendered for ToT-family
     //  runs.  Declared unconditionally (cheap); wired into the QA bundle and
     //  emitted only when `tot_qa` is true, so LET runs produce no ToT artefacts
-    //  and the dashboard's ToT overview tiles auto-drop.
-    const bool tot_qa = alcor_mode_pairs_edges(to_alcor_op_mode(op_mode));
+    //  and the dashboard's ToT overview tiles auto-drop.  --leading-only also
+    //  disables it: that mode keeps only leading edges (no pairing → every
+    //  duration unset, no orphan bits), so the ToT QA would be degenerate.
+    const bool tot_qa =
+        alcor_mode_pairs_edges(to_alcor_op_mode(op_mode)) && !leading_edge_only;
     //  3.125 ns bins (= 1 coarse count) on half-integer-cc edges — see h_tot_vs_channel.
     RootHist<TH1F> h_tot_spectrum("h_tot_spectrum",
                                   "ToT spectrum;ToT = t_{secondary} - t_{primary} [ns];hits", 65, -1.5625, 201.5625);
@@ -932,17 +940,17 @@ void lightdata_writer(
         //  Streaming-trigger weights
         //  The bundle itself is run-scope (declared above the spill loop),
         //  so spill N's noise frames see spill N-1's already-built weights.
-        //  We only reset the per-spill "have we rebuilt yet" flag here;
-        //  the actual rebuild happens once, at the noise → data boundary
-        //  inside the per-frame loop.  Rebuilding per spill (rather than
-        //  once per run) tracks channels that come online / drop out across
-        //  spills (e.g. an RDO that was off in spill 0 starts contributing
-        //  from spill 1) and channels whose rates drift over the fill.
-        bool streaming_weights_built_for_spill = false;
+        //  The rebuild happens once per spill at the noise → data boundary,
+        //  driven by `build_streaming_weights_for_spill()` in the segment
+        //  driver below.  Rebuilding per spill (rather than once per run)
+        //  tracks channels that come online / drop out across spills (e.g.
+        //  an RDO that was off in spill 0 starts contributing from spill 1)
+        //  and channels whose rates drift over the fill.
         //  (The RANSAC `min_active` / DCR-adaptive floor is gone — the RANSAC
         //  finder gates on inlier significance, not an accumulator vote floor.)
-
-        std::vector<std::tuple<int, float, float>> carry_over_hits;
+        //  Per-frame carry-over is reconstructed independently inside PASS A
+        //  (`reconstruct_streaming_carry_over`), so there is no serial
+        //  frame→frame carry vector threaded through the body any more.
 
         //  Info
         mist::logger::info("(lightdata_writer) Spill " +
@@ -1062,14 +1070,15 @@ void lightdata_writer(
         std::vector<CtHit> ct_hits;
         std::vector<std::size_t> sorted_by_time;
 
-        //  Iterate in ascending frame_id order.  CRITICAL for two state
-        //  carriers built up across this loop:
-        //   - `trigger_last_global_cc[index]`: bookkeeping for the
-        //     consecutive-Δt fills into h_trigger_dt_*.  Out-of-order frame
-        //     ids would yield negative Δts and saturate the log-binned axis.
-        //   - `carry_over_hits`: per-frame state passed forward through
-        //     `run_streaming_trigger_weighted` (frame N's tail informs frame
-        //     N+1's window).  Hash-map iteration order would scramble that.
+        //  Iterate in ascending frame_id order.  CRITICAL for the
+        //  consecutive-Δt bookkeeping built up across this loop:
+        //   - `trigger_last_global_cc[index]`: per-trigger last-seen global
+        //     coarse-count for the consecutive-Δt fills into h_trigger_dt_*.
+        //     Out-of-order frame ids would yield negative Δts and saturate
+        //     the log-binned axis.
+        //  (The streaming-score carry-over no longer threads through the
+        //  body — PASS A reconstructs each frame's carry-in independently via
+        //  `reconstruct_streaming_carry_over`.)
         //  The underlying frame_link is an unordered_map; build the sorted
         //  key vector once per spill (O(N log N) over a few thousand frames,
         //  negligible) and iterate it.
@@ -1123,8 +1132,308 @@ void lightdata_writer(
         hough_qa.ring_peak_votes_vs_active_first_solo = h_streaming_trigger_ring_peak_votes_vs_active_first_solo.get();
         hough_qa.ring_hit_arc_dist_first_solo = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
 
-        for (uint32_t frame_id : main_sorted_keys)
+        // ── Frame-level MT scaffolding (compute / serial-drain split) ────────
+        //  PASS A (parallel) precomputes the streaming score scan + RANSAC
+        //  ring-finding per frame into these slots; the per-frame body then
+        //  replays the buffered side effects serially in frame order.  All
+        //  spilldata access + ROOT-hist fills outside the QA clones happen in
+        //  the serial body.  See triggers/streaming/DISCUSSION § 2.7.
+        const size_t n_frames_in_spill = main_sorted_keys.size();
+        std::vector<StreamingScoreResult> score_results(n_frames_in_spill);
+        std::vector<RansacMutations> ransac_results(n_frames_in_spill);
+
+        //  Pre-fetch each frame's cherenkov / timing-hit vector pointers
+        //  SERIALLY so the parallel passes never touch the spill's
+        //  unordered_map (operator[] is not safe under concurrent access,
+        //  even for keys that already exist).
+        std::vector<std::vector<AlcorFinedataStruct> *> frame_hits(n_frames_in_spill);
+        std::vector<std::vector<AlcorFinedataStruct> *> frame_timing_hits(n_frames_in_spill);
+        for (size_t i = 0; i < n_frames_in_spill; ++i)
         {
+            frame_hits[i] = &spilldata.get_frame_cherenkov_hits(main_sorted_keys[i]);
+            frame_timing_hits[i] = &spilldata.get_frame_timing_hits(main_sorted_keys[i]);
+        }
+
+        //  Noise / data split: main_sorted_keys is ascending, so every
+        //  first-frames (noise) id precedes the data ids.
+        size_t split = 0;
+        while (split < n_frames_in_spill &&
+               static_cast<int>(main_sorted_keys[split]) < framer_cfg.first_frames_trigger)
+            ++split;
+
+        //  Serial position pre-pass: PASS A's RANSAC stage needs cherenkov-hit
+        //  positions, so assign them all up front (cheap map lookup per hit;
+        //  same total work the per-frame body used to do inline, just hoisted
+        //  ahead of the parallel pass).
+        auto assign_positions_for_spill = [&]()
+        {
+            for (size_t i = 0; i < n_frames_in_spill; ++i)
+                for (auto &hit_struct : *frame_hits[i])
+                    current_mapping.assign_position(hit_struct);
+        };
+
+        //  Per-frame RANSAC seed-trigger base list (hardware + TIMING, in the
+        //  order the serial body would carry them) — computed serially before
+        //  PASS A so the parallel RANSAC compute can drive off it without
+        //  touching the spill.  The streaming self-trigger (emitted by the
+        //  score stage) is appended per frame inside PASS A from
+        //  score_results.  TIMING is decided here by exactly the same pure
+        //  function the body uses (a copy of the chip-coincidence logic with
+        //  NO QA fills / DCR side effects — the body still emits TIMING and
+        //  fills the timing QA itself, idempotently).
+        std::vector<std::vector<TriggerEvent>> seed_triggers_base(n_frames_in_spill);
+        auto build_seed_triggers_base = [&]()
+        {
+            for (size_t i = 0; i < n_frames_in_spill; ++i)
+            {
+                const uint32_t frame_id = main_sorted_keys[i];
+                std::vector<TriggerEvent> &seeds = seed_triggers_base[i];
+                //  Hardware (framer-provided) triggers already present on the
+                //  frame, in their stored order.
+                const auto &existing = spilldata.get_frame_trigger_hits(frame_id);
+                seeds.assign(existing.begin(), existing.end());
+
+                //  Replicate the body's TIMING decision (chip0–chip1
+                //  coincidence + Δt window).  Pure read of the frame's timing
+                //  hits; appended AFTER the hardware triggers, exactly where
+                //  the serial body emits it.
+                int t0 = 0, t1 = 0;
+                float s0 = 0.f, s1 = 0.f;
+                std::unordered_set<int> seen0, seen1;
+                for (const auto &raw_hit : *frame_timing_hits[i])
+                {
+                    AlcorFinedata Hit(raw_hit);
+                    const int chip = Hit.get_chip();
+                    const int channel = Hit.get_global_channel_index();
+                    const float time_ns = Hit.get_time_ns();
+                    if (timing_chip_0_id >= 0 && chip == timing_chip_0_id &&
+                        seen0.insert(channel).second)
+                    {
+                        ++t0;
+                        s0 += time_ns;
+                    }
+                    if (timing_chip_1_id >= 0 && chip == timing_chip_1_id &&
+                        seen1.insert(channel).second)
+                    {
+                        ++t1;
+                        s1 += time_ns;
+                    }
+                }
+                if (t0 > 0 && t1 > 0)
+                {
+                    const float mean0 = s0 / t0;
+                    const float mean1 = s1 / t1;
+                    const float ref_timing = (mean0 + mean1) / 2.f;
+                    const float delta_timing = mean1 - mean0;
+                    const bool timing_available =
+                        (t0 == timing_chip0_alive) && (t1 == timing_chip1_alive) &&
+                        (std::fabs(delta_timing - timing_delta_center) <
+                         timing_delta_nsigma * timing_delta_window);
+                    if (timing_available)
+                        seeds.push_back({static_cast<uint8_t>(TriggerTiming),
+                                         static_cast<uint16_t>(framer_cfg.frame_size / 2),
+                                         ref_timing});
+                }
+            }
+        };
+
+        //  Per-thread clones of the RANSAC QA histogram bundle.  ROOT
+        //  histograms are not thread-safe, so each worker fills its own
+        //  clones and `Add`s them into the canonical hists at the end of the
+        //  pass (under a mutex).  Deterministic hists (ring X/Y/R, peak
+        //  votes, arc-dist, nrings) merge bit-exactly; the pixel-jittered
+        //  hitmaps are statistically identical (already non-reproducible via
+        //  `mist::Rnd`'s random_device seed).
+        struct RansacQAClones
+        {
+            StreamingRansacQA qa;
+            std::vector<std::pair<TH1 *, TH1 *>> pairs; // (clone, canonical)
+            explicit RansacQAClones(const StreamingRansacQA &c)
+            {
+                //  Clone @p src into @p dst (an empty, directory-less copy) and
+                //  register the (clone, canonical) pair for the merge / delete.
+                auto clone_into = [&](auto *&dst, auto *src)
+                {
+                    if (!src)
+                    {
+                        dst = nullptr;
+                        return;
+                    }
+                    using T = std::remove_pointer_t<decltype(src)>;
+                    T *clone = static_cast<T *>(src->Clone());
+                    clone->Reset();
+                    clone->SetDirectory(nullptr);
+                    dst = clone;
+                    pairs.emplace_back(static_cast<TH1 *>(clone), static_cast<TH1 *>(src));
+                };
+                clone_into(qa.full_hitmap, c.full_hitmap);
+                clone_into(qa.time_cut_hitmap, c.time_cut_hitmap);
+                clone_into(qa.nrings, c.nrings);
+                clone_into(qa.ring_finder_hitmap, c.ring_finder_hitmap);
+                clone_into(qa.first_hitmap, c.first_hitmap);
+                clone_into(qa.second_hitmap, c.second_hitmap);
+                clone_into(qa.ring_X_first_ransac, c.ring_X_first_ransac);
+                clone_into(qa.ring_Y_first_ransac, c.ring_Y_first_ransac);
+                clone_into(qa.ring_R_first_ransac, c.ring_R_first_ransac);
+                clone_into(qa.ring_X_second_ransac, c.ring_X_second_ransac);
+                clone_into(qa.ring_Y_second_ransac, c.ring_Y_second_ransac);
+                clone_into(qa.ring_R_second_ransac, c.ring_R_second_ransac);
+                clone_into(qa.ring_peak_votes_vs_active_first, c.ring_peak_votes_vs_active_first);
+                clone_into(qa.ring_peak_votes_vs_active_second, c.ring_peak_votes_vs_active_second);
+                clone_into(qa.ring_hit_arc_dist_first, c.ring_hit_arc_dist_first);
+                clone_into(qa.ring_hit_arc_dist_second, c.ring_hit_arc_dist_second);
+                clone_into(qa.first_hitmap_dual, c.first_hitmap_dual);
+                clone_into(qa.ring_X_first_dual, c.ring_X_first_dual);
+                clone_into(qa.ring_Y_first_dual, c.ring_Y_first_dual);
+                clone_into(qa.ring_R_first_dual, c.ring_R_first_dual);
+                clone_into(qa.ring_X_first_ransac_dual, c.ring_X_first_ransac_dual);
+                clone_into(qa.ring_Y_first_ransac_dual, c.ring_Y_first_ransac_dual);
+                clone_into(qa.ring_R_first_ransac_dual, c.ring_R_first_ransac_dual);
+                clone_into(qa.ring_peak_votes_vs_active_first_dual, c.ring_peak_votes_vs_active_first_dual);
+                clone_into(qa.ring_hit_arc_dist_first_dual, c.ring_hit_arc_dist_first_dual);
+                clone_into(qa.first_hitmap_solo, c.first_hitmap_solo);
+                clone_into(qa.ring_X_first_solo, c.ring_X_first_solo);
+                clone_into(qa.ring_Y_first_solo, c.ring_Y_first_solo);
+                clone_into(qa.ring_R_first_solo, c.ring_R_first_solo);
+                clone_into(qa.ring_X_first_ransac_solo, c.ring_X_first_ransac_solo);
+                clone_into(qa.ring_Y_first_ransac_solo, c.ring_Y_first_ransac_solo);
+                clone_into(qa.ring_R_first_ransac_solo, c.ring_R_first_ransac_solo);
+                clone_into(qa.ring_peak_votes_vs_active_first_solo, c.ring_peak_votes_vs_active_first_solo);
+                clone_into(qa.ring_hit_arc_dist_first_solo, c.ring_hit_arc_dist_first_solo);
+            }
+            void merge_into()
+            {
+                for (auto &[clone, canon] : pairs)
+                    canon->Add(clone);
+            }
+            ~RansacQAClones()
+            {
+                for (auto &[clone, canon] : pairs)
+                    delete clone;
+            }
+            RansacQAClones(const RansacQAClones &) = delete;
+            RansacQAClones &operator=(const RansacQAClones &) = delete;
+        };
+
+        //  PASS A — compute the streaming score AND RANSAC ring-finding for
+        //  frames [lo, hi) against bundle @p w.  Carry-over is reconstructed
+        //  per frame from the previous frame's trailing window (so frames are
+        //  independent); the group's first frame starts with empty carry,
+        //  matching the serial path's carry reset at the spill boundary and
+        //  at the bundle rebuild.  Dispatched to a thread pool; each worker
+        //  reads only its frame's (and its predecessor's) hits plus the
+        //  read-only bundle + seed-trigger base, owns its own QA-hist clones
+        //  (RANSAC is grid-free — no per-thread finder state), and writes
+        //  solely into its own `score_results` / `ransac_results` slots.
+        auto compute_frame_kernels = [&](size_t lo, size_t hi,
+                                         const StreamingTriggerWeights &w)
+        {
+            if (hi <= lo)
+                return;
+            const size_t n = hi - lo;
+            const size_t n_threads = std::max<size_t>(
+                1, std::min<size_t>(
+                       requested_n_threads > 0
+                           ? static_cast<size_t>(requested_n_threads)
+                           : std::thread::hardware_concurrency(),
+                       n));
+            auto run_one = [&](size_t i, const StreamingRansacQA &qa)
+            {
+                std::vector<std::tuple<int, float, float>> carry_in;
+                if (i > lo)
+                    carry_in = reconstruct_streaming_carry_over(
+                        *frame_hits[i - 1], streaming_trigger_cfg.time_window_ns,
+                        w, framer_cfg.frame_length_ns());
+                score_results[i] = compute_streaming_score_pure(
+                    *frame_hits[i], streaming_trigger_cfg.time_window_ns, w,
+                    streaming_trigger_cfg.n_sigma_threshold, carry_in,
+                    framer_cfg.frame_length_ns());
+                //  RANSAC runs only when this frame will be saved — i.e. it
+                //  carries a trigger.  A frame is saved iff it has any seed
+                //  trigger (hardware / TIMING) OR the score stage fired a
+                //  streaming trigger.  Build the per-frame seed list = base
+                //  (hardware + TIMING) + the streaming triggers from the
+                //  score result, in that order (matching the serial body).
+                const bool has_seed = !seed_triggers_base[i].empty() ||
+                                      score_results[i].fired;
+                if (!has_seed)
+                    return;
+                std::vector<TriggerEvent> seeds = seed_triggers_base[i];
+                for (const auto &trg : score_results[i].streaming_triggers)
+                    seeds.push_back(trg);
+                ransac_results[i] = run_streaming_ransac_compute(
+                    *frame_hits[i], seeds, score_results[i].streaming_mask_indices,
+                    ispill, streaming_trigger_cfg.time_window_ns,
+                    streaming_ransac_cfg, qa,
+                    w.weight_by_channel);
+            };
+            if (n_threads <= 1)
+            {
+                for (size_t i = lo; i < hi; ++i)
+                    run_one(i, hough_qa);
+            }
+            else
+            {
+                std::atomic<size_t> next{lo};
+                std::mutex merge_mtx;
+                std::vector<std::future<void>> pool;
+                pool.reserve(n_threads);
+                for (size_t t = 0; t < n_threads; ++t)
+                    pool.push_back(std::async(std::launch::async, [&]()
+                                              {
+                        //  Per-worker QA clones; merged under the mutex at end.
+                        RansacQAClones local_qa(hough_qa);
+                        for (size_t i = next.fetch_add(1); i < hi;
+                             i = next.fetch_add(1))
+                            run_one(i, local_qa.qa);
+                        std::lock_guard<std::mutex> lk(merge_mtx);
+                        local_qa.merge_into(); }));
+                for (auto &f : pool)
+                    f.get();
+            }
+        };
+
+        //  Build the streaming-trigger weight bundle once per spill, between
+        //  the noise and data segments — the same accumulated state the
+        //  inline build used to see at the first data frame: every noise
+        //  frame's full body has run (TIMING / streaming / RANSAC triggers
+        //  emitted, DCR profile filled).  In-beam sideband window
+        //  [-300, -50] ns: 250 ns wide, 50 ns guard band, left side only
+        //  (the right side carries the afterpulse tail).
+        auto build_streaming_weights_for_spill = [&]()
+        {
+            static const std::set<uint8_t> kInBeamExclude = {
+                TriggerFirstFrames,
+                TriggerStartOfSpill,
+                _TRIGGER_STREAMING_RING_FOUND_,
+                _TRIGGER_RANSAC_RING_FOUND_,
+            };
+            StreamingInBeamRates in_beam_rates =
+                compute_streaming_inbeam_rates(
+                    spilldata, /*sideband_lo_ns=*/-300.f, /*sideband_hi_ns=*/-50.f,
+                    framer_cfg.frame_length_ns(), kInBeamExclude);
+            streaming_weights = build_streaming_trigger_weights(
+                h_dcr_per_channel.get(),
+                streaming_trigger_cfg.time_window_ns,
+                framer_cfg.frame_length_ns(),
+                streaming_trigger_cfg.min_noise_hits,
+                &active_sensors,
+                in_beam_rates.empty() ? nullptr : &in_beam_rates);
+            //  C7.6 — multiplicity cap is config-owned, wired onto the bundle.
+            streaming_weights.max_hits_per_window =
+                streaming_trigger_cfg.max_hits_per_window;
+            mist::logger::info("(streaming_trigger) Spill " +
+                               std::to_string(ispill) +
+                               ": active=" + std::to_string(active_sensors.size()) +
+                               ", modelled=" + std::to_string(streaming_weights.n_channels_modelled) +
+                               ", in_beam_ch=" + std::to_string(in_beam_rates.size()) +
+                               ", E[S]=" + std::to_string(streaming_weights.expected_score_per_window) +
+                               ", σ_S=" + std::to_string(streaming_weights.sigma_score_per_window));
+        };
+
+        auto process_frame_body = [&](size_t pos)
+        {
+            const uint32_t frame_id = main_sorted_keys[pos];
             //  Update post-processing subtask bar periodically to avoid render overhead
             if (postproc_progress % 100000 == 0)
                 progress_postprocessing.update(
@@ -1136,9 +1445,9 @@ void lightdata_writer(
             auto &timing_hits = spilldata.get_frame_timing_hits(frame_id);
             auto &triggers_in_frame = spilldata.get_frame_trigger_hits(frame_id);
 
-            //  ----    ----    ----    Cherenkov hits  ----    ----    ----
-            for (auto &current_cherenkov_hit_struct : cherenkov_hits)
-                current_mapping.assign_position(current_cherenkov_hit_struct);
+            //  Cherenkov-hit positions are assigned in the serial pre-pass
+            //  before PASS A (the parallel score + RANSAC compute needs them);
+            //  see `assign_positions_for_spill` in the segment driver below.
 
             //  ----    ----    ----    Timing hits  ----    ----    ----
             //  Utilities
@@ -1238,94 +1547,20 @@ void lightdata_writer(
             //  spill we're in: first-frames → noise sample; rest → data sample.
             const bool is_first_frames_window =
                 (static_cast<int>(frame_id) < framer_cfg.first_frames_trigger);
-            //  Build streaming weights exactly once per spill, at the moment
-            //  the first data frame is encountered (i.e. immediately after
-            //  the spill's 5000 first-frames trigger frames have completed
-            //  their DCR fills into h_dcr_per_channel).  Cumulative across
-            //  spills + this spill's own noise data — captures channels that
-            //  come online late (RDO previously off) and channels that drift.
-            //  During the first-frames window itself, `streaming_weights`
-            //  remains empty: the noise QA hist fills at n_σ = 0 for spill 0
-            //  but accumulates real distributions from spill 1 onward (where
-            //  prior spills' DCR informs the bundle once it's built).
-            if (!is_first_frames_window && !streaming_weights_built_for_spill)
-            {
-                //  In-beam sideband baseline.  Anchor on every "real"
-                //  hardware trigger fired so far in the spill (FirstFrames
-                //  and StartOfSpill are synthetic markers; streaming /
-                //  RANSAC triggers don't exist yet at this point — the
-                //  score loop below is what emits them — so the exclusion
-                //  list mostly guards against future re-call paths).
-                //  Window [-300 ns, -50 ns] is 250 ns wide with a 50 ns
-                //  guard band against the trigger edge, on the LEFT side
-                //  only because the right side has the afterpulse tail.
-                static const std::set<uint8_t> kInBeamExclude = {
-                    TriggerFirstFrames,
-                    TriggerStartOfSpill,
-                    _TRIGGER_STREAMING_RING_FOUND_,
-                    _TRIGGER_RANSAC_RING_FOUND_,
-                };
-                StreamingInBeamRates in_beam_rates =
-                    compute_streaming_inbeam_rates(
-                        spilldata,
-                        /*sideband_lo_ns=*/-300.f,
-                        /*sideband_hi_ns=*/-50.f,
-                        framer_cfg.frame_length_ns(),
-                        kInBeamExclude);
-
-                streaming_weights = build_streaming_trigger_weights(
-                    h_dcr_per_channel.get(),
-                    streaming_trigger_cfg.time_window_ns,
-                    framer_cfg.frame_length_ns(),
-                    streaming_trigger_cfg.min_noise_hits,
-                    &active_sensors,      // restrict to this spill's participants
-                    in_beam_rates.empty() // no in-beam anchors → DCR-only
-                        ? nullptr
-                        : &in_beam_rates);
-                //  C7.6 — surface the operator's multiplicity cap (0 =
-                //  disabled, fully backwards-compatible) to the trigger
-                //  hot loop via the bundle.  `build_streaming_trigger_
-                //  weights` doesn't know about config (it operates on
-                //  histograms + scalars), so the caller wires it.
-                streaming_weights.max_hits_per_window =
-                    streaming_trigger_cfg.max_hits_per_window;
-                streaming_weights_built_for_spill = true;
-
-                //  C3.3: clear carry-over from the previous bundle's
-                //  running_score.  Any hits that crossed the spill
-                //  boundary were weighted against the OLD E[S] / σ_S;
-                //  mixing them into the new bundle's window biases the
-                //  first frames of this spill (typically a >5σ outlier
-                //  stripe at frame_id == first_frames_trigger).  Cheap
-                //  to clear — the next call to
-                //  run_streaming_trigger_weighted repopulates it.
-                carry_over_hits.clear();
-                //  Sanity log — confirms the active-channel filter is firing:
-                //  n_modelled should equal min(N_active_this_spill, N_measured).
-                //  If it equals N_measured even when some RDOs are off this
-                //  spill, the filter isn't being applied.  Now also logs the
-                //  in-beam baseline channel count so the operator sees
-                //  whether the sideband bundle is contributing.
-                mist::logger::info("(streaming_trigger) Spill " +
-                                   std::to_string(ispill) +
-                                   ": active=" + std::to_string(active_sensors.size()) +
-                                   ", modelled=" + std::to_string(streaming_weights.n_channels_modelled) +
-                                   ", in_beam_ch=" + std::to_string(in_beam_rates.size()) +
-                                   ", E[S]=" + std::to_string(streaming_weights.expected_score_per_window) +
-                                   ", σ_S=" + std::to_string(streaming_weights.sigma_score_per_window));
-            }
+            //  Streaming-score scan: precomputed in PASS A (`score_results`)
+            //  and replayed here in frame order.  The bundle build that used
+            //  to live inline (at the first data frame) is hoisted to
+            //  `build_streaming_weights_for_spill()`, invoked by the segment
+            //  driver between the noise and data segments — i.e. at the same
+            //  accumulated-state point (after every noise frame's full body
+            //  has emitted its TIMING / streaming / RANSAC triggers and filled
+            //  the DCR profile).  QA score-hist destination still depends on
+            //  the window: first-frames → noise sample; rest → data sample.
             TH1F *h_score_for_this_frame = is_first_frames_window
                                                ? h_streaming_score_noise.get()
                                                : h_streaming_score_data.get();
-            run_streaming_trigger_weighted(
-                spilldata,
-                frame_id,
-                streaming_trigger_cfg.time_window_ns,
-                streaming_weights,
-                streaming_trigger_cfg.n_sigma_threshold,
-                carry_over_hits,
-                h_score_for_this_frame,
-                framer_cfg.frame_length_ns());
+            drain_streaming_score(score_results[pos], spilldata, frame_id,
+                                  h_score_for_this_frame);
 
             //  ── In-beam background score sample ──────────────────────
             //  For each HARDWARE trigger in this frame, score a fixed
@@ -1392,16 +1627,38 @@ void lightdata_writer(
 
                 //  ---
                 //  --- Streaming Trigger — stage 2 (RANSAC ring finder).
-                //  Implementation in triggers/streaming/ransac.cxx.
-                //  `hough_qa` is constructed above the per-frame loop
-                //  (C6.3) — same pointers every iteration.
-                run_streaming_ransac_trigger(
-                    spilldata, frame_id,
-                    streaming_trigger, ispill,
-                    streaming_trigger_cfg.time_window_ns,
-                    streaming_ransac_cfg,
-                    hough_qa,
-                    streaming_weights.weight_by_channel);
+                //  The expensive find_rings_ransac + dedup + QA fills ran in
+                //  PASS A (`ransac_results[pos]`, computed in parallel); here
+                //  we just replay the buffered spill mutations serially, in
+                //  frame order, AFTER the streaming-score drain above — so the
+                //  RANSAC ring-tag bits OR onto the streaming-ring bit and the
+                //  trigger order stays streaming-then-RANSAC.  Implementation
+                //  in triggers/streaming/ransac.cxx.
+                const RansacMutations &ransac_mut = ransac_results[pos];
+                streaming_trigger += ransac_mut.streaming_trigger_count_inc;
+                for (const auto &[hit_idx, bit] : ransac_mut.mask_writes)
+                {
+                    AlcorFinedata tagged(cherenkov_hits[hit_idx]);
+                    tagged.add_mask_bit(bit);
+                    cherenkov_hits[hit_idx].HitMask = tagged.get_mask();
+                }
+                {
+                    auto &frame_ld = spilldata.get_frame_link()[frame_id];
+                    if (ransac_mut.has_ring1)
+                    {
+                        frame_ld.ring1_cx = ransac_mut.r1_cx;
+                        frame_ld.ring1_cy = ransac_mut.r1_cy;
+                        frame_ld.ring1_radius = ransac_mut.r1_r;
+                    }
+                    if (ransac_mut.has_ring2)
+                    {
+                        frame_ld.ring2_cx = ransac_mut.r2_cx;
+                        frame_ld.ring2_cy = ransac_mut.r2_cy;
+                        frame_ld.ring2_radius = ransac_mut.r2_r;
+                    }
+                }
+                for (const auto &trg : ransac_mut.ransac_triggers)
+                    spilldata.add_trigger_to_frame(frame_id, trg);
 
                 //  ---
                 //  --- Trigger QA
@@ -1866,6 +2123,44 @@ void lightdata_writer(
                         ct_hits, sorted_by_time, qa_cfg, qa_hists);
                 }
             }
+        }; // end process_frame_body lambda
+
+        //  ── Segment driver: noise body → build weights → data body ───────
+        if (skip_stream_qa)
+        {
+            //  Fast path: keep frames carrying a framer-provided trigger only;
+            //  no score / RANSAC / QA.  See the @p skip_stream_qa contract on
+            //  the writer's header.
+            for (size_t pos = 0; pos < n_frames_in_spill; ++pos)
+                if (!spilldata.has_trigger(main_sorted_keys[pos]))
+                    spilldata.do_not_write_frame(main_sorted_keys[pos]);
+        }
+        else
+        {
+            //  Assign cherenkov-hit positions + build per-frame RANSAC seed
+            //  bases (hardware + TIMING) for the whole spill before the
+            //  parallel passes read them.
+            assign_positions_for_spill();
+            build_seed_triggers_base();
+            //  Noise segment: score + RANSAC against the prior spill's bundle
+            //  (empty on spill 0), then run the full per-frame body serially
+            //  so the DCR profile + TIMING / streaming / RANSAC triggers
+            //  accumulate.
+            const StreamingTriggerWeights prev_weights = streaming_weights;
+            compute_frame_kernels(0, split, prev_weights);
+            for (size_t pos = 0; pos < split; ++pos)
+                process_frame_body(pos);
+            //  Build the bundle from this spill's complete noise DCR (skipped
+            //  when there are no data frames — nothing would consume it).
+            //  Mirrors the serial path's C3.3 carry-over clear at the bundle
+            //  rebuild (the MT path reconstructs carry per frame, so there is
+            //  no cross-bundle carry to clear, but keep the flag/log path).
+            if (split < n_frames_in_spill)
+                build_streaming_weights_for_spill();
+            //  Data segment: score + RANSAC against the freshly built bundle.
+            compute_frame_kernels(split, n_frames_in_spill, streaming_weights);
+            for (size_t pos = split; pos < n_frames_in_spill; ++pos)
+                process_frame_body(pos);
         }
         progress_postprocessing.update(1, 1);
 
@@ -1888,6 +2183,27 @@ void lightdata_writer(
     progress_postprocessing.finish(/*flush=*/false);
     progress_bars.finish();
     mist::logger::info("(lightdata_writer) Finished spills loop, writing to file");
+
+    //  --skip-stream-qa fast path: the per-frame QA loop was bypassed, so
+    //  every QA histogram is empty and the finalization tail below (trigger
+    //  / timing / DCR canvases, AnalysisResults publish) would render
+    //  degenerate output or divide by zero.  Short-circuit: write the
+    //  raw-hits tree + fine-calibration artefacts the framer produced, then
+    //  return.  See the matching `if (skip_stream_qa)` guard in the
+    //  segment driver above.
+    if (skip_stream_qa)
+    {
+        outfile->cd();
+        lightdata_tree->Write();
+        framer.get_fine_tune_distribution()->Write("h_fine_calib");
+        //  TOML v3 only — write_calib_to_file hard-errors on a non-.toml path.
+        AlcorFinedata::write_calib_to_file((base_dir / "fine_calib.toml").string());
+        mist::logger::warning(
+            "(lightdata_writer) --skip-stream-qa: wrote raw-hits lightdata tree "
+            "only; all QA (streaming/RANSAC/timing/DCR/trigger) was skipped and "
+            "hit positions are unassigned");
+        return;
+    }
     //  Diagnostic — surface the rollover-straddling-frame rate.
     //  Expected ≈ frame_size / rollover (3 % at default settings)
     //  *of pairs that crossed*.  A radically different number is a

@@ -34,8 +34,12 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "alcor_spilldata.h"
+#include "alcor_finedata.h"        // AlcorFinedataStruct
+#include "triggers/events.h"       // TriggerEvent
 #include "utility/config_reader.h" // StreamingRansacConfigStruct
 
 namespace mist
@@ -204,6 +208,74 @@ void run_streaming_ransac_trigger(
     AlcorSpilldata &spilldata,
     uint32_t frame_id,
     int &streaming_trigger_count,
+    int ispill,
+    float time_window_ns,
+    const StreamingRansacConfigStruct &cfg,
+    const StreamingRansacQA &qa,
+    const std::unordered_map<int, float> &channel_score_weights);
+
+// ─────────────────────────────────────────────────────────────────────
+//  Frame-level multithreading: parallel find_rings_ransac + serial drain
+//
+//  `run_streaming_ransac_trigger` reads the frame's hits + triggers from
+//  the spill and writes back to it (ring-tag mask bits, per-frame ring
+//  geometry, `_TRIGGER_RANSAC_RING_FOUND_` events) — none of which is safe
+//  under the parallel per-frame pass (the spill's unordered_map and ROOT
+//  histograms are not thread-safe).  `run_streaming_ransac_compute` does
+//  the expensive work (candidate collection + `find_rings_ransac` + dedup +
+//  ring tagging) on a worker thread, reading only its frame's hits + the
+//  seed triggers, filling the (per-thread-cloned) QA bundle, and BUFFERING
+//  the spill mutations into a @ref RansacMutations record.  The caller
+//  replays those mutations serially, in frame order, after the
+//  streaming-score drain (so the RANSAC ring-tag bits OR onto the
+//  streaming-ring bit and the trigger order stays streaming-then-RANSAC).
+//
+//  RANSAC is grid-free (`find_rings_ransac` is a free function with no
+//  shared accumulator), so the ONLY per-thread state is the per-thread QA
+//  clone bundle — there is no per-thread HoughTransform.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Spill mutations a frame's RANSAC stage would apply, deferred for serial
+/// replay.
+struct RansacMutations
+{
+    /// RANSAC ring-tag bits to OR onto a cherenkov hit's mask: (hit index in
+    /// the frame's `cherenkov_hits`, bits = HitmaskRansacRingTag{First,Second}).
+    /// OR (not overwrite) so the streaming-ring bit set by the score drain
+    /// survives.
+    std::vector<std::pair<int, HitMask>> mask_writes;
+
+    /// `_TRIGGER_RANSAC_RING_FOUND_` events (one per ring), appended via
+    /// `add_trigger_to_frame` after the streaming trigger.
+    std::vector<TriggerEvent> ransac_triggers;
+
+    /// Increment to the run-wide streaming-self-trigger counter (one per
+    /// `_TRIGGER_STREAMING_RING_FOUND_` seed processed).
+    int streaming_trigger_count_inc = 0;
+
+    /// Per-frame ring geometry to propagate to the frame link for recodata
+    /// seeding.  Only the slots whose `has_ring*` flag is set are written;
+    /// these keep the strongest (peak_votes) ring per slot across all seed
+    /// triggers in the frame, matching the serial `best_ring_votes` logic.
+    bool has_ring1 = false;
+    bool has_ring2 = false;
+    float r1_cx = 0.f, r1_cy = 0.f, r1_r = 0.f;
+    float r2_cx = 0.f, r2_cy = 0.f, r2_r = 0.f;
+};
+
+/// Pure-compute RANSAC stage for one frame.  Thread-safe given a per-thread
+/// @p qa clone bundle; reads only @p frame_hits (positions must already be
+/// assigned), the @p seed_triggers to drive (hardware + TIMING + streaming,
+/// in the SAME order the serial path would iterate them), and @p
+/// streaming_mask_indices naming the hits the score flagged (used for the
+/// `full_hitmap` QA, since the streaming-ring bits are not yet written to
+/// the hits during the parallel pass).  Runs `find_rings_ransac` + dedup +
+/// tagging, fills the QA clones, and returns the buffered spill mutations
+/// for serial replay.
+RansacMutations run_streaming_ransac_compute(
+    const std::vector<AlcorFinedataStruct> &frame_hits,
+    const std::vector<TriggerEvent> &seed_triggers,
+    const std::vector<int> &streaming_mask_indices,
     int ispill,
     float time_window_ns,
     const StreamingRansacConfigStruct &cfg,
