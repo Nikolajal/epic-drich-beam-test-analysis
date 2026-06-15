@@ -7,14 +7,20 @@
 [[trigger]]
 name   = "luca_and_finger"   # human-readable label used in output trees and logs
 index  = 0                   # trigger index (0-based); referenced in hit bitmasks
-device = 196                 # ALCOR device ID that provides the trigger signal
+device = 200                 # ALCOR device ID that provides the trigger signal (kc705)
 delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
 
+# The trigger source moved across the campaign: the 2025 runs route luca_and_finger
+# through the rdo (device 196), the 2026 runs through the kc705 (device 200).  Both
+# are declared with the SAME index 0 so the per-device lookup resolves either era to
+# the same trigger — only one device actually fires in a given run, so there is no
+# double-count.  (The trigger word also moved FIFO, 99→32; the framer detects the
+# trigger FIFO by range, any FIFO > 31, so that drift needs no config.)
 [[trigger]]
-name   = "broad_scintillator"   # human-readable label used in output trees and logs
-index  = 1                      # trigger index (0-based); referenced in hit bitmasks
-device = 197                    # ALCOR device ID that provides the trigger signal
-delay  = 117                    # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+name   = "luca_and_finger"   # same trigger, 2025 routing
+index  = 0                   # SAME index as the device-200 entry above
+device = 196                 # ALCOR device ID (rdo) for the 2025 runs
+delay  = 117                 # propagation delay (cc)
 
 ##
 # Everything below this line is ignored by the parser.

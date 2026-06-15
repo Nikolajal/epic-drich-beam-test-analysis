@@ -72,7 +72,7 @@ class TomlForm(QtWidgets.QWidget):
         self._table_layouts: dict[tuple, "TableLayout"] = {}
         # Per-load section title overrides: ``{path_tuple: title}``.
         # Used to give proper-noun capitalisation to titles the
-        # prettifier can't infer (e.g. "Streaming Hough", "Cherenkov").
+        # prettifier can't infer (e.g. "Streaming RANSAC", "Cherenkov").
         self._section_titles: dict[tuple, str] = {}
         # Per-load parameter descriptions: dashboard-curated text
         # that *wins* over the inline TOML comment.  The TOML comment
@@ -161,7 +161,7 @@ class TomlForm(QtWidgets.QWidget):
                 key_str = getattr(key, "key", str(key)).strip()
                 sub_path = (*prefix, key_str)
                 # Section title: override registry first (e.g. proper-
-                # noun cases like "Streaming Hough"), then the auto-
+                # noun cases like "Streaming RANSAC"), then the auto-
                 # prettifier as a fallback.
                 title = self._section_titles.get(sub_path) \
                     or _format_group_title(key_str, value)

@@ -31,7 +31,6 @@
 //  radial(R) observables filled inline.
 #include "utility/radiator_efficiency.h"
 #include "analysis_results.h"
-#include "utility/circle_fit.h"
 #include "utility/config_dump.h"
 #include "utility/config_reader.h"
 #include "utility/qa_publish.h" // util::qa::pdf_path + crop_pdf_inplace
@@ -101,7 +100,7 @@ void recodata_writer(
         // Forward the conf paths that recodata's CLI saw (resolved by
         // util::conf_path under --QA in main()).  trigger_conf, framer_conf,
         // and streaming_conf cascade — they affect lightdata's framing
-        // + streaming-Hough trigger and need to follow the same QA-mode
+        // + streaming-RANSAC trigger and need to follow the same QA-mode
         // resolution as the rest of the pipeline.  Other lightdata-only
         // paths (readout, fine-calib) stay at lightdata's own defaults
         // because recodata's CLI doesn't expose them and there is no QA
@@ -344,7 +343,7 @@ void recodata_writer(
     //
     //  Pipeline:
     //    init   : coverage map from `index_to_hit_xy` (geometry-only).
-    //    frame  : for each frame with a Hough ring trigger, run
+    //    frame  : for each frame with a RANSAC ring trigger, run
     //             `fit_circle` on the lightdata-tagged hits to recover
     //             per-event (cx, cy, R), then fill N_hits / N_photons /
     //             f_coverage / radial(R).  No `TriggerEvent` schema
@@ -356,11 +355,11 @@ void recodata_writer(
     //  V1 scope: no φ-gap split, no sensor-model split, no time-window
     //  variants.  All deferred to a finer-analysis follow-up.
     auto recodata_cfg = recodata_conf_reader(streaming_conf, mapping_conf);
-    //  Reuse the lightdata-side streaming/Hough QA knob for the centre
+    //  Reuse the lightdata-side streaming/RANSAC QA knob for the centre
     //  (c_x, c_y) QA half-range so both writers stay in lock-step.  We
-    //  only read the one field we need; the rest of streaming_hough_cfg
+    //  only read the one field we need; the rest of streaming_ransac_cfg
     //  is consumed upstream by lightdata_writer on the cascade path.
-    auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf);
+    auto streaming_ransac_cfg = streaming_ransac_conf_reader(streaming_conf);
 
     //  Captured-once state for the per-frame, per-ring compute
     //  helpers (`compute_ring_fit_timewindow`, `fill_ring_hists`).
@@ -378,7 +377,7 @@ void recodata_writer(
     //  During the spill loop we
     //  accumulate two pieces of information per spill:
     //
-    //    * `n_physics_per_spill[i]` — number of HOUGH_RING_FOUND
+    //    * `n_physics_per_spill[i]` — number of RANSAC_RING_FOUND
     //      triggers in spill i.  Sets the spill's weight in the
     //      coverage map: `weight_i = n_physics_i / Σ n_physics`.
     //    * `active_channels_per_spill[i]` — set of channel keys with
@@ -453,6 +452,19 @@ void recodata_writer(
     RootHist<TH1F> h_radial_first_dual_smeared("h_radial_first_dual_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_radial_first_solo_smeared("h_radial_first_solo_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
 
+    //  Wide-arc mode fills the radial hists with per-ring 1/f_coverage
+    //  weights (see fill_ring_hists); enable Sumw2 so the chi²-based radial
+    //  fit downstream sees correct weighted bin errors.  For unit weights
+    //  Sumw2 reproduces the default sqrt(N) errors, so this is a no-op in the
+    //  legacy path — guarded purely to keep the legacy hists untouched.
+    if (recodata_cfg.radial_eff_per_ring_centre)
+        for (TH1F *hp : {h_radial_first.get(), h_radial_second.get(),
+                         h_radial_first_dual.get(), h_radial_first_solo.get(),
+                         h_radial_first_smeared.get(), h_radial_second_smeared.get(),
+                         h_radial_first_dual_smeared.get(),
+                         h_radial_first_solo_smeared.get()})
+            hp->Sumw2();
+
     //  Headline physics observables  These four
     //  per-ring quantities are what beam-test operators care about:
     //    * fitted ring radius (gives Cherenkov angle / velocity / PID),
@@ -463,7 +475,7 @@ void recodata_writer(
     //    * (cx, cy) per ring — beam centre + drift over the run.
     //
     //  Same R binning as h_radial_* so the two can be overlaid in
-    //  TBrowser.  cx/cy half-range comes from streaming_hough_cfg
+    //  TBrowser.  cx/cy half-range comes from streaming_ransac_cfg
     //  (`centre_xy_half_range_mm`), shared with the lightdata writer.
     RootHist<TH1F> h_R_first("h_R_first", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_R_second("h_R_second", ";R_{fit} (mm);events", radial_n_bins, radial_lo_mm, radial_hi_mm);
@@ -487,11 +499,11 @@ void recodata_writer(
                                        kNHitsBins, kNHitsXLo, kNHitsXHi,
                                        radial_n_bins, radial_lo_mm, radial_hi_mm);
 
-    //  cx / cy half-range: read from streaming_hough_cfg so the
+    //  cx / cy half-range: read from streaming_ransac_cfg so the
     //  lightdata- and recodata-side centre-XY hists keep the same axis.
     //  Bin width 1 mm = generous for visual ring-centre clusters; the
     //  bin count tracks the half-range to keep the resolution constant.
-    const float kCentreXyHalfRangeMm = streaming_hough_cfg.centre_xy_half_range_mm;
+    const float kCentreXyHalfRangeMm = streaming_ransac_cfg.centre_xy_half_range_mm;
     const int kCentreXyBins = static_cast<int>(std::round(2.f * kCentreXyHalfRangeMm));
     RootHist<TH2F> h_centre_xy_first("h_centre_xy_first", ";c_{x} (mm);c_{y} (mm)",
                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
@@ -507,6 +519,15 @@ void recodata_writer(
     //  Full detector range (±99 mm, 0.5 mm bins) so the Cherenkov ring shows.
     RootHist<TH2F> h_trigger_cherenkov_hitmap(
         "h_trigger_cherenkov_hitmap", ";x (mm);y (mm)",
+        396, -99, 99, 396, -99, 99);
+
+    //  Companion map: ONLY the hits the ring finder tagged as ring members
+    //  (HitmaskRansacRingTag First/Second), i.e. the subset of the in-time
+    //  occupancy above that was actually assigned to a reconstructed ring.
+    //  Same geometry so the two can be compared directly (full occupancy vs
+    //  ring-tagged).
+    RootHist<TH2F> h_ring_tagged_hitmap(
+        "h_ring_tagged_hitmap", ";x (mm);y (mm)",
         396, -99, 99, 396, -99, 99);
 
     //  Per-hit radial residual vs N_hits (LEAVE-ONE-OUT fit).
@@ -542,7 +563,7 @@ void recodata_writer(
 
     //  Dual/solo splits for the first ring's vs_n observables.  Same
     //  semantics as the lightdata-side `_dual` / `_solo` splits already
-    //  in StreamingHoughQA: filled per the (frame_has_second_ring)
+    //  in StreamingRansacQA: filled per the (frame_has_second_ring)
     //  predicate computed once per frame.  Lets the operator A/B the
     //  first-ring quality between events where a second ring fired
     //  (dual = clean two-radiator events) and where it didn't (solo =
@@ -786,15 +807,24 @@ void recodata_writer(
             //  In-cut trigger-Cherenkov hitmap: accumulate the (x, y) of every
             //  cherenkov hit that passed the hardware-trigger timing cut
             //  ([recodata] hardware_ring_dt_min_ns … hardware_ring_dt_max_ns),
-            //  regardless of whether the ring fit converged — so the map shows
-            //  the full in-time occupancy (the Cherenkov ring).  res.first.hit_xy
-            //  carries the in-cut hits from compute_ring_fit_timewindow.
-            for (const auto &p : res.first.hit_xy)
+            //  regardless of whether the ring finder tagged/fitted a ring — so
+            //  the map shows the full in-time occupancy, not just ring-found
+            //  frames.  `res.occupancy_xy` is gathered in process_frame_pure
+            //  independently of the (tagged) ring reconstruction.
+            for (const auto &p : res.occupancy_xy)
                 h_trigger_cherenkov_hitmap->Fill(p[0], p[1]);
+
+            //  Companion: the ring-finder-tagged hits only (first + second ring).
+            //  res.{first,second}.hit_xy carry the tagged ring members (smeared),
+            //  recorded even when the fit itself did not converge.
+            for (const auto &p : res.first.hit_xy)
+                h_ring_tagged_hitmap->Fill(p[0], p[1]);
+            for (const auto &p : res.second.hit_xy)
+                h_ring_tagged_hitmap->Fill(p[0], p[1]);
 
             //  Radiator QA — drain the precomputed RingFitResults.  Now
             //  gated on a successful reconstruction (hardware-trigger
-            //  time-window fit) rather than the Hough self-trigger.
+            //  time-window fit) rather than the RANSAC self-trigger.
             if (res.first.fit_ok || res.second.fit_ok)
             {
                 RingFillHists first_hists;
@@ -828,7 +858,8 @@ void recodata_writer(
                 first_hists.h_residual_vs_n_split_smeared = res.frame_has_second_ring
                                                                 ? h_residual_vs_n_first_dual_smeared.get()
                                                                 : h_residual_vs_n_first_solo_smeared.get();
-                fill_ring_hists(res.first, first_hists);
+                fill_ring_hists(res.first, first_hists,
+                                recodata_cfg.radial_eff_per_ring_centre);
 
                 RingFillHists second_hists;
                 second_hists.h_nhits = h_nhits_second.get();
@@ -844,7 +875,8 @@ void recodata_writer(
                 //  by definition); just plug the smeared headline hists.
                 second_hists.h_radial_smeared = h_radial_second_smeared.get();
                 second_hists.h_residual_vs_n_smeared = h_residual_vs_n_second_smeared.get();
-                fill_ring_hists(res.second, second_hists);
+                fill_ring_hists(res.second, second_hists,
+                                recodata_cfg.radial_eff_per_ring_centre);
             }
 
             recodata_tree->Fill();
@@ -988,7 +1020,7 @@ void recodata_writer(
     //
     //  Centre-convention reminder: the coverage map and eff(R) use the
     //  FIXED nominal centre from `[recodata].nominal_centre_{x,y}_mm`;
-    //  the radial hists' R values come from PER-EVENT Hough/fit
+    //  the radial hists' R values come from PER-EVENT RANSAC/fit
     //  centres.  Discrepancy < 1 % at observed centre wander.
     //
     //  Headline N_γ / single-photon σ for the cross-run AnalysisResults
@@ -999,7 +1031,7 @@ void recodata_writer(
     bool pub_have_ring = false;
     {
         // Subfolder name: "Rings/" — contents are per-ring observables
-        // from the Hough output, not per-radiator-material splits.  The
+        // from the RANSAC output, not per-radiator-material splits.  The
         // ring↔radiator mapping (when wired in via `RadiatorInfoStruct`)
         // is a follow-up to V1; "Deferred items".
 
@@ -1063,7 +1095,7 @@ void recodata_writer(
         else
         {
             mist::logger::warning(
-                "(recodata_writer) no HOUGH_RING_FOUND triggers in this "
+                "(recodata_writer) no RANSAC_RING_FOUND triggers in this "
                 "run — coverage map falls back to geometric upper bound.");
         }
 
@@ -1129,18 +1161,36 @@ void recodata_writer(
                 if (eff_R->GetBinContent(ib) <= 0.0)
                     eff_R->SetBinContent(ib, 0.0);
 
-            h_radial_first->Divide(eff_R.get());
-            h_radial_second->Divide(eff_R.get());
-            h_radial_first_dual->Divide(eff_R.get());
-            h_radial_first_solo->Divide(eff_R.get());
+            if (!recodata_cfg.radial_eff_per_ring_centre)
+            {
+                //  Legacy fixed-nominal-centre correction: divide the
+                //  aggregate radial hists by a single eff(R).
+                h_radial_first->Divide(eff_R.get());
+                h_radial_second->Divide(eff_R.get());
+                h_radial_first_dual->Divide(eff_R.get());
+                h_radial_first_solo->Divide(eff_R.get());
 
-            //  Same eff(R) correction on the smeared sibling hists —
-            //  the smearing acts at the per-hit level so the geometric
-            //  acceptance correction is identical.
-            h_radial_first_smeared->Divide(eff_R.get());
-            h_radial_second_smeared->Divide(eff_R.get());
-            h_radial_first_dual_smeared->Divide(eff_R.get());
-            h_radial_first_solo_smeared->Divide(eff_R.get());
+                //  Same eff(R) correction on the smeared sibling hists —
+                //  the smearing acts at the per-hit level so the geometric
+                //  acceptance correction is identical.
+                h_radial_first_smeared->Divide(eff_R.get());
+                h_radial_second_smeared->Divide(eff_R.get());
+                h_radial_first_dual_smeared->Divide(eff_R.get());
+                h_radial_first_solo_smeared->Divide(eff_R.get());
+            }
+            else
+            {
+                //  Wide-arc mode: the radial hists are ALREADY
+                //  coverage-corrected per-ring at each ring's fitted centre
+                //  (1/f_coverage per-hit weighting in fill_ring_hists).  A
+                //  single fixed-centre eff(R) is meaningless for far-off
+                //  arcs, so it is written below as a DIAGNOSTIC only — no
+                //  divide (dividing would double-correct).
+                mist::logger::info(
+                    "(recodata_writer) wide-arc mode: radial hists "
+                    "coverage-corrected per-ring at the fitted centre; "
+                    "h_eff_R written as a diagnostic only (no divide).");
+            }
 
             eff_R->Write();
         }
@@ -1308,6 +1358,7 @@ void recodata_writer(
         h_centre_xy_first->Write();
         h_centre_xy_second->Write();
         h_trigger_cherenkov_hitmap->Write();
+        h_ring_tagged_hitmap->Write();
 
         //  vs_n fitting recipe
         //
@@ -1460,7 +1511,7 @@ void recodata_writer(
         //  Conf-file paths + verbatim TOML bodies for every conf the
         //  writer reads (mapping — now also carries the [coverage]
         //  geometry, trigger, framer) plus the streaming conf (which
-        //  carries the [streaming_hough] ring-reco knobs and is also
+        //  carries the [streaming_ransac] ring-reco knobs and is also
         //  forwarded to the lightdata cascade on --force-upstream so the
         //  cascade is reproducible from this file alone).
         dump.add_conf_file("mapping_conf", mapping_conf)
@@ -1659,6 +1710,11 @@ void recodata_writer(
         //  → the Cherenkov ring.
         if (auto *hm = output_file->Get<TH2F>("Rings/h_trigger_cherenkov_hitmap"))
             save_one(4, "trigger_cherenkov_hitmap", hm, "colz");
+
+        //  04 ring_tagged_hitmap — companion to the above: only the hits the
+        //  ring finder tagged as ring members (vs the full in-time occupancy).
+        if (auto *hm = output_file->Get<TH2F>("Rings/h_ring_tagged_hitmap"))
+            save_one(4, "ring_tagged_hitmap", hm, "colz");
 
         //  05 N_gamma_per_ring_summary — per-ring photon count (= the
         //     N_photons headline).  TH1F built inside the build_radial_

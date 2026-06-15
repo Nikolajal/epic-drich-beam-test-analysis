@@ -6,7 +6,7 @@
 #include "writers/lightdata/finalize_streaming_qa.h" // finalize_streaming_qa
 #include "writers/anchor_dt_canvas.h"                // render_anchor_dt_canvas
 #include "triggers/streaming/score.h"
-#include "triggers/streaming/hough.h"
+#include "triggers/streaming/ransac.h"
 #include "mapping.h"
 #include <mist/ring_finding/hough_transform.h>
 #include "TROOT.h"
@@ -25,13 +25,7 @@
 #include "TH1.h"
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <future>
-#include <mutex>
 #include <numeric>
-#include <thread>
-#include <tuple>
-#include <type_traits>
 
 // ── Timing-trigger coincidence params ─────────────────────────────────────
 // The per-chip alive-channel counts (the same-channel-offset calibration +
@@ -55,8 +49,7 @@ void lightdata_writer(
     std::string fine_calibration_config_file,
     std::string framer_conf_file,
     std::string streaming_conf_file,
-    float streaming_n_sigma_threshold_override,
-    bool skip_stream_qa)
+    float streaming_n_sigma_threshold_override)
 {
     //  ROOT thread-safety: protects TROOT/TF1/Fit::Fitter global
     //  state under the framer's multithreaded stream reads (which
@@ -214,7 +207,7 @@ void lightdata_writer(
     AlcorFinedata::set_low_stats_retry_period(
         qa_cfg.generate_calibration_low_stats_retry_period);
     //  Software trigger pipeline lives in its own conf file (streaming.toml).
-    //  Both stages share that file; the Hough struct is consumed downstream
+    //  Both stages share that file; the RANSAC struct is consumed downstream
     //  (LUT geometry, threshold derivation, centre-XY QA range).
     auto streaming_trigger_cfg = streaming_trigger_conf_reader(streaming_conf_file);
     //  Per-run streaming threshold override (DISCUSSION §1.5.2 Option A).
@@ -237,13 +230,13 @@ void lightdata_writer(
         streaming_trigger_cfg.n_sigma_threshold =
             streaming_n_sigma_threshold_override;
     }
-    auto streaming_hough_cfg = streaming_hough_conf_reader(streaming_conf_file);
+    auto streaming_ransac_cfg = streaming_ransac_conf_reader(streaming_conf_file);
 
     //  Per-trigger in-window Cherenkov hitmaps use the SAME timing cut as the
-    //  recodata ring reconstruction ([streaming_hough] hardware_ring_dt_min/max_ns),
+    //  recodata ring reconstruction ([streaming_ransac] hardware_ring_dt_min/max_ns),
     //  so they agree with the recodata ring hitmap on which hits are "in time".
     //  Both knobs now live where the recodata pipeline reads them: the ring-reco
-    //  knobs in streaming.toml's [streaming_hough] table, the coverage geometry
+    //  knobs in streaming.toml's [streaming_ransac] table, the coverage geometry
     //  in mapping_conf.toml's [coverage] table — both writer params already.
     auto recodata_cfg = recodata_conf_reader(streaming_conf_file, mapping_config_file);
     const float kTrigCherDtMin = recodata_cfg.hardware_ring_dt_min_ns;
@@ -410,7 +403,7 @@ void lightdata_writer(
     //  Pairwise Δt within a frame, keyed by ((lo << 8) | hi) where lo,hi
     //  are the two trigger indices with lo < hi (unordered pair).  Δt is
     //  signed as t_hi − t_lo so the sign carries which-came-first.  The
-    //  (streaming, Hough) pair is intentionally NOT filled — Hough is the
+    //  (streaming, RANSAC) pair is intentionally NOT filled — RANSAC is the
     //  second stage of streaming, so the two are not independent and
     //  their Δt is dominated by the median delay, not physics.
     //  FirstFrames / StartOfSpill are excluded on both legs.
@@ -496,12 +489,9 @@ void lightdata_writer(
     double timing_dcr_chip0_khz = 0.0; // chip-0 average (bins 0-31)
     double timing_dcr_chip1_khz = 0.0; // chip-1 average (bins 32-63)
     //  Smeared DCR hitmap — one fill per cherenkov Hit during noise (first-frames)
-    //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Raw
-    //  bin contents are total Hit counts; at write time they are divided by
-    //  (n_dcr_frames × frame_length × bin_area) so the stored / drawn map is an
-    //  actual dark-count rate in kHz/mm².  n_dcr_frames counts the first-frames
-    //  (noise) frames the fill ran over — see the increment at the fill site.
-    long n_dcr_frames = 0;
+    //  trigger frames, at the channel's ±1.5 mm smeared physical position.  Bin
+    //  contents are total Hit counts; divide by (n_dcr_frames × frame_length × bin_area)
+    //  for a rate.  Density ∝ DCR rate, as in the CT / AP smeared maps.
     RootHist<TH2F> h_dcr_hitmap("h_dcr_hitmap",
                                 ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     //  --- Afterpulse
@@ -577,10 +567,10 @@ void lightdata_writer(
     //  ---
     //  --- Streaming Trigger
     //
-    //  The Cherenkov-hit hitmaps cover the score → Hough pipeline:
+    //  The Cherenkov-hit hitmaps cover the score → RANSAC pipeline:
     //    full_hitmap     hits flagged by stage 1 (score's cluster mask)
     //    time_cut_hitmap hits surviving |t − t_streaming| < time_window_ns
-    //    ring_finder_*   hits the Hough tagged as belonging to a ring
+    //    ring_finder_*   hits the RANSAC tagged as belonging to a ring
     RootHist<TH2F> h_streaming_trigger_full_hitmap("h_streaming_trigger_full_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_streaming_trigger_time_cut_hitmap("h_streaming_trigger_time_cut_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_streaming_trigger_ring_finder_hitmap("h_streaming_trigger_ring_finder_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
@@ -588,8 +578,8 @@ void lightdata_writer(
     RootHist<TH2F> h_streaming_trigger_ring_finder_first_hitmap("h_streaming_trigger_ring_finder_first_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     RootHist<TH2F> h_streaming_trigger_ring_finder_second_hitmap("h_streaming_trigger_ring_finder_second_hitmap", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
     //  Per-ring centre / radius hists.  Binning AND limits are derived
-    //  from streaming_hough_cfg so a TOML edit propagates straight
-    //  through — one QA bin ↔ one Hough accumulator cell.
+    //  from streaming_ransac_cfg so a TOML edit propagates straight
+    //  through — one QA bin ↔ one RANSAC accumulator cell.
     //
     //    R   : range = [cfg.r_min, cfg.r_max],   bin width = cfg.r_step
     //    X/Y : range = [-cfg.centre_xy_half_range_mm,
@@ -598,40 +588,40 @@ void lightdata_writer(
     //          covers the full half-range symmetrically around 0)
     //
     //  Note: `centre_xy_half_range_mm` is a writer-side QA knob, not a
-    //  ring-finder bound — the Hough's X/Y space is set by the active
+    //  ring-finder bound — the RANSAC's X/Y space is set by the active
     //  geometry, not by a user limit.  Set it wider than the expected
     //  centre spread for your beam line so legitimate rings don't fall
     //  in overflow; tighter to zoom in once you know where they land.
     const int ringXY_nbins =
         std::max(1, static_cast<int>(std::round(
-                        2.f * streaming_hough_cfg.centre_xy_half_range_mm /
-                        streaming_hough_cfg.cell_size)));
-    const float ringXY_half = 0.5f * ringXY_nbins * streaming_hough_cfg.cell_size;
+                        2.f * streaming_ransac_cfg.centre_xy_half_range_mm /
+                        streaming_ransac_cfg.cell_size)));
+    const float ringXY_half = 0.5f * ringXY_nbins * streaming_ransac_cfg.cell_size;
     const int ringR_nbins =
         std::max(1, static_cast<int>(std::round(
-                        (streaming_hough_cfg.r_max - streaming_hough_cfg.r_min) /
-                        streaming_hough_cfg.r_step)));
-    const float ringR_lo = streaming_hough_cfg.r_min;
-    const float ringR_hi = streaming_hough_cfg.r_min +
-                           ringR_nbins * streaming_hough_cfg.r_step;
-    //  Per-ring **Hough peak** outputs (centre X, Y, radius taken
+                        (streaming_ransac_cfg.r_max - streaming_ransac_cfg.r_min) /
+                        streaming_ransac_cfg.r_step)));
+    const float ringR_lo = streaming_ransac_cfg.r_min;
+    const float ringR_hi = streaming_ransac_cfg.r_min +
+                           ringR_nbins * streaming_ransac_cfg.r_step;
+    //  Per-ring **RANSAC peak** outputs (centre X, Y, radius taken
     //  straight from `RingResult::{cx, cy, radius}` before the
     //  fit_circle refinement).  Written first in the output (see the
-    //  `Hough rings/` subfolder below) so the upstream → downstream
+    //  `RANSAC rings/` subfolder below) so the upstream → downstream
     //  chain is visually obvious.
-    RootHist<TH1F> h_streaming_trigger_ring_X_first_hough("h_streaming_trigger_ring_X_first_hough", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough("h_streaming_trigger_ring_Y_first_hough", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_R_first_hough("h_streaming_trigger_ring_R_first_hough", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
-    RootHist<TH1F> h_streaming_trigger_ring_X_second_hough("h_streaming_trigger_ring_X_second_hough", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_Y_second_hough("h_streaming_trigger_ring_Y_second_hough", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_R_second_hough("h_streaming_trigger_ring_R_second_hough", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    RootHist<TH1F> h_streaming_trigger_ring_X_first_ransac("h_streaming_trigger_ring_X_first_ransac", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_first_ransac("h_streaming_trigger_ring_Y_first_ransac", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_first_ransac("h_streaming_trigger_ring_R_first_ransac", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    RootHist<TH1F> h_streaming_trigger_ring_X_second_ransac("h_streaming_trigger_ring_X_second_ransac", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_second_ransac("h_streaming_trigger_ring_Y_second_ransac", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_second_ransac("h_streaming_trigger_ring_R_second_ransac", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
     //  Per-ring `fit_circle` outputs intentionally absent here: the
     //  lightdata-side fit was QA-only and `recodata_writer` re-fits
     //  the mask-tagged hits with full LOO + dual/solo splits + CB+pol3
     //  radial fit.  All fit-derived observables live in
     //  recodata.root's `Rings/` subfolder.
 
-    //  Hough-knob calibration QA (see § 2.5 in the streaming DISCUSSION).
+    //  RANSAC-knob calibration QA (see § 2.5 in the streaming DISCUSSION).
     //
     //  2D `peak_votes` (y) vs `|active|` (x) per ring slot.  Two
     //  threshold lines overlay on these axes for tuning:
@@ -656,19 +646,19 @@ void lightdata_writer(
     //  2 mm collection_radius).
     constexpr int kArcDistBinsPerSide = 30;
     const int ringArc_nbins = 2 * kArcDistBinsPerSide;
-    const float ringArc_hi = 2.f * streaming_hough_cfg.collection_radius;
+    const float ringArc_hi = 2.f * streaming_ransac_cfg.collection_radius;
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first("h_streaming_trigger_ring_hit_arc_dist_first", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_second("h_streaming_trigger_ring_hit_arc_dist_second", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
 
     //  Dual-ring sample QA — mirrors of the first-ring hists above
     //  restricted to events where a second ring was *also* found.
     //  Lets you A/B the first ring between the full sample and the
-    //  cleaner 2-ring subset (interpretation in `StreamingHoughQA`).
+    //  cleaner 2-ring subset (interpretation in `StreamingRansacQA`).
     //  Same binning / axes as the unsuffixed twins for direct overlay.
     RootHist<TH2F> h_streaming_trigger_ring_finder_first_hitmap_dual("h_streaming_trigger_ring_finder_first_hitmap_dual", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    RootHist<TH1F> h_streaming_trigger_ring_X_first_hough_dual("h_streaming_trigger_ring_X_first_hough_dual", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough_dual("h_streaming_trigger_ring_Y_first_hough_dual", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_R_first_hough_dual("h_streaming_trigger_ring_R_first_hough_dual", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    RootHist<TH1F> h_streaming_trigger_ring_X_first_ransac_dual("h_streaming_trigger_ring_X_first_ransac_dual", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_first_ransac_dual("h_streaming_trigger_ring_Y_first_ransac_dual", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_first_ransac_dual("h_streaming_trigger_ring_R_first_ransac_dual", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
     RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_dual("h_streaming_trigger_ring_peak_votes_vs_active_first_dual", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_dual("h_streaming_trigger_ring_hit_arc_dist_first_dual", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
 
@@ -676,9 +666,9 @@ void lightdata_writer(
     //  hists restricted to events where *no* second ring was found.
     //  Together (_solo + _dual) they partition the first-ring sample.
     RootHist<TH2F> h_streaming_trigger_ring_finder_first_hitmap_solo("h_streaming_trigger_ring_finder_first_hitmap_solo", ";x (mm);y (mm)", 396, -99, 99, 396, -99, 99);
-    RootHist<TH1F> h_streaming_trigger_ring_X_first_hough_solo("h_streaming_trigger_ring_X_first_hough_solo", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_Y_first_hough_solo("h_streaming_trigger_ring_Y_first_hough_solo", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
-    RootHist<TH1F> h_streaming_trigger_ring_R_first_hough_solo("h_streaming_trigger_ring_R_first_hough_solo", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
+    RootHist<TH1F> h_streaming_trigger_ring_X_first_ransac_solo("h_streaming_trigger_ring_X_first_ransac_solo", ";x (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_Y_first_ransac_solo("h_streaming_trigger_ring_Y_first_ransac_solo", ";y (mm)", ringXY_nbins, -ringXY_half, ringXY_half);
+    RootHist<TH1F> h_streaming_trigger_ring_R_first_ransac_solo("h_streaming_trigger_ring_R_first_ransac_solo", ";R (mm)", ringR_nbins, ringR_lo, ringR_hi);
     RootHist<TH2F> h_streaming_trigger_ring_peak_votes_vs_active_first_solo("h_streaming_trigger_ring_peak_votes_vs_active_first_solo", ";|active| hits;peak votes", 100, 0, 100, 50, 0, 50);
     RootHist<TH1F> h_streaming_trigger_ring_hit_arc_dist_first_solo("h_streaming_trigger_ring_hit_arc_dist_first_solo", ";|r_{hit} - R_{ring}| (mm)", ringArc_nbins, 0.f, ringArc_hi);
     const float time_window_ns = streaming_trigger_cfg.time_window_ns;
@@ -752,39 +742,9 @@ void lightdata_writer(
     //  --- --- --- --- --- ---
     //  Loop on data
     //  ---
-    //  Cache positions — iterate (device, chip, channel) directly via the
-    //  GlobalIndex overload.  Both caches keyed by `4 * channel_ordinal`
-    //  (dense int) — same as the MIST HoughTransform `lut_key`.
-    std::map<int, std::array<float, 2>> index_to_hit_xy;
-    std::map<std::array<float, 2>, int> hit_to_index_xy;
-    {
-        const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
-        constexpr int kChannelHi = 64;
-        for (int device = ::gidx::kFirstDevice; device < ::gidx::kDeviceUpperBound; ++device)
-            for (int chip = 0; chip < max_chip; ++chip)
-                for (int channel = 0; channel < kChannelHi; ++channel)
-                {
-                    const auto gi = ::GlobalIndex::from_components(
-                        device, /*fifo=*/0, chip, channel, /*tdc=*/0);
-                    auto position = current_mapping.get_position_from_global_index(gi);
-                    if (!position)
-                        continue;
-                    if (fabs((*position)[0]) < 5 && fabs((*position)[1]) < 5)
-                        continue;
-                    const int key = 4 * gi.channel_ordinal();
-                    index_to_hit_xy[key] = *position;
-                    hit_to_index_xy[*position] = key;
-                }
-    }
-    //  LUT geometry from streaming_hough_cfg.  build_lut is constructor-
-    //  side here; the same cfg is also passed per-frame to
-    //  run_streaming_hough_trigger for the per-event parameters.
-    mist::ring_finding::HoughTransform ring_finder(index_to_hit_xy,
-                                                   streaming_hough_cfg.r_min,
-                                                   streaming_hough_cfg.r_max,
-                                                   streaming_hough_cfg.r_step,
-                                                   streaming_hough_cfg.cell_size,
-                                                   streaming_hough_cfg.centre_padding_mm);
+    //  No accumulator/LUT to pre-build: the ring finder is the grid-free
+    //  RANSAC (mist::ring_finding::find_rings_ransac), which works directly on
+    //  the per-frame hit (x, y) positions inside run_streaming_ransac_trigger.
 
     //  ---
     //  Loop over spills
@@ -897,24 +857,20 @@ void lightdata_writer(
             participant_lane_spills += alive_cher + dead_cher;
         }
 
-        //  Streaming-trigger weights.  The bundle is run-scope (declared
-        //  above the spill loop), so this spill's noise frames score against
-        //  spill N-1's already-built weights; the rebuild happens once, at
-        //  the noise → data boundary, in `build_streaming_weights_for_spill`
-        //  invoked by the segment driver below.  Rebuilding per spill (rather
-        //  than once per run) tracks channels that come online / drop out
-        //  across spills and channels whose rates drift over the fill.
+        //  Streaming-trigger weights
+        //  The bundle itself is run-scope (declared above the spill loop),
+        //  so spill N's noise frames see spill N-1's already-built weights.
+        //  We only reset the per-spill "have we rebuilt yet" flag here;
+        //  the actual rebuild happens once, at the noise → data boundary
+        //  inside the per-frame loop.  Rebuilding per spill (rather than
+        //  once per run) tracks channels that come online / drop out across
+        //  spills (e.g. an RDO that was off in spill 0 starts contributing
+        //  from spill 1) and channels whose rates drift over the fill.
+        bool streaming_weights_built_for_spill = false;
+        //  (The RANSAC `min_active` / DCR-adaptive floor is gone — the RANSAC
+        //  finder gates on inlier significance, not an accumulator vote floor.)
 
-        //  Hough ring-finder `min_active` — a *separate* knob from the
-        //  streaming trigger above (the Hough operates on candidate
-        //  frames the trigger already accepted, and wants a minimum hit
-        //  count to seed a ring).  Was historically shared with the
-        //  streaming-trigger `threshold` int; split the two.
-        //  Formula: ceil(cfg.hough_threshold_fraction × N_active_Cherenkov),
-        //  floored at 1.  The fraction is a streaming_hough_cfg knob.
-        const int hough_min_active = std::max(
-            1, static_cast<int>(std::ceil(streaming_hough_cfg.hough_threshold_fraction *
-                                          n_active_cherenkov_channels)));
+        std::vector<std::tuple<int, float, float>> carry_over_hits;
 
         //  Info
         mist::logger::info("(lightdata_writer) Spill " +
@@ -1055,289 +1011,48 @@ void lightdata_writer(
         //  and also matches the bar's "processed/total" semantic.
         std::size_t postproc_progress = 0;
 
-        //  C6.3: hoist StreamingHoughQA construction above the per-frame
+        //  C6.3: hoist StreamingRansacQA construction above the per-frame
         //  loop.  Every field points at one of the h_streaming_trigger_*
         //  RootHist<T>'s declared at function scope; their `.get()`
         //  returns a stable raw pointer, so re-constructing the bundle
         //  per saved frame paid 24 redundant assignments × N frames.
         //  Build once, pass the same object every iteration.
-        StreamingHoughQA hough_qa;
+        StreamingRansacQA hough_qa;
         hough_qa.full_hitmap = h_streaming_trigger_full_hitmap.get();
         hough_qa.time_cut_hitmap = h_streaming_trigger_time_cut_hitmap.get();
         hough_qa.nrings = h_streaming_trigger_ring_finder_nrings.get();
         hough_qa.ring_finder_hitmap = h_streaming_trigger_ring_finder_hitmap.get();
         hough_qa.first_hitmap = h_streaming_trigger_ring_finder_first_hitmap.get();
         hough_qa.second_hitmap = h_streaming_trigger_ring_finder_second_hitmap.get();
-        //  Hough-seed QA assignments only; the per-ring fit
+        //  RANSAC-seed QA assignments only; the per-ring fit
         //  belongs to recodata_writer (see lines ~430 above).
-        hough_qa.ring_X_first_hough = h_streaming_trigger_ring_X_first_hough.get();
-        hough_qa.ring_Y_first_hough = h_streaming_trigger_ring_Y_first_hough.get();
-        hough_qa.ring_R_first_hough = h_streaming_trigger_ring_R_first_hough.get();
-        hough_qa.ring_X_second_hough = h_streaming_trigger_ring_X_second_hough.get();
-        hough_qa.ring_Y_second_hough = h_streaming_trigger_ring_Y_second_hough.get();
-        hough_qa.ring_R_second_hough = h_streaming_trigger_ring_R_second_hough.get();
+        hough_qa.ring_X_first_ransac = h_streaming_trigger_ring_X_first_ransac.get();
+        hough_qa.ring_Y_first_ransac = h_streaming_trigger_ring_Y_first_ransac.get();
+        hough_qa.ring_R_first_ransac = h_streaming_trigger_ring_R_first_ransac.get();
+        hough_qa.ring_X_second_ransac = h_streaming_trigger_ring_X_second_ransac.get();
+        hough_qa.ring_Y_second_ransac = h_streaming_trigger_ring_Y_second_ransac.get();
+        hough_qa.ring_R_second_ransac = h_streaming_trigger_ring_R_second_ransac.get();
         hough_qa.ring_peak_votes_vs_active_first = h_streaming_trigger_ring_peak_votes_vs_active_first.get();
         hough_qa.ring_peak_votes_vs_active_second = h_streaming_trigger_ring_peak_votes_vs_active_second.get();
         hough_qa.ring_hit_arc_dist_first = h_streaming_trigger_ring_hit_arc_dist_first.get();
         hough_qa.ring_hit_arc_dist_second = h_streaming_trigger_ring_hit_arc_dist_second.get();
         //  Dual-ring mirror — gated inside the trigger on found_rings.size() > 1.
         hough_qa.first_hitmap_dual = h_streaming_trigger_ring_finder_first_hitmap_dual.get();
-        hough_qa.ring_X_first_hough_dual = h_streaming_trigger_ring_X_first_hough_dual.get();
-        hough_qa.ring_Y_first_hough_dual = h_streaming_trigger_ring_Y_first_hough_dual.get();
-        hough_qa.ring_R_first_hough_dual = h_streaming_trigger_ring_R_first_hough_dual.get();
+        hough_qa.ring_X_first_ransac_dual = h_streaming_trigger_ring_X_first_ransac_dual.get();
+        hough_qa.ring_Y_first_ransac_dual = h_streaming_trigger_ring_Y_first_ransac_dual.get();
+        hough_qa.ring_R_first_ransac_dual = h_streaming_trigger_ring_R_first_ransac_dual.get();
         hough_qa.ring_peak_votes_vs_active_first_dual = h_streaming_trigger_ring_peak_votes_vs_active_first_dual.get();
         hough_qa.ring_hit_arc_dist_first_dual = h_streaming_trigger_ring_hit_arc_dist_first_dual.get();
         //  Solo-ring mirror — gated inside the trigger on found_rings.size() == 1.
         hough_qa.first_hitmap_solo = h_streaming_trigger_ring_finder_first_hitmap_solo.get();
-        hough_qa.ring_X_first_hough_solo = h_streaming_trigger_ring_X_first_hough_solo.get();
-        hough_qa.ring_Y_first_hough_solo = h_streaming_trigger_ring_Y_first_hough_solo.get();
-        hough_qa.ring_R_first_hough_solo = h_streaming_trigger_ring_R_first_hough_solo.get();
+        hough_qa.ring_X_first_ransac_solo = h_streaming_trigger_ring_X_first_ransac_solo.get();
+        hough_qa.ring_Y_first_ransac_solo = h_streaming_trigger_ring_Y_first_ransac_solo.get();
+        hough_qa.ring_R_first_ransac_solo = h_streaming_trigger_ring_R_first_ransac_solo.get();
         hough_qa.ring_peak_votes_vs_active_first_solo = h_streaming_trigger_ring_peak_votes_vs_active_first_solo.get();
         hough_qa.ring_hit_arc_dist_first_solo = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
 
-        //  ── Phase-2 frame-level MT scaffolding ───────────────────────────
-        //  (DISCUSSION.md § 2.7, lightdata side.)  The streaming-score scan
-        //  is the dominant serial cost; it is precomputed per frame into
-        //  `score_results` — in parallel — and replayed by
-        //  `process_frame_body`'s `drain_streaming_score` call.  Spill
-        //  processing splits at the noise→data boundary so the weight bundle
-        //  is built from the complete noise-window DCR before any data-frame
-        //  score is scored.
-        const size_t n_frames_in_spill = main_sorted_keys.size();
-        std::vector<StreamingScoreResult> score_results(n_frames_in_spill);
-        //  Per-frame Hough mutations (mask write-backs + Hough triggers),
-        //  computed in PASS A and replayed serially in the per-frame body.
-        std::vector<HoughMutations> hough_results(n_frames_in_spill);
-
-        //  Pre-fetch each frame's cherenkov-hit vector pointer SERIALLY so
-        //  the parallel score pass never touches the spill's unordered_map
-        //  (operator[] is not safe under concurrent access, even for keys
-        //  that already exist).
-        std::vector<std::vector<AlcorFinedataStruct> *> frame_hits(n_frames_in_spill);
-        for (size_t i = 0; i < n_frames_in_spill; ++i)
-            frame_hits[i] = &spilldata.get_frame_cherenkov_hits(main_sorted_keys[i]);
-
-        //  Noise / data split: main_sorted_keys is ascending, so every
-        //  first-frames (noise) id precedes the data ids.
-        size_t split = 0;
-        while (split < n_frames_in_spill &&
-               static_cast<int>(main_sorted_keys[split]) < framer_cfg.first_frames_trigger)
-            ++split;
-
-        //  Serial position pre-pass: PASS A's Hough stage needs cherenkov-hit
-        //  positions, so assign them all up front (cheap map lookup per hit;
-        //  same total work the per-frame body used to do inline, just hoisted
-        //  ahead of the parallel pass).
-        auto assign_positions_for_spill = [&]()
+        for (uint32_t frame_id : main_sorted_keys)
         {
-            for (size_t i = 0; i < n_frames_in_spill; ++i)
-                for (auto &hit_struct : *frame_hits[i])
-                    current_mapping.assign_position(hit_struct);
-        };
-
-        //  Per-thread clones of the Hough QA histogram bundle.  ROOT
-        //  histograms are not thread-safe, so each worker fills its own
-        //  clones and `Add`s them into the canonical hists at the end of the
-        //  pass (under a mutex).  Deterministic hists (ring X/Y/R, peak
-        //  votes, arc-dist, nrings) merge bit-exactly; the pixel-jittered
-        //  hitmaps are statistically identical (already non-reproducible via
-        //  `mist::Rnd`'s random_device seed).
-        struct HoughQAClones
-        {
-            StreamingHoughQA qa;
-            std::vector<std::pair<TH1 *, TH1 *>> pairs; // (clone, canonical)
-            explicit HoughQAClones(const StreamingHoughQA &c)
-            {
-                auto cl = [&](auto *&dst, auto *src)
-                {
-                    if (!src)
-                    {
-                        dst = nullptr;
-                        return;
-                    }
-                    using T = std::remove_pointer_t<decltype(src)>;
-                    T *k = static_cast<T *>(src->Clone());
-                    k->Reset();
-                    k->SetDirectory(nullptr);
-                    dst = k;
-                    pairs.emplace_back(static_cast<TH1 *>(k), static_cast<TH1 *>(src));
-                };
-                cl(qa.full_hitmap, c.full_hitmap);
-                cl(qa.time_cut_hitmap, c.time_cut_hitmap);
-                cl(qa.nrings, c.nrings);
-                cl(qa.ring_finder_hitmap, c.ring_finder_hitmap);
-                cl(qa.first_hitmap, c.first_hitmap);
-                cl(qa.second_hitmap, c.second_hitmap);
-                cl(qa.ring_X_first_hough, c.ring_X_first_hough);
-                cl(qa.ring_Y_first_hough, c.ring_Y_first_hough);
-                cl(qa.ring_R_first_hough, c.ring_R_first_hough);
-                cl(qa.ring_X_second_hough, c.ring_X_second_hough);
-                cl(qa.ring_Y_second_hough, c.ring_Y_second_hough);
-                cl(qa.ring_R_second_hough, c.ring_R_second_hough);
-                cl(qa.ring_peak_votes_vs_active_first, c.ring_peak_votes_vs_active_first);
-                cl(qa.ring_peak_votes_vs_active_second, c.ring_peak_votes_vs_active_second);
-                cl(qa.ring_hit_arc_dist_first, c.ring_hit_arc_dist_first);
-                cl(qa.ring_hit_arc_dist_second, c.ring_hit_arc_dist_second);
-                cl(qa.first_hitmap_dual, c.first_hitmap_dual);
-                cl(qa.ring_X_first_dual, c.ring_X_first_dual);
-                cl(qa.ring_Y_first_dual, c.ring_Y_first_dual);
-                cl(qa.ring_R_first_dual, c.ring_R_first_dual);
-                cl(qa.ring_X_first_hough_dual, c.ring_X_first_hough_dual);
-                cl(qa.ring_Y_first_hough_dual, c.ring_Y_first_hough_dual);
-                cl(qa.ring_R_first_hough_dual, c.ring_R_first_hough_dual);
-                cl(qa.ring_peak_votes_vs_active_first_dual, c.ring_peak_votes_vs_active_first_dual);
-                cl(qa.ring_hit_arc_dist_first_dual, c.ring_hit_arc_dist_first_dual);
-                cl(qa.first_hitmap_solo, c.first_hitmap_solo);
-                cl(qa.ring_X_first_solo, c.ring_X_first_solo);
-                cl(qa.ring_Y_first_solo, c.ring_Y_first_solo);
-                cl(qa.ring_R_first_solo, c.ring_R_first_solo);
-                cl(qa.ring_X_first_hough_solo, c.ring_X_first_hough_solo);
-                cl(qa.ring_Y_first_hough_solo, c.ring_Y_first_hough_solo);
-                cl(qa.ring_R_first_hough_solo, c.ring_R_first_hough_solo);
-                cl(qa.ring_peak_votes_vs_active_first_solo, c.ring_peak_votes_vs_active_first_solo);
-                cl(qa.ring_hit_arc_dist_first_solo, c.ring_hit_arc_dist_first_solo);
-            }
-            void merge_into()
-            {
-                for (auto &[clone, canon] : pairs)
-                    canon->Add(clone);
-            }
-            ~HoughQAClones()
-            {
-                for (auto &[clone, canon] : pairs)
-                    delete clone;
-            }
-            HoughQAClones(const HoughQAClones &) = delete;
-            HoughQAClones &operator=(const HoughQAClones &) = delete;
-        };
-
-        //  PASS A — compute the streaming score AND Hough ring-finding for
-        //  frames [lo, hi) against bundle @p w.  Carry-over is reconstructed
-        //  per frame from the previous frame's trailing window (so frames are
-        //  independent); the group's first frame starts with empty carry,
-        //  matching the serial path's carry reset at the spill boundary and
-        //  at the bundle rebuild.  Dispatched to a thread pool; each worker
-        //  reads only its frame's (and its predecessor's) hits plus the
-        //  read-only bundle, owns its own HoughTransform (the LUT is shared
-        //  const, the accumulator per-thread) and its own QA-hist clones, and
-        //  writes solely into its own `score_results` / `hough_results` slots.
-        auto compute_frame_kernels = [&](size_t lo, size_t hi,
-                                         const StreamingTriggerWeights &w)
-        {
-            if (hi <= lo)
-                return;
-            const size_t n = hi - lo;
-            const size_t n_threads = std::max<size_t>(
-                1, std::min<size_t>(
-                       requested_n_threads > 0
-                           ? static_cast<size_t>(requested_n_threads)
-                           : std::thread::hardware_concurrency(),
-                       n));
-            auto run_one = [&](size_t i, mist::ring_finding::HoughTransform &ht,
-                               const StreamingHoughQA &qa)
-            {
-                std::vector<std::tuple<int, float, float>> carry_in;
-                if (i > lo)
-                    carry_in = reconstruct_streaming_carry_over(
-                        *frame_hits[i - 1], streaming_trigger_cfg.time_window_ns,
-                        w, framer_cfg.frame_length_ns());
-                score_results[i] = compute_streaming_score_pure(
-                    *frame_hits[i], streaming_trigger_cfg.time_window_ns, w,
-                    streaming_trigger_cfg.n_sigma_threshold, carry_in,
-                    framer_cfg.frame_length_ns());
-                //  Hough runs only when the score fired (the serial path is
-                //  gated on `has_trigger`, but a frame is only saved-and-
-                //  Hough-processed via a streaming trigger; hardware-only
-                //  frames carry no streaming-ring trigger so find_rings finds
-                //  nothing to do).
-                if (score_results[i].fired)
-                    hough_results[i] = run_streaming_hough_compute(
-                        *frame_hits[i], score_results[i].streaming_triggers,
-                        score_results[i].streaming_mask_indices, ht,
-                        hough_min_active, ispill,
-                        streaming_trigger_cfg.time_window_ns, streaming_hough_cfg,
-                        qa);
-            };
-            if (n_threads <= 1)
-            {
-                for (size_t i = lo; i < hi; ++i)
-                    run_one(i, ring_finder, hough_qa);
-            }
-            else
-            {
-                std::atomic<size_t> next{lo};
-                std::mutex merge_mtx;
-                std::vector<std::future<void>> pool;
-                pool.reserve(n_threads);
-                for (size_t t = 0; t < n_threads; ++t)
-                    pool.push_back(std::async(std::launch::async, [&]()
-                                              {
-                        //  Per-worker Hough state: copy shares the const LUT
-                        //  but gets its own accumulator; QA clones merged
-                        //  under the mutex at the end.
-                        mist::ring_finding::HoughTransform local_ht = ring_finder;
-                        HoughQAClones local_qa(hough_qa);
-                        for (size_t i = next.fetch_add(1); i < hi;
-                             i = next.fetch_add(1))
-                            run_one(i, local_ht, local_qa.qa);
-                        std::lock_guard<std::mutex> lk(merge_mtx);
-                        local_qa.merge_into(); }));
-                for (auto &f : pool)
-                    f.get();
-            }
-        };
-
-        //  Build the streaming-trigger weight bundle once per spill, between
-        //  the noise and data segments — the same accumulated state the
-        //  inline build used to see at the first data frame: every noise
-        //  frame's full body has run (TIMING / streaming / Hough triggers
-        //  emitted, DCR profile filled).  In-beam sideband window
-        //  [-300, -50] ns: 250 ns wide, 50 ns guard band, left side only
-        //  (the right side carries the afterpulse tail).
-        auto build_streaming_weights_for_spill = [&]()
-        {
-            static const std::set<uint8_t> kInBeamExclude = {
-                TriggerFirstFrames,
-                TriggerStartOfSpill,
-                _TRIGGER_STREAMING_RING_FOUND_,
-                _TRIGGER_HOUGH_RING_FOUND_,
-            };
-            StreamingInBeamRates in_beam_rates =
-                compute_streaming_inbeam_rates(
-                    spilldata, /*sideband_lo_ns=*/-300.f, /*sideband_hi_ns=*/-50.f,
-                    framer_cfg.frame_length_ns(), kInBeamExclude);
-            streaming_weights = build_streaming_trigger_weights(
-                h_dcr_per_channel.get(),
-                streaming_trigger_cfg.time_window_ns,
-                framer_cfg.frame_length_ns(),
-                streaming_trigger_cfg.min_noise_hits,
-                &active_sensors,
-                in_beam_rates.empty() ? nullptr : &in_beam_rates);
-            //  C7.6 — multiplicity cap is config-owned, wired onto the bundle.
-            streaming_weights.max_hits_per_window =
-                streaming_trigger_cfg.max_hits_per_window;
-            mist::logger::info("(streaming_trigger) Spill " +
-                               std::to_string(ispill) +
-                               ": active=" + std::to_string(active_sensors.size()) +
-                               ", modelled=" + std::to_string(streaming_weights.n_channels_modelled) +
-                               ", in_beam_ch=" + std::to_string(in_beam_rates.size()) +
-                               ", E[S]=" + std::to_string(streaming_weights.expected_score_per_window) +
-                               ", σ_S=" + std::to_string(streaming_weights.sigma_score_per_window));
-        };
-
-        //  ── Per-frame body (Phase-2 MT: serial drain) ───────────────────
-        //  Lifted from a range-for into a `[&](pos)` lambda so it can be
-        //  driven over the noise segment, then (after the streaming-weights
-        //  build) the data segment — see the segment driver below the
-        //  definition.  Every side effect (hist fills, trigger emits, mask
-        //  writes, tree-write selection) happens HERE, serially in frame
-        //  order; the only work hoisted out is the streaming-score *scan*,
-        //  which is precomputed per frame into `score_results` (in parallel)
-        //  and merely replayed via `drain_streaming_score` below.
-        auto process_frame_body = [&](size_t pos)
-        {
-            const uint32_t frame_id = main_sorted_keys[pos];
-
             //  Update post-processing subtask bar periodically to avoid render overhead
             if (postproc_progress % 100000 == 0)
                 progress_postprocessing.update(
@@ -1349,9 +1064,9 @@ void lightdata_writer(
             auto &timing_hits = spilldata.get_frame_timing_hits(frame_id);
             auto &triggers_in_frame = spilldata.get_frame_trigger_hits(frame_id);
 
-            //  Cherenkov-hit positions are assigned in the serial pre-pass
-            //  before PASS A (the parallel score + Hough compute needs them);
-            //  see `assign_positions_for_spill` in the segment driver below.
+            //  ----    ----    ----    Cherenkov hits  ----    ----    ----
+            for (auto &current_cherenkov_hit_struct : cherenkov_hits)
+                current_mapping.assign_position(current_cherenkov_hit_struct);
 
             //  ----    ----    ----    Timing hits  ----    ----    ----
             //  Utilities
@@ -1451,20 +1166,94 @@ void lightdata_writer(
             //  spill we're in: first-frames → noise sample; rest → data sample.
             const bool is_first_frames_window =
                 (static_cast<int>(frame_id) < framer_cfg.first_frames_trigger);
-            //  Streaming-score scan: precomputed in PASS A (`score_results`)
-            //  and replayed here in frame order.  The bundle build that used
-            //  to live inline (at the first data frame) is hoisted to
-            //  `build_streaming_weights_for_spill()`, invoked by the segment
-            //  driver between the noise and data segments — i.e. at the same
-            //  accumulated-state point (after every noise frame's full body
-            //  has emitted its TIMING / streaming / Hough triggers and filled
-            //  the DCR profile).  QA score-hist destination still depends on
-            //  the window: first-frames → noise sample; rest → data sample.
+            //  Build streaming weights exactly once per spill, at the moment
+            //  the first data frame is encountered (i.e. immediately after
+            //  the spill's 5000 first-frames trigger frames have completed
+            //  their DCR fills into h_dcr_per_channel).  Cumulative across
+            //  spills + this spill's own noise data — captures channels that
+            //  come online late (RDO previously off) and channels that drift.
+            //  During the first-frames window itself, `streaming_weights`
+            //  remains empty: the noise QA hist fills at n_σ = 0 for spill 0
+            //  but accumulates real distributions from spill 1 onward (where
+            //  prior spills' DCR informs the bundle once it's built).
+            if (!is_first_frames_window && !streaming_weights_built_for_spill)
+            {
+                //  In-beam sideband baseline.  Anchor on every "real"
+                //  hardware trigger fired so far in the spill (FirstFrames
+                //  and StartOfSpill are synthetic markers; streaming /
+                //  RANSAC triggers don't exist yet at this point — the
+                //  score loop below is what emits them — so the exclusion
+                //  list mostly guards against future re-call paths).
+                //  Window [-300 ns, -50 ns] is 250 ns wide with a 50 ns
+                //  guard band against the trigger edge, on the LEFT side
+                //  only because the right side has the afterpulse tail.
+                static const std::set<uint8_t> kInBeamExclude = {
+                    TriggerFirstFrames,
+                    TriggerStartOfSpill,
+                    _TRIGGER_STREAMING_RING_FOUND_,
+                    _TRIGGER_RANSAC_RING_FOUND_,
+                };
+                StreamingInBeamRates in_beam_rates =
+                    compute_streaming_inbeam_rates(
+                        spilldata,
+                        /*sideband_lo_ns=*/-300.f,
+                        /*sideband_hi_ns=*/-50.f,
+                        framer_cfg.frame_length_ns(),
+                        kInBeamExclude);
+
+                streaming_weights = build_streaming_trigger_weights(
+                    h_dcr_per_channel.get(),
+                    streaming_trigger_cfg.time_window_ns,
+                    framer_cfg.frame_length_ns(),
+                    streaming_trigger_cfg.min_noise_hits,
+                    &active_sensors,      // restrict to this spill's participants
+                    in_beam_rates.empty() // no in-beam anchors → DCR-only
+                        ? nullptr
+                        : &in_beam_rates);
+                //  C7.6 — surface the operator's multiplicity cap (0 =
+                //  disabled, fully backwards-compatible) to the trigger
+                //  hot loop via the bundle.  `build_streaming_trigger_
+                //  weights` doesn't know about config (it operates on
+                //  histograms + scalars), so the caller wires it.
+                streaming_weights.max_hits_per_window =
+                    streaming_trigger_cfg.max_hits_per_window;
+                streaming_weights_built_for_spill = true;
+
+                //  C3.3: clear carry-over from the previous bundle's
+                //  running_score.  Any hits that crossed the spill
+                //  boundary were weighted against the OLD E[S] / σ_S;
+                //  mixing them into the new bundle's window biases the
+                //  first frames of this spill (typically a >5σ outlier
+                //  stripe at frame_id == first_frames_trigger).  Cheap
+                //  to clear — the next call to
+                //  run_streaming_trigger_weighted repopulates it.
+                carry_over_hits.clear();
+                //  Sanity log — confirms the active-channel filter is firing:
+                //  n_modelled should equal min(N_active_this_spill, N_measured).
+                //  If it equals N_measured even when some RDOs are off this
+                //  spill, the filter isn't being applied.  Now also logs the
+                //  in-beam baseline channel count so the operator sees
+                //  whether the sideband bundle is contributing.
+                mist::logger::info("(streaming_trigger) Spill " +
+                                   std::to_string(ispill) +
+                                   ": active=" + std::to_string(active_sensors.size()) +
+                                   ", modelled=" + std::to_string(streaming_weights.n_channels_modelled) +
+                                   ", in_beam_ch=" + std::to_string(in_beam_rates.size()) +
+                                   ", E[S]=" + std::to_string(streaming_weights.expected_score_per_window) +
+                                   ", σ_S=" + std::to_string(streaming_weights.sigma_score_per_window));
+            }
             TH1F *h_score_for_this_frame = is_first_frames_window
                                                ? h_streaming_score_noise.get()
                                                : h_streaming_score_data.get();
-            drain_streaming_score(score_results[pos], spilldata, frame_id,
-                                  h_score_for_this_frame);
+            run_streaming_trigger_weighted(
+                spilldata,
+                frame_id,
+                streaming_trigger_cfg.time_window_ns,
+                streaming_weights,
+                streaming_trigger_cfg.n_sigma_threshold,
+                carry_over_hits,
+                h_score_for_this_frame,
+                framer_cfg.frame_length_ns());
 
             //  ── In-beam background score sample ──────────────────────
             //  For each HARDWARE trigger in this frame, score a fixed
@@ -1475,7 +1264,7 @@ void lightdata_writer(
             //  (red) and post-first-frames data (blue) samples.  Only
             //  genuine external triggers anchor the window: synthetic
             //  markers (FirstFrames / StartOfSpill / UNKNOWN) and the
-            //  derived ring triggers (streaming / Hough) are skipped.
+            //  derived ring triggers (streaming / RANSAC) are skipped.
             {
                 //  Sampling band: ends inbeam_offset before the trigger,
                 //  inbeam_width wide (both config knobs), scored PER HIT with
@@ -1497,7 +1286,7 @@ void lightdata_writer(
                         tidx == TriggerStartOfSpill ||
                         tidx == static_cast<uint8_t>(_TRIGGER_UNKNOWN_) ||
                         tidx == static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_) ||
-                        tidx == static_cast<uint8_t>(_TRIGGER_HOUGH_RING_FOUND_))
+                        tidx == static_cast<uint8_t>(_TRIGGER_RANSAC_RING_FOUND_))
                         continue;
                     ++n_inbeam_triggers_total;
                     const float t_hi = trg.fine_time - inbeam_offset;
@@ -1530,24 +1319,17 @@ void lightdata_writer(
                 //  None
 
                 //  ---
-                //  --- Streaming Trigger — stage 2 (Hough ring finder).
-                //  The expensive find_rings + QA fills ran in PASS A
-                //  (`hough_results[pos]`, computed in parallel); here we just
-                //  replay the buffered spill mutations serially, in frame
-                //  order, AFTER the streaming-score drain above — so the
-                //  Hough ring-tag bits OR onto the streaming-ring bit and the
-                //  trigger order stays streaming-then-Hough.  Implementation
-                //  in triggers/streaming/hough.cxx.
-                const HoughMutations &hough_mut = hough_results[pos];
-                streaming_trigger += hough_mut.streaming_trigger_count_inc;
-                for (const auto &[hit_idx, bit] : hough_mut.mask_writes)
-                {
-                    AlcorFinedata tagged(cherenkov_hits[hit_idx]);
-                    tagged.add_mask_bit(bit);
-                    cherenkov_hits[hit_idx].HitMask = tagged.get_mask();
-                }
-                for (const auto &trg : hough_mut.hough_triggers)
-                    spilldata.add_trigger_to_frame(frame_id, trg);
+                //  --- Streaming Trigger — stage 2 (RANSAC ring finder).
+                //  Implementation in triggers/streaming/ransac.cxx.
+                //  `hough_qa` is constructed above the per-frame loop
+                //  (C6.3) — same pointers every iteration.
+                run_streaming_ransac_trigger(
+                    spilldata, frame_id,
+                    streaming_trigger, ispill,
+                    streaming_trigger_cfg.time_window_ns,
+                    streaming_ransac_cfg,
+                    hough_qa,
+                    streaming_weights.weight_by_channel);
 
                 //  ---
                 //  --- Trigger QA
@@ -1570,10 +1352,10 @@ void lightdata_writer(
                 //  derived trigger fired by the streaming pipeline
                 //  itself rather than a hardware/external one — its
                 //  per-trigger plots double-account the same physics
-                //  that HOUGH_RING_FOUND already plots.  Both excluded
+                //  that RANSAC_RING_FOUND already plots.  Both excluded
                 //  from the per-trigger fan-out by operator request
                 //  alongside the synthetic markers.  TODO(operator-
-                //  review): revisit once the streaming-vs-Hough
+                //  review): revisit once the streaming-vs-RANSAC
                 //  separation is more clearly defined.
                 //  NOTE: TIMING (and TRACKING) are HARDWARE triggers and
                 //  are deliberately NOT listed here — they get the full
@@ -1736,7 +1518,7 @@ void lightdata_writer(
                     //  bucket relative to the in-time bucket (partner fills
                     //  hit_counter[1]).
                     constexpr double kOutOfTimeOffsetNs = 100.;
-                    auto window_size = (current_trigger.index == _TRIGGER_HOUGH_RING_FOUND_) || (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_) ? time_window_ns : streaming_trigger_cfg.default_trigger_window_ns;
+                    auto window_size = (current_trigger.index == _TRIGGER_RANSAC_RING_FOUND_) || (current_trigger.index == _TRIGGER_STREAMING_RING_FOUND_) ? time_window_ns : streaming_trigger_cfg.default_trigger_window_ns;
                     for (const auto &current_cherenkov_hit_struct : cherenkov_hits)
                     {
                         AlcorFinedata current_hit(current_cherenkov_hit_struct);
@@ -1894,8 +1676,8 @@ void lightdata_writer(
                 //  Skips:
                 //    - synthetic markers (FirstFrames / StartOfSpill) on
                 //      either leg;
-                //    - the (streaming, Hough) pair specifically, because
-                //      Hough is downstream of streaming so their Δt is
+                //    - the (streaming, RANSAC) pair specifically, because
+                //      RANSAC is downstream of streaming so their Δt is
                 //      a near-deterministic stage delay, not physics.
                 //  Range is ±frame_length_ns_q — the bound any pair can
                 //  achieve within a frame.  Triangle acceptance is applied
@@ -1910,12 +1692,12 @@ void lightdata_writer(
                         const auto &trb = triggers_in_frame[ib];
                         if (is_synthetic_marker(trb.index))
                             continue;
-                        const bool stream_hough_pair =
+                        const bool stream_ransac_pair =
                             (tra.index == _TRIGGER_STREAMING_RING_FOUND_ &&
-                             trb.index == _TRIGGER_HOUGH_RING_FOUND_) ||
-                            (tra.index == _TRIGGER_HOUGH_RING_FOUND_ &&
+                             trb.index == _TRIGGER_RANSAC_RING_FOUND_) ||
+                            (tra.index == _TRIGGER_RANSAC_RING_FOUND_ &&
                              trb.index == _TRIGGER_STREAMING_RING_FOUND_);
-                        if (stream_hough_pair)
+                        if (stream_ransac_pair)
                             continue;
                         const uint8_t i_lo = std::min(tra.index, trb.index);
                         const uint8_t i_hi = std::max(tra.index, trb.index);
@@ -1949,9 +1731,6 @@ void lightdata_writer(
                 //  focused on orchestration.
                 if (fired_trigger_types.count(registry.index_of(static_cast<TriggerNumber>(TriggerFirstFrames))))
                 {
-                    //  This frame is a noise (first-frames) frame — count it so
-                    //  the DCR hitmap can be normalised to a rate at write time.
-                    ++n_dcr_frames;
                     ::btana::lightdata::DcrAfterpulseCtHists qa_hists;
                     qa_hists.h_dcr_per_channel = h_dcr_per_channel.get();
                     qa_hists.h_dcr_hitmap = h_dcr_hitmap.get();
@@ -1974,39 +1753,6 @@ void lightdata_writer(
                         ct_hits, sorted_by_time, qa_cfg, qa_hists);
                 }
             }
-        }; // end process_frame_body lambda
-
-        //  ── Segment driver: noise body → build weights → data body ───────
-        if (skip_stream_qa)
-        {
-            //  Fast path (Phase 1): keep frames carrying a framer-provided
-            //  trigger only; no score / Hough / QA.  See the @p skip_stream_qa
-            //  contract on the writer's header.
-            for (size_t pos = 0; pos < n_frames_in_spill; ++pos)
-                if (!spilldata.has_trigger(main_sorted_keys[pos]))
-                    spilldata.do_not_write_frame(main_sorted_keys[pos]);
-        }
-        else
-        {
-            //  Assign cherenkov-hit positions for the whole spill before the
-            //  parallel passes (the Hough stage reads them).
-            assign_positions_for_spill();
-            //  Noise segment: score + Hough against the prior spill's bundle
-            //  (empty on spill 0), then run the full per-frame body serially
-            //  so the DCR profile + TIMING / streaming / Hough triggers
-            //  accumulate.
-            const StreamingTriggerWeights prev_weights = streaming_weights;
-            compute_frame_kernels(0, split, prev_weights);
-            for (size_t pos = 0; pos < split; ++pos)
-                process_frame_body(pos);
-            //  Build the bundle from this spill's complete noise DCR (skipped
-            //  when there are no data frames — nothing would consume it).
-            if (split < n_frames_in_spill)
-                build_streaming_weights_for_spill();
-            //  Data segment: score + Hough against the freshly built bundle.
-            compute_frame_kernels(split, n_frames_in_spill, streaming_weights);
-            for (size_t pos = split; pos < n_frames_in_spill; ++pos)
-                process_frame_body(pos);
         }
         progress_postprocessing.update(1, 1);
 
@@ -2029,27 +1775,6 @@ void lightdata_writer(
     progress_postprocessing.finish(/*flush=*/false);
     progress_bars.finish();
     mist::logger::info("(lightdata_writer) Finished spills loop, writing to file");
-
-    //  --skip-stream-qa fast path: the per-frame QA loop was bypassed, so
-    //  every QA histogram is empty and the finalization tail below (trigger
-    //  / timing / DCR canvases, AnalysisResults publish) would render
-    //  degenerate output or divide by zero.  Short-circuit: write the
-    //  raw-hits tree + fine-calibration artefacts the framer produced, then
-    //  return.  See the matching `if (skip_stream_qa)` guard in the
-    //  per-frame loop above.
-    if (skip_stream_qa)
-    {
-        outfile->cd();
-        lightdata_tree->Write();
-        framer.get_fine_tune_distribution()->Write("h_fine_calib");
-        //  TOML v3 only — write_calib_to_file hard-errors on a non-.toml path.
-        AlcorFinedata::write_calib_to_file((base_dir / "fine_calib.toml").string());
-        mist::logger::warning(
-            "(lightdata_writer) --skip-stream-qa: wrote raw-hits lightdata tree "
-            "only; all QA (streaming/Hough/timing/DCR/trigger) was skipped and "
-            "hit positions are unassigned");
-        return;
-    }
     //  Diagnostic — surface the rollover-straddling-frame rate.
     //  Expected ≈ frame_size / rollover (3 % at default settings)
     //  *of pairs that crossed*.  A radically different number is a
@@ -2354,23 +2079,6 @@ void lightdata_writer(
         mist::logger::info("(lightdata_writer) timing-sensor DCR: no noise "
                            "frames / timing hits — plot empty");
     h_timing_dcr_per_channel->Write();
-    //  Normalise the smeared DCR hitmap from raw Hit counts to an actual
-    //  dark-count rate.  Observation time = n_dcr_frames × frame_length; the
-    //  per-bin count divided by (observation time × bin area) gives kHz/mm²:
-    //  count / (n_frames × frame_len_ns) → hits/ns; ×1e9 → Hz; /1e3 → kHz;
-    //  /bin_area → kHz/mm² (combined ns→kHz factor = 1e6).  Applied before
-    //  Write() so both the stored ROOT object and the drawn PDF carry the rate.
-    if (n_dcr_frames > 0 && framer_cfg.frame_length_ns() > 0.f)
-    {
-        const double bin_area_mm2 = h_dcr_hitmap->GetXaxis()->GetBinWidth(1) *
-                                    h_dcr_hitmap->GetYaxis()->GetBinWidth(1);
-        const double scale =
-            1.e6 / (static_cast<double>(n_dcr_frames) *
-                    static_cast<double>(framer_cfg.frame_length_ns()) *
-                    bin_area_mm2);
-        h_dcr_hitmap->Scale(scale);
-        h_dcr_hitmap->SetZTitle("DCR [kHz/mm^{2}]");
-    }
     h_dcr_hitmap->Write();
     h_afterpulse_near_per_channel->Write();
     h_afterpulse_near_hitmap->Write();
@@ -2393,7 +2101,7 @@ void lightdata_writer(
     h_phys_ct_dchannel_dt->Write();
     //  ---
     //  --- Streaming Trigger
-    //  Finalize body (overlay canvases + Hough-rings TDirectories)
+    //  Finalize body (overlay canvases + RANSAC-rings TDirectories)
     //  lives in `src/writers/lightdata/finalize_streaming_qa.cxx`.
     {
         const auto streaming_ring_index =
@@ -2409,26 +2117,26 @@ void lightdata_writer(
         ctx.h_streaming_trigger_ring_finder_hitmap = h_streaming_trigger_ring_finder_hitmap.get();
         ctx.h_streaming_trigger_ring_finder_first_hitmap = h_streaming_trigger_ring_finder_first_hitmap.get();
         ctx.h_streaming_trigger_ring_finder_second_hitmap = h_streaming_trigger_ring_finder_second_hitmap.get();
-        ctx.h_ring_X_first_hough = h_streaming_trigger_ring_X_first_hough.get();
-        ctx.h_ring_Y_first_hough = h_streaming_trigger_ring_Y_first_hough.get();
-        ctx.h_ring_R_first_hough = h_streaming_trigger_ring_R_first_hough.get();
-        ctx.h_ring_X_second_hough = h_streaming_trigger_ring_X_second_hough.get();
-        ctx.h_ring_Y_second_hough = h_streaming_trigger_ring_Y_second_hough.get();
-        ctx.h_ring_R_second_hough = h_streaming_trigger_ring_R_second_hough.get();
+        ctx.h_ring_X_first_ransac = h_streaming_trigger_ring_X_first_ransac.get();
+        ctx.h_ring_Y_first_ransac = h_streaming_trigger_ring_Y_first_ransac.get();
+        ctx.h_ring_R_first_ransac = h_streaming_trigger_ring_R_first_ransac.get();
+        ctx.h_ring_X_second_ransac = h_streaming_trigger_ring_X_second_ransac.get();
+        ctx.h_ring_Y_second_ransac = h_streaming_trigger_ring_Y_second_ransac.get();
+        ctx.h_ring_R_second_ransac = h_streaming_trigger_ring_R_second_ransac.get();
         ctx.h_ring_peak_votes_vs_active_first = h_streaming_trigger_ring_peak_votes_vs_active_first.get();
         ctx.h_ring_peak_votes_vs_active_second = h_streaming_trigger_ring_peak_votes_vs_active_second.get();
         ctx.h_ring_hit_arc_dist_first = h_streaming_trigger_ring_hit_arc_dist_first.get();
         ctx.h_ring_hit_arc_dist_second = h_streaming_trigger_ring_hit_arc_dist_second.get();
         ctx.h_ring_finder_first_hitmap_dual = h_streaming_trigger_ring_finder_first_hitmap_dual.get();
-        ctx.h_ring_X_first_hough_dual = h_streaming_trigger_ring_X_first_hough_dual.get();
-        ctx.h_ring_Y_first_hough_dual = h_streaming_trigger_ring_Y_first_hough_dual.get();
-        ctx.h_ring_R_first_hough_dual = h_streaming_trigger_ring_R_first_hough_dual.get();
+        ctx.h_ring_X_first_ransac_dual = h_streaming_trigger_ring_X_first_ransac_dual.get();
+        ctx.h_ring_Y_first_ransac_dual = h_streaming_trigger_ring_Y_first_ransac_dual.get();
+        ctx.h_ring_R_first_ransac_dual = h_streaming_trigger_ring_R_first_ransac_dual.get();
         ctx.h_ring_peak_votes_vs_active_first_dual = h_streaming_trigger_ring_peak_votes_vs_active_first_dual.get();
         ctx.h_ring_hit_arc_dist_first_dual = h_streaming_trigger_ring_hit_arc_dist_first_dual.get();
         ctx.h_ring_finder_first_hitmap_solo = h_streaming_trigger_ring_finder_first_hitmap_solo.get();
-        ctx.h_ring_X_first_hough_solo = h_streaming_trigger_ring_X_first_hough_solo.get();
-        ctx.h_ring_Y_first_hough_solo = h_streaming_trigger_ring_Y_first_hough_solo.get();
-        ctx.h_ring_R_first_hough_solo = h_streaming_trigger_ring_R_first_hough_solo.get();
+        ctx.h_ring_X_first_ransac_solo = h_streaming_trigger_ring_X_first_ransac_solo.get();
+        ctx.h_ring_Y_first_ransac_solo = h_streaming_trigger_ring_Y_first_ransac_solo.get();
+        ctx.h_ring_R_first_ransac_solo = h_streaming_trigger_ring_R_first_ransac_solo.get();
         ctx.h_ring_peak_votes_vs_active_first_solo = h_streaming_trigger_ring_peak_votes_vs_active_first_solo.get();
         ctx.h_ring_hit_arc_dist_first_solo = h_streaming_trigger_ring_hit_arc_dist_first_solo.get();
         //  Streaming-ring trigger map lookups — caller resolves the
@@ -2550,24 +2258,6 @@ void lightdata_writer(
             //  alternating landscape / portrait cards.
             TCanvas c(TString::Format("c_qa_lightdata_%02d_%s", order, name.c_str()),
                       "", 1000, 1000);
-            //  "colz" draws a z-colour palette axis (with its rotated title)
-            //  on the right edge.  Default margins clip the palette title, but
-            //  fixing that with a wide right margin would steal width from the
-            //  frame and squash the equal-aspect x-y map (the square-plot rule).
-            //  Instead keep modest margins — matching the timing-hitmap colz
-            //  recipe so the frame stays ~square and the PDF tiles uniformly on
-            //  the dashboard — and pull the z-axis title in close to the palette
-            //  with a small title offset so it fits without widening the margin.
-            //  Bumped x/y title offsets keep both axis titles off their ticks.
-            if (TString(draw_opt).Contains("colz", TString::kIgnoreCase))
-            {
-                c.SetLeftMargin(0.12);
-                c.SetRightMargin(0.16);
-                c.SetBottomMargin(0.13);
-                h->GetXaxis()->SetTitleOffset(1.0);
-                h->GetYaxis()->SetTitleOffset(1.3);
-                h->GetZaxis()->SetTitleOffset(0.9);
-            }
             h->Draw(draw_opt);
             const auto path = util::qa::pdf_path(run_dir, "lightdata", order, name);
             c.SaveAs(path.string().c_str());
@@ -2589,7 +2279,7 @@ void lightdata_writer(
         //  can rotate the X-axis labels and breathe out the pad
         //  margins.  Default ROOT auto-rotation crowds long trigger
         //  names on the X side and clips them on the Y side; with
-        //  ~12 entries like ``HOUGH_RING_FOUND`` and
+        //  ~12 entries like ``RANSAC_RING_FOUND`` and
         //  ``broad_scintillator`` it gets unreadable.
         //
         //  ``LabelsOption("v")`` is the binned-axis rotation idiom
@@ -2938,7 +2628,7 @@ void lightdata_writer(
         //    ``n_sigma_threshold``.  In QA mode (streaming disabled by
         //    ``conf/QA/streaming.toml``) both curves still fill, so the
         //    analyser sees the full distribution without paying for
-        //    the Hough cascade.  In production (streaming firing), the
+        //    the RANSAC cascade.  In production (streaming firing), the
         //    plot is the post-hoc audit of whether the threshold the
         //    operator picked is where they wanted it.  The
         //    recommendation is a STARTING POINT — the shifter looks at
@@ -3837,14 +3527,41 @@ void lightdata_writer(
                             xb, xb));
                     if (!proj || proj->GetEntries() < kMinEntriesForFit)
                         continue;
-                    //  Quiet, no-draw, no-store fit over the populated range.
-                    const int fit_status =
-                        proj->Fit("expo", "Q0");
+                    //  The parent h2 was Scale(1,"width")'d into a density for
+                    //  display, which leaves the projection with non-integer
+                    //  contents and broken per-bin errors — a chi-square
+                    //  ``expo`` fit on it mostly fails (status != 0) and no rate
+                    //  is printed.  Recover the raw per-bin counts (×bin width
+                    //  exactly inverts the density scaling) and restore Poisson
+                    //  errors so the fit is well-posed again.
+                    for (int b = 1; b <= proj->GetNbinsX(); ++b)
+                    {
+                        const double cnt = proj->GetBinContent(b) * proj->GetBinWidth(b);
+                        proj->SetBinContent(b, cnt);
+                        proj->SetBinError(b, cnt > 0.0 ? std::sqrt(cnt) : 0.0);
+                    }
+                    //  Quiet, no-draw, no-store Poisson-likelihood fit ("L") —
+                    //  robust on the wide-dynamic-range, log-spaced counts where
+                    //  the chi-square fit struggled.
+                    const int fit_status = proj->Fit("expo", "Q0L");
                     TF1 *fexpo = proj->GetFunction("expo");
-                    if (fit_status != 0 || !fexpo)
-                        continue;
-                    const double p1 = fexpo->GetParameter(1); // = −λ (1/ns)
-                    const double lambda_per_ns = -p1;
+                    double lambda_per_ns = -1.0;
+                    if (fit_status == 0 && fexpo)
+                    {
+                        const double p1 = fexpo->GetParameter(1); // = −λ (1/ns)
+                        if (p1 < 0.0 && std::isfinite(p1))
+                            lambda_per_ns = -p1;
+                    }
+                    //  Fallback when the fit still doesn't converge: the mean
+                    //  inter-arrival time of a Poisson process is 1/λ, so
+                    //  λ = 1/⟨Δt⟩ from the (count-restored) projection — always
+                    //  defined when the column has hits, so a rate is shown.
+                    if (!(lambda_per_ns > 0.0))
+                    {
+                        const double mean_dt = proj->GetMean();
+                        if (mean_dt > 0.0 && std::isfinite(mean_dt))
+                            lambda_per_ns = 1.0 / mean_dt;
+                    }
                     if (!(lambda_per_ns > 0.0) || !std::isfinite(lambda_per_ns))
                         continue;
                     const double rate_hz = lambda_per_ns * 1.0e9;

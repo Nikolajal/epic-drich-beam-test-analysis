@@ -17,7 +17,7 @@
  *
  * The first two are run-level (geometry-only, computed once at writer
  * init from the same `index_to_hit_xy` map both writers already build).
- * The third is per-ring and uses the per-event Hough/fit centre so the
+ * The third is per-ring and uses the per-event RANSAC/fit centre so the
  * resulting `N_photons = N_hits / f_coverage` is exact per event.
  *
  * Centre conventions (see DISCUSSION.md § 2.6):
@@ -26,8 +26,8 @@
  *     historic convention, preserved for direct comparison with offline
  *     analyses.
  *   - `(R, φ)` of an individual hit and `azimuthal_coverage_fraction`
- *     use the **per-event ring centre** (fit-refined Hough centre, or
- *     the Hough peak when no fit was run).
+ *     use the **per-event ring centre** (fit-refined RANSAC centre, or
+ *     the RANSAC peak when no fit was run).
  *
  * Ported from the offline `photon_number_new.cpp` —
  * specifically the `radial_efficiency` function and the start-of-spill
@@ -186,7 +186,7 @@ TH2F *build_coverage_map_xy(
      * @param R           Ring radius [mm].
      * @param delta_r_mm  Channel-on-arc bandwidth [mm].  Typically
      *                    matches `collection_radius` from the upstream
-     *                    Hough config.
+     *                    RANSAC config.
      * @param channel_half_width_mm  Pixel half-width [mm] used to convert a
      *                    channel into an angular φ-span at its radius.  Pass
      *                    `RecodataConfigStruct::channel_half_width_mm` so

@@ -243,7 +243,7 @@ Sub-roadmap on pickup:
    "consecutive hits within afterpulse-Δt window" / "total hits";
    currently the afterpulse logic flags hits but doesn't publish
    the rate.
-4. **QA restructure / re-evaluate needs** — the Hough-refactor QA
+4. **QA restructure / re-evaluate needs** — the RANSAC-refactor QA
    landed per-ring histograms (`triggers/streaming/DISCUSSION.md` §
    2.6 changes).  Audit which lightdata-side QA hists are now
    redundant with the streaming-side ones; consolidate.

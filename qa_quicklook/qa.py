@@ -178,7 +178,7 @@ _PDF_TOPIC_RULES: tuple[tuple["_re_topics.Pattern[str]", str], ...] = (
     (_re_topics.compile(r"^.*time_diff.*"),                      "triggers"),
     # Trigger coincidence matrix → Triggers.
     (_re_topics.compile(r"^trigger_matrix(\..*)?$"),             "triggers"),
-    # Ring finder QA from the Hough stage → Triggers.
+    # Ring finder QA from the RANSAC stage → Triggers.
     (_re_topics.compile(r"^.*ring_finder.*"),                    "triggers"),
     (_re_topics.compile(r"^.*hough.*"),                          "triggers"),
     # Timing-sensor DCR — a per-channel dark-count measurement, so it
@@ -3172,6 +3172,7 @@ class _GeneralQaPage(QtWidgets.QWidget):
         )),
         ("Cherenkov", (
             "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring
+            "ring_tagged_hitmap.pdf",         # subset the ring finder tagged as ring members
             "ring_centre_xy.pdf",
             "N_gamma_per_ring_summary.pdf",   # N_photons per ring
             "sigma_photon_summary.pdf",       # single-photon σ per ring

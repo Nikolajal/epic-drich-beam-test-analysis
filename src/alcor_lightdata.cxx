@@ -10,6 +10,8 @@ void AlcorLightdataStruct::clear()
     tracking_hits.shrink_to_fit();
     cherenkov_hits.clear();
     cherenkov_hits.shrink_to_fit();
+    ring1_cx = ring1_cy = ring1_radius = 0.f;
+    ring2_cx = ring2_cy = ring2_radius = 0.f;
 }
 
 std::optional<float> AlcorLightdata::get_trigger_time(uint8_t trigger_index)

@@ -25,7 +25,7 @@ ct_elec_signal_hi             =  10   # electrical CT signal window upper edge (
 ct_phys_radius_mm             = 3.2   # physical-CT neighbour radius (mm) — shared by writer + cross_talk macro
 ct_sideband_offset            = 512   # CT sideband start (cc) — far DCR plateau for accidental subtraction
 
-# Software trigger pipeline (streaming score + Hough) lives in
+# Software trigger pipeline (streaming score + RANSAC) lives in
 # conf/streaming.toml — those knobs are writer-side and don't belong
 # with framer / QA configuration here.
 # See include/triggers/streaming/DISCUSSION.md.

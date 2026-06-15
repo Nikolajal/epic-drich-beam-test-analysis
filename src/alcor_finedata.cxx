@@ -549,8 +549,8 @@ void AlcorFinedata::generate_calibration(TH2F *calibration_histogram, bool overw
         "  [cache_size=" + std::to_string(low_stats_keys_.size()) + "]");
 }
 
-// The AlcorFinedata ring-finding adapter (`alcor_find_rings_hough`) lives
-// inline in `src/triggers/streaming/hough.cxx`, the only consumer.
+// The AlcorFinedata ring-finding adapter (`alcor_find_rings_ransac`) lives
+// inline in `src/triggers/streaming/ransac.cxx`, the only consumer.
 // See the header comment block at the top of `alcor_finedata.h` and
 // `include/triggers/streaming/DISCUSSION.md` § 2 for context.
 // =============================================================================

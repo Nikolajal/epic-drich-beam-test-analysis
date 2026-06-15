@@ -17,8 +17,8 @@
  *    `delete c_streaming_score_overlay` at the bottom of the function
  *    silently frees the overlay clones and legend too.  That's worth
  *    isolating so the writer's main flow doesn't carry it inline.
- *  - It also nests three TDirectory subfolders (Hough rings, Hough
- *    rings (dual), Hough rings (solo)).  The pattern is grouped here.
+ *  - It also nests three TDirectory subfolders (RANSAC rings, RANSAC
+ *    rings (dual), RANSAC rings (solo)).  The pattern is grouped here.
  *
  * All histogram pointers in the context struct are non-owning — they
  * point at RootHist<>-managed instances that live for the lifetime of
@@ -58,33 +58,33 @@ struct StreamingTriggerFinalizeContext
     TH2F *h_streaming_trigger_ring_finder_first_hitmap;
     TH2F *h_streaming_trigger_ring_finder_second_hitmap;
 
-    // ── "Hough rings/" subfolder — Hough peak (cx, cy, R) + per-ring
+    // ── "RANSAC rings/" subfolder — RANSAC peak (cx, cy, R) + per-ring
     //     knob-calibration QA for the bright and second ring.
-    TH1F *h_ring_X_first_hough;
-    TH1F *h_ring_Y_first_hough;
-    TH1F *h_ring_R_first_hough;
-    TH1F *h_ring_X_second_hough;
-    TH1F *h_ring_Y_second_hough;
-    TH1F *h_ring_R_second_hough;
+    TH1F *h_ring_X_first_ransac;
+    TH1F *h_ring_Y_first_ransac;
+    TH1F *h_ring_R_first_ransac;
+    TH1F *h_ring_X_second_ransac;
+    TH1F *h_ring_Y_second_ransac;
+    TH1F *h_ring_R_second_ransac;
     TH2F *h_ring_peak_votes_vs_active_first;
     TH2F *h_ring_peak_votes_vs_active_second;
     TH1F *h_ring_hit_arc_dist_first;
     TH1F *h_ring_hit_arc_dist_second;
 
-    // ── "Hough rings (dual)/" subfolder — first-ring observables
+    // ── "RANSAC rings (dual)/" subfolder — first-ring observables
     //     gated on a second ring also being present in the frame.
     TH2F *h_ring_finder_first_hitmap_dual;
-    TH1F *h_ring_X_first_hough_dual;
-    TH1F *h_ring_Y_first_hough_dual;
-    TH1F *h_ring_R_first_hough_dual;
+    TH1F *h_ring_X_first_ransac_dual;
+    TH1F *h_ring_Y_first_ransac_dual;
+    TH1F *h_ring_R_first_ransac_dual;
     TH2F *h_ring_peak_votes_vs_active_first_dual;
     TH1F *h_ring_hit_arc_dist_first_dual;
 
-    // ── "Hough rings (solo)/" subfolder — complement of (dual).
+    // ── "RANSAC rings (solo)/" subfolder — complement of (dual).
     TH2F *h_ring_finder_first_hitmap_solo;
-    TH1F *h_ring_X_first_hough_solo;
-    TH1F *h_ring_Y_first_hough_solo;
-    TH1F *h_ring_R_first_hough_solo;
+    TH1F *h_ring_X_first_ransac_solo;
+    TH1F *h_ring_Y_first_ransac_solo;
+    TH1F *h_ring_R_first_ransac_solo;
     TH2F *h_ring_peak_votes_vs_active_first_solo;
     TH1F *h_ring_hit_arc_dist_first_solo;
 
@@ -101,7 +101,7 @@ struct StreamingTriggerFinalizeContext
  *
  * Creates the top-level subfolder, fills it with the score hists +
  * overlay canvas + ring-finder summaries, then creates the three
- * nested `Hough rings*` subfolders.  The output TDirectory cursor
+ * nested `RANSAC rings*` subfolders.  The output TDirectory cursor
  * is left at the streaming-trigger subfolder on return so any
  * subsequent writes still land in the right place (matches the
  * pre-extraction inline behaviour).

@@ -149,6 +149,7 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
     // E[S | H_0]   = Σ_c m_c · w_c = N_measured       (count of channels)
     // Var[S | H_0] = Σ_c m_c · w_c² = Σ_c 1/m_c       (accumulator below)
     double sum_inv_m = 0.0;
+    double sum_m = 0.0; // Σ_c m_c = expected background hits per window (E_dark)
     int n_modelled = 0;
 
     for (int b = 1; b <= n_bins; ++b)
@@ -191,6 +192,7 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
         const float weight = 1.f / m_c;
         out.weight_by_channel.emplace(channel_ord, weight);
         sum_inv_m += static_cast<double>(weight);
+        sum_m += static_cast<double>(m_c); // E_dark accumulator
         ++n_modelled;
     }
 
@@ -201,6 +203,7 @@ build_streaming_trigger_weights(const TProfile *h_dcr_per_channel_pre_scale,
 
     out.expected_score_per_window = static_cast<float>(n_modelled);
     out.sigma_score_per_window = std::sqrt(static_cast<float>(sum_inv_m));
+    out.expected_dark_hits_per_window = static_cast<float>(sum_m);
     out.n_channels_modelled = n_modelled;
 
     return out;
@@ -354,15 +357,17 @@ bool run_streaming_trigger(AlcorSpilldata &current_spill,
 //  v1 — DCR-weighted streaming trigger
 // ─────────────────────────────────────────────────────────────────────────────
 
-StreamingScoreResult compute_streaming_score_pure(
-    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
+bool run_streaming_trigger_weighted(
+    AlcorSpilldata &current_spill,
+    int frame_id,
     const float time_window_ns,
     const StreamingTriggerWeights &weights,
     const float n_sigma_threshold,
-    const std::vector<std::tuple<int, float, float>> &carry_in,
+    std::vector<std::tuple<int, float, float>> &carry_over_hits,
+    TH1F *h_score_for_qa,
     float frame_length_ns)
 {
-    StreamingScoreResult result;
+    auto &cherenkov_hits = current_spill.get_frame_cherenkov_hits(frame_id);
 
     //  Build and sort finedata hits (mirrors v0).
     //
@@ -374,7 +379,7 @@ StreamingScoreResult compute_streaming_score_pure(
     //  Scratch buffers reused across frames: one allocation lifecycle instead
     //  of a fresh vector per frame.  `clear()` retains capacity, so after the
     //  first few frames these allocate ~nothing.  This path is serial on the
-    //  main thread (see the streaming/Hough serial note); `thread_local` keeps
+    //  main thread (see the streaming/RANSAC serial note); `thread_local` keeps
     //  it correct if that ever changes.  Clarity change, NOT a measured speedup
     //  — see triggers/streaming/DISCUSSION.md §1.7 for the A/B that found no win.
     static thread_local std::vector<AlcorFinedata> cherenkov_finedata_hits;
@@ -409,7 +414,7 @@ StreamingScoreResult compute_streaming_score_pure(
     static thread_local std::deque<WinEntry> window;
     window.clear();
     float running_score = 0.f;
-    for (const auto &entry : carry_in)
+    for (const auto &entry : carry_over_hits)
     {
         window.push_back(entry);
         running_score += std::get<2>(entry);
@@ -450,10 +455,10 @@ StreamingScoreResult compute_streaming_score_pure(
             has_fired = true;
 
             const float trigger_time = median_of(peak_times);
-            result.streaming_triggers.push_back(
-                {static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_),
-                 static_cast<uint16_t>(peak_count),
-                 static_cast<float>(trigger_time)});
+            current_spill.add_trigger_to_frame(frame_id,
+                                               {static_cast<uint8_t>(_TRIGGER_STREAMING_RING_FOUND_),
+                                                static_cast<uint16_t>(peak_count),
+                                                static_cast<float>(trigger_time)});
         }
 
         in_cluster = false;
@@ -502,21 +507,15 @@ StreamingScoreResult compute_streaming_score_pure(
         //  n_σ = 0, which would otherwise dominate the noise QA hist's
         //  display range and corrupt threshold tuning.
         const float n_sigma = weights.n_sigma_of(running_score);
-        //  Record the n_σ for QA replay only when the bundle is built
-        //  (non-zero σ) — mirrors the serial guard that protected the
-        //  spill-0 bootstrap from spiking the noise hist at n_σ = 0.  The
-        //  drain decides whether a hist is actually filled.
-        if (weights.sigma_score_per_window > 0.f)
-            result.n_sigma_fills.push_back(n_sigma);
+        if (h_score_for_qa && weights.sigma_score_per_window > 0.f)
+            h_score_for_qa->Fill(n_sigma);
 
         if (n_sigma >= n_sigma_threshold)
         {
             in_cluster = true;
 
-            //  Record the hit index for the serial drain to mask
-            //  (`HitmaskStreamingRingTrigger`); the pure pass never mutates
-            //  the input hits.
-            result.streaming_mask_indices.push_back(orig_idx[ihit]);
+            cherenkov_finedata_hits[ihit].set_streaming_ring_trigger_mask();
+            cherenkov_hits[orig_idx[ihit]].HitMask = cherenkov_finedata_hits[ihit].get_mask();
 
             //  Update peak snapshot when the score grows past the previous max.
             if (running_score > peak_score)
@@ -541,126 +540,14 @@ StreamingScoreResult compute_streaming_score_pure(
 
     //  Carry-over: hits still in window at frame boundary, time-shifted by
     //  -frame_length_ns so the next frame's window timing stays continuous.
-    result.carry_out.reserve(window.size());
+    carry_over_hits.clear();
+    carry_over_hits.reserve(window.size());
     for (const auto &entry : window)
-        result.carry_out.emplace_back(-1,
-                                      std::get<1>(entry) - frame_length_ns,
-                                      std::get<2>(entry));
+        carry_over_hits.emplace_back(-1,
+                                     std::get<1>(entry) - frame_length_ns,
+                                     std::get<2>(entry));
 
-    result.fired = has_fired;
-    return result;
-}
-
-void drain_streaming_score(const StreamingScoreResult &result,
-                           AlcorSpilldata &current_spill,
-                           int frame_id,
-                           TH1F *h_score_for_qa)
-{
-    if (h_score_for_qa)
-        for (const float n_sigma : result.n_sigma_fills)
-            h_score_for_qa->Fill(n_sigma);
-
-    auto &cherenkov_hits = current_spill.get_frame_cherenkov_hits(frame_id);
-    for (const int idx : result.streaming_mask_indices)
-    {
-        //  Mirror the serial write-back: add the streaming-ring bit to the
-        //  hit's mask via the finedata wrapper, then store the full mask.
-        AlcorFinedata hit(cherenkov_hits[idx]);
-        hit.set_streaming_ring_trigger_mask();
-        cherenkov_hits[idx].HitMask = hit.get_mask();
-    }
-
-    for (const auto &trg : result.streaming_triggers)
-        current_spill.add_trigger_to_frame(frame_id, trg);
-}
-
-std::vector<std::tuple<int, float, float>> reconstruct_streaming_carry_over(
-    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
-    const float time_window_ns,
-    const StreamingTriggerWeights &weights,
-    float frame_length_ns)
-{
-    std::vector<std::tuple<int, float, float>> out;
-
-    //  Approximate the carry-over a frame hands to its successor: the sliding
-    //  window's contents at the frame boundary are every modelled,
-    //  non-afterpulse hit whose time exceeds (t_last − time_window_ns), where
-    //  t_last is the latest non-afterpulse hit time in the frame.  This is a
-    //  `get_time_ns()`-threshold shortcut for the serial scan's exact
-    //  windowing (which orders by `AlcorFinedata::operator<`, i.e. raw
-    //  `get_time()`, and evicts by `get_time_ns()`); the two boundary sets
-    //  can differ by a hit at the window edge, but the effect is sub-bin in
-    //  the score QA and below the FMA-reassociation floor already present
-    //  from the refactor (see DISCUSSION § 2.7.1).  Chosen over an exact
-    //  per-frame re-sort for speed — output is observably identical.  The
-    //  rare case where a carry-IN hit itself survives to the boundary is also
-    //  not modelled (negligible).
-    float t_last = -std::numeric_limits<float>::infinity();
-    bool any = false;
-    for (const auto &h_struct : cherenkov_hits)
-    {
-        AlcorFinedata hit(h_struct);
-        if (hit.is_afterpulse())
-            continue;
-        const float t = hit.get_time_ns();
-        if (t > t_last)
-        {
-            t_last = t;
-            any = true;
-        }
-    }
-    if (!any)
-        return out;
-
-    const float window_lo = t_last - time_window_ns;
-    for (const auto &h_struct : cherenkov_hits)
-    {
-        AlcorFinedata hit(h_struct);
-        if (hit.is_afterpulse())
-            continue;
-        const float t = hit.get_time_ns();
-        if (t <= window_lo)
-            continue;
-        const int channel_ord =
-            ::GlobalIndex(hit.get_global_index()).channel_ordinal();
-        const auto wit = weights.weight_by_channel.find(channel_ord);
-        if (wit == weights.weight_by_channel.end())
-            continue;
-        out.emplace_back(-1, t, wit->second);
-    }
-
-    //  Window order is oldest-first (front = oldest) so the next frame's
-    //  eviction pops the right entries; sort ascending by time before the
-    //  boundary shift.
-    std::sort(out.begin(), out.end(),
-              [](const auto &a, const auto &b)
-              { return std::get<1>(a) < std::get<1>(b); });
-    for (auto &entry : out)
-        std::get<1>(entry) -= frame_length_ns;
-
-    return out;
-}
-
-bool run_streaming_trigger_weighted(
-    AlcorSpilldata &current_spill,
-    int frame_id,
-    const float time_window_ns,
-    const StreamingTriggerWeights &weights,
-    const float n_sigma_threshold,
-    std::vector<std::tuple<int, float, float>> &carry_over_hits,
-    TH1F *h_score_for_qa,
-    float frame_length_ns)
-{
-    //  Serial path = pure compute then immediate drain, so behaviour is
-    //  bit-identical to the pre-split implementation.  The carry-over chain
-    //  is threaded in/out here; the MT path reconstructs it per frame.
-    const auto &cherenkov_hits = current_spill.get_frame_cherenkov_hits(frame_id);
-    StreamingScoreResult result = compute_streaming_score_pure(
-        cherenkov_hits, time_window_ns, weights, n_sigma_threshold,
-        carry_over_hits, frame_length_ns);
-    carry_over_hits = std::move(result.carry_out);
-    drain_streaming_score(result, current_spill, frame_id, h_score_for_qa);
-    return result.fired;
+    return has_fired;
 }
 
 void fill_window_score_samples(

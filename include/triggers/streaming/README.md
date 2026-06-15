@@ -14,7 +14,7 @@ in one place.
 | File | Stage | Status |
 |---|---|---|
 | `score.{h,cxx}` | 1 — DCR-weighted score, time clustering | ✅ Shipped (v1).  Was originally `triggers/streaming.{h,cxx}` until the consolidation split the pipeline by stage. |
-| `hough.{h,cxx}` | 2 — Hough ring finder | ✅ Shipped.  Extracted out of `src/lightdata_writer.cxx`; called from the writer's per-frame loop.  (The old in-trigger `fit_circle` centre refinement was removed; centre refinement now happens in the recodata re-fit.) |
+| `hough.{h,cxx}` | 2 — RANSAC ring finder | ✅ Shipped.  Extracted out of `src/lightdata_writer.cxx`; called from the writer's per-frame loop.  (The old in-trigger `fit_circle` centre refinement was removed; centre refinement now happens in the recodata re-fit.) |
 | `DISCUSSION.md` | Both | ✅ Current.  Design + open items. |
 | `README.md`    | Both | ✅ This file. |
 
@@ -26,7 +26,7 @@ under two sections:
 | Section | Stage | Notes |
 |---|---|---|
 | `[streaming_trigger]` | 1 | Time window, n_σ threshold, min-noise-hits gate.  See `score.h` for parameter semantics. |
-| `[streaming_hough]`   | 2 | Hough cell size, radius range, time pre-cut, peak thresholds, max rings.  Every knob is live (wired through `run_streaming_hough_trigger`).  (The `fit_circle_init_{x,y,r}` knobs were removed — centre refinement moved to the recodata re-fit.) |
+| `[streaming_ransac]`   | 2 | RANSAC cell size, radius range, time pre-cut, peak thresholds, max rings.  Every knob is live (wired through `run_streaming_ransac_trigger`).  (The `fit_circle_init_{x,y,r}` knobs were removed — centre refinement moved to the recodata re-fit.) |
 
 ## Conventions
 
@@ -39,7 +39,7 @@ under two sections:
     - Stage 1: `run_streaming_trigger` (v0, plain count threshold) and
       `run_streaming_trigger_weighted` (v1, DCR-inverse-weighted score —
       current production path), backed by `build_streaming_trigger_weights`.
-    - Stage 2: `run_streaming_hough_trigger`.
+    - Stage 2: `run_streaming_ransac_trigger`.
 - **No state shared across stages at code level.**  Stage 1's output is
   written into the frame's `trigger_hits` collection as a
   `_TRIGGER_STREAMING_RING_FOUND_` event; stage 2 reads that event back
