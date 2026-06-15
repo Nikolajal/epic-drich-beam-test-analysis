@@ -56,31 +56,35 @@ default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a 
 [streaming_hough]
 
 # ────────────────────────────────────────────────────────────────
-# Coarser Hough accumulator — QA speedup lever.
+# Coarse Hough accumulator.
 #
-# Production (conf/streaming.toml) uses r_step = cell_size = 1.5 mm
-# with aggregation_window_cells = 2 → 8-cell sliding-window peak
-# finder over a 3×3×3 mm³ volume.  Cost: voting and peak-finding
-# scale with n_cells = nx·ny·n_R, which goes as 1/cell_size³.
+# Both production (conf/defaults/streaming.toml) and QA now run the
+# WIDE-ARC recipe: a coarse grid (r_step = cell_size = 3.0 mm,
+# aggregation_window_cells = 1) over a wide centre range, with the
+# subsequent floating-centre fit_circle re-fit in recodata supplying
+# precision.  Voting and peak-finding scale with n_cells = nx·ny·n_R
+# (~1/cell_size³), so the coarse grid keeps the wide-centre accumulator
+# bounded — a 1.5 mm grid over a ±250 mm centre range would be ~8×
+# larger and slower.
 #
-# QA reverts to the legacy coarser grid: r_step = cell_size = 3.0 mm
-# (half the production resolution per axis → ~8× fewer accumulator
-# cells, ~8× faster vote pass + peak finder) and turns aggregation
-# off (single-cell peak), since the cells are already at the
-# legacy-equivalent volume.
-#
-# Trade-off: ~22% loss in peak_votes recovery vs the aggregation
-# recipe (rings near cell boundaries can fragment); centres are
-# located to one 3-mm cell instead of one 1.5-mm cell.  The
-# subsequent fit_circle re-fit in recodata refines the centre to
-# sub-mm precision either way, so the resolution loss is on the
-# Hough seed, not on the final ring measurement.  Fine for QA.
+# Trade-off: centres are located to one 3-mm cell from the Hough seed,
+# but the fit_circle re-fit refines them to sub-mm precision, so the
+# resolution loss is on the seed, not the final ring measurement.
 # ────────────────────────────────────────────────────────────────
-r_min               =   35.0
-r_max               =  105.0
-r_step              =    3.0    # QA: legacy coarser radius granularity
-cell_size           =    3.0    # QA: legacy coarser XY cell — ~8× speedup
-centre_padding_mm   =   10.0
+# Wide coarse-scan recipe (mirrors conf/defaults/streaming.toml): wide centre
+# (±1000 mm) + radius ([10, 1700] mm, r_max capped at the reachable diagonal)
+# at a coarse 25 mm grid so the accumulator stays small; fit_circle refines.
+# QA finds far-off-centre arcs on the same footing as production.
+r_min               =     10.0
+r_max               =   1700.0  # capped at reachable centre↔hit diagonal (see defaults)
+r_step              =     25.0  # coarse radius granularity
+cell_size           =     25.0  # coarse XY cell
+centre_padding_mm   =   1000.0  # ±1000 mm centre search
+
+r_max_auto            =   false # explicit wide r_max (decoupled from padding)
+sensor_half_extent_mm =   99.0  # r_max_auto only
+r_margin_mm           =   10.0  # r_max_auto only
+radial_eff_per_ring_centre = true  # keep arc-mode reconstruction in QA
 
 # ────────────────────────────────────────────────────────────────
 # QA-tuned ring acceptance — the only knobs that differ from
@@ -103,11 +107,19 @@ min_hits_slack           =   0.75
 # at ceil(5.8) = 6 hits.  QA: 0.008 — floors at ceil(13.2) = 14 hits.
 # Doubles the entry gate; preserves statistics on the bright-ring
 # population while cutting the long-tail fake rings.
-hough_threshold_fraction =   0.008
+# IGNORED under the RANSAC finder (vestigial Hough gates):
+hough_n_sigma_dcr        =   0.0     # IGNORED (RANSAC)
+min_ring_votes_floor     =   5       # IGNORED (RANSAC)
+hough_threshold_fraction =   0.008   # IGNORED (RANSAC)
 
-# Production defaults for everything else — these are not QA levers.
-collection_radius        =   2
-centre_xy_half_range_mm  =   25.0
+# RANSAC ring finder (mirror conf/defaults/streaming.toml).
+collection_radius        =   6       # RANSAC inlier band [mm]
+ransac_iterations        = 600
+ransac_min_significance  = 5.0
+ransac_min_inliers       = 8
+# Auto-coupled to centre_padding_mm (left unset); set explicitly to zoom the
+# per-ring centre QA hists.
+# centre_xy_half_range_mm  =   25.0
 #  Aggregation off in QA: the cell_size is already at the legacy
 #  3 mm, so an 8-cell window would scan a 6³ mm³ volume — too coarse
 #  for two-ring separation.  Single-cell peak at 3 mm matches the
@@ -129,3 +141,13 @@ aggregation_window_cells =   1
 # output (h_residual_vs_n_* stay empty, no _sigma_photon_mm scalars).
 # ────────────────────────────────────────────────────────────────
 skip_loo_residuals       =  true
+
+# Recodata per-ring quality floors (mirror conf/defaults/streaming.toml; set
+# explicitly because the QA overlay is a full-file swap).  min_hits_per_ring
+# rejects sub-8-hit random-coincidence "rings".  arc_span_min_rad is the span
+# above which a free Taubin refit is trusted as a refinement of the finder seed;
+# below it recodata keeps the finder centre (radius re-estimated from the hits)
+# instead of a high-variance free refit — see conf/defaults/streaming.toml for
+# the full dual-role note.
+min_hits_per_ring        =  8
+arc_span_min_rad         =  0.3

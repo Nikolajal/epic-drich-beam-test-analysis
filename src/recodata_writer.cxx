@@ -31,7 +31,6 @@
 //  radial(R) observables filled inline.
 #include "utility/radiator_efficiency.h"
 #include "analysis_results.h"
-#include "utility/circle_fit.h"
 #include "utility/config_dump.h"
 #include "utility/config_reader.h"
 #include "utility/qa_publish.h" // util::qa::pdf_path + crop_pdf_inplace
@@ -453,6 +452,19 @@ void recodata_writer(
     RootHist<TH1F> h_radial_first_dual_smeared("h_radial_first_dual_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
     RootHist<TH1F> h_radial_first_solo_smeared("h_radial_first_solo_smeared", ";R_{smeared} (mm);hits / efficiency", radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
 
+    //  Wide-arc mode fills the radial hists with per-ring 1/f_coverage
+    //  weights (see fill_ring_hists); enable Sumw2 so the chi²-based radial
+    //  fit downstream sees correct weighted bin errors.  For unit weights
+    //  Sumw2 reproduces the default sqrt(N) errors, so this is a no-op in the
+    //  legacy path — guarded purely to keep the legacy hists untouched.
+    if (recodata_cfg.radial_eff_per_ring_centre)
+        for (TH1F *hp : {h_radial_first.get(), h_radial_second.get(),
+                         h_radial_first_dual.get(), h_radial_first_solo.get(),
+                         h_radial_first_smeared.get(), h_radial_second_smeared.get(),
+                         h_radial_first_dual_smeared.get(),
+                         h_radial_first_solo_smeared.get()})
+            hp->Sumw2();
+
     //  Headline physics observables  These four
     //  per-ring quantities are what beam-test operators care about:
     //    * fitted ring radius (gives Cherenkov angle / velocity / PID),
@@ -507,6 +519,15 @@ void recodata_writer(
     //  Full detector range (±99 mm, 0.5 mm bins) so the Cherenkov ring shows.
     RootHist<TH2F> h_trigger_cherenkov_hitmap(
         "h_trigger_cherenkov_hitmap", ";x (mm);y (mm)",
+        396, -99, 99, 396, -99, 99);
+
+    //  Companion map: ONLY the hits the ring finder tagged as ring members
+    //  (HitmaskHoughRingTag First/Second), i.e. the subset of the in-time
+    //  occupancy above that was actually assigned to a reconstructed ring.
+    //  Same geometry so the two can be compared directly (full occupancy vs
+    //  ring-tagged).
+    RootHist<TH2F> h_ring_tagged_hitmap(
+        "h_ring_tagged_hitmap", ";x (mm);y (mm)",
         396, -99, 99, 396, -99, 99);
 
     //  Per-hit radial residual vs N_hits (LEAVE-ONE-OUT fit).
@@ -786,11 +807,20 @@ void recodata_writer(
             //  In-cut trigger-Cherenkov hitmap: accumulate the (x, y) of every
             //  cherenkov hit that passed the hardware-trigger timing cut
             //  ([recodata] hardware_ring_dt_min_ns … hardware_ring_dt_max_ns),
-            //  regardless of whether the ring fit converged — so the map shows
-            //  the full in-time occupancy (the Cherenkov ring).  res.first.hit_xy
-            //  carries the in-cut hits from compute_ring_fit_timewindow.
-            for (const auto &p : res.first.hit_xy)
+            //  regardless of whether the ring finder tagged/fitted a ring — so
+            //  the map shows the full in-time occupancy, not just ring-found
+            //  frames.  `res.occupancy_xy` is gathered in process_frame_pure
+            //  independently of the (tagged) ring reconstruction.
+            for (const auto &p : res.occupancy_xy)
                 h_trigger_cherenkov_hitmap->Fill(p[0], p[1]);
+
+            //  Companion: the ring-finder-tagged hits only (first + second ring).
+            //  res.{first,second}.hit_xy carry the tagged ring members (smeared),
+            //  recorded even when the fit itself did not converge.
+            for (const auto &p : res.first.hit_xy)
+                h_ring_tagged_hitmap->Fill(p[0], p[1]);
+            for (const auto &p : res.second.hit_xy)
+                h_ring_tagged_hitmap->Fill(p[0], p[1]);
 
             //  Radiator QA — drain the precomputed RingFitResults.  Now
             //  gated on a successful reconstruction (hardware-trigger
@@ -828,7 +858,8 @@ void recodata_writer(
                 first_hists.h_residual_vs_n_split_smeared = res.frame_has_second_ring
                                                                 ? h_residual_vs_n_first_dual_smeared.get()
                                                                 : h_residual_vs_n_first_solo_smeared.get();
-                fill_ring_hists(res.first, first_hists);
+                fill_ring_hists(res.first, first_hists,
+                                recodata_cfg.radial_eff_per_ring_centre);
 
                 RingFillHists second_hists;
                 second_hists.h_nhits = h_nhits_second.get();
@@ -844,7 +875,8 @@ void recodata_writer(
                 //  by definition); just plug the smeared headline hists.
                 second_hists.h_radial_smeared = h_radial_second_smeared.get();
                 second_hists.h_residual_vs_n_smeared = h_residual_vs_n_second_smeared.get();
-                fill_ring_hists(res.second, second_hists);
+                fill_ring_hists(res.second, second_hists,
+                                recodata_cfg.radial_eff_per_ring_centre);
             }
 
             recodata_tree->Fill();
@@ -1129,18 +1161,36 @@ void recodata_writer(
                 if (eff_R->GetBinContent(ib) <= 0.0)
                     eff_R->SetBinContent(ib, 0.0);
 
-            h_radial_first->Divide(eff_R.get());
-            h_radial_second->Divide(eff_R.get());
-            h_radial_first_dual->Divide(eff_R.get());
-            h_radial_first_solo->Divide(eff_R.get());
+            if (!recodata_cfg.radial_eff_per_ring_centre)
+            {
+                //  Legacy fixed-nominal-centre correction: divide the
+                //  aggregate radial hists by a single eff(R).
+                h_radial_first->Divide(eff_R.get());
+                h_radial_second->Divide(eff_R.get());
+                h_radial_first_dual->Divide(eff_R.get());
+                h_radial_first_solo->Divide(eff_R.get());
 
-            //  Same eff(R) correction on the smeared sibling hists —
-            //  the smearing acts at the per-hit level so the geometric
-            //  acceptance correction is identical.
-            h_radial_first_smeared->Divide(eff_R.get());
-            h_radial_second_smeared->Divide(eff_R.get());
-            h_radial_first_dual_smeared->Divide(eff_R.get());
-            h_radial_first_solo_smeared->Divide(eff_R.get());
+                //  Same eff(R) correction on the smeared sibling hists —
+                //  the smearing acts at the per-hit level so the geometric
+                //  acceptance correction is identical.
+                h_radial_first_smeared->Divide(eff_R.get());
+                h_radial_second_smeared->Divide(eff_R.get());
+                h_radial_first_dual_smeared->Divide(eff_R.get());
+                h_radial_first_solo_smeared->Divide(eff_R.get());
+            }
+            else
+            {
+                //  Wide-arc mode: the radial hists are ALREADY
+                //  coverage-corrected per-ring at each ring's fitted centre
+                //  (1/f_coverage per-hit weighting in fill_ring_hists).  A
+                //  single fixed-centre eff(R) is meaningless for far-off
+                //  arcs, so it is written below as a DIAGNOSTIC only — no
+                //  divide (dividing would double-correct).
+                mist::logger::info(
+                    "(recodata_writer) wide-arc mode: radial hists "
+                    "coverage-corrected per-ring at the fitted centre; "
+                    "h_eff_R written as a diagnostic only (no divide).");
+            }
 
             eff_R->Write();
         }
@@ -1308,6 +1358,7 @@ void recodata_writer(
         h_centre_xy_first->Write();
         h_centre_xy_second->Write();
         h_trigger_cherenkov_hitmap->Write();
+        h_ring_tagged_hitmap->Write();
 
         //  vs_n fitting recipe
         //
@@ -1659,6 +1710,11 @@ void recodata_writer(
         //  → the Cherenkov ring.
         if (auto *hm = output_file->Get<TH2F>("Rings/h_trigger_cherenkov_hitmap"))
             save_one(4, "trigger_cherenkov_hitmap", hm, "colz");
+
+        //  04 ring_tagged_hitmap — companion to the above: only the hits the
+        //  ring finder tagged as ring members (vs the full in-time occupancy).
+        if (auto *hm = output_file->Get<TH2F>("Rings/h_ring_tagged_hitmap"))
+            save_one(4, "ring_tagged_hitmap", hm, "colz");
 
         //  05 N_gamma_per_ring_summary — per-ring photon count (= the
         //     N_photons headline).  TH1F built inside the build_radial_

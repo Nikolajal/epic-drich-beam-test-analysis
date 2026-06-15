@@ -85,41 +85,79 @@ FrameResult process_frame_pure(AlcorLightdata &lightdata,
         break;
     }
 
-    //  Ring detection + fit on HARDWARE-trigger frames.  The streaming/
-    //  Hough self-trigger that tags ring hits is disabled in QA mode, so
-    //  instead we reconstruct the ring from every non-afterpulse cherenkov
-    //  hit within ±dt_cut of the hardware trigger's reference time.
+    //  Trigger-time Cherenkov occupancy (for h_trigger_cherenkov_hitmap) —
+    //  gathered INDEPENDENTLY of the ring finder so the map shows where every
+    //  in-time hit lands even on frames where no ring is reconstructed.  Uses
+    //  the first hardware / TIMING trigger as the reference and the
+    //  [hardware_ring_dt_min, max] window.  (Previously the hitmap drew from
+    //  the ring-fit hit set, which silently gated it to ring-found frames.)
+    for (const auto &[idx, trig] : res.accepted_triggers)
     {
-        //  Reference time = the first genuine hardware trigger in the frame
-        //  (skip the synthetic markers + the derived ring triggers).
-        const TriggerEvent *hw_trig = nullptr;
-        for (const auto &[idx, trig] : res.accepted_triggers)
+        const bool hw = idx < static_cast<int>(TriggerFirstFrames) ||
+                        idx == static_cast<int>(TriggerTiming);
+        if (!hw)
+            continue;
+        const float dt_lo = ctx.ring_ctx.cfg.hardware_ring_dt_min_ns;
+        const float dt_hi = ctx.ring_ctx.cfg.hardware_ring_dt_max_ns;
+        for (const auto &chrk : lightdata.get_cherenkov_hits_link())
         {
-            if (idx == TriggerFirstFrames || idx == TriggerStartOfSpill ||
-                idx == _TRIGGER_UNKNOWN_ ||
-                idx == _TRIGGER_STREAMING_RING_FOUND_ ||
-                idx == _TRIGGER_HOUGH_RING_FOUND_)
+            AlcorFinedata fh(chrk);
+            if (fh.is_afterpulse())
                 continue;
-            hw_trig = &trig;
-            break;
+            const float dt = fh.get_time_ns() - trig.fine_time;
+            if (dt >= dt_lo && dt <= dt_hi)
+                res.occupancy_xy.push_back({fh.get_hit_x_rnd(), fh.get_hit_y_rnd()});
         }
-        if (hw_trig)
+        break; // one hardware-trigger reference per frame
+    }
+
+    //  Ring reconstruction.
+    //
+    //  PRIMARY path — refine the rings the streaming-Hough already isolated
+    //  (hits tagged HitmaskHoughRingTagFirst / *Second).  The Hough now seeds
+    //  on hardware triggers as well as the streaming self-trigger (see
+    //  run_streaming_hough_trigger), so tagged hits are present on every
+    //  hardware- or streaming-triggered physics frame, in QA and production
+    //  alike — and fitting the tagged arc captures far-off-centre rings the
+    //  all-in-time-hits fit would average into a central blob.
+    //
+    //  FALLBACK — a frame the Hough never seeded (no tagged hits): the legacy
+    //  single-circle fit to every in-time hit around the hardware trigger's
+    //  reference time.
+    {
+        //  do_loo gated by the recodata config knob.  `skip_loo_residuals =
+        //  true` (typically in conf/QA/streaming.toml) disables the per-hit
+        //  leave-one-out loop — the biggest QA speedup lever, at the cost of
+        //  no σ_photon measurement.  See RecodataConfigStruct.
+        const bool do_loo = !ctx.ring_ctx.cfg.skip_loo_residuals;
+
+        bool have_tagged = false;
+        for (const auto &chrk : lightdata.get_cherenkov_hits_link())
         {
-            //  do_loo gated by the recodata config knob.
-            //  `skip_loo_residuals = true` (typically in
-            //  conf/QA/streaming.toml's [streaming_hough] table) disables
-            //  the per-hit leave-one-out
-            //  fit loop — the biggest QA speedup lever, at the cost of no
-            //  σ_photon measurement.  See RecodataConfigStruct.
-            const bool do_loo = !ctx.ring_ctx.cfg.skip_loo_residuals;
-            res.first = compute_ring_fit_timewindow(
-                hw_trig->fine_time,
-                ctx.ring_ctx.cfg.hardware_ring_dt_min_ns,
-                ctx.ring_ctx.cfg.hardware_ring_dt_max_ns,
-                lightdata, do_loo, ctx.ring_ctx);
-            //  No Hough → no first/second ring separation; the time-window
-            //  fit is the single reconstructed ring (second stays empty).
-            res.frame_has_second_ring = false;
+            AlcorFinedata fh(chrk);
+            if (fh.has_mask_bit(HitmaskHoughRingTagFirst) ||
+                fh.has_mask_bit(HitmaskHoughRingTagSecond))
+            {
+                have_tagged = true;
+                break;
+            }
+        }
+
+        //  Reconstruct ONLY from RANSAC-tagged ring hits.  No fallback: if the
+        //  ring finder tagged nothing, there is no ring — fabricating a fit on
+        //  every in-time hit (the old time-window path) just produced a
+        //  near-origin centroid "ring" per frame, which swamped the centre
+        //  distribution.  RANSAC now seeds on hardware triggers too, so a real
+        //  ring is always tagged when present.
+        if (have_tagged)
+        {
+            res.first = compute_ring_fit_tagged(
+                HitmaskHoughRingTagFirst, lightdata, do_loo, ctx.ring_ctx);
+            res.second = compute_ring_fit_tagged(
+                HitmaskHoughRingTagSecond, lightdata, do_loo, ctx.ring_ctx);
+            //  Genuine second ring iff the finder tagged second-ring hits —
+            //  drives the dual/solo split downstream.
+            res.frame_has_second_ring = res.second.n_hits > 0;
         }
     }
     return res;

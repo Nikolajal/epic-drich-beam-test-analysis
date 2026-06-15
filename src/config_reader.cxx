@@ -936,14 +936,64 @@ streaming_hough_conf_reader(std::string config_file)
             cfg.min_hits_slack = static_cast<float>(*v);
         if (auto v = (*sh_table)["hough_threshold_fraction"].value<double>())
             cfg.hough_threshold_fraction = static_cast<float>(*v);
+        if (auto v = (*sh_table)["hough_n_sigma_dcr"].value<double>())
+            cfg.hough_n_sigma_dcr = static_cast<float>(*v);
+        if (auto v = (*sh_table)["min_ring_votes_floor"].value<int64_t>())
+            cfg.min_ring_votes_floor = static_cast<int>(*v);
         if (auto v = (*sh_table)["collection_radius"].value<double>())
             cfg.collection_radius = static_cast<float>(*v);
+        if (auto v = (*sh_table)["ransac_iterations"].value<int64_t>())
+            cfg.ransac_iterations = static_cast<int>(*v);
+        if (auto v = (*sh_table)["ransac_min_significance"].value<double>())
+            cfg.ransac_min_significance = static_cast<float>(*v);
+        if (auto v = (*sh_table)["ransac_min_inliers"].value<int64_t>())
+            cfg.ransac_min_inliers = static_cast<int>(*v);
         if (auto v = (*sh_table)["centre_xy_half_range_mm"].value<double>())
             cfg.centre_xy_half_range_mm = static_cast<float>(*v);
         if (auto v = (*sh_table)["aggregation_window_cells"].value<int64_t>())
             cfg.aggregation_window_cells = static_cast<int>(*v);
         if (auto v = (*sh_table)["centre_padding_mm"].value<double>())
             cfg.centre_padding_mm = static_cast<float>(*v);
+
+        //  Wide-arc mode: auto-couple the radius range to the centre range
+        //  (far-off-centre / arc reconstruction).  Capture whether the QA
+        //  centre axis was pinned in TOML *before* we may widen it below.
+        const bool centre_xy_half_range_set =
+            static_cast<bool>((*sh_table)["centre_xy_half_range_mm"]);
+        if (auto v = (*sh_table)["r_max_auto"].value<bool>())
+            cfg.r_max_auto = *v;
+        if (auto v = (*sh_table)["sensor_half_extent_mm"].value<double>())
+            cfg.sensor_half_extent_mm = static_cast<float>(*v);
+        if (auto v = (*sh_table)["r_margin_mm"].value<double>())
+            cfg.r_margin_mm = static_cast<float>(*v);
+
+        if (cfg.r_max_auto)
+        {
+            if (cfg.centre_padding_mm < 0.f)
+            {
+                mist::logger::warning(
+                    "(streaming_hough_conf_reader) r_max_auto requires "
+                    "centre_padding_mm >= 0 (the -1 sentinel defines the pad AS "
+                    "r_max, mutually exclusive with deriving r_max from the "
+                    "pad).  Leaving auto OFF; using the explicit r_max.");
+                cfg.r_max_auto = false;
+            }
+            else
+            {
+                cfg.r_max = cfg.centre_padding_mm + cfg.sensor_half_extent_mm +
+                            cfg.r_margin_mm;
+            }
+        }
+
+        //  Single-knob promise: when the per-ring centre QA axis isn't
+        //  explicitly pinned, widen it to bracket the centre search range
+        //  (centre_padding_mm) so far-off centres don't pile into overflow.
+        //  Applies whenever a finite pad is given (not just r_max_auto), so
+        //  the explicit-r_max coarse-scan config gets a matching QA axis too.
+        //  Bin width snaps to cell_size downstream, so n_bins scales
+        //  automatically.
+        if (!centre_xy_half_range_set && cfg.centre_padding_mm >= 0.f)
+            cfg.centre_xy_half_range_mm = cfg.centre_padding_mm;
 
         //  C3.5 — `fit_circle_init_{x,y,r}` are deprecated.  recodata_writer
         //  seeds the per-ring refit from the Hough peak (cx, cy, radius);
@@ -1003,6 +1053,13 @@ streaming_hough_conf_reader(std::string config_file)
                                "(streaming_hough_conf_reader) geom: r_min=%.2f r_max=%.2f r_step=%.2f cell_size=%.2f",
                                cfg.r_min, cfg.r_max, cfg.r_step, cfg.cell_size)
                                .Data());
+        if (cfg.r_max_auto)
+            mist::logger::info(TString::Format(
+                                   "(streaming_hough_conf_reader) r_max AUTO-COUPLED (wide-arc): "
+                                   "r_max=%.1f = pad %.1f + sensor %.1f + margin %.1f",
+                                   cfg.r_max, cfg.centre_padding_mm,
+                                   cfg.sensor_half_extent_mm, cfg.r_margin_mm)
+                                   .Data());
         mist::logger::info(TString::Format(
                                "(streaming_hough_conf_reader) thresholds: threshold_fraction=%.3f min_hits_slack=%.3f "
                                "hough_threshold_fraction=%.4f collection_radius=%.2f",
@@ -1065,6 +1122,15 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
 {
     RecodataConfigStruct cfg;
 
+    //  Effective Hough r_max (honouring the wide-arc auto-coupling) — peeked
+    //  from the [streaming_hough] table below and used in part (b) to warn if
+    //  the radial histogram range would clip large arcs.  -1 = unknown.  Only
+    //  meaningful as a clip bound when r_max is AUTO-derived (then it ≈ the
+    //  reachable R); with an explicit huge coarse-scan r_max the radial range
+    //  is decoupled, so the warning is suppressed.
+    float hough_r_max_effective = -1.f;
+    bool hough_r_max_auto_derived = false;
+
     //  (a) Ring-reconstruction knobs from streaming.toml's
     //      `[streaming_hough]` table.
     try
@@ -1086,6 +1152,46 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
                 cfg.delta_r_for_coverage_mm = static_cast<float>(*v);
             if (auto v = (*h_table)["min_hits_per_ring"].value<int64_t>())
                 cfg.min_hits_per_ring = static_cast<int>(*v);
+            if (auto v = (*h_table)["arc_span_min_rad"].value<double>())
+                cfg.arc_span_min_rad = static_cast<float>(*v);
+
+            //  Mirror the wide-arc r_max derivation from
+            //  streaming_hough_conf_reader (single source of truth there;
+            //  this is a read-only peek for the radial-clip warning below).
+            float h_r_max = 120.f;
+            if (auto v = (*h_table)["r_max"].value<double>())
+                h_r_max = static_cast<float>(*v);
+            bool h_r_max_auto = false;
+            if (auto v = (*h_table)["r_max_auto"].value<bool>())
+                h_r_max_auto = *v;
+            float pad = -1.f;
+            if (auto v = (*h_table)["centre_padding_mm"].value<double>())
+                pad = static_cast<float>(*v);
+            //  Mirror streaming_hough_conf_reader's mutual-exclusion guard:
+            //  auto is only honoured when centre_padding_mm >= 0.
+            const bool wide_arc = h_r_max_auto && pad >= 0.f;
+            if (wide_arc)
+            {
+                float sensor = 99.f, margin = 10.f;
+                if (auto v = (*h_table)["sensor_half_extent_mm"].value<double>())
+                    sensor = static_cast<float>(*v);
+                if (auto v = (*h_table)["r_margin_mm"].value<double>())
+                    margin = static_cast<float>(*v);
+                h_r_max = pad + sensor + margin;
+            }
+            hough_r_max_effective = h_r_max;
+            hough_r_max_auto_derived = wide_arc;
+
+            //  Per-ring eff / arc-mode reconstruction (Kasa seed + arc-span
+            //  guard + per-ring coverage).  Defaults to the wide-arc
+            //  derivation (so existing auto-coupled configs are unchanged),
+            //  but can be set EXPLICITLY — needed by the wide coarse-scan
+            //  config, which uses an explicit r_max (r_max_auto = false) yet
+            //  still wants arc-mode reconstruction on.
+            cfg.radial_eff_per_ring_centre = wide_arc;
+            if (auto v = (*h_table)["radial_eff_per_ring_centre"].value<bool>())
+                cfg.radial_eff_per_ring_centre = *v;
+
             if (auto v = (*h_table)["hardware_ring_dt_min_ns"].value<double>())
                 cfg.hardware_ring_dt_min_ns = static_cast<float>(*v);
             if (auto v = (*h_table)["hardware_ring_dt_max_ns"].value<double>())
@@ -1159,6 +1265,14 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
         if (cfg.r_max_coverage_mm <= cfg.r_min_coverage_mm)
             mist::logger::warning(
                 "(recodata_conf_reader) r_max_coverage_mm must exceed r_min_coverage_mm.");
+        if (hough_r_max_auto_derived && hough_r_max_effective > 0.f &&
+            cfg.r_max_coverage_mm < hough_r_max_effective)
+            mist::logger::warning(TString::Format(
+                                      "(recodata_conf_reader) r_max_coverage_mm=%.1f < Hough r_max=%.1f "
+                                      "— the radial histogram will CLIP large arcs.  Widen "
+                                      "[coverage].r_max_coverage_mm to >= the Hough r_max.",
+                                      cfg.r_max_coverage_mm, hough_r_max_effective)
+                                      .Data());
         if (cfg.channel_half_width_mm <= 0.f)
             mist::logger::warning(
                 "(recodata_conf_reader) channel_half_width_mm must be > 0.");
@@ -1181,10 +1295,10 @@ recodata_conf_reader(std::string streaming_file, std::string mapping_file)
         mist::logger::info(TString::Format(
                                "(recodata_conf_reader) nominal centre: (%.2f, %.2f) mm  "
                                "delta_r_for_coverage=%.2f mm  min_hits_per_ring=%d  "
-                               "min_channel_r_for_coverage=%.2f mm",
+                               "min_channel_r_for_coverage=%.2f mm  arc_span_min=%.2f rad",
                                cfg.nominal_centre_x_mm, cfg.nominal_centre_y_mm,
                                cfg.delta_r_for_coverage_mm, cfg.min_hits_per_ring,
-                               cfg.min_channel_r_for_coverage_mm)
+                               cfg.min_channel_r_for_coverage_mm, cfg.arc_span_min_rad)
                                .Data());
         if (cfg.skip_loo_residuals)
             mist::logger::info(

@@ -3172,6 +3172,7 @@ class _GeneralQaPage(QtWidgets.QWidget):
         )),
         ("Cherenkov", (
             "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring
+            "ring_tagged_hitmap.pdf",         # subset the ring finder tagged as ring members
             "ring_centre_xy.pdf",
             "N_gamma_per_ring_summary.pdf",   # N_photons per ring
             "sigma_photon_summary.pdf",       # single-photon σ per ring

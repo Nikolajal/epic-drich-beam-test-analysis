@@ -33,12 +33,9 @@
  */
 
 #include <cstdint>
-#include <vector>
+#include <unordered_map>
 
 #include "alcor_spilldata.h"
-#include "alcor_finedata.h"        // AlcorFinedataStruct
-#include "alcor_data.h"            // HitMask
-#include "triggers/events.h"       // TriggerEvent
 #include "utility/config_reader.h" // StreamingHoughConfigStruct
 
 namespace mist
@@ -168,117 +165,47 @@ struct StreamingHoughQA
 };
 
 /**
- * @brief Run the Hough ring-finder on every streaming trigger present
+ * @brief Run the RANSAC ring-finder on every ring-seeding trigger present
  *        in a frame, emitting one `_TRIGGER_HOUGH_RING_FOUND_` event
  *        per ring directly into the frame's trigger collection.
  *
- * Iterates over the frame's triggers, processes every entry tagged
- * `_TRIGGER_STREAMING_RING_FOUND_`, and (for each):
- *   - builds a ring-candidate list via a `±time_window_ns` time pre-cut,
- *   - runs `HoughTransform::find_rings` on the candidates,
- *   - tags the original hits with `HitmaskHoughRingTagFirst / Second`,
- *   - calls `fit_circle` to refine each ring's centre,
- *   - emits the Hough trigger event via `spilldata.add_trigger_to_frame`.
+ * Iterates over the frame's triggers, processes every ring-seeding trigger
+ * (hardware triggers + `_TRIGGER_STREAMING_RING_FOUND_`; see
+ * `is_ring_seed_trigger`), and (for each):
+ *   - builds a ring-candidate list via a `±time_window_ns` time pre-cut
+ *     (skipping hits already tagged by an earlier seed in this frame),
+ *   - runs `mist::ring_finding::find_rings_ransac` on the candidates,
+ *   - tags the contributing hits with `HitmaskHoughRingTagFirst / Second`,
+ *   - emits the ring trigger event via `spilldata.add_trigger_to_frame`.
  *
- * @param spilldata               Spill data for the current frame.
- *                                Mask bits are written back on the
- *                                Cherenkov hits in-place; Hough trigger
- *                                events are appended via
+ * Centre/radius refinement (Taubin `circle_fit`) and N_γ happen downstream
+ * in `recodata_writer` on the mask-tagged hits.
+ *
+ * @param spilldata               Spill data for the current frame.  Mask bits
+ *                                are written back on the Cherenkov hits
+ *                                in-place; ring trigger events are appended via
  *                                `add_trigger_to_frame`.
  * @param frame_id                Index of the frame being processed.
- * @param ring_finder             Pre-built shared Hough transform (its
- *                                `build_lut` must already have been
- *                                called with the active geometry, with
- *                                `r_min`/`r_max`/`r_step`/`cell_size`
- *                                from @p cfg).
- * @param min_active              `min_active` passed to MIST's
- *                                `find_rings`; `min_hits` is derived as
- *                                `min_active × cfg.min_hits_slack`.
- *                                The caller is expected to compute this
- *                                as `ceil(cfg.hough_threshold_fraction
- *                                × N_active_cherenkov)` (the Hough
- *                                stage doesn't see the channel count).
  * @param streaming_trigger_count In/out counter incremented once per
- *                                streaming trigger processed across the
- *                                whole run; used to gate the first-1000
- *                                fills of `qa.frames_examples`.
+ *                                streaming self-trigger processed across the
+ *                                run; gates the first-1000 fills of
+ *                                `qa.frames_examples`.
  * @param ispill                  Current spill index (0-based); QA only
  *                                fills `frames_examples` when `ispill == 0`.
- * @param time_window_ns          Time pre-cut width — inherited from
- *                                the streaming-score `time_window_ns`
- *                                (NOT a knob in `cfg`;).
- * @param cfg                     Streaming-Hough config struct.  Supplies
- *                                `threshold_fraction`, `min_hits_slack`,
- *                                and `collection_radius`.  The
- *                                LUT-geometry fields (`r_min` etc.) are
- *                                consumed by the caller when constructing
- *                                @p ring_finder, not here.
- *                                (`fit_circle_init_{x,y,r}` were removed
- *                                in C3.5 — recodata seeds the per-ring
- *                                refit from the Hough peak.)
+ * @param time_window_ns          Time pre-cut width — inherited from the
+ *                                streaming-score `time_window_ns`.
+ * @param cfg                     Streaming-Hough config struct.  Supplies the
+ *                                RANSAC knobs (`ransac_iterations`,
+ *                                `ransac_min_significance`, `ransac_min_inliers`,
+ *                                `collection_radius`, `r_min`, `r_max`).
  * @param qa                      QA histogram bundle (any field may be `nullptr`).
  */
 void run_streaming_hough_trigger(
     AlcorSpilldata &spilldata,
     uint32_t frame_id,
-    mist::ring_finding::HoughTransform &ring_finder,
-    int min_active,
     int &streaming_trigger_count,
     int ispill,
     float time_window_ns,
     const StreamingHoughConfigStruct &cfg,
-    const StreamingHoughQA &qa);
-
-// ─────────────────────────────────────────────────────────────────────
-//  Frame-level multithreading: parallel find_rings + serial mutation drain
-//
-//  `run_streaming_hough_trigger` reads the frame's hits + triggers from
-//  the spill and writes back to it (mask bits, `_TRIGGER_HOUGH_RING_FOUND_`
-//  events) — neither is safe under the parallel per-frame pass (the spill's
-//  unordered_map and ROOT histograms are not thread-safe).
-//  `run_streaming_hough_compute` does the expensive work (candidate
-//  collection + `find_rings` + ring tagging) on a worker thread, reading
-//  only its frame's hits + the streaming triggers the score stage produced,
-//  filling the (per-thread-cloned) QA bundle, and BUFFERING the spill
-//  mutations into a @ref HoughMutations record.  The caller replays those
-//  mutations serially, in frame order, after `drain_streaming_score` (so
-//  the streaming-ring bit is already set and the Hough bits OR onto it, and
-//  the trigger order stays streaming-then-Hough).
-// ─────────────────────────────────────────────────────────────────────
-
-/// Spill mutations a frame's Hough stage would apply, deferred for serial
-/// replay.
-struct HoughMutations
-{
-    /// Hough ring-tag bits to OR onto a cherenkov hit's mask: (hit index in
-    /// the frame's `cherenkov_hits`, bits = HitmaskHoughRingTag{First,Second}).
-    /// OR (not overwrite) so the streaming-ring bit set by the score drain
-    /// survives.
-    std::vector<std::pair<int, HitMask>> mask_writes;
-
-    /// `_TRIGGER_HOUGH_RING_FOUND_` events (one per ring), appended via
-    /// `add_trigger_to_frame` after the streaming trigger.
-    std::vector<TriggerEvent> hough_triggers;
-
-    /// Number of streaming triggers processed (the `streaming_trigger_count`
-    /// in/out increment of the serial entry point).
-    int streaming_trigger_count_inc = 0;
-};
-
-/// Pure-compute Hough stage for one frame.  Thread-safe given a per-thread
-/// @p ring_finder and a per-thread @p qa clone bundle; reads only @p
-/// cherenkov_hits (positions must already be assigned) and the score stage's
-/// @p streaming_triggers, with @p streaming_mask_indices naming the hits the
-/// score flagged (used for the `full_hitmap` QA, since the mask bits are not
-/// yet written to the hits during the parallel pass).  Returns the buffered
-/// spill mutations for serial replay.
-HoughMutations run_streaming_hough_compute(
-    const std::vector<AlcorFinedataStruct> &cherenkov_hits,
-    const std::vector<TriggerEvent> &streaming_triggers,
-    const std::vector<int> &streaming_mask_indices,
-    mist::ring_finding::HoughTransform &ring_finder,
-    int min_active,
-    int ispill,
-    float time_window_ns,
-    const StreamingHoughConfigStruct &cfg,
-    const StreamingHoughQA &qa);
+    const StreamingHoughQA &qa,
+    const std::unordered_map<int, float> &channel_score_weights);

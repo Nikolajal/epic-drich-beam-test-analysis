@@ -269,6 +269,9 @@ add_executable(recodata_writer       macros/utilities/recodata_writer.cpp)
 add_executable(recotrackdata_writer  macros/utilities/recotrackdata_writer.cpp)
 add_executable(pulser_calib_writer   macros/utilities/pulser_calib_writer.cpp)
 add_executable(btana-dump            macros/utilities/btana_dump.cpp)
+# Standalone RANSAC ring-finder tuning harness (reads lightdata.root, re-runs
+# the scan with CLI params — see macros/utilities/ransac_tune.cpp).  Dev tool.
+add_executable(ransac_tune           macros/utilities/ransac_tune.cpp)
 # Stand-alone TBrowser launcher used by the QA dashboard's Inspect
 # button.  See macros/utilities/qa_tbrowser.cpp for the rationale.
 add_executable(qa_tbrowser           macros/utilities/qa_tbrowser.cpp)
@@ -281,6 +284,7 @@ target_link_libraries(recodata_writer       PRIVATE beam_test_analysis)
 target_link_libraries(recotrackdata_writer  PRIVATE beam_test_analysis)
 target_link_libraries(pulser_calib_writer   PRIVATE beam_test_analysis)
 target_link_libraries(btana-dump            PRIVATE beam_test_analysis)
+target_link_libraries(ransac_tune           PRIVATE beam_test_analysis)
 # qa_tbrowser + qa_tcanvas only need ROOT (no project lib) since
 # they're pure TApplication glue.  Link against the umbrella ROOT
 # library target FindROOT already exports for the writers.
@@ -388,6 +392,8 @@ if(BTANA_BUILD_TESTS)
     endfunction()
 
     btana_add_test(global_index)
+    btana_add_test(ring_arc)
+    btana_add_test(config_autocouple)
 
     message(STATUS "[beam_test_analysis] Tests enabled — binaries will land in ${CMAKE_BINARY_DIR}/bin")
 endif()

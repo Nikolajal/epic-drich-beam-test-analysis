@@ -63,26 +63,54 @@ default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a 
 # Hough accumulator geometry — set once at writer init via
 # mist::ring_finding::HoughTransform's constructor.
 #
-# AGGREGATION RECIPE ACTIVE (2026-Q2 patch landed):
-#   r_step = cell_size = 1.5 mm (half of the original 3 mm grid)
-#   aggregation_window_cells = 2 (set below) → 2×2×2 sub-cell sliding
-#   window in the peak finder, scanning a physical (2·1.5)³ = 3³ mm³
-#   volume per peak position.  Volume-equivalent to the legacy single-
-#   cell finder at 3 mm, so min_hits / threshold_fraction keep their
-#   meaning.  Expected gain vs legacy: ~22 % recovery of peak_votes
-#   that previously fragmented across cell boundaries (measured in the
-#   2026-Q2 calibration run, see DISCUSSION § 2.3.1), plus sub-cell
-#   precision on the recovered ring centres.
+# WIDE COARSE-SCAN RECIPE ACTIVE — far-off-centre / arc reconstruction.
 #
-# To revert to legacy single-cell behaviour: set all three to the
-# original values (r_step = cell_size = 3.0, aggregation_window_cells
-# = 1) — they're a coupled triple.
-r_min               =   35.0    # minimum ring radius scanned (mm)
-r_max               =  105.0    # maximum ring radius scanned (mm)
-r_step              =    1.5    # radius granularity (mm) — halved for aggregation
-cell_size           =    1.5    # XY accumulator cell size (mm) — halved
-                                # for aggregation.  Sub-cell refinement
-                                # is § 2.3 in the DISCUSSION.
+# The beam can produce only ARCS of large Cherenkov rings whose centres sit
+# far outside the sensor.  The first Hough pass is therefore a deliberately
+# WIDE, COARSE scan:
+#   * centre search:  X, Y ∈ ±centre_padding_mm  (±1000 mm here)
+#   * radius scan:    R ∈ [r_min, r_max]         ([10, 1700] mm here — r_max
+#                     capped at the reachable centre↔hit diagonal; see r_max)
+# Precision is NOT the Hough's job — the floating-centre fit_circle refit
+# downstream (seeded by a closed-form Kasa fit on the tagged hits) supplies
+# sub-mm centres/radii.  So the grid is COARSE (cell_size = r_step = 25 mm,
+# aggregation_window_cells = 1), which keeps the accumulator tiny despite the
+# huge range:  nx·ny·nR ≈ 87·87·400 ≈ 3 M cells ≈ 12 MB (the LUT, a few hundred
+# MB, dominates).  A fine 3 mm grid over this range would be multi-GB.
+#
+# Geometry note: with centres bounded to ±1000 mm and hits on the ±~85 mm
+# sensor, the largest REACHABLE radius is the centre↔hit diagonal ≈ 1657 mm,
+# so R bins above that are allocated but never voted — harmless at coarse cells.
+#
+# To revert to the legacy near-origin aggregation recipe, set:
+#   r_max_auto = false, centre_padding_mm = 10, r_max = 105,
+#   cell_size = r_step = 1.5, aggregation_window_cells = 2,
+#   collection_radius = 2, radial_eff_per_ring_centre = false
+# (the grid/aggregation values are a coupled set).
+r_min               =     10.0  # minimum ring radius scanned (mm)
+r_max               =   1700.0  # maximum ring radius scanned (mm).  Capped at the
+                                # REACHABLE max: with centres ≤ ±(bbox+pad) and
+                                # hits on the sensor, the centre↔hit diagonal is
+                                # ≈ 1654 mm for centre_padding_mm=1000, so larger
+                                # R bins would never be voted.  Raise together
+                                # with centre_padding_mm if the centre grid grows.
+r_step              =     25.0  # radius granularity (mm) — coarse (localise only)
+cell_size           =     25.0  # XY accumulator cell size (mm) — coarse
+
+# Radius-scan auto-coupling.  When true, r_max is DERIVED from the centre range
+# (r_max = centre_padding_mm + sensor_half_extent_mm + r_margin_mm).  OFF here:
+# the wide coarse scan sets r_max explicitly (10000) so it is decoupled from
+# the centre padding.  (sensor_half_extent_mm / r_margin_mm only matter when
+# r_max_auto = true.)
+r_max_auto            =   false
+sensor_half_extent_mm =   99.0  # hit bounding-box half-width (mm), r_max_auto only
+r_margin_mm           =   10.0  # safety margin on the derived r_max, r_max_auto only
+
+# Arc-mode recodata reconstruction (Kasa seed + arc-span guard + per-ring
+# coverage-corrected radial fill).  Defaults to r_max_auto when unset; pinned
+# ON here because the coarse scan runs with r_max_auto = false but still wants
+# the far-off-centre reconstruction path.
+radial_eff_per_ring_centre = true
 
 # LUT padding — half-width (mm) of extra X/Y space added around the
 # hit bounding box at `build_lut` time.  Sets how far outside the
@@ -106,7 +134,10 @@ cell_size           =    1.5    # XY accumulator cell size (mm) — halved
 # Setting to a very small value (< ring-radius worst case) WILL exclude
 # legitimate rings; sanity-check against the `ring_X/Y_first_hough`
 # distributions every time you change this.
-centre_padding_mm   =   10.0    # mm; -1.0 falls back to r_max (legacy)
+centre_padding_mm   = 1000.0    # mm; half-width of the centre (X,Y) search grid
+                                # → centres findable in ±(bbox+this).  Also sets
+                                # the per-ring centre QA axis.  -1.0 falls back
+                                # to r_max (legacy, incompatible with r_max_auto).
 
 # Per-frame ring-finder parameters
 #
@@ -144,24 +175,46 @@ centre_padding_mm   =   10.0    # mm; -1.0 falls back to r_max (legacy)
 #     not-yet-implemented merge pass (DISCUSSION § 2.5).
 threshold_fraction       =   0.33    # relative floor: min fraction of currently-
                                      # active hits required in the peak cell.
-                                     # Raise to suppress a duplicate ring 2
-                                     # (R_first ≈ R_second in `Hough rings/`).
+                                     # Kept at the historical 0.33 — DCR junk is
+                                     # now handled by the DCR-adaptive entry gate
+                                     # (hough_n_sigma_dcr) rather than by over-
+                                     # tightening this relative floor (which also
+                                     # cut real dual-ring yield).
 min_hits_slack           =   0.75    # ring-acceptance slack on the absolute vote
                                      # floor (0..1):  min_hits = floor(min_active ×
                                      # this).  Leave at 0.75 unless you're explicitly
                                      # studying the absolute floor.  Matches the
                                      # config_reader.h default.
-hough_threshold_fraction =   0.0035  # Hough entry gate, as a fraction of active
-                                     # Cherenkov channels.  Raise to suppress
-                                     # random-noise ring candidates and to
-                                     # short-circuit the second-ring pass on
-                                     # stage-1-only noise pile-up events.
-collection_radius        =   2       # mm — ring band width for hit assignment.
-                                     # Too small → ring 1's outer hits stay
-                                     # active and vote for a duplicate ring 2;
-                                     # too large → noise hits absorbed into
-                                     # ring 1.  Watch `ring_finder_first_hitmap`
-                                     # for a clean annulus vs a blob.
+
+# Hough entry gate (min_active).  PREFERRED: DCR-adaptive — min_active is set
+# from the first-frames noise model as
+#     min_active = max(min_ring_votes_floor, ceil(E_dark + hough_n_sigma_dcr·√E_dark))
+# where E_dark = Σ_c m_c (expected background hits/window).  Scales the floor up
+# on noisy runs, down on clean ones, mirroring stage 1's n_σ gate.  Set
+# hough_n_sigma_dcr = 0 to fall back to the fixed-fraction path below.
+# IGNORED under the RANSAC finder (vestigial Hough-accumulator gates — pending
+# config cleanup): hough_n_sigma_dcr, min_ring_votes_floor,
+# hough_threshold_fraction, threshold_fraction, min_hits_slack, and the geometry
+# grid knobs (cell_size, r_step, centre_padding_mm, r_max_auto,
+# sensor_half_extent_mm, r_margin_mm, aggregation_window_cells).
+hough_n_sigma_dcr        =   0.0     # IGNORED (RANSAC)
+min_ring_votes_floor     =   5       # IGNORED (RANSAC)
+hough_threshold_fraction =   0.0035  # IGNORED (RANSAC)
+
+collection_radius        =   6       # mm — RANSAC inlier band (|dist−R| < this).
+                                     # Narrow (~ring width) so uniform DCR adds
+                                     # only a thin baseline; the arc's excess wins.
+
+# ── RANSAC ring finder (replaced the Hough accumulator) ──────────────────────
+# Grid-free: samples 3 hits → exact circle, scores by inlier EXCESS over the
+# expected uniform background, accepts on Poisson significance.  Far-off-centre
+# / wide-radius is free (no accumulator); a concentrated arc beats small circles
+# that merely graze uniform noise.  Centre/radius range = [r_min, r_max] above.
+ransac_iterations        = 600       # RANSAC samples per ring
+ransac_min_significance  = 5.0       # accept only if inlier excess > this·√(bg)
+ransac_min_inliers       = 8         # absolute floor on a ring's inlier count
+                                     # Watch `ring_finder_first_hitmap` for a
+                                     # clean annulus vs a blob.
 
 # Per-ring centre QA histograms' X/Y half-range (mm).  The Hough algorithm
 # itself doesn't bound X/Y — this is a writer-side knob that sets the axis
@@ -169,7 +222,10 @@ collection_radius        =   2       # mm — ring band width for hit assignment
 # automatically snapped to `cell_size`.  Set wider than the expected
 # centre spread for your beam line so legitimate rings don't fall in
 # overflow; tighter to zoom in once you know where the ring centres land.
-centre_xy_half_range_mm  =  25.0     # mm
+# Left unset in wide-arc mode: the reader auto-couples it to
+# centre_padding_mm so the per-ring centre hists bracket the full centre
+# range without overflow.  Set it explicitly (e.g. 25.0) to zoom in.
+# centre_xy_half_range_mm  =  25.0     # mm
 
 # Sub-cell aggregation in MIST's peak finder.  Default 1 = single-cell
 # peak (legacy behaviour, current production).  Set to 2 to enable
@@ -190,7 +246,10 @@ centre_xy_half_range_mm  =  25.0     # mm
 # equivalence (= legacy single-cell at the original 3 mm) makes
 # `min_hits` and `threshold_fraction` keep their physical meaning, so
 # no threshold re-tuning is needed when flipping the recipe.
-aggregation_window_cells =     2     # 1 = single-cell peak (legacy); 2 = aggregated
+aggregation_window_cells =     1     # 1 = single-cell peak (wide-arc: precision
+                                     # comes from the fit_circle refit, so the
+                                     # coarse Hough only localises); 2 = aggregated
+                                     # sub-cell (legacy near-origin recipe).
 
 # fit_circle initial guess — REMOVED 2026-05-30 (C3.5).  recodata seeds
 # the per-ring refit from the Hough peak's (cx, cy, radius) directly.
@@ -218,10 +277,25 @@ hardware_ring_dt_min_ns  =  -30.0
 hardware_ring_dt_max_ns  =   30.0
 
 # Minimum hits per ring for the re-fit to be attempted.  Below this the
-# ring is skipped (no N_photons / radial fill).  Matches the upstream
-# Hough min_hits floor so the recodata and lightdata views agree on what
-# counts as a ring.
-min_hits_per_ring        =    5
+# ring is skipped (no N_photons / radial fill).  Raised 5→8 for the wide
+# coarse scan: 5-6-hit "rings" are random-coincidence junk that swamped the
+# solo radial fit (drove solo N_gamma→0); 8+ hits keeps genuine arcs.
+min_hits_per_ring        =    8
+
+# Minimum azimuthal span [rad] of a ring's hits for a free (seedless) Taubin
+# refit to be trusted.  Dual role in recodata:
+#   - Hough/RANSAC-tagged path (the live path): recodata SEEDS the fit from the
+#     finder's robust (cx,cy,R).  Above this span the seedless refit is trusted
+#     as a refinement (if it stays near the seed); below it the finder centre is
+#     kept and only the radius is re-estimated from the hits.  Either way the
+#     ring is kept — never rejected — so far short arcs survive with the finder's
+#     centre instead of collapsing toward the origin.
+#   - Legacy time-window path (no seed available): below this span the ring is
+#     rejected as a near-degenerate free fit.
+# Set to 0.3 (~17°): physical far-off-centre arcs subtend ~36° (0.63 rad); 0.8
+# (~46°) used to reject exactly those.  Consulted when arc-mode is active
+# (radial_eff_per_ring_centre = true).
+arc_span_min_rad         =    0.3
 
 # Channel-on-arc bandwidth [mm] used by `azimuthal_coverage_fraction`:
 # a channel counts as "on the ring" if |r_ch - R| < delta_r.  Should

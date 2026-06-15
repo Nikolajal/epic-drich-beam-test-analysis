@@ -21,6 +21,7 @@
 
 #include <map>
 #include <array>
+#include <vector>
 
 #include "alcor_data.h"             // HitMask
 #include "writers/recodata/types.h" // RingFitResult, RingFillHists
@@ -84,13 +85,41 @@ RingFitResult compute_ring_fit_timewindow(float t_ref_ns,
                                           const RingComputeContext &ctx);
 
 /**
+ * @brief Pure-compute single-ring fit from HOUGH-TAGGED hits.
+ *
+ * Selects every non-afterpulse cherenkov hit carrying @p ring_tag
+ * (`HitmaskHoughRingTagFirst` or `…Second`, set by the streaming-Hough stage
+ * which already isolated the ring members), then runs the same fit core as
+ * @ref compute_ring_fit_timewindow (Kasa seed + arc-span guard + circle fit +
+ * azimuthal coverage + optional LOO).  This is the PRIMARY recodata path when
+ * the Hough has tagged hits — it refines the exact arc the Hough found
+ * instead of fitting all in-time hits.  No shared state mutated; thread-safe.
+ *
+ * @param ring_tag  Which ring's tag bit to collect (First / Second).
+ * @param do_loo    Run the per-hit leave-one-out loop (gated upstream).
+ * @param ctx       Geometry + config bundle.
+ */
+RingFitResult compute_ring_fit_tagged(HitMask ring_tag,
+                                      AlcorLightdata &lightdata,
+                                      bool do_loo,
+                                      const RingComputeContext &ctx);
+
+/**
  * @brief Drain helper: replay the histogram fills implied by a
  *        precomputed @ref RingFitResult into the @p h target bundle.
  *
  * Any pointer in @p h may be nullptr — the corresponding fill is
  * skipped.  Mutates only the passed-in histograms; safe to call
  * iff the caller serializes hist access.
+ *
+ * @param eff_weight_per_ring  Wide-arc mode.  When true, the radial(R)
+ *        hists are filled with per-hit weight `1 / r.f_coverage` so the
+ *        distribution is coverage-corrected at the ring's fitted centre
+ *        (the downstream fixed-centre `eff(R)` divide is disabled in this
+ *        mode).  Rings with non-positive `f_coverage` contribute no radial
+ *        hits.  Default false = legacy unit-weight fills.
  */
-void fill_ring_hists(const RingFitResult &r, const RingFillHists &h);
+void fill_ring_hists(const RingFitResult &r, const RingFillHists &h,
+                     bool eff_weight_per_ring = false);
 
 } // namespace btana::recodata

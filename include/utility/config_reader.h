@@ -754,10 +754,48 @@ struct StreamingHoughConfigStruct
 
     /// @brief `min_active = ceil(this × N_active_cherenkov)`.  Both the
     /// "Hough may run at all" gate and the baseline for `min_hits_slack`.
+    /// FALLBACK only: used when no DCR noise model is available (or
+    /// `hough_n_sigma_dcr <= 0`).  Prefer the DCR-adaptive floor below — this
+    /// fixed fraction is blind to the dark rate (see DISCUSSION § "Hough
+    /// threshold — make it DCR-dependent").
     float hough_threshold_fraction = 0.0035f;
 
-    /// @brief Ring band width [mm] for hit assignment.
+    /// @brief DCR-adaptive Hough floor: when `> 0`, `min_active` is derived
+    /// from the streaming noise model instead of `hough_threshold_fraction`:
+    ///
+    ///     min_active = max(min_ring_votes_floor,
+    ///                      ceil(E_dark + hough_n_sigma_dcr · √E_dark))
+    ///
+    /// where `E_dark = Σ_c m_c` (expected background hits/window) comes from
+    /// the first-frames noise model — a Poisson `n_σ` over the dark floor,
+    /// mirroring stage 1's score gate.  Scales the floor UP on noisy runs and
+    /// DOWN on clean ones.  `0` (default) keeps the legacy fixed-fraction
+    /// path.  Typical: 3–5.
+    float hough_n_sigma_dcr = 0.f;
+
+    /// @brief Absolute lower floor on `min_active` for the DCR-adaptive path
+    /// (so a near-zero `E_dark` can't collapse the gate to 0).  Only used
+    /// when `hough_n_sigma_dcr > 0`.
+    int min_ring_votes_floor = 5;
+
+    /// @brief Ring band width [mm] for hit assignment.  Also the RANSAC
+    /// inlier band (|dist − R| < this ⇒ inlier).  Keep narrow (a few mm, ~the
+    /// physical ring width) so uniform DCR contributes only a thin baseline.
     float collection_radius = 2.f;
+
+    // ── RANSAC ring finder (replaced the Hough accumulator) ─────────────
+    /// @brief RANSAC samples per ring.  More iterations → higher chance of
+    /// hitting a 3-hit subset on the real arc; cheap (closed-form per sample).
+    int ransac_iterations = 600;
+
+    /// @brief Accept a ring only if its inlier EXCESS over the expected uniform
+    /// background exceeds this many σ (Poisson).  This is what lets a
+    /// concentrated arc beat a small circle that merely grazes uniform noise,
+    /// and rejects pure noise.  Typical 4–6.
+    float ransac_min_significance = 5.f;
+
+    /// @brief Absolute floor on a ring's inlier count.
+    int ransac_min_inliers = 8;
 
     /// @brief Half-range [mm] of the X/Y axis on the per-ring centre QA
     /// histograms (the hists span @c [-this, +this]).  Not consumed by
@@ -791,6 +829,46 @@ struct StreamingHoughConfigStruct
     /// hists, well below `r_max`.  No effect on physics if the chosen
     /// value comfortably brackets the real ring centres.
     float centre_padding_mm = -1.f;
+
+    /// @brief Auto-couple the radius range to the centre range (wide-arc
+    /// mode).  When @c true, @ref r_max is *derived* — not read from TOML —
+    /// as
+    ///
+    ///     r_max = centre_padding_mm + sensor_half_extent_mm + r_margin_mm
+    ///
+    /// so a single knob (`centre_padding_mm`) widens both the centre search
+    /// grid and the radius scan together.  This is the configuration for
+    /// the far-off-centre / arc regime: a ring whose centre sits up to
+    /// `centre_padding_mm` outside the hit bounding box and whose arc still
+    /// reaches the far edge of the sensor needs radii up to roughly
+    /// `centre_padding_mm + sensor_half_extent_mm`, plus a safety margin.
+    ///
+    /// Requires `centre_padding_mm >= 0` (the legacy `-1` sentinel *defines*
+    /// the pad as `r_max`, which is mutually exclusive with deriving `r_max`
+    /// from the pad).  When that precondition fails the reader leaves auto
+    /// off and warns.  Default @c false preserves the legacy fixed-`r_max`
+    /// behaviour for near-origin runs.
+    ///
+    /// **Wide-arc coupled set** — when running this mode, also set a *coarse*
+    /// grid (`cell_size = r_step = 3.0`, `aggregation_window_cells = 1`):
+    /// precision comes from the downstream floating-centre `fit_circle`
+    /// refinement, so the Hough only has to localise the peak.  The coarse
+    /// grid keeps the (main-thread-serial) accumulator bounded — a 1.5 mm
+    /// grid over a ±250 mm centre range would balloon the LUT ~8× and the
+    /// per-frame cost with it.
+    bool r_max_auto = false;
+
+    /// @brief Sensor half-extent [mm] used by the @ref r_max_auto coupling.
+    /// The largest hit-to-centre distance from a centre `centre_padding_mm`
+    /// outside the bounding box is bounded by adding the sensor reach on the
+    /// hit side.  Default 99 matches the hitmap / `index_to_hit_xy` bbox
+    /// half-width.  Ignored unless @ref r_max_auto.
+    float sensor_half_extent_mm = 99.f;
+
+    /// @brief Safety margin [mm] added to the @ref r_max_auto derivation so
+    /// the largest arc's radius comfortably fits inside the scan.  Ignored
+    /// unless @ref r_max_auto.
+    float r_margin_mm = 10.f;
 
     //  C3.5 — removed `fit_circle_init_{x,y,r}` fields and TOML knobs.
     //  No live consumer existed: the centre/radius
@@ -883,6 +961,36 @@ struct RecodataConfigStruct
     /// fill).  Matches the upstream `min_hits` floor in the Hough
     /// stage so the two are consistent.
     int min_hits_per_ring = 5;
+
+    /// @brief Minimum azimuthal span [rad] of the collected ring hits for
+    /// the floating-centre `fit_circle` to be trusted.  A short arc with a
+    /// far-off centre is a nearly-degenerate fit — letting the centre float
+    /// can run away.  When the hits' angular span about the centroid seed is
+    /// below this, recodata falls back to a fixed-centre fit (centroid +
+    /// median radius) and flags the ring lower-quality rather than trusting
+    /// the runaway free-centre solution.  Default 0.5 rad (~29°).  Read from
+    /// the `[streaming_hough]` table next to the other ring-reco knobs.
+    float arc_span_min_rad = 0.5f;
+
+    /// @brief Wide-arc mode: correct the radial(R) distribution per-ring at
+    /// the *fitted* centre instead of dividing the aggregate hist by a single
+    /// fixed-nominal-centre `eff(R)`.  When @c true, `fill_ring_hists` fills
+    /// each ring's hits with weight `1 / f_coverage` (the ring's azimuthal
+    /// coverage at its fitted centre), so the radial hist integral is already
+    /// the coverage-corrected per-ring photon count; recodata then writes
+    /// `h_eff_R` as a diagnostic only (no divide), since a single-centre
+    /// `eff(R)` is meaningless for far-off arcs.  Also switches the per-ring
+    /// circle fit to a closed-form (Kasa) algebraic seed + azimuthal-span
+    /// guard so far-off-centre arcs reconstruct robustly.
+    ///
+    /// `recodata_conf_reader` defaults this to the `[streaming_hough].r_max_auto`
+    /// flag (so the single wide-arc switch drives both the Hough bounds and the
+    /// recodata correction), but it can also be set EXPLICITLY via a
+    /// `radial_eff_per_ring_centre` key — needed by the wide coarse-scan config,
+    /// which uses an explicit `r_max` (auto off) yet still wants arc-mode
+    /// reconstruction.  Default @c false preserves the legacy
+    /// fixed-nominal-centre behaviour.
+    bool radial_eff_per_ring_centre = false;
 
     /// @brief Coincidence window (ns, relative to a hardware trigger's
     /// reference time) used to select cherenkov hits for the ring fit when

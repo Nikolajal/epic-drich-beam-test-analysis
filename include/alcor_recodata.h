@@ -68,19 +68,6 @@ private:
     std::vector<AlcorFinedataStruct> recodata;                  ///< Owned Hit collection.
     std::vector<AlcorFinedataStruct> *recodata_ptr = &recodata; ///< Branch-address pointer slot — points at the owned vector for the wrapper's lifetime.
 
-    // ---- Hough-transform internals ----------------------------------------
-    std::vector<float> hough_r_bins; ///< Radial bin centres used during Hough voting.
-    float hough_cell_size = 3.2f;    ///< Accumulator cell size in the (x, y) plane [mm].
-    float hough_x_min;               ///< Lower x boundary of the Hough accumulator [mm].
-    float hough_x_max;               ///< Upper x boundary of the Hough accumulator [mm].
-    float hough_y_min;               ///< Lower y boundary of the Hough accumulator [mm].
-    float hough_y_max;               ///< Upper y boundary of the Hough accumulator [mm].
-    int hough_nx;                    ///< Number of accumulator cells along x.
-    int hough_ny;                    ///< Number of accumulator cells along y.
-    std::vector<int> hough_accum;    ///< Flat 3-D accumulator [iR * nx*ny + iy * nx + ix].
-    /// Pre-computed LUT: GlobalIndex → per-R-bin → flat accumulator cell indices.
-    std::unordered_map<int, std::vector<std::vector<int>>> hough_lut;
-
 public:
     // ================================================================
     //  Constructors
@@ -442,39 +429,6 @@ public:
      * @param distance_time_cut    Maximum Δt between neighbouring hits [ns].
      */
     void find_rings(float_t distance_length_cut, float_t distance_time_cut);
-
-    /**
-     * @brief Pre-compute the Hough-transform look-up table (LUT).
-     *
-     * The Hough transform votes for ring centre candidates: for each Hit position
-     * and candidate radius R, the set of accumulator cells consistent with that
-     * (Hit, R) pair is pre-computed once here and reused per event.  Call once per
-     * run (or whenever the geometry changes) before @ref find_rings_hough.
-     *
-     * @param index_to_hit_xy  Map from global channel index to (x, y) position [mm].
-     * @param r_min            Minimum candidate ring radius [mm].
-     * @param r_max            Maximum candidate ring radius [mm].
-     * @param r_step           Radius step size [mm].
-     * @param cell_size        Linear size of each accumulator cell [mm].
-     */
-    void build_hough_lut(const std::map<int, std::array<float, 2>> &index_to_hit_xy,
-                         float r_min, float r_max, float r_step, float cell_size);
-
-    /**
-     * @brief Find ring candidates using the pre-computed Hough LUT.
-     *
-     * Each Hit votes for the accumulator cells stored in the LUT.  Cells exceeding
-     * the threshold are declared ring candidates; contributing hits and the
-     * event-level ring trigger are updated accordingly.
-     *
-     * @pre @ref build_hough_lut must have been called with geometry consistent with
-     *      the current event data.
-     *
-     * @param threshold_fraction  Minimum fraction of active hits required in a peak
-     *                            cell to be accepted as a ring centre (range 0–1).
-     * @param min_hits            Minimum absolute vote count for acceptance.
-     */
-    void find_rings_hough(float threshold_fraction, int min_hits);
 
     ///@}
 };
