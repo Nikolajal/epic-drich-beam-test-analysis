@@ -1385,11 +1385,31 @@ min_active  = max(abs_floor, E_dark + k·√E_dark)   # Poisson n_σ over the da
 ```
 
 i.e. a real ring must exceed the DCR expectation by `k` sigma (mirrors stage 1's
-`n_σ`).  Replace `hough_threshold_fraction` with a `hough_n_sigma_dcr` knob.
-Validate across regimes (streaming-noisy σ_S≳5000 vs dense) and confirm the
-dual-ring yield is preserved while the solo-junk collapses.  Interim: the
-bumped constant (`hough_threshold_fraction = 0.005`, `min_hits_per_ring = 8`,
-`arc_span_min_rad = 0.8`) is a stopgap only.
+`n_σ`).  Validate across regimes (streaming-noisy σ_S≳5000 vs dense) and confirm
+the dual-ring yield is preserved while the solo-junk collapses.
+
+**Status update (v2.2.0 — Hough→RANSAC migration).**  Stage 2 is now the
+grid-free RANSAC finder, and it ALREADY carries a significance gate
+(`ransac_min_significance`): a candidate's weighted inlier EXCESS over the
+expected background must exceed `min_significance·√(expected)`.  That is the
+"n_σ over a background floor" idea this task asked for — but the background is
+currently estimated as a UNIFORM areal density over the sensor fiducial
+(`ρ·L·2·band`, see `ransac_ring_finder.h`), NOT the per-channel DCR model
+`E_dark = Σ_c m_c`.  So the data-adaptive floor is *half-built*: the gate shape
+is right, the background estimate is uniform rather than DCR-weighted.
+
+To finish it: `score.{h,cxx}` already computes and publishes
+`expected_dark_hits_per_window = Σ_c m_c` (added during the migration, **currently
+unused**) — plumb it (and/or the per-channel `1/m_c` weights, already passed to
+the finder) into the RANSAC background term so the significance gate is taken
+over the true per-window dark expectation instead of a flat density.  No new
+`hough_*` knob: the live gate is `ransac_min_significance`.
+
+The old Hough-era stopgap knobs (`hough_threshold_fraction`,
+`min_ring_votes_floor`) are now IGNORED (vestigial, flagged in
+`conf/*/streaming.toml`).  Current acceptance is `ransac_min_significance` +
+`min_inliers` + the recodata `arc_span_min_rad = 0.3` (relaxed from 0.8 so the
+~36° far arcs survive — 0.8 was rejecting exactly the arcs we want).
 
 ### Time-aware hit handling (task #33)
 
