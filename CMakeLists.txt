@@ -394,6 +394,7 @@ if(BTANA_BUILD_TESTS)
     btana_add_test(global_index)
     btana_add_test(ring_arc)
     btana_add_test(config_autocouple)
+    btana_add_test(conf_path)
 
     message(STATUS "[beam_test_analysis] Tests enabled — binaries will land in ${CMAKE_BINARY_DIR}/bin")
 endif()
