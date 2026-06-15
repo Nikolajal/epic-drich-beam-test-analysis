@@ -47,20 +47,20 @@
 
 namespace
 {
-    //  Same predicate as run_streaming_ransac_trigger's is_ring_seed_trigger:
-    //  config hardware [0,99], built-in TIMING, and the streaming self-trigger.
-    bool is_ring_seed_trigger(int index)
-    {
-        return index < static_cast<int>(TriggerFirstFrames) ||
-               index == static_cast<int>(TriggerTiming) ||
-               index == static_cast<int>(_TRIGGER_STREAMING_RING_FOUND_);
-    }
+//  Same predicate as run_streaming_ransac_trigger's is_ring_seed_trigger:
+//  config hardware [0,99], built-in TIMING, and the streaming self-trigger.
+bool is_ring_seed_trigger(int index)
+{
+    return index < static_cast<int>(TriggerFirstFrames) ||
+           index == static_cast<int>(TriggerTiming) ||
+           index == static_cast<int>(_TRIGGER_STREAMING_RING_FOUND_);
+}
 
-    struct FrameHits
-    {
-        std::vector<float> x, y, t;
-        std::vector<int> ch;
-    };
+struct FrameHits
+{
+    std::vector<float> x, y, t;
+    std::vector<int> ch;
+};
 } // namespace
 
 int main(int argc, char **argv)
@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     bool use_weights = true;
     bool ignore_triggers = false; // run on ALL frame cherenkov hits (no seed)
     bool auto_window = false;     // isolate the densest time_window per frame
-    bool dt_scan = false;        // diagnostic: histogram t_hit - nearest seed time
+    bool dt_scan = false;         // diagnostic: histogram t_hit - nearest seed time
 
     app.add_option("file", file_path, "Path to lightdata.root")
         ->required()
