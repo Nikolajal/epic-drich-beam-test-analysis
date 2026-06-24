@@ -393,19 +393,35 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                 }
             }
 
+            //  ----    ----    ----    Timing → ALWAYS leading-edge  ----  ----
+            //  The timing sub-detector is read out leading-edge even when the
+            //  run's op_mode is a ToT family: its hits must NEVER be paired.
+            //  Exclude timing edges from BOTH the ToT-as-LET odd-edge drop and
+            //  the edge buffering below, so every timing edge falls through to
+            //  the legacy LET path (one hit at its leading-edge time, no
+            //  duration) regardless of the decoded op_mode.
+            bool is_timing = false;
+            for (const auto &t : current_readout_tag_list)
+                if (t == "timing")
+                {
+                    is_timing = true;
+                    break;
+                }
+
             //  ----    ----    ----    ToT-as-LET  ----    ----    ----
             //  Leading-edge-only: drop trailing (odd) edges; the leading (even)
             //  edges fall through to the legacy LET path below (one hit each, no
             //  pairing, no duration).  Lets a ToT run be reconstructed with the
             //  full LET analysis and serves as a pairing cross-check.
-            if (_leading_edge_only && tot_pairing && (current_data.get_tdc() & 1))
+            if (_leading_edge_only && tot_pairing && !is_timing &&
+                (current_data.get_tdc() & 1))
                 continue;
 
             //  ----    ----    ----    ToT edge buffering  ----    ----    ----
             //  Buffer the edge; pairing happens after the read, time-sorted (see
             //  the deferred-pairing block after the loop) because ALCOR stream
-            //  order is not time order.
-            if (tot_pairing && !_leading_edge_only)
+            //  order is not time order.  Timing edges are excluded (always LET).
+            if (tot_pairing && !_leading_edge_only && !is_timing)
             {
                 const uint32_t channel = current_data.get_global_index();
                 const uint64_t key =
@@ -710,9 +726,10 @@ void ParallelStreamingFramer::process(size_t stream_index, WorkerQA *qa)
                     auto &cl = frame_map[rh.frame_index];
                     for (auto &tag : tags)
                     {
-                        if (tag == "timing")
-                            cl.timing_hits.emplace_back(hit).duration = rh.duration;
-                        else if (tag == "tracking")
+                        //  Timing is leading-edge ONLY — never paired, ever — so
+                        //  it is emitted on the LET path above and the paired
+                        //  (ToT) path handles only tracking / cherenkov.
+                        if (tag == "tracking")
                             cl.tracking_hits.emplace_back(hit).duration = rh.duration;
                         else if (tag == "cherenkov")
                             cl.cherenkov_hits.emplace_back(hit).duration = rh.duration;
