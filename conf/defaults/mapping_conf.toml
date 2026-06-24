@@ -121,13 +121,16 @@
 # it to a 1D eff(R) by averaging over phi to correct the radial(R) hist.
 # Radial range for the eff(R) / radial(R) / N_gamma machinery.  This tracks
 # the FITTED ring radii (physical Cherenkov arcs), NOT the wide coarse RANSAC
-# scan range (r_max can be 10000 mm but real fitted arcs are ≲ a few hundred
-# mm, capped by the centre grid reach).  600 mm gives generous headroom; raise
-# it only if fitted radii actually approach it.  Legacy near-origin: [25, 125].
+# scan range.  Narrowed to the on-sensor physical-ring band [20, 130] mm so the
+# CB+pol3 N_gamma fit and the R/radial QA hists focus on the real Cherenkov peak
+# (a peak at ~42 mm fitted across a 600 mm range skews the fit integral and
+# squashes the plot).  r_max stays ≥ the RANSAC r_max (120 mm) so fitted arcs are
+# not clipped.  For the wide far-off-centre ARC studies, widen this back (the
+# large fitted radii need the headroom).  Legacy wide bracket: [25, 600].
 n_phi_bins_coverage =   360    # azimuthal bins over [-pi, pi]  (1 deg/bin)
-n_r_bins_coverage   =   460    # radial bins (~1.25 mm/bin over [25, 600])
-r_min_coverage_mm   =   25.0   # mm
-r_max_coverage_mm   =  600.0   # mm — brackets physical fitted arc radii
+n_r_bins_coverage   =   110    # radial bins (1 mm/bin over [20, 130])
+r_min_coverage_mm   =   20.0   # mm
+r_max_coverage_mm   =  130.0   # mm — on-sensor physical-ring band (≥ RANSAC r_max=120)
 
 # Channel pixel half-side [mm].  3 mm pitch → 1.5.  Used by both the
 # coverage map rasterisation and `azimuthal_coverage_fraction`'s
