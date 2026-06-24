@@ -2,27 +2,29 @@
 
 /**
  * @file utility/root_hist.h
- * @brief Owning RAII wrapper for ROOT histograms — a thin ergonomic shim over
- *        @ref mist::hep::owned::root_ptr.
+ * @brief Owning RAII wrapper for ROOT histograms.
  *
- * The ownership rules ROOT fights (detach-on-create so an open `TFile` can't
- * double-free a histogram; ownership-correct deletion) live in **mist-hep**
- * (`mist::hep::owned::make/clone/adopt` + `root_deleter`).  `RootHist<T>` adds
- * only what the writers rely on on top of that owning handle:
+ * `RootHist<T>` is a `unique_ptr`-style wrapper for `TH1F`, `TH2F`,
+ * `TProfile`, and friends that closes three latent problems with bare
+ * `new TH*` allocation:
  *
- *  - in-place construction `RootHist<T> h("name", title, …)` (forwards to
- *    `owned::make<T>`),
- *  - adoption of an existing pointer `RootHist<T>(other->Clone(...))`
- *    (forwards to `owned::adopt<T>`),
- *  - a move-only, default-constructible value type so
- *    `std::unordered_map<K, RootHist<T>>` compiles and never copies a pointer,
- *  - pointer-like access (`operator->`, `*`, `get`, `bool`, `release`,
- *    `reset`).
- *
- * Semantics are unchanged from the previous standalone implementation — the
- * detach/deletion logic is just sourced from mist-hep now instead of duplicated
- * here.  Does not auto-write on destruction (explicit `Write()` calls are
- * preserved); `enable_auto_write()` opts in, kept for interface compatibility.
+ *  1. **Leak on early return / exception.** Bare `new TH1F(...)` paired with
+ *     an end-of-function `outfile->Close()` leaks on every non-default
+ *     control-flow exit.  Compounds linearly with the number of runs on
+ *     a runlist driver.
+ *  2. **Stray-`gDirectory` ownership.** `TH1::AddDirectory(true)` is the
+ *     ROOT default — every fresh histogram silently attaches itself to
+ *     whatever `gDirectory` happens to be at construction.  If that
+ *     directory belongs to an input `TFile` (very common after a
+ *     `->Clone()` whose source was loaded from disk), closing the input
+ *     file frees the clone under the caller's feet
+ *      This wrapper calls `SetDirectory(nullptr)`
+ *     in its constructor so the wrapped histogram is owned by the
+ *     wrapper alone — no ROOT-side surprises.
+ *  3. **Copyable raw pointers in containers.** `std::map<K, TH1F*>`
+ *     accidentally duplicates the pointer on copy and reshuffle; with
+ *     `RootHist<T>` the value is move-only, so any miswiring becomes a
+ *     compile error.
  *
  * ## Usage
  *
@@ -30,49 +32,102 @@
  *     h->Fill(value);                  // operator-> proxies to TH1F
  *     h->Write();                      // explicit Write() — lands in gDirectory
  *
+ * The wrapper does **not** auto-write on destruction by default.  Existing
+ * explicit `Write()` calls in the writer code are preserved as-is.  To opt
+ * in to a write-at-destruction (e.g. when migrating a function whose write
+ * section is otherwise hard to express), call:
+ *
+ *     h.enable_auto_write(target_dir);     // writes to target_dir at scope exit
+ *
+ * If a manual `Write()` also fires through `operator->`, call `mark_written()`
+ * after it so the dtor skips the duplicate.  (Or just don't enable auto-write
+ * on histograms you write explicitly.)
+ *
+ * ## Adopting an existing histogram (e.g. from Clone())
+ *
  *     RootHist<TH1F> clone(static_cast<TH1F*>(other->Clone("clone")));
- *     std::unordered_map<int, RootHist<TH1F>> per_channel;  // move-only value
+ *     // ctor detaches `clone` from gDirectory — closes §6.10 by construction.
+ *
+ * ## Maps and vectors
+ *
+ *     std::unordered_map<int, RootHist<TH1F>> per_channel;
+ *     per_channel.try_emplace(ch, "name", "title", 100, 0, 10);
+ *     per_channel[ch] = RootHist<TH1F>("name", "title", 100, 0, 10);  // also OK
+ *     for (auto &[k, v] : per_channel)   // use auto&[]: RootHist is move-only
+ *         v->Write();
+ *
+ * Move-only; no copy.  Default-constructible (holds nothing) so `map::operator[]`
+ * still compiles.
  */
 
+#include <memory>
 #include <type_traits>
 #include <utility>
-
 #include <TDirectory.h>
 
-#include <mist/hep/owned.h>
+namespace rh_detail
+{
+/// Trait: does `T` expose `SetDirectory(TDirectory*)`?  TH1/TH2/TH3/TProfile
+/// do; TGraph does not.  Used to conditionally detach in the ctor.
+template <typename U, typename = void>
+struct has_set_directory : std::false_type
+{
+};
+
+template <typename U>
+struct has_set_directory<
+    U,
+    std::void_t<decltype(std::declval<U &>().SetDirectory(static_cast<TDirectory *>(nullptr)))>>
+    : std::true_type
+{
+};
+} // namespace rh_detail
 
 template <typename T>
 class RootHist
 {
-    mist::hep::owned::root_ptr<T> h_;
+    std::unique_ptr<T> h_;
     TDirectory *write_dir_ = nullptr;
     bool auto_write_ = false;
     bool written_ = false;
 
+    void detach_from_dir_() noexcept
+    {
+        if constexpr (rh_detail::has_set_directory<T>::value)
+            if (h_)
+                h_->SetDirectory(nullptr);
+    }
+
 public:
     // ── Construction ────────────────────────────────────────────────────────
 
-    /// Empty wrapper (no histogram) — so `map<K, RootHist<T>>::operator[]` can
-    /// default-construct.  Its `operator->` returns `nullptr`, exactly as the
-    /// previous implementation and raw-pointer code did.
+    /// Empty wrapper (no histogram).  Needed so `map<K, RootHist<T>>::operator[]`
+    /// can default-construct values.  An empty wrapper's `operator->` returns
+    /// `nullptr` — dereferencing it crashes, same as today's raw-pointer code.
     RootHist() noexcept = default;
 
-    /// Construct the histogram in place via `owned::make<T>` (detaches it from
-    /// gDirectory).  SFINAE-disabled for the single-`T*` case so the adopting
-    /// ctor below is chosen for that overload.
+    /// Construct the histogram in place.  Forwarded to `T(args...)`.
+    /// SFINAE-disabled when there is no matching `T` ctor for `args...` — in
+    /// particular this lets the adopting ctor below pick up `RootHist<T>(T*)`
+    /// without colliding here.
     template <typename... Args,
               typename = std::enable_if_t<
                   std::is_constructible_v<T, Args...> &&
                   !(sizeof...(Args) == 1 &&
                     std::conjunction_v<std::is_same<std::decay_t<Args>, T *>...>)>>
     explicit RootHist(Args &&...args)
-        : h_(mist::hep::owned::make<T>(std::forward<Args>(args)...))
+        : h_(std::make_unique<T>(std::forward<Args>(args)...))
     {
+        detach_from_dir_();
     }
 
-    /// Adopt an already-allocated histogram (e.g. a `Clone()`) via
-    /// `owned::adopt<T>` — takes ownership and detaches it from gDirectory.
-    explicit RootHist(T *raw) noexcept : h_(mist::hep::owned::adopt<T>(raw)) {}
+    /// Adopt an already-allocated histogram — e.g. the result of a `Clone()`.
+    /// The wrapper takes ownership; the wrapped histogram is detached from
+    /// `gDirectory` immediately so closing any input file does not free it.
+    explicit RootHist(T *raw) noexcept : h_(raw)
+    {
+        detach_from_dir_();
+    }
 
     // ── Copy disabled, move allowed ─────────────────────────────────────────
 
@@ -93,15 +148,19 @@ public:
     /// Release ownership; caller becomes responsible for the histogram.
     T *release() noexcept { return h_.release(); }
 
-    /// Replace the held histogram; the new one is detached from gDirectory.
+    /// Replace the held histogram.  The new one is detached from gDirectory.
     void reset(T *raw = nullptr) noexcept
     {
-        h_ = mist::hep::owned::adopt<T>(raw);
+        h_.reset(raw);
+        detach_from_dir_();
         written_ = false;
     }
 
-    // ── Optional write-at-destruction (kept for interface compatibility) ─────
+    // ── Optional write-at-destruction ───────────────────────────────────────
 
+    /// Opt in to writing the histogram in @p dir at scope exit.  Pass
+    /// `nullptr` (the default) to write to whatever `gDirectory` is at
+    /// destruction time — almost never what you want.  Pass an explicit dir.
     RootHist &enable_auto_write(TDirectory *dir = nullptr) noexcept
     {
         auto_write_ = true;
@@ -109,6 +168,9 @@ public:
         return *this;
     }
 
+    /// Tell the wrapper "I already wrote this" — suppresses the dtor write.
+    /// Call after a manual `Write()` if you had also called
+    /// `enable_auto_write()`.
     void mark_written() noexcept { written_ = true; }
 
     ~RootHist()
