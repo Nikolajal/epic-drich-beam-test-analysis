@@ -81,11 +81,11 @@ enum class RingShapeMode
 //  so every downstream consumer that expects a single radius still works.
 struct RingEllipse
 {
-    double a = 0.0, b = 0.0;       // semi-axes (a ≥ b), mm
+    double a = 0.0, b = 0.0; // semi-axes (a ≥ b), mm
     double a_err = 0.0, b_err = 0.0;
-    double theta_deg = 0.0;        // major-axis rotation, (-90, 90]
-    bool is_ellipse = false;       // false → circle fallback (a == b)
-    bool ok = false;               // false → fit failed; caller keeps circle
+    double theta_deg = 0.0;  // major-axis rotation, (-90, 90]
+    bool is_ellipse = false; // false → circle fallback (a == b)
+    bool ok = false;         // false → fit failed; caller keeps circle
 };
 
 //  Fit r(φ) = a·b / √((b·cos Δ)² + (a·sin Δ)²), Δ = φ − θ, over the ring band
@@ -198,8 +198,7 @@ double elliptical_radius(double dx, double dy, const RingEllipse &e)
     const double r_bar = 0.5 * (e.a + e.b);
     const double d = std::atan2(dy, dx) - e.theta_deg * M_PI / 180.0;
     const double r_ell =
-        e.a * e.b / std::sqrt(std::pow(e.b * std::cos(d), 2) +
-                              std::pow(e.a * std::sin(d), 2));
+        e.a * e.b / std::sqrt(std::pow(e.b * std::cos(d), 2) + std::pow(e.a * std::sin(d), 2));
     return r_ell > 0.0 ? r * r_bar / r_ell : r;
 }
 
@@ -378,7 +377,7 @@ void recodata_writer(
     //  see --force-ring / --force-ellipse.  Parsed once; consumed by the
     //  aggregate ellipse fit below.
     const RingShapeMode shape_mode =
-        ring_shape_mode == "circle"  ? RingShapeMode::kForceCircle
+        ring_shape_mode == "circle"    ? RingShapeMode::kForceCircle
         : ring_shape_mode == "ellipse" ? RingShapeMode::kForceEllipse
                                        : RingShapeMode::kAuto;
 
@@ -1991,7 +1990,6 @@ void recodata_writer(
                 /*add_diagonal=*/false, "c_qa_recodata_04_ring_centre_xy",
                 run_dir, 4, "ring_centre_xy");
         }
-
 
         //  ── Aggregate ring shape (ellipse) ──────────────────────────────────
         //  Fit the run's ring shape ONCE here — the per-trigger N_γ radial AND
