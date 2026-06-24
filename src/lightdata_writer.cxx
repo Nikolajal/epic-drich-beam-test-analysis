@@ -19,6 +19,7 @@
 #include "TLegend.h"
 #include "TLine.h"
 #include "TLatex.h"
+#include "TPaveText.h"
 #include "TMarker.h"
 #include "TStyle.h"
 #include "TF1.h"
@@ -4381,32 +4382,21 @@ void lightdata_writer(
                 const TotPeakFit tp = tot_fit_by_sensor.count(sen)
                                           ? tot_fit_by_sensor[sen]
                                           : TotPeakFit{};
-                //  ToT bands for the coincidence-Δt slices: ±2σ around each
-                //  fitted peak.  Restrict ONLY on the overlapping (inner) side —
-                //  if the 1 p.e. and 2 p.e. ±2σ windows overlap, clip both inner
-                //  edges to the threshold so no hit is counted in both bands; the
-                //  outer edges stay at ±2σ.  Robust for sensors like 1350 whose
-                //  2 p.e. shoulder won't support a clean double-Gaussian (there
-                //  have2 is false → only the 1 p.e. band is used).
-                double p1_lo = tp.mu1 - 2.0 * tp.sig1;
-                double p1_hi = tp.mu1 + 2.0 * tp.sig1;
+                //  1/2 p.e. separation = the 1 p.e. peak's upper ±2σ edge,
+                //  μ1 + 2σ1.  Uniform across sensors (works for 1350, whose
+                //  2 p.e. shoulder won't support a double-Gaussian): 1 p.e. =
+                //  μ1 ± 2σ1; 2 p.e. = above the threshold, up to μ2 + 2σ2 when a
+                //  2 p.e. peak resolved, else the ToT axis end.
+                const double thr = tp.mu1 + 2.0 * tp.sig1;
+                const double p1_lo = tp.mu1 - 2.0 * tp.sig1;
+                const double p2_hi = tp.have2 ? (tp.mu2 + 2.0 * tp.sig2)
+                                              : hist->GetXaxis()->GetXmax();
                 double dt_1pe = std::numeric_limits<double>::quiet_NaN();
                 double dt_2pe = std::numeric_limits<double>::quiet_NaN();
-                if (tp.have2)
+                if (tp.sig1 > 0)
                 {
-                    double p2_lo = tp.mu2 - 2.0 * tp.sig2;
-                    double p2_hi = tp.mu2 + 2.0 * tp.sig2;
-                    if (tp.thr_ns > 0 && p1_hi > p2_lo) // overlap → split at threshold
-                    {
-                        p1_hi = std::min(p1_hi, tp.thr_ns);
-                        p2_lo = std::max(p2_lo, tp.thr_ns);
-                    }
-                    dt_1pe = peak_avg_dt(hist.get(), p1_lo, p1_hi, "_dtpy_1pe");
-                    dt_2pe = peak_avg_dt(hist.get(), p2_lo, p2_hi, "_dtpy_2pe");
-                }
-                else
-                {
-                    dt_1pe = peak_avg_dt(hist.get(), p1_lo, p1_hi, "_dtpy_1pe");
+                    dt_1pe = peak_avg_dt(hist.get(), p1_lo, thr, "_dtpy_1pe");
+                    dt_2pe = peak_avg_dt(hist.get(), thr, p2_hi, "_dtpy_2pe");
                 }
 
                 TCanvas c(TString::Format("c_qa_lightdata_dtvstot_%s_%s",
@@ -4416,34 +4406,38 @@ void lightdata_writer(
                 c.SetRightMargin(0.16);
                 c.SetLogz(); // wide per-bin dynamic range (prompt peak ≫ tail)
                 hist->Draw("colz");
-                //  1 p.e./2 p.e. separation threshold (vertical, X = ToT),
-                //  spanning the hist's actual Δt range (per-trigger binning).
-                TLine thrline(tp.thr_ns, hist->GetYaxis()->GetXmin(),
-                              tp.thr_ns, hist->GetYaxis()->GetXmax());
+                //  1/2 p.e. separation threshold (vertical, X = ToT = μ1 + 2σ1),
+                //  spanning the hist's Δt range (per-trigger binning).
+                TLine thrline(thr, hist->GetYaxis()->GetXmin(),
+                              thr, hist->GetYaxis()->GetXmax());
                 thrline.SetLineColor(kRed + 1);
                 thrline.SetLineStyle(2);
                 thrline.SetLineWidth(2);
-                if (tp.have2 && tp.thr_ns > 0)
+                if (tp.sig1 > 0)
                     thrline.Draw();
-                //  Trigger + sensor are already in the hist title; here only the
-                //  fit-derived numbers.  ⟨Δt⟩ = mean coincidence time of the peak.
-                TLatex lbl;
-                lbl.SetNDC();
-                lbl.SetTextSize(0.032);
-                lbl.SetTextFont(42);
-                if (tp.have2 && tp.thr_ns > 0)
-                {
-                    lbl.SetTextColor(kRed + 1);
-                    lbl.DrawLatex(0.17, 0.90, TString::Format("1/2 p.e. threshold = %.1f ns", tp.thr_ns));
-                }
-                lbl.SetTextColor(kAzure + 2);
+                //  Fit-derived numbers in a white, border-less box in the top-
+                //  right corner — over the sparse high-ToT region, clear of the
+                //  prompt band, left of the colz palette (right margin 0.16 → the
+                //  pad's right edge is NDC x ≈ 0.84).  Trigger + sensor are
+                //  already in the hist title; ⟨Δt⟩ = mean coincidence time of the
+                //  peak in each ToT band.
+                TPaveText box(0.455, 0.725, 0.835, 0.90, "NDC");
+                box.SetFillColor(10); // opaque white
+                box.SetFillStyle(1001);
+                box.SetBorderSize(0);
+                box.SetTextFont(42);
+                box.SetTextAlign(12); // left, vertically centred
+                box.SetTextSize(0.026);
+                if (tp.sig1 > 0)
+                    box.AddText(TString::Format("1/2 p.e. threshold = %.1f ns", thr))
+                        ->SetTextColor(kRed + 1);
                 if (std::isfinite(dt_1pe))
-                    lbl.DrawLatex(0.17, 0.86, TString::Format("1 p.e.  #LT#Deltat#GT = %.2f ns", dt_1pe));
-                if (tp.have2 && std::isfinite(dt_2pe))
-                {
-                    lbl.SetTextColor(kGreen + 2);
-                    lbl.DrawLatex(0.17, 0.82, TString::Format("2 p.e.  #LT#Deltat#GT = %.2f ns", dt_2pe));
-                }
+                    box.AddText(TString::Format("1 p.e.  #LT#Deltat#GT = %.2f ns", dt_1pe))
+                        ->SetTextColor(kAzure + 2);
+                if (std::isfinite(dt_2pe))
+                    box.AddText(TString::Format("2 p.e.  #LT#Deltat#GT = %.2f ns", dt_2pe))
+                        ->SetTextColor(kGreen + 2);
+                box.Draw();
                 const auto path = util::qa::pdf_path(
                     run_dir, "lightdata", trg_order++,
                     std::string("dt_vs_tot_") + trig_name + "_" + sen);
