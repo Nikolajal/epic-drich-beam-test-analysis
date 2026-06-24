@@ -26,6 +26,8 @@
 #include "TString.h"
 
 #include "mist/logger/logger.h"
+#include <mist/stats/sideband.h>
+#include <vector>
 
 namespace btana::recodata
 {
@@ -249,19 +251,19 @@ void fit_radial_distribution(TH1F *h,
         const double sig = std::fabs(ring_fit.GetParameter(2));
         if (sig > 0.0)
         {
+            //  Equal-width flanking-sideband subtraction (peak μ±3σ; wings out
+            //  to μ±6σ, total wing width = peak width) via the ROOT-free
+            //  mist::stats::sideband_subtract — replaces the hand-rolled bin
+            //  arithmetic.  `h` is already per-ring scaled, so `.signal` is the
+            //  per-ring N_γ (no further /N_rings — matches the fit-based n_gamma).
             auto *ax = h->GetXaxis();
-            const double peak_counts = h->Integral(
-                ax->FindBin(mu - 3.0 * sig), ax->FindBin(mu + 3.0 * sig));
-            const double outer_counts = h->Integral(
-                ax->FindBin(mu - 6.0 * sig), ax->FindBin(mu + 6.0 * sig));
-            const double sideband_counts = outer_counts - peak_counts; // the wings
-            const double signal = peak_counts - sideband_counts;
-            //  `h` was already scaled to per-ring above (1/N_rings), so
-            //  `peak_counts`/`sideband_counts`/`signal` are ALL per-ring.
-            //  Dividing by N_rings here as well double-counted the
-            //  normalisation and drove the sideband estimator to ~0; it
-            //  must be left per-ring to match the fit-based n_gamma.
-            n_gamma_sb = signal;
+            std::vector<double> contents(ax->GetNbins());
+            for (int i = 1; i <= ax->GetNbins(); ++i)
+                contents[i - 1] = h->GetBinContent(i);
+            n_gamma_sb = mist::stats::sideband_subtract(
+                             contents, ax->GetXmin(), ax->GetBinWidth(1),
+                             mu - 3.0 * sig, mu + 3.0 * sig)
+                             .signal;
         }
     }
 
