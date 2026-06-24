@@ -316,7 +316,9 @@ class TestSchemeAwareAcquisition(unittest.TestCase):
         argv = download.build_argv(cfg, "20260101-120000", Path("."))
         self.assertEqual(
             argv,
-            ["rsync", "-av", "eic@eic701:/daq/data/20260101-120000", "Data/"])
+            ["rsync", "-av", "--exclude=process-online/", "--include=*/",
+             "--include=*.root", "--exclude=*",
+             "eic@eic701:/daq/data/20260101-120000", "Data/"])
 
     def test_legacy_rsync_fields_back_compat(self) -> None:
         #  Old [rsync].remote_host + remote_data_dir must produce the
@@ -326,7 +328,9 @@ class TestSchemeAwareAcquisition(unittest.TestCase):
         argv = download.build_argv(cfg, "20260101-120000", Path("."))
         self.assertEqual(
             argv,
-            ["rsync", "-av", "eic@eic701:/daq/data/20260101-120000", "Data/"])
+            ["rsync", "-av", "--exclude=process-online/", "--include=*/",
+             "--include=*.root", "--exclude=*",
+             "eic@eic701:/daq/data/20260101-120000", "Data/"])
 
     def test_local_path_argv(self) -> None:
         cfg = download.RsyncConfig(source_address="/mnt/sandbox")

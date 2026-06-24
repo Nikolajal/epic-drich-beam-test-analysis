@@ -59,4 +59,12 @@ void recodata_writer(
      * `force_upstream` cascade so `recodata_writer --force-upstream --QA`
      * propagates the QA RANSAC thresholds through to the lightdata stage.
      */
-    std::string streaming_conf = "conf/streaming.toml");
+    std::string streaming_conf = "conf/streaming.toml",
+    /**
+     * Cherenkov ring-shape policy for the radial coordinate:
+     *   "auto"    — classify circle vs ellipse from the fit (default),
+     *   "circle"  — force a circular ring (legacy R; --force-ring),
+     *   "ellipse" — force the elliptical radius ρ (--force-ellipse).
+     * Drives the per-trigger N_γ radial remap + the hitmap overlay.
+     */
+    std::string ring_shape_mode = "auto");

@@ -3176,16 +3176,10 @@ class _GeneralQaPage(QtWidgets.QWidget):
             "timing_dcr_per_channel.pdf",   # per-channel timing-sensor DCR (kHz) + per-chip avgs
         )),
         ("Cherenkov", (
-            "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring
-            "ring_tagged_hitmap.pdf",         # subset the ring finder tagged as ring members
+            "trigger_cherenkov_hitmap.pdf",   # in-cut trigger-Cherenkov hits → the ring + ellipse fit
             "ring_centre_xy.pdf",
-            "N_gamma_per_ring_summary.pdf",   # N_photons per ring
             "sigma_photon_summary.pdf",       # single-photon σ per ring
-            "streaming_score.pdf",
-            "radial_fit_ring1.pdf",           # ring 1 radial Gauss+pol3 fit → N_γ
-            "radial_fit_ring2.pdf",           # ring 2
-            "radial_fit_ring1_dual.pdf",      # ring 1, dual-ring events
-            "radial_fit_ring1_solo.pdf",      # ring 1, solo-ring events
+            "radial_efficiency.pdf",          # shared R-dependent eff(R) (one per run; per-trigger N_γ lives in the Triggers chapter)
         )),
     )
 
@@ -3197,6 +3191,8 @@ class _GeneralQaPage(QtWidgets.QWidget):
         "trigger_dt_",       # consecutive-firing Δt vs spill (rate stability)
         "trigcher_dt_",      # trigger–Cherenkov Δt (coincidence timing)
         "trigcher_hitmap_",  # in-window Cherenkov hitmap (the ring)
+        "dt_vs_tot_",        # ToT-family: ToT vs Δt(hit−trigger) (ToT runs only)
+        "ngamma_",           # per-trigger N_γ radial fit (photons / triggered frame)
     )
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -3290,7 +3286,15 @@ class _GeneralQaPage(QtWidgets.QWidget):
         rows_with_paths: list[tuple[str, list[Path]]] = []
         total_headline_tiles = 0
         for row_label, picks in self._GENERAL_ROWS:
-            paths = [emitted[pick] for pick in picks if pick in emitted]
+            paths: list[Path] = []
+            for pick in picks:
+                if pick.endswith("*"):
+                    #  Glob: every emitted plot with this prefix (skip the _logy
+                    #  siblings), e.g. ngamma_<trigger> for the per-trigger N_γ.
+                    paths += [emitted[k] for k in sorted(emitted)
+                              if k.startswith(pick[:-1]) and not k.endswith("_logy.pdf")]
+                elif pick in emitted:
+                    paths.append(emitted[pick])
             if paths:
                 rows_with_paths.append((row_label, paths))
                 total_headline_tiles += len(paths)
@@ -3312,19 +3316,50 @@ class _GeneralQaPage(QtWidgets.QWidget):
                     return name
             return None
 
+        #  Discover the real triggers from the NON-sensor-split plots only.
+        #  dt_vs_tot carries a trailing `_<sensor>` (e.g.
+        #  dt_vs_tot_luca_and_finger_1350) — using it for discovery would mint
+        #  phantom "luca_and_finger_1350" triggers, so it is excluded here and
+        #  its sensor variants are aggregated under the trigger row below.
+        #  dt_vs_tot (sensor-suffixed) and ngamma (combo/raw/_logy variants) are
+        #  EXCLUDED from discovery — matching their prefix would mint phantom
+        #  triggers (luca_and_finger_1350, combo_luca…, luca…_raw).  Their
+        #  variants are aggregated under the real trigger row below instead.
+        _GROUPED = ("dt_vs_tot_", "ngamma_")
         trigger_names: set[str] = set()
         for stem in emitted:
             base = stem[:-4] if stem.endswith(".pdf") else stem
-            tname = _trigger_of(base)
-            if tname:
-                trigger_names.add(tname)
+            for prefix in self._PER_TRIGGER_PLOTS:
+                if prefix in _GROUPED:
+                    continue
+                if base.startswith(prefix):
+                    name = base[len(prefix):]
+                    if prefix == "anchor_dt_" and name == "vs_spill":
+                        break
+                    trigger_names.add(name)
+                    break
 
         trigger_rows: list[tuple[str, list[Path]]] = []
         n_trigger_tiles = 0
         for tname in sorted(trigger_names):
-            paths = [emitted[f"{prefix}{tname}.pdf"]
-                     for prefix in self._PER_TRIGGER_PLOTS
-                     if f"{prefix}{tname}.pdf" in emitted]
+            paths: list[Path] = []
+            for prefix in self._PER_TRIGGER_PLOTS:
+                if prefix == "dt_vs_tot_":
+                    #  Sensor variants for this trigger (lin only), by sensor.
+                    paths += [emitted[s] for s in sorted(emitted)
+                              if s.startswith(f"dt_vs_tot_{tname}_")
+                              and not s.endswith("_logy.pdf")]
+                elif prefix == "ngamma_":
+                    #  Per-trigger N_γ, all under the trigger: combined raw+corr
+                    #  first, then the separate raw + corrected fits.  Lin only —
+                    #  the _logy siblings are drill-downs, not row tiles.
+                    for cand in (f"ngamma_combo_{tname}.pdf",
+                                 f"ngamma_{tname}.pdf",
+                                 f"ngamma_{tname}_raw.pdf"):
+                        if cand in emitted:
+                            paths.append(emitted[cand])
+                elif f"{prefix}{tname}.pdf" in emitted:
+                    paths.append(emitted[f"{prefix}{tname}.pdf"])
             if paths:
                 trigger_rows.append((tname, paths))
                 n_trigger_tiles += len(paths)

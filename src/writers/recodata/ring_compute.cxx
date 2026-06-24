@@ -185,6 +185,11 @@ static RingFitResult fit_collected_ring_hits(
                       ? static_cast<float>(fit.rms_residual)
                       : static_cast<float>(std::sqrt(resid_sq / out.n_hits));
 
+    //  The per-ring ELLIPSE fit is deferred to the finalize stage, where it runs
+    //  about the GLOBAL centre (fit_ring_ellipse_about) — fitting about a single
+    //  stable centre removes the per-ring θ bias.  Here we only keep the circle
+    //  fit + radial residuals.
+
     out.f_coverage = util::radiator_efficiency::azimuthal_coverage_fraction(
         ctx.index_to_hit_xy, out.cx, out.cy, out.R,
         ctx.cfg.delta_r_for_coverage_mm, ctx.cfg.channel_half_width_mm);
@@ -348,6 +353,9 @@ void fill_ring_hists(const RingFitResult &r, const RingFillHists &h,
         h.h_R_vs_nhits_split->Fill(r.n_hits, r.R);
     if (h.h_centre_xy)
         h.h_centre_xy->Fill(r.cx, r.cy);
+    //  The per-ring ellipse-shape distributions (h_ab, h_theta_ellip) are filled
+    //  in the finalize stage from fit_ring_ellipse_about (about the global
+    //  centre), NOT here — see recodata_writer.
 
     //  Radial(R) distribution.  In wide-arc mode the aggregate
     //  fixed-nominal-centre eff(R) divide downstream is disabled, so we

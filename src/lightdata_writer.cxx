@@ -16,9 +16,11 @@
 #include "utility/config_dump.h"
 #include "utility/qa_publish.h"
 #include "TCanvas.h"
+#include "TPad.h"
 #include "TLegend.h"
 #include "TLine.h"
 #include "TLatex.h"
+#include "TPaveText.h"
 #include "TMarker.h"
 #include "TStyle.h"
 #include "TF1.h"
@@ -304,6 +306,16 @@ void lightdata_writer(
 
     auto config_triggers = trigger_conf_reader(trigger_setup_file);
     TriggerRegistry registry(config_triggers);
+    //  Delay-tuning diagnostic target: the luca_and_finger trigger's own device,
+    //  derived from the trigger config so it tracks the campaign (SPS rdo-192 /
+    //  PS kc705-200) rather than being hardcoded.  -1 if no such trigger.
+    int luca_trig_device = -1, luca_trig_index = -1;
+    for (const auto &[dev, dt] : config_triggers.by_device)
+        if (dt.name == "luca_and_finger")
+        {
+            luca_trig_device = dt.device;
+            luca_trig_index = dt.index;
+        }
     //  Prepare output file & tree
     std::string outfile_name = data_repository + "/" + run_name + "/lightdata.root";
     if (std::filesystem::exists(outfile_name) && !force_rebuild)
@@ -455,18 +467,26 @@ void lightdata_writer(
     //  their characteristic single-p.e. ToT, while pile-up afterpulses (the
     //  untagged "fake two-photon" hits) populate inflated-ToT bands.  Lazy-
     //  allocated per fired trigger, but only when `tot_qa` (LET runs leave the
-    //  map empty → no PDF, dashboard tile auto-drops).  Y binning matches
+    //  map empty → no PDF, dashboard tile auto-drops).  ToT (X) binning matches
     //  h_tot_spectrum (3.125 ns = 1 coarse count, half-integer-cc edges).
-    std::unordered_map<int, RootHist<TH2F>> h_trigger_dt_vs_tot;
-    //  X window [ns] for the Δt-vs-ToT plot: a touch before the trigger
-    //  (−20 ns covers readout jitter on the prompt peak) out to +200 ns,
-    //  matching the ToT Y range so the prompt peak and the afterpulse /
-    //  pile-up tail both sit on screen.  1 ns bins resolve the few-ns prompt
-    //  peak.  Fixed diagnostic axis (like the afterpulse hitmaps' −99..99) —
-    //  not a physics tunable.
-    constexpr double kDtVsTotXLo = -20.0;
-    constexpr double kDtVsTotXHi = 200.0;
-    constexpr int kDtVsTotNBinsX = 220;
+    //  Per fired trigger → per sensor.  ToT response differs between the two
+    //  SiPM models (1350 / Quetta), so the Δt-vs-ToT is split by sensor; the
+    //  1 p.e./2 p.e. ToT boundaries (from the per-sensor ToT-spectrum fit) are
+    //  overlaid at render and used to slice the coincidence-Δt per region.
+    std::unordered_map<int, std::map<std::string, RootHist<TH2F>>> h_trigger_dt_vs_tot;
+    //  Δt window [ns] (Y axis) for the Δt-vs-ToT plot: symmetric [−40, 40] ns
+    //  around the trigger so the prompt peak and the near afterpulse / pile-up
+    //  tail both sit on screen.  1 ns bins resolve the few-ns prompt peak.
+    //  Fixed diagnostic axis (like the afterpulse hitmaps' −99..99) — not a
+    //  physics tunable.
+    constexpr double kDtVsTotDtLo = -40.0;
+    constexpr double kDtVsTotDtHi = 40.0;
+    constexpr int kDtVsTotNBinsDt = 80;
+    //  ToT window [ns] (X axis): half-integer-cc edges, 3.125 ns bins to match
+    //  h_tot_spectrum.
+    constexpr double kDtVsTotToTLo = -1.5625;
+    constexpr double kDtVsTotToTHi = 201.5625;
+    constexpr int kDtVsTotNBinsToT = 65;
 
     //  In-beam QA-sample accounting: how many hardware triggers were
     //  eligible for an in-beam pre-trigger sample vs how many were dropped
@@ -551,6 +571,18 @@ void lightdata_writer(
     //  3.125 ns bins (= 1 coarse count) on half-integer-cc edges — see h_tot_vs_channel.
     RootHist<TH1F> h_tot_spectrum("h_tot_spectrum",
                                   "ToT spectrum;ToT = t_{secondary} - t_{primary} [ns];hits", 65, -1.5625, 201.5625);
+    //  Cherenkov-to-trigger Δt for hits on the luca_and_finger trigger's OWN
+    //  device — a delay-tuning diagnostic.  The prompt-peak offset from 0 is the
+    //  residual trigger-delay miscalibration (1 cc = 3.125 ns; new delay =
+    //  current − peak/3.125 cc to centre it).  cc-binned with half-cc edges so
+    //  each clock cycle sits at a bin centre.
+    RootHist<TH1F> h_cher_dt_trigdev(
+        "h_cher_dt_trigdev",
+        TString::Format("Cherenkov#minustrigger #Deltat (luca_and_finger, device %d);"
+                        "#Delta_{t} (t_{Hit} - t_{trigger}) [ns];hits",
+                        luca_trig_device)
+            .Data(),
+        65, -101.5625, 101.5625);
     //  Y: 3.125 ns bins (= 1 coarse count) with edges on half-integer cc so each
     //  integer-cc duration sits at a bin centre — the coarse-only (no fine-calib)
     //  duration then doesn't smear across bin edges.  Range 0–200 ns captures the
@@ -566,6 +598,9 @@ void lightdata_writer(
     //  per-sensor set cleanly; written + rendered (with per-peak fit) only for ToT.
     std::map<std::string, std::unique_ptr<TH1F>> tot_spectrum_by_sensor;
     std::unordered_map<int, TH1F *> tot_spectrum_by_device;
+    //  device → sensor, reused at fill time to split the per-trigger Δt-vs-ToT
+    //  maps by sensor (each hit's sensor comes from its device via this map).
+    std::unordered_map<int, std::string> device_to_sensor;
     if (tot_qa)
         for (const auto &rc : framer.get_readout_config().all())
             for (const auto &dc : rc.device_chip)
@@ -583,7 +618,20 @@ void lightdata_writer(
                     slot->SetDirectory(nullptr);
                 }
                 tot_spectrum_by_device[dc.first] = slot.get();
+                device_to_sensor[dc.first] = sen;
             }
+    //  Per-sensor 1 p.e./2 p.e. ToT fit boundaries.  Computed once when the ToT
+    //  spectra are rendered and reused by the Δt-vs-ToT renderer, which slices
+    //  the coincidence-Δt into the 1 p.e. (ToT < threshold) and 2 p.e.
+    //  (ToT > threshold) regions and reports each region's mean coincidence Δt.
+    struct TotPeakFit
+    {
+        double amp1 = 0, mu1 = 0, sig1 = 0;
+        double amp2 = 0, mu2 = 0, sig2 = 0;
+        double thr_ns = -1;
+        bool have2 = false;
+    };
+    std::map<std::string, TotPeakFit> tot_fit_by_sensor;
     //  Smeared 2D hitmaps — per primary Hit we deposit 100 fills at independent
     //  ±1.5 mm smeared positions when the Hit lies in the relevant window.  Density
     //  in the resulting TH2F is therefore proportional to the corresponding
@@ -1832,21 +1880,37 @@ void lightdata_writer(
                         //  Δt-vs-ToT — booked only for ToT-family runs so LET
                         //  runs carry no ToT artefacts and the dashboard tile
                         //  auto-drops (same mode-gating as the other ToT QA).
+                        //  One hist per sensor (1350 / Quetta) per trigger.
                         if (tot_qa)
                         {
-                            h_trigger_dt_vs_tot[current_trigger.index] = RootHist<TH2F>(
-                                TString::Format("h_trigger_dt_vs_tot_%s",
-                                                registry.name_of(current_trigger.index).c_str())
-                                    .Data(),
-                                TString::Format(
-                                    "ToT vs #Deltat_{trg} (%s);"
-                                    "#Delta_{t} (t_{Hit} - t_{trigger}) [ns];"
-                                    "ToT = t_{secondary} - t_{primary} [ns]",
-                                    registry.name_of(current_trigger.index).c_str())
-                                    .Data(),
-                                kDtVsTotNBinsX, kDtVsTotXLo, kDtVsTotXHi,
-                                65, -1.5625, 201.5625);
-                            h_trigger_dt_vs_tot[current_trigger.index]->SetDirectory(nullptr);
+                            //  Δt (Y) binning: hardware triggers fire on the
+                            //  coarse clock, so their hit−trigger Δt is quantised
+                            //  to one clock cycle (3.125 ns) — bin at 1 cc with
+                            //  half-cc edges so each cycle sits at a bin centre
+                            //  (1 ns bins would comb).  Ring-found (software)
+                            //  triggers carry fine hit timing → keep 1 ns bins.
+                            const std::string trg_nm = registry.name_of(current_trigger.index);
+                            const bool ring_trig = trg_nm.find("RING_FOUND") != std::string::npos;
+                            const int dt_nbins = ring_trig ? kDtVsTotNBinsDt : 25;
+                            const double dt_lo = ring_trig ? kDtVsTotDtLo : -39.0625;
+                            const double dt_hi = ring_trig ? kDtVsTotDtHi : 39.0625;
+                            for (const auto &[sen, _hsen] : tot_spectrum_by_sensor)
+                            {
+                                auto &slot = h_trigger_dt_vs_tot[current_trigger.index][sen];
+                                slot = RootHist<TH2F>(
+                                    TString::Format("h_trigger_dt_vs_tot_%s_%s",
+                                                    trg_nm.c_str(), sen.c_str())
+                                        .Data(),
+                                    TString::Format(
+                                        "#Deltat_{trg} vs ToT (%s, sensor %s);"
+                                        "ToT = t_{secondary} - t_{primary} [ns];"
+                                        "#Delta_{t} (t_{Hit} - t_{trigger}) [ns]",
+                                        trg_nm.c_str(), sen.c_str())
+                                        .Data(),
+                                    kDtVsTotNBinsToT, kDtVsTotToTLo, kDtVsTotToTHi,
+                                    dt_nbins, dt_lo, dt_hi);
+                                slot->SetDirectory(nullptr);
+                            }
                         }
                     }
 
@@ -1874,6 +1938,12 @@ void lightdata_writer(
                         {
                             auto current_delta_time = current_hit.get_time_ns() - current_trigger.fine_time;
                             h_trigger_time_diff_w_cherenkov[current_trigger.index]->Fill(current_delta_time);
+                            //  Delay-tuning diagnostic: Cherenkov-to-trigger Δt
+                            //  for hits on the luca trigger's own device only.
+                            if (luca_trig_device >= 0 &&
+                                current_trigger.index == luca_trig_index &&
+                                current_hit.get_device() == luca_trig_device)
+                                h_cher_dt_trigdev->Fill(current_delta_time);
                             //  Δt-vs-ToT (ToT-family only): only paired hits
                             //  carry a duration ≥ 0; orphans (−1) are excluded
                             //  so they don't pile a spurious band at the axis
@@ -1883,10 +1953,20 @@ void lightdata_writer(
                             if (tot_qa)
                             {
                                 const float hit_tot = current_hit.get_duration();
-                                if (hit_tot >= 0.f &&
-                                    h_trigger_dt_vs_tot.count(current_trigger.index))
-                                    h_trigger_dt_vs_tot[current_trigger.index]->Fill(
-                                        current_delta_time, hit_tot);
+                                if (hit_tot >= 0.f)
+                                {
+                                    auto trit = h_trigger_dt_vs_tot.find(current_trigger.index);
+                                    if (trit != h_trigger_dt_vs_tot.end())
+                                    {
+                                        const auto sit = device_to_sensor.find(current_hit.get_device());
+                                        if (sit != device_to_sensor.end())
+                                        {
+                                            auto hit2 = trit->second.find(sit->second);
+                                            if (hit2 != trit->second.end())
+                                                hit2->second->Fill(hit_tot, current_delta_time);
+                                        }
+                                    }
+                                }
                             }
                             //  In-window hitmap: hits inside the config timing
                             //  cut [kTrigCherDtMin, kTrigCherDtMax] (asymmetric,
@@ -2407,9 +2487,10 @@ void lightdata_writer(
     //  so a TBrowser dive lands all related histograms together.
     for (auto &[key, val] : h_trigger_anchor_dt)
         write_in(key, val.get());
-    //  Δt-vs-ToT per fired trigger (ToT-family runs only; map empty in LET).
-    for (auto &[key, val] : h_trigger_dt_vs_tot)
-        write_in(key, val.get());
+    //  Δt-vs-ToT per fired trigger × sensor (ToT-family runs only; empty in LET).
+    for (auto &[key, by_sensor] : h_trigger_dt_vs_tot)
+        for (auto &[sen, val] : by_sensor)
+            write_in(key, val.get());
 
     //  Pairwise Δt(trigger_i, trigger_j) — lives in Triggers/Pairs/ so
     //  the dashboard's QA Lightdata sub-tab gets a separate collapsible
@@ -2518,6 +2599,9 @@ void lightdata_writer(
     h_afterpulse_far_hitmap->Write();
     h_afterpulse_per_channel->Write();
     h_afterpulse_hitmap->Write();
+    //  Delay-tuning diagnostic — persisted for any run that has the trigger.
+    if (h_cher_dt_trigdev->GetEntries() > 0)
+        h_cher_dt_trigdev->Write();
     if (tot_qa) // ToT-family run → persist the ToT QA hists for Full-plots discovery
     {
         h_tot_spectrum->Write();
@@ -2716,34 +2800,26 @@ void lightdata_writer(
             //  EACH of the 1 p.e. and 2 p.e. peaks → centre (mu) + sigma annotated.
             //  Used for the combined spectrum and each per-sensor spectrum.
             //  TODO(config): promote the threshold to a run-db / conf field.
-            auto render_tot_spectrum = [&run_dir](int order, const std::string &name,
-                                                  TH1F *hs, const std::string &sensor_label)
+            //  Extract the 1 p.e./2 p.e. peak structure from a ToT spectrum:
+            //  1 p.e. Gaussian seed, valley-walk up to the 2 p.e. peak, then a
+            //  joint DOUBLE Gaussian (the 2 p.e. sits on the 1 p.e. tail, so a
+            //  lone Gaussian there is dragged by the tail).  threshold = valley
+            //  between the peaks.  No second peak (no pile-up) → have2=false,
+            //  thr_ns < 0.  Reused by both the ToT-spectrum and Δt-vs-ToT renders.
+            auto fit_tot_peaks = [](TH1F *hs) -> TotPeakFit
             {
+                TotPeakFit tp;
                 if (!hs || hs->GetEntries() < 50)
-                    return;
+                    return tp;
                 const int pk = hs->GetMaximumBin();
                 const double pk_ns = hs->GetBinCenter(pk);
-                //  1 p.e. Gaussian (±12 ns window around the main peak) — a seed.
                 TF1 f1("f_tot_1pe", "gaus");
                 f1.SetRange(std::max(0.0, pk_ns - 12.0), pk_ns + 12.0);
                 hs->Fit(&f1, "RQ0");
                 double amp1 = f1.GetParameter(0), mu1 = f1.GetParameter(1), sig1 = f1.GetParameter(2);
-
-                //  2 p.e. peak: a genuine local maximum above the 1 p.e. valley
-                //  (interior of [mu1 + 1.5sigma, 4*mu1]).  The peaks are CLOSE and
-                //  the 2 p.e. sits on the 1 p.e. tail, so once a second peak is
-                //  found we fit a DOUBLE Gaussian (1 p.e. + 2 p.e.) seeded from both
-                //  — a lone Gaussian on the 2 p.e. window is dragged by the tail.
-                //  Threshold = valley (minimum) between the peaks.  No second peak
-                //  (no pile-up) -> 1 p.e.-only, no threshold line.
-                TF1 f2("f_tot_2pe", "gaus");
-                bool have2 = false;
                 double amp2 = 0, mu2 = 0, sig2 = 0, thr_ns = -1;
+                bool have2 = false;
                 {
-                    //  Walk up from the 1 p.e. peak to the valley (last falling
-                    //  bin); the 2 p.e. peak is the maximum above it.  No magic
-                    //  offset — works for close peaks where the valley sits just
-                    //  above the 1 p.e. tail.
                     const int pkbin = hs->GetMaximumBin();
                     const int hi2 = std::min(hs->FindBin(4.0 * mu1), hs->GetNbinsX());
                     int vb = pkbin;
@@ -2779,13 +2855,31 @@ void lightdata_writer(
                         have2 = (sig2 > 0 && mu2 > thr_ns && mu2 > mu1);
                     }
                 }
+                tp.amp1 = amp1;
+                tp.mu1 = mu1;
+                tp.sig1 = sig1;
+                tp.amp2 = amp2;
+                tp.mu2 = mu2;
+                tp.sig2 = sig2;
+                tp.thr_ns = thr_ns;
+                tp.have2 = have2;
+                return tp;
+            };
+            auto render_tot_spectrum = [&run_dir](int order, const std::string &name,
+                                                  TH1F *hs, const std::string &sensor_label,
+                                                  const TotPeakFit &tp)
+            {
+                if (!hs || hs->GetEntries() < 50)
+                    return;
                 //  Component curves for drawing, from the (possibly joint) fit.
-                f1.SetParameters(amp1, mu1, sig1);
-                f1.SetRange(mu1 - 3.0 * sig1, mu1 + 3.0 * sig1);
-                if (have2)
+                TF1 f1("f_tot_1pe", "gaus");
+                f1.SetParameters(tp.amp1, tp.mu1, tp.sig1);
+                f1.SetRange(tp.mu1 - 3.0 * tp.sig1, tp.mu1 + 3.0 * tp.sig1);
+                TF1 f2("f_tot_2pe", "gaus");
+                if (tp.have2)
                 {
-                    f2.SetParameters(amp2, mu2, sig2);
-                    f2.SetRange(mu2 - 3.0 * sig2, mu2 + 3.0 * sig2);
+                    f2.SetParameters(tp.amp2, tp.mu2, tp.sig2);
+                    f2.SetRange(tp.mu2 - 3.0 * tp.sig2, tp.mu2 + 3.0 * tp.sig2);
                 }
                 TCanvas c(TString::Format("c_qa_lightdata_%02d_%s", order, name.c_str()), "", 1000, 1000);
                 c.SetLogy();
@@ -2794,11 +2888,11 @@ void lightdata_writer(
                 f1.SetLineColor(kAzure + 2);
                 f1.SetNpx(400);
                 f1.Draw("same");
-                TLine thr(thr_ns, 0.5, thr_ns, hs->GetMaximum());
+                TLine thr(tp.thr_ns, 0.5, tp.thr_ns, hs->GetMaximum());
                 thr.SetLineColor(kRed + 1);
                 thr.SetLineStyle(2);
                 thr.SetLineWidth(2);
-                if (have2)
+                if (tp.have2)
                 {
                     f2.SetLineColor(kGreen + 2);
                     f2.SetNpx(400);
@@ -2812,23 +2906,65 @@ void lightdata_writer(
                 lbl.SetTextSize(0.028);
                 lbl.SetTextAlign(31); // right-aligned
                 lbl.SetTextColor(kAzure + 2);
-                lbl.DrawLatex(0.90, 0.88, TString::Format("%s   1 p.e.:  #mu = %.1f,  #sigma = %.1f ns", sensor_label.c_str(), mu1, sig1));
-                if (have2)
+                lbl.DrawLatex(0.90, 0.88, TString::Format("%s   1 p.e.:  #mu = %.1f,  #sigma = %.1f ns", sensor_label.c_str(), tp.mu1, tp.sig1));
+                if (tp.have2)
                 {
                     lbl.SetTextColor(kGreen + 2);
-                    lbl.DrawLatex(0.90, 0.84, TString::Format("2 p.e.:  #mu = %.1f,  #sigma = %.1f ns", mu2, sig2));
+                    lbl.DrawLatex(0.90, 0.84, TString::Format("2 p.e.:  #mu = %.1f,  #sigma = %.1f ns", tp.mu2, tp.sig2));
                     lbl.SetTextColor(kRed + 1);
-                    lbl.DrawLatex(0.90, 0.80, TString::Format("threshold = %.1f ns", thr_ns));
+                    lbl.DrawLatex(0.90, 0.80, TString::Format("threshold = %.1f ns", tp.thr_ns));
                 }
                 const auto path = util::qa::pdf_path(run_dir, "lightdata", order, name);
                 c.SaveAs(path.string().c_str());
                 util::qa::crop_pdf_inplace(path);
             };
-            render_tot_spectrum(20, "tot_spectrum", h_tot_spectrum.get(), "all sensors");
+            render_tot_spectrum(20, "tot_spectrum", h_tot_spectrum.get(), "all sensors",
+                                fit_tot_peaks(h_tot_spectrum.get()));
             {
                 int order = 23;
                 for (auto &[sen, hist] : tot_spectrum_by_sensor)
-                    render_tot_spectrum(order++, "tot_spectrum_" + sen, hist.get(), "sensor " + sen);
+                {
+                    //  Store the per-sensor fit so the Δt-vs-ToT renderer can
+                    //  reuse the 1 p.e./2 p.e. threshold + peak boundaries.
+                    TotPeakFit tp = fit_tot_peaks(hist.get());
+                    tot_fit_by_sensor[sen] = tp;
+                    render_tot_spectrum(order++, "tot_spectrum_" + sen, hist.get(), "sensor " + sen, tp);
+                }
+            }
+            //  Delay-tuning plot: Cherenkov-to-trigger Δt on the luca trigger's
+            //  own device.  Gaussian fit around the prompt peak — the fitted mean
+            //  is the residual delay offset; the green line marks the centred (0)
+            //  target, and the box reports Δdelay = −μ/cc to apply in the config.
+            if (h_cher_dt_trigdev->GetEntries() > 50)
+            {
+                TH1F *h = h_cher_dt_trigdev.get();
+                const double pk = h->GetBinCenter(h->GetMaximumBin());
+                TF1 fg("f_cher_dt", "gaus");
+                fg.SetRange(pk - 12.0, pk + 12.0);
+                h->Fit(&fg, "RQ0");
+                const double mu = fg.GetParameter(1), sg = fg.GetParameter(2);
+                fg.SetRange(mu - 3.0 * sg, mu + 3.0 * sg);
+                TCanvas c("c_qa_lightdata_22_cher_dt_trigdev", "", 1000, 1000);
+                c.SetLeftMargin(0.12);
+                h->Draw("hist");
+                fg.SetLineColor(kRed + 1);
+                fg.SetNpx(400);
+                fg.Draw("same");
+                TLine l0(0., 0., 0., h->GetMaximum());
+                l0.SetLineColor(kGreen + 2);
+                l0.SetLineStyle(2);
+                l0.SetLineWidth(2);
+                l0.Draw();
+                TLatex lbl;
+                lbl.SetNDC();
+                lbl.SetTextFont(42);
+                lbl.SetTextSize(0.03);
+                lbl.DrawLatex(0.15, 0.86, TString::Format("prompt peak #mu = %.2f ns  (#sigma = %.2f ns)", mu, sg));
+                lbl.SetTextColor(kAzure + 2);
+                lbl.DrawLatex(0.15, 0.82, TString::Format("residual = %.2f cc  #rightarrow  #Deltadelay = %+.1f cc", mu / BTANA_ALCOR_CC_TO_NS, -mu / BTANA_ALCOR_CC_TO_NS));
+                const auto path = util::qa::pdf_path(run_dir, "lightdata", 22, "cher_dt_trigdev");
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
             }
             //  ToT vs channel: bespoke so we can set log-Z (occupancy spans orders
             //  of magnitude across channels).
@@ -4190,14 +4326,48 @@ void lightdata_writer(
             util::qa::crop_pdf_inplace(path);
         }
 
-        //  Per-trigger Δt-vs-ToT (ToT-family runs only) — one PDF per fired
-        //  hardware trigger, X = Δt(hit − trigger) [ns], Y = ToT [ns], log Z
-        //  for the wide per-bin dynamic range.  ``h_trigger_dt_vs_tot`` is
-        //  only booked under the same is_secondary + is_synthetic_marker gate
-        //  as the other per-trigger maps AND only when ``tot_qa``, so this
-        //  loop is empty for LET runs and already excludes secondaries /
-        //  synthetic markers.  Continues the trg_order counter so these tile
-        //  after the consecutive-Δt PDFs.
+        //  Per-trigger × sensor Δt-vs-ToT (ToT-family runs only) — one PDF per
+        //  fired hardware trigger per sensor, X = ToT [ns], Y = Δt(hit − trigger)
+        //  [ns], log Z for the wide per-bin dynamic range.  The per-sensor
+        //  1 p.e./2 p.e. ToT threshold (``tot_fit_by_sensor``) is overlaid as a
+        //  vertical line, and the coincidence-Δt is sliced into the 1 p.e.
+        //  (ToT below threshold) and 2 p.e. (ToT above threshold) regions — each
+        //  region's projection onto Δt is peak-found and its mean coincidence
+        //  time annotated.  ``h_trigger_dt_vs_tot`` is booked under the same
+        //  is_secondary + is_synthetic_marker gate as the other per-trigger maps
+        //  AND only when ``tot_qa``, so this loop is empty for LET runs.
+        //  Mean Δt of the coincidence peak within a ToT band [tot_lo, tot_hi]:
+        //  project onto Δt, find the prompt peak, average Δt within ±8 ns of it.
+        auto peak_avg_dt = [](TH2 *h2, double tot_lo, double tot_hi,
+                              const char *pyname) -> double
+        {
+            if (tot_hi <= tot_lo)
+                return std::numeric_limits<double>::quiet_NaN();
+            const int bxlo = std::max(1, h2->GetXaxis()->FindBin(tot_lo));
+            const int bxhi = std::min(h2->GetNbinsX(), h2->GetXaxis()->FindBin(tot_hi));
+            if (bxhi < bxlo)
+                return std::numeric_limits<double>::quiet_NaN();
+            std::unique_ptr<TH1D> py(h2->ProjectionY(pyname, bxlo, bxhi));
+            if (!py)
+                return std::numeric_limits<double>::quiet_NaN();
+            py->SetDirectory(nullptr);
+            if (py->GetEntries() < 20)
+                return std::numeric_limits<double>::quiet_NaN();
+            const int pkb = py->GetMaximumBin();
+            const double pk = py->GetBinCenter(pkb);
+            constexpr double kWindowNs = 8.0; // captures the prompt coincidence peak
+            double sw = 0, swt = 0;
+            for (int b = 1; b <= py->GetNbinsX(); ++b)
+            {
+                const double t = py->GetBinCenter(b);
+                if (std::fabs(t - pk) > kWindowNs)
+                    continue;
+                const double w = py->GetBinContent(b);
+                sw += w;
+                swt += w * t;
+            }
+            return sw > 0 ? swt / sw : std::numeric_limits<double>::quiet_NaN();
+        };
         std::vector<int> dt_vs_tot_trigger_ids;
         dt_vs_tot_trigger_ids.reserve(h_trigger_dt_vs_tot.size());
         for (const auto &[k, _] : h_trigger_dt_vs_tot)
@@ -4205,22 +4375,159 @@ void lightdata_writer(
         std::sort(dt_vs_tot_trigger_ids.begin(), dt_vs_tot_trigger_ids.end());
         for (int trigger_idx : dt_vs_tot_trigger_ids)
         {
-            auto &hist = h_trigger_dt_vs_tot[trigger_idx];
-            if (!hist || hist->GetEntries() <= 0)
-                continue;
             const std::string trig_name = registry.name_of(trigger_idx);
-            TCanvas c(TString::Format("c_qa_lightdata_dtvstot_%s",
-                                      trig_name.c_str()),
-                      "", 1000, 1000);
-            c.SetLeftMargin(0.14);
-            c.SetRightMargin(0.16);
-            c.SetLogz(); // wide per-bin dynamic range (prompt peak ≫ tail)
-            hist->Draw("colz");
-            const auto path = util::qa::pdf_path(
-                run_dir, "lightdata", trg_order++,
-                std::string("dt_vs_tot_") + trig_name);
-            c.SaveAs(path.string().c_str());
-            util::qa::crop_pdf_inplace(path);
+            for (auto &[sen, hist] : h_trigger_dt_vs_tot[trigger_idx])
+            {
+                if (!hist || hist->GetEntries() <= 0)
+                    continue;
+                const TotPeakFit tp = tot_fit_by_sensor.count(sen)
+                                          ? tot_fit_by_sensor[sen]
+                                          : TotPeakFit{};
+                //  1/2 p.e. separation = the 1 p.e. peak's upper ±2σ edge,
+                //  μ1 + 2σ1.  Uniform across sensors (works for 1350, whose
+                //  2 p.e. shoulder won't support a double-Gaussian): 1 p.e. =
+                //  μ1 ± 2σ1; 2 p.e. = above the threshold, up to μ2 + 2σ2 when a
+                //  2 p.e. peak resolved, else the ToT axis end.
+                const double thr = tp.mu1 + 2.0 * tp.sig1;
+                const double p1_lo = tp.mu1 - 2.0 * tp.sig1;
+                const double p2_hi = tp.have2 ? (tp.mu2 + 2.0 * tp.sig2)
+                                              : hist->GetXaxis()->GetXmax();
+                double dt_1pe = std::numeric_limits<double>::quiet_NaN();
+                double dt_2pe = std::numeric_limits<double>::quiet_NaN();
+                if (tp.sig1 > 0)
+                {
+                    dt_1pe = peak_avg_dt(hist.get(), p1_lo, thr, "_dtpy_1pe");
+                    dt_2pe = peak_avg_dt(hist.get(), thr, p2_hi, "_dtpy_2pe");
+                }
+
+                TCanvas c(TString::Format("c_qa_lightdata_dtvstot_%s_%s",
+                                          trig_name.c_str(), sen.c_str()),
+                          "", 1000, 1000);
+                c.SetLeftMargin(0.14);
+                c.SetRightMargin(0.16);
+                c.SetLogz(); // wide per-bin dynamic range (prompt peak ≫ tail)
+                hist->Draw("colz");
+                //  1/2 p.e. separation threshold (vertical, X = ToT = μ1 + 2σ1),
+                //  spanning the hist's Δt range (per-trigger binning).
+                TLine thrline(thr, hist->GetYaxis()->GetXmin(),
+                              thr, hist->GetYaxis()->GetXmax());
+                thrline.SetLineColor(kRed + 1);
+                thrline.SetLineStyle(2);
+                thrline.SetLineWidth(2);
+                if (tp.sig1 > 0)
+                    thrline.Draw();
+                //  Fit-derived numbers in a white, border-less box in the top-
+                //  right corner — over the sparse high-ToT region, clear of the
+                //  prompt band, left of the colz palette (right margin 0.16 → the
+                //  pad's right edge is NDC x ≈ 0.84).  Trigger + sensor are
+                //  already in the hist title; ⟨Δt⟩ = mean coincidence time of the
+                //  peak in each ToT band.
+                TPaveText box(0.455, 0.725, 0.835, 0.90, "NDC");
+                box.SetFillColor(10); // opaque white
+                box.SetFillStyle(1001);
+                box.SetBorderSize(0);
+                box.SetTextFont(42);
+                box.SetTextAlign(12); // left, vertically centred
+                box.SetTextSize(0.026);
+                if (tp.sig1 > 0)
+                    box.AddText(TString::Format("1/2 p.e. threshold = %.1f ns", thr))
+                        ->SetTextColor(kRed + 1);
+                if (std::isfinite(dt_1pe))
+                    box.AddText(TString::Format("1 p.e.  #LT#Deltat#GT = %.2f ns", dt_1pe))
+                        ->SetTextColor(kAzure + 2);
+                if (std::isfinite(dt_2pe))
+                    box.AddText(TString::Format("2 p.e.  #LT#Deltat#GT = %.2f ns", dt_2pe))
+                        ->SetTextColor(kGreen + 2);
+                //  Time-walk shift = 2 p.e. − 1 p.e. mean Δt.
+                if (std::isfinite(dt_1pe) && std::isfinite(dt_2pe))
+                    box.AddText(TString::Format(
+                                    "#Delta#LT#Deltat#GT = %.2f ns", dt_2pe - dt_1pe))
+                        ->SetTextColor(kBlack);
+                box.Draw();
+
+                const auto path = util::qa::pdf_path(
+                    run_dir, "lightdata", trg_order++,
+                    std::string("dt_vs_tot_") + trig_name + "_" + sen);
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
+
+                //  Companion plot: the 1 p.e. vs 2 p.e. Δt projections, full
+                //  size, so the time-walk shift is its own readable figure.
+                //  Project the 2D over each ToT band onto Δt and area-normalise
+                //  (shape comparison).  Stem keeps the dt_vs_tot_<trigger>_
+                //  prefix (+ _pe) → still groups under the trigger row, no qa.py
+                //  change.
+                std::unique_ptr<TH1D> ov1, ov2;
+                if (tp.sig1 > 0)
+                {
+                    const int b1lo = std::max(1, hist->GetXaxis()->FindBin(p1_lo));
+                    const int b1hi =
+                        std::min(hist->GetNbinsX(), hist->GetXaxis()->FindBin(thr));
+                    const int b2lo = std::max(1, hist->GetXaxis()->FindBin(thr));
+                    const int b2hi =
+                        std::min(hist->GetNbinsX(), hist->GetXaxis()->FindBin(p2_hi));
+                    ov1.reset(hist->ProjectionY("_ovl_1pe", b1lo, b1hi));
+                    ov2.reset(hist->ProjectionY("_ovl_2pe", b2lo, b2hi));
+                    ov1->SetDirectory(nullptr);
+                    ov2->SetDirectory(nullptr);
+                    if (ov1->Integral() > 0)
+                        ov1->Scale(1.0 / ov1->Integral());
+                    if (ov2->Integral() > 0)
+                        ov2->Scale(1.0 / ov2->Integral());
+                    ov1->SetLineColor(kAzure + 2);
+                    ov2->SetLineColor(kGreen + 2);
+                    ov1->SetLineWidth(2);
+                    ov2->SetLineWidth(2);
+                    ov1->SetStats(0);
+                    const double om = std::max(ov1->GetMaximum(), ov2->GetMaximum());
+                    if (om > 0)
+                        ov1->SetMaximum(1.15 * om);
+                    ov1->SetMinimum(0.0);
+                }
+                if (ov1 && ov2 && ov1->GetEntries() > 0 && ov2->GetEntries() > 0)
+                {
+                    TCanvas cpe(TString::Format("c_qa_lightdata_dtpe_%s_%s",
+                                                trig_name.c_str(), sen.c_str()),
+                                "", 900, 700);
+                    cpe.SetLeftMargin(0.12);
+                    cpe.SetBottomMargin(0.12);
+                    ov1->SetTitle(TString::Format(
+                        "1 vs 2 p.e. #Deltat (%s, sensor %s);"
+                        "#Deltat (t_{Hit} #minus t_{trigger}) [ns];normalised",
+                        trig_name.c_str(), sen.c_str()));
+                    ov1->GetXaxis()->SetTitleSize(0.045);
+                    ov1->GetXaxis()->SetLabelSize(0.04);
+                    ov1->GetYaxis()->SetTitleSize(0.045);
+                    ov1->GetYaxis()->SetLabelSize(0.04);
+                    ov1->Draw("hist");
+                    ov2->Draw("hist same");
+                    TLegend lpe(0.68, 0.76, 0.88, 0.89);
+                    lpe.SetFillColor(10);
+                    lpe.SetFillStyle(1001);
+                    lpe.SetBorderSize(0);
+                    lpe.SetTextFont(42);
+                    lpe.SetTextSize(0.04);
+                    lpe.AddEntry(ov1.get(), "1 p.e.", "l");
+                    lpe.AddEntry(ov2.get(), "2 p.e.", "l");
+                    lpe.Draw();
+                    TPaveText pbox(0.14, 0.80, 0.46, 0.89, "NDC");
+                    pbox.SetFillColor(10);
+                    pbox.SetFillStyle(1001);
+                    pbox.SetBorderSize(0);
+                    pbox.SetTextFont(42);
+                    pbox.SetTextAlign(12);
+                    pbox.SetTextSize(0.042);
+                    if (std::isfinite(dt_1pe) && std::isfinite(dt_2pe))
+                        pbox.AddText(TString::Format(
+                            "#Delta#LT#Deltat#GT = %.2f ns", dt_2pe - dt_1pe));
+                    pbox.Draw();
+                    const auto ppe = util::qa::pdf_path(
+                        run_dir, "lightdata", trg_order++,
+                        std::string("dt_vs_tot_") + trig_name + "_" + sen + "_pe");
+                    cpe.SaveAs(ppe.string().c_str());
+                    util::qa::crop_pdf_inplace(ppe);
+                }
+            }
         }
 
         //  Per-trigger trigger↔cherenkov coincidence — Δt of cherenkov hits
