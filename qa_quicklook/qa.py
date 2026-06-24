@@ -3197,6 +3197,7 @@ class _GeneralQaPage(QtWidgets.QWidget):
         "trigger_dt_",       # consecutive-firing Δt vs spill (rate stability)
         "trigcher_dt_",      # trigger–Cherenkov Δt (coincidence timing)
         "trigcher_hitmap_",  # in-window Cherenkov hitmap (the ring)
+        "dt_vs_tot_",        # ToT-family: ToT vs Δt(hit−trigger) (ToT runs only)
     )
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:

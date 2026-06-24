@@ -12,7 +12,7 @@
 name   = "luca_and_finger"   # human-readable label used in output trees and logs
 index  = 0                   # trigger index (0-based); referenced in hit bitmasks
 device = 192                 # ALCOR device ID (rdo-192) providing the trigger
-delay  = 117                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 366 ns)
+delay  = 111                 # propagation delay (cc, 320 MHz → ~3.125 ns/cc ≈ 347 ns); tuned to centre the Cherenkov-trigger Δt on rdo-192
 
 ##
 # Everything below this line is ignored by the parser.

@@ -261,6 +261,17 @@ RansacMutations run_streaming_ransac_compute(
                     return true;
                 if (r.radius < cfg.r_min || r.radius > cfg.r_max)
                     return true;
+                //  Centre acceptance: physical Cherenkov rings sit near the
+                //  detector centre.  Reject rings whose centre is farther than
+                //  centre_padding_mm from (0, 0) on either axis — a hard cut on
+                //  the otherwise centre-free RANSAC.  Config-driven, so a wide
+                //  centre_padding_mm (e.g. production's 1000 mm) stays permissive
+                //  and keeps the far-off-centre arc path; a tight value (QA's
+                //  15 mm) prunes spurious far rings, which also speeds the
+                //  downstream re-fit / QA.
+                if (std::fabs(r.cx) > cfg.centre_padding_mm ||
+                    std::fabs(r.cy) > cfg.centre_padding_mm)
+                    return true;
                 return false;
             };
             found_rings.erase(

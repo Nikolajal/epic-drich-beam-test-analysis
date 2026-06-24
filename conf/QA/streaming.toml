@@ -71,15 +71,19 @@ default_trigger_window_ns   = 50.0   # fallback ±window (ns) for hits around a 
 # but the fit_circle re-fit refines them to sub-mm precision, so the
 # resolution loss is on the seed, not the final ring measurement.
 # ────────────────────────────────────────────────────────────────
-# Wide coarse-scan recipe (mirrors conf/defaults/streaming.toml): wide centre
-# (±1000 mm) + radius ([10, 1700] mm, r_max capped at the reachable diagonal)
-# at a coarse 25 mm grid so the accumulator stays small; fit_circle refines.
-# QA finds far-off-centre arcs on the same footing as production.
-r_min               =     10.0
-r_max               =   1700.0  # capped at reachable centre↔hit diagonal (see defaults)
-r_step              =     25.0  # coarse radius granularity
-cell_size           =     25.0  # coarse XY cell
-centre_padding_mm   =   1000.0  # ±1000 mm centre search
+# Physical-ring scan (narrowed from the wide far-arc coarse scan): the dRICH
+# Cherenkov rings sit within ±15 mm of the detector centre with R ∈ [20, 120] mm.
+# r_max = 120 is a HARD radius cut (ransac.cxx rejects rings outside
+# [r_min, r_max]), which removes the spurious far/large-radius rings the wide
+# scan admitted — the cause of the "ungodly" X/Y/R ranges.  Finer grid over the
+# small range for readable QA hists.  NOTE: the centre is NOT hard-cut in the
+# finder (RANSAC is centre-free); the radius cut + the on-sensor hit geometry
+# keep centres near 0, and centre_padding_mm only sets the X/Y QA-hist extent.
+r_min               =     20.0
+r_max               =    120.0  # HARD upper radius cut (ransac.cxx rejects R outside [r_min,r_max])
+r_step              =      2.0  # R-hist granularity over [20,120] → 50 bins
+cell_size           =      1.0  # XY-hist cell over ±15 mm → 30 bins
+centre_padding_mm   =     15.0  # ±15 mm centre range (X/Y QA-hist extent)
 
 r_max_auto            =   false # explicit wide r_max (decoupled from padding)
 sensor_half_extent_mm =   99.0  # r_max_auto only
