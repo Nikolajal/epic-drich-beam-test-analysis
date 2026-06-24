@@ -16,6 +16,7 @@
 #include "utility/config_dump.h"
 #include "utility/qa_publish.h"
 #include "TCanvas.h"
+#include "TPad.h"
 #include "TLegend.h"
 #include "TLine.h"
 #include "TLatex.h"
@@ -4437,12 +4438,95 @@ void lightdata_writer(
                 if (std::isfinite(dt_2pe))
                     box.AddText(TString::Format("2 p.e.  #LT#Deltat#GT = %.2f ns", dt_2pe))
                         ->SetTextColor(kGreen + 2);
+                //  Time-walk shift = 2 p.e. − 1 p.e. mean Δt.
+                if (std::isfinite(dt_1pe) && std::isfinite(dt_2pe))
+                    box.AddText(TString::Format(
+                                    "#Delta#LT#Deltat#GT = %.2f ns", dt_2pe - dt_1pe))
+                        ->SetTextColor(kBlack);
                 box.Draw();
+
                 const auto path = util::qa::pdf_path(
                     run_dir, "lightdata", trg_order++,
                     std::string("dt_vs_tot_") + trig_name + "_" + sen);
                 c.SaveAs(path.string().c_str());
                 util::qa::crop_pdf_inplace(path);
+
+                //  Companion plot: the 1 p.e. vs 2 p.e. Δt projections, full
+                //  size, so the time-walk shift is its own readable figure.
+                //  Project the 2D over each ToT band onto Δt and area-normalise
+                //  (shape comparison).  Stem keeps the dt_vs_tot_<trigger>_
+                //  prefix (+ _pe) → still groups under the trigger row, no qa.py
+                //  change.
+                std::unique_ptr<TH1D> ov1, ov2;
+                if (tp.sig1 > 0)
+                {
+                    const int b1lo = std::max(1, hist->GetXaxis()->FindBin(p1_lo));
+                    const int b1hi =
+                        std::min(hist->GetNbinsX(), hist->GetXaxis()->FindBin(thr));
+                    const int b2lo = std::max(1, hist->GetXaxis()->FindBin(thr));
+                    const int b2hi =
+                        std::min(hist->GetNbinsX(), hist->GetXaxis()->FindBin(p2_hi));
+                    ov1.reset(hist->ProjectionY("_ovl_1pe", b1lo, b1hi));
+                    ov2.reset(hist->ProjectionY("_ovl_2pe", b2lo, b2hi));
+                    ov1->SetDirectory(nullptr);
+                    ov2->SetDirectory(nullptr);
+                    if (ov1->Integral() > 0)
+                        ov1->Scale(1.0 / ov1->Integral());
+                    if (ov2->Integral() > 0)
+                        ov2->Scale(1.0 / ov2->Integral());
+                    ov1->SetLineColor(kAzure + 2);
+                    ov2->SetLineColor(kGreen + 2);
+                    ov1->SetLineWidth(2);
+                    ov2->SetLineWidth(2);
+                    ov1->SetStats(0);
+                    const double om = std::max(ov1->GetMaximum(), ov2->GetMaximum());
+                    if (om > 0)
+                        ov1->SetMaximum(1.15 * om);
+                    ov1->SetMinimum(0.0);
+                }
+                if (ov1 && ov2 && ov1->GetEntries() > 0 && ov2->GetEntries() > 0)
+                {
+                    TCanvas cpe(TString::Format("c_qa_lightdata_dtpe_%s_%s",
+                                                trig_name.c_str(), sen.c_str()),
+                                "", 900, 700);
+                    cpe.SetLeftMargin(0.12);
+                    cpe.SetBottomMargin(0.12);
+                    ov1->SetTitle(TString::Format(
+                        "1 vs 2 p.e. #Deltat (%s, sensor %s);"
+                        "#Deltat (t_{Hit} #minus t_{trigger}) [ns];normalised",
+                        trig_name.c_str(), sen.c_str()));
+                    ov1->GetXaxis()->SetTitleSize(0.045);
+                    ov1->GetXaxis()->SetLabelSize(0.04);
+                    ov1->GetYaxis()->SetTitleSize(0.045);
+                    ov1->GetYaxis()->SetLabelSize(0.04);
+                    ov1->Draw("hist");
+                    ov2->Draw("hist same");
+                    TLegend lpe(0.68, 0.76, 0.88, 0.89);
+                    lpe.SetFillColor(10);
+                    lpe.SetFillStyle(1001);
+                    lpe.SetBorderSize(0);
+                    lpe.SetTextFont(42);
+                    lpe.SetTextSize(0.04);
+                    lpe.AddEntry(ov1.get(), "1 p.e.", "l");
+                    lpe.AddEntry(ov2.get(), "2 p.e.", "l");
+                    lpe.Draw();
+                    TPaveText pbox(0.14, 0.80, 0.46, 0.89, "NDC");
+                    pbox.SetFillColor(10);
+                    pbox.SetFillStyle(1001);
+                    pbox.SetBorderSize(0);
+                    pbox.SetTextFont(42);
+                    pbox.SetTextAlign(12);
+                    pbox.SetTextSize(0.042);
+                    if (std::isfinite(dt_1pe) && std::isfinite(dt_2pe))
+                        pbox.AddText(TString::Format(
+                            "#Delta#LT#Deltat#GT = %.2f ns", dt_2pe - dt_1pe));
+                    pbox.Draw();
+                    const auto ppe = util::qa::pdf_path(
+                        run_dir, "lightdata", trg_order++,
+                        std::string("dt_vs_tot_") + trig_name + "_" + sen + "_pe");
+                    cpe.SaveAs(ppe.string().c_str());
+                    util::qa::crop_pdf_inplace(ppe);
+                }
             }
         }
 
