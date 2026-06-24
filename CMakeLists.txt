@@ -101,17 +101,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(mist)
 
-# MIST-HEP — ROOT-backed analysis helpers built on mist (owned:: RAII for ROOT
-# objects, fit/histo/graph/stats helpers).  mist::hep skips its own
-# find_package(mist) because the mist::mist target above already exists.
-# Declared as `misthep` (no hyphen) for a clean ${misthep_SOURCE_DIR}.
-FetchContent_Declare(
-    misthep
-    GIT_REPOSITORY https://github.com/Nikolajal/mist-hep
-    GIT_TAG        v1.0.0
-)
-FetchContent_MakeAvailable(misthep)
-
 # --------------------------------------------------
 # ROOT
 # --------------------------------------------------
@@ -158,7 +147,6 @@ ROOT_GENERATE_DICTIONARY(
         # as its own -s option and aborts ("-s may not occur within a group").
         -I${CMAKE_CURRENT_SOURCE_DIR}/include
         -I${mist_SOURCE_DIR}/include
-        -I${misthep_SOURCE_DIR}/include
         -I${tomlplusplus_SOURCE_DIR}/include
 )
 
@@ -231,7 +219,6 @@ set(BEAM_LOADER_LIB     "${CMAKE_CURRENT_BINARY_DIR}/libbeam_test_analysis${DYNL
 #  reachable through the source-tree include path.
 set(BEAM_LOADER_DEP_INCLUDES
 "R__ADD_INCLUDE_PATH(${mist_SOURCE_DIR}/include)
-R__ADD_INCLUDE_PATH(${misthep_SOURCE_DIR}/include)
 R__ADD_INCLUDE_PATH(${tomlplusplus_SOURCE_DIR}/include)")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/lib_loader.h.in"
@@ -265,7 +252,6 @@ target_link_libraries(beam_test_analysis
         CLI11::CLI11
         tomlplusplus::tomlplusplus
         mist::mist
-        mist::hep
 )
 
 #  Install RPATH for the shared library — resolve its own siblings
