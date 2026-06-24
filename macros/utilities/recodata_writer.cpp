@@ -34,6 +34,8 @@ int main(int argc, char **argv)
     bool force_rebuild = false;
     bool force_upstream = false;
     bool qa_mode = false;
+    bool force_ring = false;
+    bool force_ellipse = false;
     //  Sweep audit: accept --threads as a no-op so the
     //  uniform qa_pipeline.py invocation
     //  (`writer ... --threads N`) doesn't reject this stage.  Recodata
@@ -67,10 +69,24 @@ int main(int argc, char **argv)
     //  when present (e.g. raised RANSAC thresholds → biases N_γ up
     //  but keeps σ_photon ~invariant).  See conf/QA/streaming.toml.
     app.add_flag("--QA", qa_mode);
+    //  Ring-shape policy for the radial coordinate.  Mutually exclusive;
+    //  default (neither) = auto-classify circle vs ellipse from the fit.
+    //    --force-ring     → legacy circular radius R (before, for A/B).
+    //    --force-ellipse  → elliptical radius ρ even if a≈b (after, for A/B).
+    auto *p_force_ring = app.add_flag("--force-ring", force_ring,
+                                      "Force a circular ring (legacy R radial)");
+    auto *p_force_ellipse =
+        app.add_flag("--force-ellipse", force_ellipse,
+                     "Force the elliptical radius ρ in the radial coordinate");
+    p_force_ring->excludes(p_force_ellipse);
 
     try
     {
         CLI11_PARSE(app, argc, argv);
+
+        const std::string ring_shape_mode = force_ring      ? "circle"
+                                            : force_ellipse ? "ellipse"
+                                                            : "auto";
 
         //  Resolve any unset --xxx-conf option through util::conf_path,
         //  which redirects to conf/<mode>/<basename> when the override
@@ -122,7 +138,7 @@ int main(int argc, char **argv)
             {
                 auto start = std::chrono::high_resolution_clock::now();
                 mist::logger::info(TString::Format("(recodata_writer) Starting writing recodata for run '%s'", current_run_name.c_str()).Data());
-                recodata_writer(data_repository, current_run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, streaming_config_file);
+                recodata_writer(data_repository, current_run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, streaming_config_file, ring_shape_mode);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = end - start;
                 mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", elapsed.count()).Data());
@@ -134,7 +150,7 @@ int main(int argc, char **argv)
         else
         {
             auto start = std::chrono::high_resolution_clock::now();
-            recodata_writer(data_repository, run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, streaming_config_file);
+            recodata_writer(data_repository, run_name, max_spill, force_rebuild, force_upstream, mapping_conf, trigger_config_file, framer_config_file, streaming_config_file, ring_shape_mode);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
             mist::logger::info(TString::Format("(recodata_writer) Total time taken: %f seconds", elapsed.count()).Data());

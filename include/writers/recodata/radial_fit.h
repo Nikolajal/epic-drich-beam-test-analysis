@@ -60,6 +60,7 @@ void fit_radial_distribution(TH1F *h,
                              const RecodataConfigStruct &cfg,
                              const std::string &data_repository,
                              const std::string &run_name,
-                             std::vector<RadialFitResult> &results);
+                             std::vector<RadialFitResult> &results,
+                             const std::string &norm_unit = "ring");
 
 } // namespace btana::recodata

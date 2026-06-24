@@ -9,6 +9,10 @@
 #include "TPad.h"
 #include "TLatex.h"
 #include "TPaveText.h"
+#include "TEllipse.h"
+#include "TMarker.h"
+#include "TLine.h"
+#include "TArc.h"
 #include "TStyle.h"
 #include "TROOT.h"
 #include "TTree.h"
@@ -58,6 +62,306 @@ using ::btana::recodata::RingFillHists;
 using ::btana::recodata::RingFitResult;
 using ::btana::recodata::VsNFitResult;
 
+namespace
+{
+
+//  Ring-shape classification policy.  kAuto applies the significance + 2%-floor
+//  test; the force modes override it (e.g. for a before/after comparison or when
+//  the operator knows the optics).  Selected by the --force-ring / --force-ellipse
+//  CLI flags.
+enum class RingShapeMode
+{
+    kAuto,
+    kForceCircle,
+    kForceEllipse
+};
+
+//  Result of fitting the Cherenkov ring as an ellipse about a fixed centre.
+//  `is_ellipse == false` is the retro-compat circle case: a == b == R, θ = 0,
+//  so every downstream consumer that expects a single radius still works.
+struct RingEllipse
+{
+    double a = 0.0, b = 0.0;       // semi-axes (a ≥ b), mm
+    double a_err = 0.0, b_err = 0.0;
+    double theta_deg = 0.0;        // major-axis rotation, (-90, 90]
+    bool is_ellipse = false;       // false → circle fallback (a == b)
+    bool ok = false;               // false → fit failed; caller keeps circle
+};
+
+//  Fit r(φ) = a·b / √((b·cos Δ)² + (a·sin Δ)²), Δ = φ − θ, over the ring band
+//  about the (already well-determined) centre.  The centre is NOT re-fitted —
+//  the ring-centre map pins it to sub-bin precision; here we only resolve the
+//  shape.  Falls back to a circle (a == b == R, θ = 0) unless the ellipticity
+//  is BOTH statistically significant (|a − b| > `n_sigma_circle`·σ_(a−b)) AND
+//  physically non-negligible (|a − b| > `min_ellipticity_frac`·R).  The second
+//  gate matters: with high statistics the per-sector r errors shrink so far
+//  that a sub-percent a−b clears any n-σ test — but a 0.4 mm distortion on a
+//  47 mm ring is a circle in every way that counts.  The fallback keeps the
+//  legacy single-R contract intact (retro-compat).
+RingEllipse fit_ring_ellipse(TH2 *hm, double cx, double cy, double seed_R,
+                             double seed_sigma, double n_sigma_band,
+                             double n_sigma_circle, double min_ellipticity_frac,
+                             RingShapeMode mode)
+{
+    RingEllipse out;
+    out.a = out.b = seed_R;
+    if (hm == nullptr || seed_R <= 0.0 || seed_sigma <= 0.0)
+        return out;
+
+    const int kPhiBins = 36;
+    TProfile prof("ring_rphi", "", kPhiBins, -M_PI, M_PI);
+    for (int ix = 1; ix <= hm->GetNbinsX(); ++ix)
+        for (int iy = 1; iy <= hm->GetNbinsY(); ++iy)
+        {
+            const double w = hm->GetBinContent(ix, iy);
+            if (w <= 0)
+                continue;
+            const double x = hm->GetXaxis()->GetBinCenter(ix) - cx;
+            const double y = hm->GetYaxis()->GetBinCenter(iy) - cy;
+            const double r = std::sqrt(x * x + y * y);
+            if (std::fabs(r - seed_R) > n_sigma_band * seed_sigma)
+                continue;
+            prof.Fill(std::atan2(y, x), r, w);
+        }
+    if (prof.GetEntries() < 10)
+        return out;
+
+    TF1 fell("fell",
+             "[0]*[1]/sqrt(pow([1]*cos(x-[2]),2)+pow([0]*sin(x-[2]),2))", -M_PI,
+             M_PI);
+    fell.SetParameters(seed_R, seed_R, 0.0);
+    fell.SetParLimits(0, 0.3 * seed_R, 3.0 * seed_R);
+    fell.SetParLimits(1, 0.3 * seed_R, 3.0 * seed_R);
+    if (static_cast<int>(prof.Fit(&fell, "RQN")) != 0)
+        return out;
+
+    double a = fell.GetParameter(0), b = fell.GetParameter(1);
+    double ae = fell.GetParError(0), be = fell.GetParError(1);
+    double th = fell.GetParameter(2);
+    //  Order a ≥ b so θ is unambiguously the major-axis angle (the model is
+    //  symmetric under a↔b, θ→θ+90°).
+    if (b > a)
+    {
+        std::swap(a, b);
+        std::swap(ae, be);
+        th += M_PI / 2.0;
+    }
+    double thd = th * 180.0 / M_PI;
+    while (thd > 90.0)
+        thd -= 180.0;
+    while (thd <= -90.0)
+        thd += 180.0;
+
+    out.ok = true;
+    out.a = a;
+    out.b = b;
+    out.a_err = ae;
+    out.b_err = be;
+    out.theta_deg = thd;
+
+    const double s_ab = std::sqrt(ae * ae + be * be);
+    const double d_ab = std::fabs(a - b);
+    const double r_mean = 0.5 * (a + b);
+    switch (mode)
+    {
+    case RingShapeMode::kForceCircle:
+        out.is_ellipse = false;
+        break;
+    case RingShapeMode::kForceEllipse:
+        out.is_ellipse = true; // fit succeeded (out.ok) to reach here
+        break;
+    case RingShapeMode::kAuto:
+    default:
+        out.is_ellipse = (s_ab > 0.0 && d_ab > n_sigma_circle * s_ab) &&
+                         (d_ab > min_ellipticity_frac * r_mean);
+        break;
+    }
+    if (!out.is_ellipse)
+    {
+        const double R = 0.5 * (a + b);
+        out.a = out.b = R;
+        out.theta_deg = 0.0;
+    }
+    return out;
+}
+
+//  Map a hit offset (dx, dy) from the ring centre to the elliptical radius
+//  ρ = r · R̄ / r_ell(φ), R̄ = (a+b)/2 — so every point ON the ellipse lands at
+//  R̄ regardless of azimuth, collapsing the a−b spread out of the radial
+//  distribution.  Returns the plain radius r unchanged for the circle case
+//  (is_ellipse == false), so callers can remap unconditionally.
+double elliptical_radius(double dx, double dy, const RingEllipse &e)
+{
+    const double r = std::hypot(dx, dy);
+    if (!e.is_ellipse || e.a <= 0.0 || e.b <= 0.0)
+        return r;
+    const double r_bar = 0.5 * (e.a + e.b);
+    const double d = std::atan2(dy, dx) - e.theta_deg * M_PI / 180.0;
+    const double r_ell =
+        e.a * e.b / std::sqrt(std::pow(e.b * std::cos(d), 2) +
+                              std::pow(e.a * std::sin(d), 2));
+    return r_ell > 0.0 ? r * r_bar / r_ell : r;
+}
+
+//  Draw a projection strip's count axis as 3 manual ticks at ~10/50/90% of the
+//  data max, each rounded to 2 significant figures, with faint dashed gridlines.
+//  ROOT 6.40 can't rotate axis labels, so for the narrow right strip the labels
+//  are hand-drawn rotated 90° (top-to-bottom).  Caller hides the native count
+//  labels and sets the count-axis frame max.  `count_is_x` true → Y-projection
+//  (count along the bottom/horizontal axis); false → X-projection (count up the
+//  left axis).  Drawn in the current pad's user coordinates.
+void draw_proj_count_axis(TH1 *h, double data_max, double frame_max,
+                          bool count_is_x, bool rotate_labels)
+{
+    if (data_max <= 0.0)
+        return;
+    const double binlo = h->GetXaxis()->GetXmin();
+    const double binhi = h->GetXaxis()->GetXmax();
+    const double span = binhi - binlo;
+    auto round2 = [](double v)
+    {
+        if (v <= 0.0)
+            return 0.0;
+        const double e = std::pow(10.0, std::floor(std::log10(v)) - 1.0);
+        return std::round(v / e) * e;
+    };
+    TLine grid;
+    grid.SetLineColorAlpha(kGray + 1, 0.5);
+    grid.SetLineStyle(2);
+    TLine tick;
+    tick.SetLineColor(kBlack);
+    TLatex lab;
+    lab.SetTextFont(42);
+    lab.SetTextSize(0.085);
+    lab.SetTextColor(kBlack);
+    for (double frac : {0.1, 0.5, 0.9})
+    {
+        const double v = round2(frac * data_max);
+        if (v <= 0.0 || v > frame_max)
+            continue;
+        if (count_is_x)
+        {
+            //  Y-projection: count along x (bottom); bins along y.  Labels
+            //  rotated 270° (reading top-to-bottom; 90° read bottom-to-top, i.e.
+            //  Y-flipped).
+            grid.DrawLine(v, binlo, v, binhi);
+            tick.DrawLine(v, binlo, v, binlo + 0.05 * span);
+            lab.SetTextAngle(rotate_labels ? 270.0 : 0.0);
+            lab.SetTextAlign(rotate_labels ? 12 : 23);
+            lab.DrawLatex(v, binlo - 0.03 * span, TString::Format("%g", v));
+        }
+        else
+        {
+            //  X-projection: count up the left (y); bins along x.
+            grid.DrawLine(binlo, v, binhi, v);
+            tick.DrawLine(binlo, v, binlo + 0.05 * span, v);
+            lab.SetTextAngle(0.0);
+            lab.SetTextAlign(32);
+            lab.DrawLatex(binlo - 0.015 * span, v, TString::Format("%g", v));
+        }
+    }
+}
+
+//  Standard "2D map + X/Y projections" panel — shared by ring_centre_xy,
+//  ring_ab and ring_theta_ellipticity so the three look and behave identically.
+//  3-pad layout; coherent filled-bar projections with 10/50/90% rounded ticks +
+//  grid (Y rotated top-to-bottom); an opaque, SHADOWLESS white stat box in the
+//  free top-right corner.  `add_diagonal` overlays the a=b reference line
+//  (ring_ab only).  Saves <tag>.pdf under the recodata stage at index `idx`.
+//  Callers own the domain logic (centre fit / σ fits / θ remap); this owns ONLY
+//  the rendering.
+void draw_map_with_projections(TH2 *h2, const std::vector<TString> &stat_lines,
+                               bool add_diagonal, const char *canvas_name,
+                               const std::string &run_dir, int idx,
+                               const char *tag)
+{
+    std::unique_ptr<TH1D> px(h2->ProjectionX((std::string(tag) + "_px").c_str()));
+    std::unique_ptr<TH1D> py(h2->ProjectionY((std::string(tag) + "_py").c_str()));
+    px->SetDirectory(nullptr);
+    py->SetDirectory(nullptr);
+    px->SetTitle("");
+    py->SetTitle("");
+    for (TH1D *p : {px.get(), py.get()})
+    {
+        p->SetFillColor(kAzure - 9);
+        p->SetLineColor(kAzure + 2);
+        p->SetLineWidth(2);
+        p->SetBarWidth(1.0);
+        p->SetBarOffset(0.0);
+    }
+    const double pxmax = px->GetMaximum(), pymax = py->GetMaximum();
+    px->SetMinimum(0.0);
+    px->SetMaximum(pxmax * 1.10);
+    py->SetMinimum(0.0);
+    py->SetMaximum(pymax * 1.10);
+
+    TCanvas c(canvas_name, "", 1000, 1000);
+    const double kYW = 0.18, kXH = 0.18, kL = 0.11, kB = 0.10;
+    TPad p2d("p2d_map", "", 0.00, 0.00, 1.00 - kYW, 1.00 - kXH);
+    TPad pxp("pxproj_map", "", 0.00, 1.00 - kXH, 1.00 - kYW, 1.00);
+    TPad pyp("pyproj_map", "", 1.00 - kYW, 0.00, 1.00, 1.00 - kXH);
+    p2d.SetLeftMargin(kL);
+    p2d.SetRightMargin(0.0);
+    p2d.SetBottomMargin(kB);
+    p2d.SetTopMargin(0.0);
+    pxp.SetLeftMargin(kL);
+    pxp.SetRightMargin(0.0);
+    pxp.SetBottomMargin(0.0);
+    pxp.SetTopMargin(0.04);
+    pyp.SetLeftMargin(0.0);
+    pyp.SetRightMargin(0.04);
+    pyp.SetBottomMargin(kB);
+    pyp.SetTopMargin(0.0);
+    p2d.Draw();
+    pxp.Draw();
+    pyp.Draw();
+    p2d.cd();
+    h2->SetStats(0);
+    h2->Draw("col");
+    //  a = b reference line (the circle locus; ring_ab only).
+    TLine diag(h2->GetXaxis()->GetXmin(), h2->GetXaxis()->GetXmin(),
+               h2->GetXaxis()->GetXmax(), h2->GetXaxis()->GetXmax());
+    if (add_diagonal)
+    {
+        diag.SetLineColor(kGray + 2);
+        diag.SetLineStyle(2);
+        diag.Draw();
+    }
+    for (TH1D *p : {px.get(), py.get()})
+    {
+        p->GetXaxis()->SetLabelSize(0.0);
+        p->GetXaxis()->SetTickLength(0.0);
+        p->GetYaxis()->SetLabelSize(0.0);
+        p->GetYaxis()->SetTickLength(0.0);
+        p->GetYaxis()->SetNdivisions(0);
+    }
+    pxp.cd();
+    px->Draw("bar");
+    draw_proj_count_axis(px.get(), pxmax, pxmax * 1.10, /*count_is_x=*/false,
+                         /*rotate=*/false);
+    pyp.cd();
+    py->Draw("hbar");
+    draw_proj_count_axis(py.get(), pymax, pymax * 1.10, /*count_is_x=*/true,
+                         /*rotate=*/true);
+    c.cd();
+    TPaveText stat(0.82, 0.82, 0.999, 0.999, "NDC");
+    stat.SetFillColor(kWhite);
+    stat.SetFillStyle(1001);
+    stat.SetBorderSize(0); // flat — boxes never carry a drop shadow
+    stat.SetTextColor(kBlack);
+    stat.SetTextFont(42);
+    stat.SetTextSize(0.016);
+    stat.SetTextAlign(12);
+    for (const auto &s : stat_lines)
+        stat.AddText(s);
+    stat.Draw();
+    const auto path = util::qa::pdf_path(run_dir, "recodata", idx, tag);
+    c.SaveAs(path.string().c_str());
+    util::qa::crop_pdf_inplace(path);
+}
+
+} // namespace
+
 void recodata_writer(
     std::string data_repository,
     std::string run_name,
@@ -67,8 +371,17 @@ void recodata_writer(
     std::string mapping_conf,
     std::string trigger_conf,
     std::string framer_conf,
-    std::string streaming_conf)
+    std::string streaming_conf,
+    std::string ring_shape_mode)
 {
+    //  Ring-shape policy for the radial coordinate (auto / circle / ellipse) —
+    //  see --force-ring / --force-ellipse.  Parsed once; consumed by the
+    //  aggregate ellipse fit below.
+    const RingShapeMode shape_mode =
+        ring_shape_mode == "circle"  ? RingShapeMode::kForceCircle
+        : ring_shape_mode == "ellipse" ? RingShapeMode::kForceEllipse
+                                       : RingShapeMode::kAuto;
+
     //  Clean PDF rendering — no stats box on any saved canvas.
     //  Applies globally for the rest of this process; affects both
     //  the radial fit canvases and the σ-vs-N canvases.
@@ -247,6 +560,9 @@ void recodata_writer(
     //  detector) must drag this down, which a mean over only the
     //  populated bins would silently ignore.
     double detector_readiness = 0.0;
+    //  Per-hardware-trigger N_γ (photons / triggered frame); filled in the QA
+    //  finalize block, published to AnalysisResults below.
+    std::map<std::string, double> per_trigger_ngamma;
     {
         const int max_chip = ::gidx::kUsesSplitInTwo ? 4 : 8;
         constexpr int kChannelHi = 64;
@@ -501,10 +817,11 @@ void recodata_writer(
 
     //  cx / cy half-range: read from streaming_ransac_cfg so the
     //  lightdata- and recodata-side centre-XY hists keep the same axis.
-    //  Bin width 1 mm = generous for visual ring-centre clusters; the
-    //  bin count tracks the half-range to keep the resolution constant.
+    //  Bin width 0.25 mm: the ring-centre cluster core is ~1 mm wide, so a
+    //  1 mm bin quantized the mode estimate too coarsely; 0.25 mm lets the
+    //  Gaussian-core fit (below) resolve the centroid to sub-bin precision.
     const float kCentreXyHalfRangeMm = streaming_ransac_cfg.centre_xy_half_range_mm;
-    const int kCentreXyBins = static_cast<int>(std::round(2.f * kCentreXyHalfRangeMm));
+    const int kCentreXyBins = static_cast<int>(std::round(8.f * kCentreXyHalfRangeMm));
     RootHist<TH2F> h_centre_xy_first("h_centre_xy_first", ";c_{x} (mm);c_{y} (mm)",
                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm,
                                      kCentreXyBins, -kCentreXyHalfRangeMm, kCentreXyHalfRangeMm);
@@ -1333,9 +1650,6 @@ void recodata_writer(
                 h->Write();
                 delete h;
             };
-            build_radial_summary("h_N_gamma_per_ring_summary", "N_{#gamma} / ring", [](const RadialFitResult &r)
-                                 { return r.n_gamma; }, [](const RadialFitResult &)
-                                 { return 0.0; });
             build_radial_summary("h_peak_mu_summary", "peak #mu (mm)", [](const RadialFitResult &r)
                                  { return r.peak_mu; }, [](const RadialFitResult &r)
                                  { return r.peak_mu_err; });
@@ -1608,6 +1922,13 @@ void recodata_writer(
             util::qa::crop_pdf_inplace(path);
         }
 
+        //  Global ring centre (mode of the per-ring centre distribution) —
+        //  hoisted to function scope so the per-hardware-trigger N_γ block below
+        //  can reuse it instead of re-fitting a noisy per-ring centre.
+        double best_x = 0.0, best_y = 0.0;
+        //  Representative ring R / σ (from the luca_and_finger fit, else the
+        //  first hardware trigger) — drawn as overlay circles on the hitmap.
+        double ring_R = 0.0, ring_sigma = 0.0;
         //  04 ring_centre_xy — first-ring centre map with NARROW marginal X
         //  (top) and Y (right) projection strips that SHARE the map's axes
         //  (same binning): c_x and c_y are labelled once on the MAP (bottom +
@@ -1621,107 +1942,529 @@ void recodata_writer(
             std::unique_ptr<TH1D> py(cxy->ProjectionY("h_centre_y_first"));
             px->SetDirectory(nullptr);
             py->SetDirectory(nullptr);
-            px->SetTitle("");
-            py->SetTitle("");
-            px->SetFillColor(kAzure - 9);
-            py->SetFillColor(kAzure - 9);
-            px->SetLineColor(kAzure + 2);
-            py->SetLineColor(kAzure + 2);
-            //  Best centre = peak (mode) of each projection.
-            const double best_x = px->GetEntries() > 0
-                                      ? px->GetXaxis()->GetBinCenter(px->GetMaximumBin())
-                                      : 0.0;
-            const double best_y = py->GetEntries() > 0
-                                      ? py->GetXaxis()->GetBinCenter(py->GetMaximumBin())
-                                      : 0.0;
+            //  px/py here serve only the centre fit (mode → Gaussian-core mean);
+            //  the panel rendering (and its own projections) is drawn by
+            //  draw_map_with_projections below.
+            //  Centre seed = peak (mode) of each projection; refined below to
+            //  the Gaussian-core mean for sub-bin precision (the fine 0.25 mm
+            //  bins make the raw mode jittery, so the continuous fit centroid
+            //  is the precise estimator and seeds the fit range).
+            best_x = px->GetEntries() > 0
+                         ? px->GetXaxis()->GetBinCenter(px->GetMaximumBin())
+                         : 0.0;
+            best_y = py->GetEntries() > 0
+                         ? py->GetXaxis()->GetBinCenter(py->GetMaximumBin())
+                         : 0.0;
+            //  Centre spread σ_x, σ_y (Gaussian core of each projection) — the
+            //  ring-to-ring centre movement that propagates into the radial σ
+            //  (σ_radial² = σ_intrinsic² + σ_centre², σ_centre = √((σx²+σy²)/2)).
+            //  On a converged fit the mean (param 1) replaces the mode bin as
+            //  the centre; otherwise the mode stands as a robust fallback.
+            double sig_cx = 0.0, sig_cy = 0.0;
+            if (px->GetEntries() > 0)
+            {
+                TF1 gcx("gcx", "gaus");
+                gcx.SetRange(best_x - 4.0, best_x + 4.0);
+                if (static_cast<int>(px->Fit(&gcx, "RQ0")) == 0)
+                {
+                    best_x = gcx.GetParameter(1);
+                    sig_cx = std::fabs(gcx.GetParameter(2));
+                }
+            }
+            if (py->GetEntries() > 0)
+            {
+                TF1 gcy("gcy", "gaus");
+                gcy.SetRange(best_y - 4.0, best_y + 4.0);
+                if (static_cast<int>(py->Fit(&gcy, "RQ0")) == 0)
+                {
+                    best_y = gcy.GetParameter(1);
+                    sig_cy = std::fabs(gcy.GetParameter(2));
+                }
+            }
 
-            TCanvas c("c_qa_recodata_04_ring_centre_xy", "", 1000, 1000);
-            const double kYW = 0.18; // Y-projection strip width (right)
-            const double kXH = 0.18; // X-projection strip height (top)
-            //  Map + X-proj share left/right margins → the c_x axes line up;
-            //  map + Y-proj share top/bottom margins → the c_y axes line up.
-            //  Map keeps its c_x (bottom) + c_y (left) axis margins; the
-            //  strip-facing margins are ZERO so the projections butt right up
-            //  against the map (no gap).
-            const double kL = 0.11, kB = 0.10;
-            TPad p2d("p2d_centre", "", 0.00, 0.00, 1.00 - kYW, 1.00 - kXH);
-            TPad pxp("pxproj_centre", "", 0.00, 1.00 - kXH, 1.00 - kYW, 1.00);
-            TPad pyp("pyproj_centre", "", 1.00 - kYW, 0.00, 1.00, 1.00 - kXH);
-            p2d.SetLeftMargin(kL);
-            p2d.SetRightMargin(0.0); // butt against the Y-projection
-            p2d.SetBottomMargin(kB);
-            p2d.SetTopMargin(0.0); // butt against the X-projection
-            pxp.SetLeftMargin(kL);
-            pxp.SetRightMargin(0.0);
-            pxp.SetBottomMargin(0.0); // touch the map's top
-            pxp.SetTopMargin(0.04);
-            pyp.SetLeftMargin(0.0); // touch the map's right
-            pyp.SetRightMargin(0.04);
-            pyp.SetBottomMargin(kB);
-            pyp.SetTopMargin(0.0);
-            p2d.Draw();
-            pxp.Draw();
-            pyp.Draw();
-
-            //  Shared axes labelled ONCE on the MAP (the outer side, away from
-            //  each strip): c_x on the bottom, c_y on the left.  The strips
-            //  hide their duplicate axis labels.  The Y-projection uses the
-            //  natural hbar orientation (bars grow rightward, away from the
-            //  map) — no content negation, so its fill renders normally.
-            p2d.cd();
-            cxy->Draw("col"); // no colz palette; keep default c_x/c_y axes
-            pxp.cd();
-            px->GetXaxis()->SetLabelSize(0.0);
-            px->GetXaxis()->SetTickLength(0.0);
-            px->Draw("hist");
-            pyp.cd();
-            //  hbar: GetXaxis() is the bin axis (c_y) — read off the map's
-            //  left axis, so hide it; GetYaxis() is the count/value axis —
-            //  SHOW it (scaled up for the narrow strip) so the Y-projection
-            //  has a visible scale like the X-projection does.
-            py->GetXaxis()->SetLabelSize(0.0);
-            py->GetXaxis()->SetTickLength(0.0);
-            py->GetYaxis()->SetLabelSize(0.07);
-            py->GetYaxis()->SetNdivisions(204);
-            py->Draw("hbar");
-
-            c.cd();
-            TLatex txt;
-            txt.SetNDC();
-            txt.SetTextSize(0.017);
-            txt.SetTextColor(kBlack);
-            //  Top-RIGHT free corner — outside all three pads (above the
-            //  Y-projection strip), so it never overlaps a histogram.
-            txt.DrawLatex(0.845, 0.955, "Best centre");
-            txt.DrawLatex(0.845, 0.920,
-                          TString::Format("c_{x} = %.1f mm", best_x));
-            txt.DrawLatex(0.845, 0.885,
-                          TString::Format("c_{y} = %.1f mm", best_y));
-
-            const auto path =
-                util::qa::pdf_path(run_dir, "recodata", 4, "ring_centre_xy");
-            c.SaveAs(path.string().c_str());
-            util::qa::crop_pdf_inplace(path);
+            draw_map_with_projections(
+                cxy,
+                {TString::Format("c_{x} = %.1f mm", best_x),
+                 TString::Format("#sigma_{x} = %.2f mm", sig_cx),
+                 TString::Format("c_{y} = %.1f mm", best_y),
+                 TString::Format("#sigma_{y} = %.2f mm", sig_cy)},
+                /*add_diagonal=*/false, "c_qa_recodata_04_ring_centre_xy",
+                run_dir, 4, "ring_centre_xy");
         }
 
-        //  04 trigger_cherenkov_hitmap — (x, y) of every cherenkov hit inside
-        //  the hardware-trigger timing cut ([recodata] hardware_ring_dt_min_ns
-        //  … hardware_ring_dt_max_ns).  The in-time trigger-Cherenkov occupancy
-        //  → the Cherenkov ring.
+
+        //  ── Aggregate ring shape (ellipse) ──────────────────────────────────
+        //  Fit the run's ring shape ONCE here — the per-trigger N_γ radial AND
+        //  the hitmap overlay both consume it.  Optics distort the ring into an
+        //  ellipse; measuring the per-trigger radial in the elliptical radius ρ
+        //  keeps the a−b spread from inflating σ.  A STABLE aggregate ellipse is
+        //  used (not per-ring, which would overfit ~15-hit arcs and bias σ low).
+        //  Seeded from the ring-tagged hits' mean/RMS radius about the pinned
+        //  centre.  Thresholds: ±5σ band; ellipse only when a−b is BOTH >2σ_(a−b)
+        //  AND >2% of R (else circle → ρ == r, retro-compat).
+        constexpr double kRingBandNSigma = 5.0;
+        constexpr double kEllipseNSigma = 2.0;
+        constexpr double kEllipseMinFrac = 0.02;
+        RingEllipse ell;
+        if (auto *rt = output_file->Get<TH2F>("Rings/h_ring_tagged_hitmap"))
+        {
+            double sw = 0.0, sr = 0.0, sr2 = 0.0;
+            for (int ix = 1; ix <= rt->GetNbinsX(); ++ix)
+                for (int iy = 1; iy <= rt->GetNbinsY(); ++iy)
+                {
+                    const double w = rt->GetBinContent(ix, iy);
+                    if (w <= 0)
+                        continue;
+                    const double dx = rt->GetXaxis()->GetBinCenter(ix) - best_x;
+                    const double dy = rt->GetYaxis()->GetBinCenter(iy) - best_y;
+                    const double r = std::hypot(dx, dy);
+                    sw += w;
+                    sr += w * r;
+                    sr2 += w * r * r;
+                }
+            if (sw > 0.0)
+            {
+                const double mean = sr / sw;
+                const double rms =
+                    std::sqrt(std::max(0.0, sr2 / sw - mean * mean));
+                ell = fit_ring_ellipse(rt, best_x, best_y, mean,
+                                       rms > 0.0 ? rms : 1.0, kRingBandNSigma,
+                                       kEllipseNSigma, kEllipseMinFrac,
+                                       shape_mode);
+            }
+        }
+
+        //  ── Per-hardware-trigger N_γ ─────────────────────────────────────────
+        //  Photons per triggered frame, per hardware trigger.  Built entirely
+        //  here from lightdata's per-trigger in-window (time-cut) hitmaps, about
+        //  the single GLOBAL centre (best_x, best_y) — no per-ring centre fit, no
+        //  RANSAC.  Each trigger's radial is the dist-to-global-centre of every
+        //  in-window hit; fit_radial_distribution normalises by the trigger's
+        //  frame count (frame-population entries) → N_γ / triggered frame.  The
+        //  Gaussian peak / pol3 split separates the ring from the in-window DCR.
+        //  Coverage-corrected by the active-channel azimuthal coverage of the
+        //  global ring (geometry coverage ÷ detector readiness).
+        {
+            //  Radial efficiency eff(R) — R-DEPENDENT, computed ONCE: it depends
+            //  only on the global centre + channel geometry, NOT the trigger, so
+            //  it is shared by every trigger's correction below.  In each annulus:
+            //  live pixel area on it ÷ the full annulus area (2πR·dR), ×
+            //  detector_readiness.  Rendered once as radial_efficiency.
+            const double pix_area =
+                std::pow(2.0 * recodata_cfg.channel_half_width_mm, 2);
+            const double eff_band = recodata_cfg.channel_half_width_mm;
+            auto eff = std::make_unique<TH1F>(
+                "h_radial_efficiency",
+                ";R about global centre (mm);#it{eff}(R) = live area / annulus",
+                radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+            eff->SetDirectory(nullptr);
+            for (int b = 1; b <= eff->GetNbinsX(); ++b)
+            {
+                const double Rb = eff->GetBinCenter(b);
+                double covered = 0.0;
+                for (const auto &[ch, pos] : index_to_hit_xy)
+                {
+                    const double r_ch = std::hypot(pos[0] - best_x, pos[1] - best_y);
+                    if (std::fabs(r_ch - Rb) < eff_band)
+                        covered += pix_area;
+                }
+                const double annulus = 2.0 * M_PI * Rb * (2.0 * eff_band);
+                eff->SetBinContent(b, annulus > 0.0
+                                          ? (covered / annulus) * detector_readiness
+                                          : 0.0);
+            }
+            {
+                TCanvas c("c_qa_recodata_radial_efficiency", "", 1000, 700);
+                c.SetLeftMargin(0.12);
+                c.SetBottomMargin(0.12);
+                eff->SetLineColor(kAzure + 2);
+                eff->SetLineWidth(2);
+                eff->SetMinimum(0.0);
+                eff->Draw("hist");
+                const auto path = util::qa::pdf_path(run_dir, "recodata", 5,
+                                                     "radial_efficiency");
+                c.SaveAs(path.string().c_str());
+                util::qa::crop_pdf_inplace(path);
+            }
+            for (const auto &[tidx, tname] : registry.triggers)
+            {
+                //  Hardware triggers only — skip the synthetic ring-found markers.
+                if (tname.find("RING_FOUND") != std::string::npos ||
+                    tname == "UNKNOWN" || tname == "FirstFrames" ||
+                    tname == "StartOfSpill")
+                    continue;
+                auto *wm = input_file->Get<TH2F>(
+                    TString::Format("Triggers/%s/h_trigger_window_hitmap_%s",
+                                    tname.c_str(), tname.c_str()));
+                auto *fp = input_file->Get<TH1F>(
+                    TString::Format("Triggers/%s/h_trigger_frame_population_%s",
+                                    tname.c_str(), tname.c_str()));
+                if (!wm || !fp || wm->GetEntries() < 500 || fp->GetEntries() < 1)
+                    continue;
+
+                //  Radial of every in-window hit about the global centre.
+                auto radial = std::make_unique<TH1F>(
+                    ("h_radial_trigger_" + tname).c_str(),
+                    (";R about global centre (mm);hits / triggered frame"),
+                    radial_hist_n_bins, radial_lo_mm, radial_hi_mm);
+                radial->SetDirectory(nullptr);
+                radial->Sumw2();
+                for (int bx = 1; bx <= wm->GetNbinsX(); ++bx)
+                    for (int by = 1; by <= wm->GetNbinsY(); ++by)
+                    {
+                        const double c = wm->GetBinContent(bx, by);
+                        if (c <= 0.0)
+                            continue;
+                        const double dx = wm->GetXaxis()->GetBinCenter(bx) - best_x;
+                        const double dy = wm->GetYaxis()->GetBinCenter(by) - best_y;
+                        //  Elliptical radius ρ (≡ r when the ring is circular):
+                        //  removes the optical a−b smearing from the per-trigger
+                        //  radial so the fitted σ reflects true resolution.
+                        radial->Fill(elliptical_radius(dx, dy, ell), c);
+                    }
+
+                //  eff(R) is the shared, trigger-independent curve computed above.
+                //  RAW (uncorrected) radial, per frame — kept for the combined plot.
+                std::unique_ptr<TH1F> raw(static_cast<TH1F *>(
+                    radial->Clone(("ngamma_raw_" + tname).c_str())));
+                raw->SetDirectory(nullptr);
+                std::vector<RadialFitResult> raw_res;
+                fit_radial_distribution(raw.get(), fp, "ngamma_" + tname + "_raw",
+                                        recodata_cfg, data_repository, run_name,
+                                        raw_res, "frame");
+                //  CORRECTED: divide each radial bin by eff(R) (R-dependent),
+                //  guarded against near-zero-efficiency bins.
+                for (int b = 1; b <= radial->GetNbinsX(); ++b)
+                {
+                    const double e = eff->GetBinContent(b);
+                    if (e > 0.05)
+                    {
+                        radial->SetBinContent(b, radial->GetBinContent(b) / e);
+                        radial->SetBinError(b, radial->GetBinError(b) / e);
+                    }
+                }
+                std::vector<RadialFitResult> one;
+                fit_radial_distribution(radial.get(), fp,
+                                        "ngamma_" + tname, recodata_cfg,
+                                        data_repository, run_name, one, "frame");
+                if (one.empty() || one.front().peak_sigma <= 0.0)
+                    continue;
+                const double n_gamma_trig = one.front().n_gamma;
+                per_trigger_ngamma[tname] = n_gamma_trig;
+                if (tname == "luca_and_finger" || ring_R <= 0.0)
+                {
+                    ring_R = one.front().peak_mu;
+                    ring_sigma = one.front().peak_sigma;
+                }
+                const double eff_at_R =
+                    eff->GetBinContent(eff->FindBin(one.front().peak_mu));
+                mist::logger::info(
+                    TString::Format(
+                        "(recodata) N_gamma[%s] = %.2f / frame (R-dependent eff(R); "
+                        "eff(%.1f mm)=%.3f, readiness %.3f)",
+                        tname.c_str(), n_gamma_trig, one.front().peak_mu, eff_at_R,
+                        detector_readiness)
+                        .Data());
+                //  Combined RAW (grey) + CORRECTED (red) on one canvas, lin + log,
+                //  focused on the yield + σ rather than the full fit-param box.
+                if (!raw_res.empty())
+                    for (int logy = 0; logy <= 1; ++logy)
+                    {
+                        TCanvas cc((std::string("c_ngamma_combo_") + tname +
+                                    (logy ? "_l" : ""))
+                                       .c_str(),
+                                   "", 1000, 700);
+                        cc.SetLeftMargin(0.12);
+                        cc.SetBottomMargin(0.12);
+                        if (logy)
+                            cc.SetLogy();
+                        raw->SetLineColor(kGray + 2);
+                        raw->SetLineWidth(2);
+                        raw->SetMarkerColor(kGray + 2);
+                        radial->SetLineColor(kRed + 1);
+                        radial->SetLineWidth(2);
+                        radial->SetMarkerColor(kRed + 1);
+                        radial->SetTitle(
+                            (tname + ": raw vs eff(R)-corrected;"
+                                     "R about global centre (mm);photons / frame / bin")
+                                .c_str());
+                        radial->SetMaximum(1.3 * std::max(raw->GetMaximum(),
+                                                          radial->GetMaximum()));
+                        radial->SetMinimum(logy ? 0.3 : 0.0);
+                        radial->Draw("hist");
+                        raw->Draw("hist same");
+                        TLatex l;
+                        l.SetNDC();
+                        l.SetTextFont(42);
+                        l.SetTextSize(0.042);
+                        l.SetTextColor(kGray + 2);
+                        l.DrawLatex(0.45, 0.85,
+                                    TString::Format("raw:  N_{#gamma} = %.1f,  #sigma = %.2f mm",
+                                                    raw_res.front().n_gamma,
+                                                    raw_res.front().peak_sigma));
+                        l.SetTextColor(kRed + 1);
+                        l.DrawLatex(0.45, 0.79,
+                                    TString::Format("corrected:  N_{#gamma} = %.1f,  #sigma = %.2f mm",
+                                                    one.front().n_gamma,
+                                                    one.front().peak_sigma));
+                        const auto path = util::qa::pdf_path(
+                            run_dir, "recodata", 5,
+                            std::string("ngamma_combo_") + tname + (logy ? "_logy" : ""));
+                        cc.SaveAs(path.string().c_str());
+                        util::qa::crop_pdf_inplace(path);
+                    }
+            }
+        }
+
+        //  04 trigger_cherenkov_hitmap — (x, y) of every in-time cherenkov hit →
+        //  the Cherenkov ring.  Overlaid: the fitted global centre (marker) and
+        //  the fitted ring shape.  Optics can distort the ring into an ellipse,
+        //  so the shape is fit as an ellipse (semi-axes a, b, rotation θ) about
+        //  the pinned centre; when |a−b| is consistent with 0 it collapses to a
+        //  circle (R) — the legacy single-radius overlay.  The solid curve is
+        //  the fit, dashed = ±3σ, dotted = ±5σ (σ = radial ring width).
         if (auto *hm = output_file->Get<TH2F>("Rings/h_trigger_cherenkov_hitmap"))
-            save_one(4, "trigger_cherenkov_hitmap", hm, "colz");
+        {
+            //  Reuse the aggregate ellipse hoisted above (shared with the
+            //  per-trigger radial remap).  Ring-tagged hits feed the diagnostic.
+            auto *rt = output_file->Get<TH2F>("Rings/h_ring_tagged_hitmap");
+
+            TCanvas c("c_qa_recodata_04_trigger_cherenkov_hitmap", "", 1000, 1000);
+            c.SetRightMargin(0.14);
+            hm->Draw("colz");
+            //  TEllipse(x, y, r1, r2, phimin, phimax, theta): circle fallback
+            //  has r1 == r2 (== R) and theta == 0.  Bands offset both semi-axes
+            //  by ±nσ (radial width), inner radii clamped at 0.
+            const double th = ell.theta_deg;
+            auto mk_ell = [&](double da)
+            {
+                return TEllipse(best_x, best_y, std::max(0.0, ell.a + da),
+                                std::max(0.0, ell.b + da), 0.0, 360.0, th);
+            };
+            TEllipse e_fit = mk_ell(0.0);
+            TEllipse e_3lo = mk_ell(-3 * ring_sigma);
+            TEllipse e_3hi = mk_ell(+3 * ring_sigma);
+            TEllipse e_5lo = mk_ell(-5 * ring_sigma);
+            TEllipse e_5hi = mk_ell(+5 * ring_sigma);
+            TMarker mk(best_x, best_y, 5); // '5' = an X marker at the fit centre
+            //  Ellipse-axes overlay (ellipse case only): major (a) and minor (b)
+            //  semi-axis spokes from the centre, a horizontal +X reference
+            //  through the centre, and an arc marking θ (measured +X → major
+            //  axis, CCW positive).  Declared here so they outlive SaveAs.
+            const double th_rad = ell.theta_deg * M_PI / 180.0;
+            TLine axis_a(best_x, best_y, best_x + ell.a * std::cos(th_rad),
+                         best_y + ell.a * std::sin(th_rad));
+            TLine axis_b(best_x, best_y,
+                         best_x + ell.b * std::cos(th_rad + M_PI / 2.0),
+                         best_y + ell.b * std::sin(th_rad + M_PI / 2.0));
+            TLine xref(best_x, best_y, best_x + 1.10 * ell.a, best_y);
+            TArc th_arc(best_x, best_y, 0.42 * ell.a,
+                        std::min(0.0, ell.theta_deg),
+                        std::max(0.0, ell.theta_deg));
+            TLatex axlab;
+            //  Info box: black text on an opaque white box (the red-on-colz
+            //  caption was unreadable over hot pixels) — params on line 1, the
+            //  line-style legend on line 2.
+            TPaveText info(0.13, 0.83, 0.66, 0.895, "NDC");
+            info.SetFillColor(kWhite);
+            info.SetFillStyle(1001);
+            info.SetBorderSize(0); // flat — no drop shadow
+            info.SetTextColor(kBlack);
+            info.SetTextFont(42);
+            info.SetTextSize(0.024);
+            info.SetTextAlign(12); // left, vertically centred
+            info.SetMargin(0.02);
+            if (ring_R > 0.0 && ring_sigma > 0.0)
+            {
+                for (TEllipse *e : {&e_fit, &e_3lo, &e_3hi, &e_5lo, &e_5hi})
+                {
+                    e->SetFillStyle(0);
+                    e->SetLineColor(kRed + 1);
+                    e->SetLineWidth(2);
+                }
+                e_fit.SetLineStyle(1);
+                e_3lo.SetLineStyle(2);
+                e_3hi.SetLineStyle(2);
+                e_5lo.SetLineStyle(3);
+                e_5hi.SetLineStyle(3);
+                e_fit.Draw();
+                e_3lo.Draw();
+                e_3hi.Draw();
+                e_5lo.Draw();
+                e_5hi.Draw();
+                mk.SetMarkerColor(kRed + 1);
+                mk.SetMarkerSize(2);
+                mk.Draw();
+                if (ell.is_ellipse)
+                {
+                    //  Light-blue spokes so the axes read as distinct from the
+                    //  red ellipse geometry.
+                    const int kAxisCol = kAzure + 2;
+                    axis_a.SetLineColor(kAxisCol);
+                    axis_a.SetLineWidth(2);
+                    axis_b.SetLineColor(kAxisCol);
+                    axis_b.SetLineWidth(2);
+                    xref.SetLineColor(kGray + 2);
+                    xref.SetLineWidth(1);
+                    xref.SetLineStyle(2);
+                    th_arc.SetFillStyle(0);
+                    th_arc.SetNoEdges();
+                    th_arc.SetLineColorAlpha(kGray + 2, 0.5); // 50% transparent
+                    th_arc.SetLineWidth(2);
+                    axis_a.Draw();
+                    axis_b.Draw();
+                    xref.Draw();
+                    th_arc.Draw();
+                    //  Tags follow each spoke's inclination but are OFFSET
+                    //  perpendicular to the line (so the spoke never strikes
+                    //  through the text), pulled toward the centre into the empty
+                    //  ring interior.  One uniform text size for a/b/θ.  Text
+                    //  angle wrapped to (−90,90] (square pad → geometric angle ==
+                    //  screen angle).
+                    //  Value-only tags (the letter is dropped — the axis position
+                    //  names it; full a/b/θ live in the info box).  a/b follow
+                    //  their spoke inclination, offset to the BELOW side (−n̂) so
+                    //  the value reads under the axis without strike-through.  θ
+                    //  is anchored to the X-parallel reference like an axis label.
+                    auto read_ang = [](double d)
+                    {
+                        while (d > 90.0)
+                            d -= 180.0;
+                        while (d <= -90.0)
+                            d += 180.0;
+                        return d;
+                    };
+                    const double kPerp = 0.055 * ell.a; // small perpendicular gap
+                    axlab.SetTextFont(42);
+                    axlab.SetTextSize(0.022);
+                    axlab.SetTextAlign(12); // left → writing STARTS at the anchor
+                    axlab.SetTextColor(kAxisCol);
+                    //  a value: writing starts a little after the centre and reads
+                    //  OUTWARD along θ̂, offset just BELOW the spoke (−n̂).
+                    const double ra = 0.30 * ell.a;
+                    axlab.SetTextAngle(read_ang(ell.theta_deg));
+                    axlab.DrawLatex(
+                        best_x + ra * std::cos(th_rad) + kPerp * std::sin(th_rad),
+                        best_y + ra * std::sin(th_rad) - kPerp * std::cos(th_rad),
+                        TString::Format("%.1f mm", ell.a));
+                    //  b value: starts after the centre, reads outward along
+                    //  (θ+90)̂, offset just ABOVE the spoke (+n̂).
+                    const double thb = th_rad + M_PI / 2.0;
+                    const double rb = 0.30 * ell.b;
+                    axlab.SetTextAngle(read_ang(ell.theta_deg + 90.0));
+                    axlab.DrawLatex(
+                        best_x + rb * std::cos(thb) - kPerp * std::sin(thb),
+                        best_y + rb * std::sin(thb) + kPerp * std::cos(thb),
+                        TString::Format("%.1f mm", ell.b));
+                    //  θ value: INSIDE the angle arc, centred on the bisector and
+                    //  inclined along it (text follows the angle's centre line).
+                    const double bis = 0.5 * th_rad;
+                    const double r_th = 0.28 * ell.a; // inside the arc (0.42·a)
+                    axlab.SetTextAngle(read_ang(0.5 * ell.theta_deg));
+                    axlab.SetTextColor(kGray + 2);
+                    axlab.DrawLatex(best_x + r_th * std::cos(bis),
+                                    best_y + r_th * std::sin(bis),
+                                    TString::Format("%.0f#circ", ell.theta_deg));
+                }
+                const TString shape =
+                    ell.is_ellipse
+                        ? TString::Format(
+                              "fit: a=%.1f, b=%.1f mm, #theta=%.0f#circ, "
+                              "#sigma=%.2f mm",
+                              ell.a, ell.b, ell.theta_deg, ring_sigma)
+                        : TString::Format("fit: R=%.1f, #sigma=%.2f mm", ell.a,
+                                          ring_sigma);
+                info.AddText(shape);
+                info.AddText("solid = fit,  dashed = #pm3#sigma,  "
+                             "dotted = #pm5#sigma");
+                info.Draw();
+            }
+            const auto path = util::qa::pdf_path(run_dir, "recodata", 4,
+                                                 "trigger_cherenkov_hitmap");
+            c.SaveAs(path.string().c_str());
+            util::qa::crop_pdf_inplace(path);
+
+            //  Radial-coordinate cross-check (elliptic rings only): the
+            //  circular-r distribution is smeared by the a−b spread.  Re-map
+            //  each ring hit to an elliptical radius ρ = r·R̄ / r_ell(φ)
+            //  (θ-aware) so a perfect ellipse collapses to a δ at R̄ = (a+b)/2;
+            //  the σ drop quantifies how much radial width was ellipticity vs
+            //  intrinsic resolution.  Diagnostic only — the production radial
+            //  fit is rewired separately once this is validated.
+            if (ell.is_ellipse && ring_sigma > 0.0)
+            {
+                TH2F *src = rt != nullptr ? rt : hm;
+                const double Rbar = 0.5 * (ell.a + ell.b);
+                TH1F h_circ("h_radial_circ", "", 48, Rbar - 12.0, Rbar + 12.0);
+                TH1F h_ellr("h_radial_ell", "", 48, Rbar - 12.0, Rbar + 12.0);
+                for (int ix = 1; ix <= src->GetNbinsX(); ++ix)
+                    for (int iy = 1; iy <= src->GetNbinsY(); ++iy)
+                    {
+                        const double w = src->GetBinContent(ix, iy);
+                        if (w <= 0)
+                            continue;
+                        const double dx =
+                            src->GetXaxis()->GetBinCenter(ix) - best_x;
+                        const double dy =
+                            src->GetYaxis()->GetBinCenter(iy) - best_y;
+                        const double r = std::sqrt(dx * dx + dy * dy);
+                        if (std::fabs(r - ring_R) > 5.0 * ring_sigma)
+                            continue;
+                        h_circ.Fill(r, w);
+                        h_ellr.Fill(elliptical_radius(dx, dy, ell), w);
+                    }
+                auto fit_sigma = [&](TH1F &h) -> double
+                {
+                    if (h.GetEntries() < 20)
+                        return 0.0;
+                    TF1 g("g", "gaus");
+                    g.SetRange(Rbar - 3 * ring_sigma, Rbar + 3 * ring_sigma);
+                    return static_cast<int>(h.Fit(&g, "RQN")) == 0
+                               ? std::fabs(g.GetParameter(2))
+                               : 0.0;
+                };
+                const double s_circ = fit_sigma(h_circ);
+                const double s_ell = fit_sigma(h_ellr);
+                mist::logger::info(
+                    TString::Format(
+                        "(recodata_writer) ring shape a=%.2f b=%.2f mm "
+                        "theta=%.1f deg  radial sigma circular=%.2f -> "
+                        "elliptical=%.2f mm",
+                        ell.a, ell.b, ell.theta_deg, s_circ, s_ell)
+                        .Data());
+                TCanvas cc("c_qa_recodata_04_radial_ellipse_vs_circle", "", 900,
+                           700);
+                h_circ.SetLineColor(kGray + 2);
+                h_circ.SetLineWidth(2);
+                h_ellr.SetLineColor(kRed + 1);
+                h_ellr.SetLineWidth(2);
+                h_circ.SetTitle("ring-hit radial: circular r vs elliptical "
+                                "#rho;radius about centre (mm);hits / bin");
+                h_circ.SetStats(0);
+                h_circ.Draw("hist");
+                h_ellr.Draw("hist same");
+                TLatex lt;
+                lt.SetNDC();
+                lt.SetTextSize(0.034);
+                lt.SetTextColor(kGray + 2);
+                lt.DrawLatex(0.15, 0.86,
+                             TString::Format("circular r:  #sigma = %.2f mm",
+                                             s_circ));
+                lt.SetTextColor(kRed + 1);
+                lt.DrawLatex(0.15, 0.81,
+                             TString::Format("elliptical #rho:  #sigma = %.2f mm",
+                                             s_ell));
+                const auto pth = util::qa::pdf_path(
+                    run_dir, "recodata", 4, "radial_ellipse_vs_circle");
+                cc.SaveAs(pth.string().c_str());
+                util::qa::crop_pdf_inplace(pth);
+            }
+        }
 
         //  04 ring_tagged_hitmap — companion to the above: only the hits the
         //  ring finder tagged as ring members (vs the full in-time occupancy).
         if (auto *hm = output_file->Get<TH2F>("Rings/h_ring_tagged_hitmap"))
             save_one(4, "ring_tagged_hitmap", hm, "colz");
-
-        //  05 N_gamma_per_ring_summary — per-ring photon count (= the
-        //     N_photons headline).  TH1F built inside the build_radial_
-        //     summary lambda above and deleted after Write(); read back
-        //     from the file.
-        if (auto *ng = output_file->Get<TH1F>("Rings/h_N_gamma_per_ring_summary"))
-            save_one(5, "N_gamma_per_ring_summary", ng, "hist text");
 
         //  06 sigma_photon_summary — per-ring single-photon resolution
         //     σ_photon (mm), the other Cherenkov headline the operator
@@ -1765,6 +2508,9 @@ void recodata_writer(
             rm[{run_name, "all", "full.n_gamma"}] = {pub_n_gamma, 0.0};
             rm[{run_name, "all", "full.sigma"}] = {pub_sigma, pub_sigma_err};
         }
+        //  Per-hardware-trigger N_γ (photons / triggered frame).
+        for (const auto &[tname, ng] : per_trigger_ngamma)
+            rm[{run_name, "all", "full.n_gamma." + tname}] = {ng, 0.0};
         ar.update(rm, /*source=*/"recodata");
     }
     //

@@ -36,7 +36,8 @@ void fit_radial_distribution(TH1F *h,
                              const RecodataConfigStruct &cfg,
                              const std::string &data_repository,
                              const std::string &run_name,
-                             std::vector<RadialFitResult> &results)
+                             std::vector<RadialFitResult> &results,
+                             const std::string &norm_unit)
 {
     if (!h || h->GetEntries() < 100)
     {
@@ -65,7 +66,7 @@ void fit_radial_distribution(TH1F *h,
     if (n_rings > 0)
     {
         h->Scale(1.0 / static_cast<double>(n_rings));
-        h->GetYaxis()->SetTitle("photons / ring / bin");
+        h->GetYaxis()->SetTitle(("photons / " + norm_unit + " / bin").c_str());
     }
     //  Acceptance band — used for the peak seed search (to avoid
     //  eff(R) corner blow-ups) and as the wide envelope.
@@ -296,9 +297,9 @@ void fit_radial_distribution(TH1F *h,
         pave.SetBorderSize(1);
         pave.SetTextAlign(12);
         pave.SetTextSize(0.028);
-        pave.AddText(TString::Format("N_{#gamma} / ring = %.2f", n_gamma).Data());
+        pave.AddText(TString::Format("N_{#gamma} / %s = %.2f", norm_unit.c_str(), n_gamma).Data());
         pave.AddText(TString::Format("N_{#gamma} (sideband) = %.2f", n_gamma_sb).Data());
-        pave.AddText(TString::Format("over %ld rings", n_rings).Data());
+        pave.AddText(TString::Format("over %ld %ss", n_rings, norm_unit.c_str()).Data());
         pave.AddText(TString::Format("#chi^{2}/ndf = %.2f / %d = %.2f",
                                      chi2, ndf, chi2_per_ndf)
                          .Data());
